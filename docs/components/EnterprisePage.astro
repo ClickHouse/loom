@@ -40,46 +40,45 @@ const evaluation = [
 ---
 
 <SiteFrame title={copy.title} description={copy.description} path={path} locale={locale} alternates={enterpriseAlternates}>
-  <h1>{copy.heading}</h1>
-  <p class="lead">{copy.lead}</p>
-  <div class="site-actions">
-    <a class="primary" href={plan.href} hreflang={plan.hreflang}>{plan.label}</a>
-    <a class="secondary" href={security.href} hreflang={security.hreflang}>{security.label}</a>
-  </div>
-
-  <section class="site-section" aria-labelledby="deploy-title">
-    <div class="section-copy">
+  <div class="enterprise-intro">
+    <div>
+      <h1>{copy.heading}</h1>
+      <p class="lead">{copy.lead}</p>
+      <div class="site-actions">
+        <a class="primary" href={plan.href} hreflang={plan.hreflang}>{plan.label}<span class="link-arrow" aria-hidden="true">→</span></a>
+        <a class="secondary" href={security.href} hreflang={security.hreflang}>{security.label}</a>
+      </div>
+    </div>
+    <section class="site-panel deployment" aria-labelledby="deploy-title">
       <h2 id="deploy-title">{copy.deploymentHeading}</h2>
       <p>{copy.deploymentIntro}</p>
-    </div>
-    <div class="site-grid">
       {deployment.map(({ title, detail, href, hreflang, label }) => (
-        <article class="site-panel">
+        <article>
           <h3>{title}</h3>
           <p>{detail}</p>
-          <a href={href} hreflang={hreflang}>{label} <span aria-hidden="true">↗</span></a>
+          <a href={href} hreflang={hreflang}>{label} <span class="link-arrow" aria-hidden="true">→</span></a>
         </article>
       ))}
-    </div>
-  </section>
+    </section>
+  </div>
 
   <section class="site-section" aria-labelledby="controls-title">
     <div class="section-copy">
       <h2 id="controls-title">{copy.controlsHeading}</h2>
       <p>{copy.controlsIntro}</p>
     </div>
-    <div class="site-grid">
+    <div class="site-grid controls">
       {controls.map(({ title, detail, href, hreflang, label }) => (
         <article class="site-panel">
           <h3>{title}</h3>
           <p>{detail}</p>
-          <a href={href} hreflang={hreflang}>{label} <span aria-hidden="true">↗</span></a>
+          <a href={href} hreflang={hreflang}>{label} <span class="link-arrow" aria-hidden="true">→</span></a>
         </article>
       ))}
     </div>
   </section>
 
-  <section class="site-section" aria-labelledby="evaluate-title">
+  <section class="site-section evaluation" aria-labelledby="evaluate-title">
     <div class="section-copy">
       <h2 id="evaluate-title">{copy.evaluateHeading}</h2>
       <p>{copy.evaluateIntro}</p>
@@ -93,5 +92,15 @@ const evaluation = [
 </SiteFrame>
 
 <style>
-  h1 { text-wrap: balance; overflow-wrap: anywhere; }
+  .enterprise-intro { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: center; gap: clamp(1.5rem, 5vw, 5rem); }
+  .deployment { border-block-start: 2px solid var(--accent); }
+  .deployment h2 { font-size: clamp(1.35rem, 2vw, 1.8rem); }
+  .deployment article { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  .deployment article p { font-size: 0.94rem; }
+  .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .controls .site-panel { display: flex; flex-direction: column; align-items: start; }
+  .controls a { margin-top: auto; }
+  .evaluation { padding: clamp(1.1rem, 3vw, 2.45rem); border: 1px solid var(--line); border-inline-start: 0.2rem solid var(--accent); background: var(--surface); }
+  @media (max-width: 59rem) { .enterprise-intro { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 39rem) { .controls { grid-template-columns: minmax(0, 1fr); } }
 </style>

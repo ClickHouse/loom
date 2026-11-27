@@ -1,6 +1,7 @@
 export const ranges = [30, 90, 365];
 export const grains = { day: "Daily", week: "Weekly", month: "Monthly" };
 export const thresholds = { 0: "Any successful request", 50000: "More than 50,000", 1000000: "More than 1,000,000" };
+const defaults = { tab: "self-hosted", days: 30, grain: "week", cohort: "month", installation: 0, domain: 0 };
 const dayMs = 86_400_000;
 
 export function daysBefore(day, days) {
@@ -21,17 +22,26 @@ export function adoptionFilters(params) {
   const domain = params.get("domain");
 
   return {
-    tab: params.get("tab") === "oss" ? "oss" : "self-hosted",
-    days: ranges.includes(days) ? days : 30,
-    grain: Object.hasOwn(grains, grain) ? grain : "week",
-    cohort: params.get("cohort") === "week" ? "week" : "month",
-    installation: Object.hasOwn(thresholds, installation) ? Number(installation) : 0,
-    domain: Object.hasOwn(thresholds, domain) ? Number(domain) : 0,
+    tab: params.get("tab") === "oss" ? "oss" : defaults.tab,
+    days: ranges.includes(days) ? days : defaults.days,
+    grain: Object.hasOwn(grains, grain) ? grain : defaults.grain,
+    cohort: params.get("cohort") === "week" ? "week" : defaults.cohort,
+    installation: Object.hasOwn(thresholds, installation) ? Number(installation) : defaults.installation,
+    domain: Object.hasOwn(thresholds, domain) ? Number(domain) : defaults.domain,
   };
 }
 
+export function omitDefaultAdoptionFilters(params) {
+  for (const [key, value] of Object.entries(defaults)) {
+    if (params.get(key) === String(value)) params.delete(key);
+  }
+}
+
 export function adoptionUrl(filters, changes = {}, anchor = "") {
-  return "?" + new URLSearchParams({ ...filters, ...changes }) + anchor;
+  const params = new URLSearchParams({ ...filters, ...changes });
+  omitDefaultAdoptionFilters(params);
+  const search = params.toString();
+  return `/adoption${search ? `?${search}` : ""}${anchor}`;
 }
 
 export function relativeChange(current, previous) {

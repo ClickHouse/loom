@@ -24,7 +24,9 @@ Astro.response.headers.set("Cache-Control", "public, max-age=0, must-revalidate"
 Astro.response.headers.set("Vercel-CDN-Cache-Control", "public, s-maxage=3600, stale-while-revalidate=86400");
 
 const filters = adoptionFilters(Astro.url.searchParams);
-const { today, refreshedAt, selfHosted, openSource } = await loadPublishedAdoption();
+const dataset = Astro.url.searchParams.get("csv");
+const tab = dataset ? (dataset === "downloads" || dataset === "stars" ? "oss" : "self-hosted") : filters.tab;
+const { today, refreshedAt, selfHosted, openSource } = await loadPublishedAdoption(tab);
 const { totals: summaries, retention, versions, activity, lifecycle, domains } = selfHosted;
 const totals = summaries?.find(({ range_days, comparison }) => range_days === filters.days && comparison === "current");
 const previous = summaries?.find(
@@ -63,7 +65,6 @@ const sources = {
   npm: "https://www.npmjs.com/package/@clickhouse/loom",
   GHCR: "https://github.com/ClickHouse/loom/pkgs/container/loom",
 };
-const dataset = Astro.url.searchParams.get("csv");
 if (dataset) {
   const rows = adoptionCsv(dataset, series, lifecycleGroups, oss);
   if (!rows) return new Response("Unknown dataset", { status: 404 });
@@ -129,16 +130,16 @@ const overview = [
 >
   <h1>Loom adoption</h1>
   <p class="lead">How teams run Loom and how developers discover it.</p>
-  <div class="actions">
-    <a class="primary" href="/docs/getting-started/quickstart">Run Loom</a>
-    <a href="#methodology">How we measure adoption</a>
+  <div class="site-actions">
+    <a class="secondary" href="#methodology">How we measure adoption</a>
+    <a class="text-link" href="/telemetry">Telemetry settings</a>
   </div>
   <nav class="switcher" aria-label="Adoption views">
     <a href={adoptionUrl(filters, { tab: "self-hosted" })} aria-current={filters.tab === "self-hosted" ? "page" : undefined}>Self-hosted</a>
-    <a href={adoptionUrl(filters, { tab: "oss" })} aria-current={filters.tab === "oss" ? "page" : undefined}>OSS</a>
+    <a href={adoptionUrl(filters, { tab: "oss" })} aria-current={filters.tab === "oss" ? "page" : undefined}>Open source</a>
   </nav>
 
-  <form method="get" class="filters" aria-label="Adoption filters">
+  <form method="get" action="/adoption" class="filters" aria-label="Adoption filters" data-adoption-filters>
     <input type="hidden" name="tab" value={filters.tab} />
     <label>Lookback
       <select name="days">
@@ -173,10 +174,10 @@ const overview = [
       <input type="hidden" name="installation" value={filters.installation} />
       <input type="hidden" name="domain" value={filters.domain} />
     </>}
-    <button type="submit">Apply filters</button>
+    <button class="secondary" type="submit">Apply filters</button>
   </form>
 
-  <section id="self-hosted" class="view" aria-labelledby="self-hosted-title" hidden={filters.tab !== "self-hosted"}>
+  {filters.tab === "self-hosted" && <section id="self-hosted" aria-labelledby="self-hosted-title">
     <div class="section-title">
       <div>
         <h2 id="self-hosted-title">Self-hosted</h2>
@@ -185,19 +186,24 @@ const overview = [
       <a href="/telemetry">Telemetry and privacy</a>
     </div>
 
-    <div class="metrics">
-      {overview.map(([label, key, description]) => {
-        const change = compare ? relativeChange(totals[key], previous[key]) : null;
-        return <article class="card">
-          <h3>{label}</h3>
-          <strong>{totals ? number.format(totals[key]) : "—"}</strong>
-          <p>{description}</p>
-          {change !== null && <p class="change">{signedPercent.format(change)} vs. previous {filters.days} days</p>}
-        </article>;
-      })}
-    </div>
-    {!Array.isArray(summaries) && <p class="notice">Self-hosted metrics will appear when the telemetry warehouse is connected.</p>}
-    {Array.isArray(summaries) && !totals && <p class="notice">No installations reported in this period.</p>}
+    {totals ? (
+      <div class="metrics">
+        {overview.map(([label, key, description]) => {
+          const change = compare ? relativeChange(totals[key], previous[key]) : null;
+          return <article class="card">
+            <h3>{label}</h3>
+            <strong>{number.format(totals[key])}</strong>
+            <p>{description}</p>
+            {change !== null && <p class="change">{signedPercent.format(change)} vs. previous {filters.days} days</p>}
+          </article>;
+        })}
+      </div>
+    ) : (
+      <div class="card coverage">
+        <p>{Array.isArray(summaries) ? "No installations reported in this period." : "Self-hosted metrics are unavailable."}</p>
+        <a class="text-link" href={adoptionUrl(filters, { tab: "oss" })}>View open-source adoption <span class="link-arrow" aria-hidden="true">→</span></a>
+      </div>
+    )}
     {totals && <p class="notice">Latest reporting date <time datetime={totals.last_reported}>{totals.last_reported}</time> UTC. Period changes appear when both windows have a report on every date.</p>}
 
     <article class="card activity" id="reported-contact-domains">
@@ -290,9 +296,9 @@ const overview = [
         </article>
       )}
     </div>
-  </section>
+  </section>}
 
-  <section id="oss" class="view" aria-labelledby="oss-title" hidden={filters.tab !== "oss"}>
+  {filters.tab === "oss" && <section id="oss" aria-labelledby="oss-title">
     <div class="section-title">
       <div>
         <h2 id="oss-title">Open-source adoption</h2>
@@ -348,7 +354,7 @@ const overview = [
         : <p>Daily snapshots will appear as they are collected.</p>}
     </article>
     <p class="notice">Downloads can include automated builds and retries.</p>
-  </section>
+  </section>}
 
   <section id="methodology" class="methodology" aria-labelledby="methodology-title">
     <h2 id="methodology-title">How we measure adoption</h2>
@@ -367,30 +373,40 @@ const overview = [
       </div>
     </dl>
   </section>
-  <footer>Dashboard fetched source data <time datetime={refreshedAt}>{today} at {refreshedAt.slice(11, 16)} UTC</time></footer>
+  <p class="refreshed">Source data fetched <time datetime={refreshedAt}>{today} at {refreshedAt.slice(11, 16)} UTC</time></p>
 </SiteFrame>
+
+<script>
+  import { omitDefaultAdoptionFilters } from "../lib/adoption-view.mjs";
+
+  document.querySelector<HTMLFormElement>("[data-adoption-filters]")?.addEventListener("formdata", ({ formData }) => {
+    omitDefaultAdoptionFilters(formData);
+  });
+</script>
 
 <style>
   h1 { font-size: clamp(2.8rem, 7vw, 5.6rem); }
   h3 { margin: 0; font-size: 1rem; font-weight: 650; }
   h4 { margin: 0; font-size: 0.92rem; }
-  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.8rem 1.2rem; margin-top: 1.15rem; }
-  .actions a:not(.primary) { color: var(--muted); font-size: 0.9rem; }
   .switcher {
-    width: fit-content;
-    gap: 0.2rem;
-    margin-block: 2.4rem 1.15rem;
-    padding: 0.25rem;
-    background: #1d1d19;
-    border: 1px solid var(--line);
-    border-radius: 0.55rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    margin-block: 2.4rem 1rem;
+    border-bottom: 1px solid var(--line);
   }
   .switcher a {
-    padding: 0.48rem 1rem;
-    border-radius: 0.3rem;
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: 0.45rem 0.8rem;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
     font-weight: 650;
+    text-decoration: none;
   }
-  .switcher a[aria-current] { background: var(--accent); color: #141413; }
+  .switcher a:hover, .switcher a[aria-current] { color: var(--accent); }
+  .switcher a[aria-current] { border-bottom-color: var(--accent); }
   .filters {
     display: flex;
     flex-wrap: wrap;
@@ -399,17 +415,18 @@ const overview = [
     margin-bottom: 2rem;
     padding: 0.95rem;
     border: 1px solid var(--line);
-    border-radius: 0.55rem;
+    border-radius: var(--radius);
+    background: var(--surface);
   }
-  .filters label { display: grid; gap: 0.4rem; color: var(--muted); font-size: 0.82rem; font-weight: 600; }
-  select, button {
+  .filters label { display: grid; flex: 1 1 8rem; gap: 0.4rem; color: var(--muted); font-size: 0.82rem; font-weight: 600; }
+  select {
     font: inherit;
     color: inherit;
-    background: #1d1d19;
+    background: var(--page);
     border: 1px solid var(--line);
-    border-radius: 0.35rem;
+    border-radius: var(--radius);
     padding: 0.5rem 0.65rem;
-    min-height: 2.4rem;
+    min-height: 2.75rem;
   }
   .filters button { font-size: 0.85rem; color: var(--accent); cursor: pointer; }
   .filters button:hover { border-color: var(--accent); }
@@ -417,7 +434,7 @@ const overview = [
   .card-title { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem 1rem; }
   .chart-links { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
   .card-title a, .card p a { color: var(--accent); font-size: 0.86rem; }
-  .card p.change { color: #a5c1ff; font-variant-numeric: tabular-nums; }
+  .card p.change { color: var(--click-alert-color-text-info); font-variant-numeric: tabular-nums; }
   .section-title {
     display: flex;
     align-items: start;
@@ -427,7 +444,7 @@ const overview = [
     margin-bottom: 1.2rem;
   }
   .section-title a { font-size: 0.88rem; color: var(--accent); }
-  .section-title p, .card p, .notice, footer { font-size: 0.9rem; }
+  .section-title p, .card p, .notice, .refreshed { font-size: 0.9rem; }
   .section-title p, .card p { margin-top: 0.35rem; }
   .metrics, .panels {
     display: grid;
@@ -443,10 +460,11 @@ const overview = [
     padding: clamp(0.9rem, 3vw, 1.3rem);
     min-width: 0;
     overflow-wrap: anywhere;
-    background: #1d1d19;
+    background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 0.55rem;
+    border-radius: var(--radius);
   }
+  .coverage { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.45rem 1.2rem; padding-block: 0.7rem; }
   .card strong {
     display: block;
     font-size: clamp(1.75rem, 3.5vw, 2.65rem);
@@ -471,12 +489,12 @@ const overview = [
   dt { color: var(--muted); }
   dd { margin: 0; }
   .plots { margin-top: 0.9rem; }
-  .plots > div { min-width: 0; padding: 0.9rem; border: 1px solid var(--line); border-radius: 0.35rem; }
+  .plots > div { min-width: 0; padding: 0.9rem; border: 1px solid var(--line); border-radius: var(--radius); }
   .methodology { margin-top: 1.5rem; }
   .methodology { padding-top: 1.4rem; border-top: 1px solid var(--line); }
   .methodology dl { gap: 0.9rem; }
   .methodology dl div { display: grid; gap: 0.3rem; }
   .methodology dt { font-weight: 650; color: inherit; }
   .methodology dd { font-size: 0.91rem; color: var(--muted); line-height: 1.6; }
-  footer { margin-top: 2rem; color: var(--muted); }
+  .refreshed { margin-top: 2rem; color: var(--muted); }
 </style>

@@ -311,7 +311,8 @@ and [Cohere Embed v4](https://docs.aws.amazon.com/bedrock/latest/userguide/model
 The one-shot client uses Google's [generateContent API](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/models/inference)
 for Gemini publisher models. Set `LOOM_LLM_PROVIDER=vertex` with an explicit model,
 project, and location, or use a `vertex:<model>` per-job override. The location
-selects the global or regional Google endpoint. The deployment sets these values.
+selects a global, regional, or multi-region Google endpoint. The deployment sets
+these values.
 
 The Google Auth library discovers and refreshes Application Default Credentials
 off the event loop. Workload Identity Federation supplies short-lived credentials
@@ -324,6 +325,14 @@ including reasoning tokens when reported. The cost table uses standard regional
 text rates for its listed Vertex models. A model outside that table has unknown cost.
 See [Vertex setup](../getting-started/models-and-keys.md#vertex-ai) for deployment and
 rollout.
+
+The [native assistant](../operations/assistant.md) selects its own Vertex model
+with `LOOM_ASSISTANT_PROVIDER=vertex` and uses `streamGenerateContent` with the
+same project, location and credential source. It replays model-generated parts
+with their thought signatures when returning tool results within an answer.
+Stream usage comes from the provider's token counts, including cached input
+and reasoning. The assistant uses the canonical `vertex:<model>` price key
+to reserve budget and account for each turn.
 
 ### Protocol
 

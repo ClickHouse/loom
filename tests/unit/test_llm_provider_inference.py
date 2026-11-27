@@ -296,6 +296,7 @@ def test_vertex_settings_require_a_model_project_and_location(
         ("llm_model", "models/gemini-3.5-flash-lite", "needs a Gemini model ID"),
         ("vertex_project", "project/path", "LOOM_VERTEX_PROJECT"),
         ("vertex_location", "us-central1/api", "LOOM_VERTEX_LOCATION"),
+        ("vertex_location", "xx", "LOOM_VERTEX_LOCATION"),
     ],
 )
 def test_vertex_rejects_malformed_routes_at_settings_load(
@@ -311,6 +312,36 @@ def test_vertex_rejects_malformed_routes_at_settings_load(
     route[field] = value
     with pytest.raises(ValueError, match=error):
         Settings(_env_file=None, llm_provider="vertex", **route)
+
+
+@pytest.mark.parametrize(
+    ("location", "expected_host"),
+    [
+        ("global", "aiplatform.googleapis.com"),
+        ("eu", "aiplatform.eu.rep.googleapis.com"),
+        ("us", "aiplatform.us.rep.googleapis.com"),
+        ("europe-west1", "europe-west1-aiplatform.googleapis.com"),
+    ],
+)
+def test_vertex_accepts_global_multiregion_and_region_locations(
+    location: str, expected_host: str
+) -> None:
+    from server.core.llm_provider import vertex_route
+    from server.settings import Settings
+
+    s = Settings(
+        _env_file=None,
+        llm_provider="vertex",
+        llm_model="gemini-3.5-flash-lite",
+        vertex_project="test-project",
+        vertex_location=location,
+    )
+    assert s.vertex_location == location
+    _, url = vertex_route("gemini-3.5-flash-lite", "test-project", location)
+    assert url == (
+        f"https://{expected_host}/v1/projects/test-project/locations/{location}"
+        "/publishers/google/models/gemini-3.5-flash-lite:generateContent"
+    )
 
 
 def test_vertex_is_refused_when_the_deployment_requires_its_gateway() -> None:

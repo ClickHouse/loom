@@ -57,6 +57,30 @@ def test_a_page_splits_at_its_headings_and_skips_fenced_ones() -> None:
     assert docs_index.split_page("operations/x.md", _PAGE)[0].audience == "operator"
 
 
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        "seo:\n  title: Metadata only\nmode: center\npagination: false",
+        "description: Metadata only\nseo:\n  title: A search title",
+    ],
+)
+def test_site_frontmatter_stays_out_of_the_title_outline_and_search(metadata: str) -> None:
+    path = "features/sharing.md"
+    ix = docs_index.build([(path, f"---\n{metadata}\n---\n\n{_PAGE}")])
+    page = docs_index.section_text(ix, path, ())
+    assert page is not None and page.title == "Sharing"
+    assert page.text.startswith("# Sharing")
+    assert docs_index.page_sections(ix, path)[0].anchor == "sharing"
+    assert docs_index.search(ix, "Metadata", 1) == []
+
+
+def test_a_leading_rule_is_kept_when_it_does_not_open_yaml_metadata() -> None:
+    text = "---\n\n# Sharing\n\nRead this first.\n\n---\n\n## Collections"
+    sections = docs_index.split_page("features/sharing.md", text)
+    assert [s.heading for s in sections] == ["", "Sharing", "Collections"]
+    assert sections[0].text == "---"
+
+
 def test_anchors_are_the_ones_the_doc_link_check_resolves() -> None:
     assert docs_index.slug("Read `help.get`, then **share**!") == "read-helpget-then-share"
 
@@ -174,6 +198,22 @@ def test_a_page_that_cannot_be_read_is_left_out(tmp_path: Path) -> None:
     (tmp_path / "good.md").write_text("# Good\n\nsharing\n")
     (tmp_path / "bad.md").write_bytes(b"# Bad\n\n\xff\xfe sharing\n")
     assert [p for p, _ in docs.pages(tmp_path)] == ["good.md"]
+
+
+def test_only_doc_sources_are_indexed_after_a_site_build(tmp_path: Path) -> None:
+    paths = (
+        "guides/connect.md",
+        ".blume-content/guides/connect.md",
+        ".vercel/output/static/docs/guides/connect.md",
+        "dist/client/guides/connect.md",
+        "node_modules/dependency/README.md",
+        "development/testing.md",
+    )
+    for path in paths:
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("# Connect\n\nConnect an agent.\n")
+    assert [path for path, _ in docs.pages(tmp_path)] == ["guides/connect.md"]
 
 
 def test_a_section_read_carries_no_outline(shipped_docs) -> None:

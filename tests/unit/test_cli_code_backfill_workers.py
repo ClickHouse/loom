@@ -541,6 +541,43 @@ def test_a_signal_to_the_whole_group_stops_each_batch_before_its_worker_retires(
         assert mine.index("cancelled") < mine.index("flushed") < mine.index("retired")
 
 
+async def test_a_sigterm_after_the_parent_pipe_closes_lets_the_batch_flush(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    from collections.abc import Callable
+
+    from server.cli._proc import cancel_on_sigterm
+
+    loop = asyncio.get_running_loop()
+    on_term: Callable[[], None] | None = None
+    flushed = False
+
+    def _install(sig: signal.Signals, handler: Callable[[], None]) -> None:
+        nonlocal on_term
+        assert sig == signal.SIGTERM
+        on_term = handler
+
+    monkeypatch.setattr(loop, "add_signal_handler", _install)
+    monkeypatch.setattr(loop, "remove_signal_handler", lambda _sig: None)
+    reader, writer = multiprocessing.Pipe()
+
+    async def _batch() -> None:
+        nonlocal flushed
+        try:
+            writer.close()
+            await asyncio.Future()
+        finally:
+            assert on_term is not None
+            on_term()
+            await asyncio.sleep(0)
+            flushed = True
+
+    with reader, writer, pytest.raises(SystemExit, match="run stopped during its batch"):
+        await cancel_on_sigterm(pool._until_closed(reader, _batch(), 1))
+    assert flushed
+
+
 def test_the_edge_pass_in_a_worker_resolves_imports_to_files_another_worker_wrote(
     tmp_path: Path,
 ) -> None:

@@ -122,8 +122,16 @@ async def test_reads_are_scoped_as_their_callers_rely_on() -> None:
             ["n"],
             ["changed"],
         )
-    await store.pending("o", "c", days=14, ch=ch)
-    assert ch.sql[-1][1]["days"] == 14
+    after = (42, "A" * 32)
+    assert await store.pending("o", "c", days=14, after=after, before=100, limit=2, ch=ch) == (
+        [],
+        None,
+    )
+    sql, params = ch.sql[-1]
+    assert "version < {before:UInt64}" in sql
+    assert "ORDER BY version, scan_digest" in sql
+    assert params["days"] == 14 and params["lim"] == 2 and params["before"] == 100
+    assert (params["after_version"], params["after_digest"]) == after
     assert await store.policy_due("o", "c", "v", limit=50, ch=ch) == ["m"]
     assert ch.sql[-1][1]["lim"] == 50
     assert await store.code_namespaces(ch=ch) == [("o", "c")]

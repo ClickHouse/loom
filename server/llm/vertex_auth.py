@@ -20,6 +20,10 @@ _lock = asyncio.Lock()
 _credentials: Credentials | None = None
 
 
+class VertexCredentialsError(RuntimeError):
+    """A credential failure safe to report without provider details."""
+
+
 class _BoundedRequest(transport.Request):
     def __init__(self, request: Callable[..., transport.Response], deadline: float) -> None:
         self._request = request
@@ -81,16 +85,20 @@ def _authorize(url: str, deadline: float) -> dict[str, str]:
             )
             before_request(request, "POST", url, result)
         except DefaultCredentialsError:
-            raise RuntimeError(
+            raise VertexCredentialsError(
                 "Vertex AI needs Google Application Default Credentials. "
                 "Configure Workload Identity."
             ) from None
+        except PermissionError:
+            raise VertexCredentialsError("Vertex AI could not read Google credentials") from None
         except TransportError:
             raise httpx.ConnectError("Could not reach the Google credential service") from None
         except GoogleAuthError:
-            raise RuntimeError(
+            raise VertexCredentialsError(
                 "Vertex AI could not refresh Google credentials. Check IAM."
             ) from None
     if not result.get("authorization"):
-        raise RuntimeError("Google Application Default Credentials returned no access token")
+        raise VertexCredentialsError(
+            "Google Application Default Credentials returned no access token"
+        )
     return result
