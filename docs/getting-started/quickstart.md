@@ -1,3 +1,7 @@
+---
+description: Install the released stack with Docker, connect a coding agent, and verify its first saved memory.
+---
+
 # Quickstart
 
 This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP. It
