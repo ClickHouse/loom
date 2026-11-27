@@ -58,10 +58,11 @@ class _Read:
 
 @dataclass
 class Move:
-    """A link's stored row and the link it becomes."""
+    """A link's stored row and the link it becomes; None for a file link that is dropped
+    (the memory has a finer link in that file)."""
 
     row: LinkRow
-    link: Link
+    link: Link | None
 
 
 # a link not found keeps the commit it was last read at
@@ -93,10 +94,25 @@ async def recheck_all(result: link_pass.PassResult) -> None:
             async with link_pass.repository_locks.lease(_lock_name(org, cns)):
                 await _recheck_repository(org, cns, budget, result)
         except LeaseBusy:
-            pass  # another host is checking this repository
+            pass  # another pass is checking this repository
         except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
-            result.errors.append(f"recheck {org}/{cns}: {e}")
+            # its links stay at the head last checked
+            result.failed(f"recheck {org}/{cns}: {e}", e, f"{cns}:recheck")
         left -= granted - budget.judgements
+
+
+async def recheck_repository(org: str, cns: str) -> link_pass.PassResult | None:
+    """Follow one configured repository's links to its indexed head now, for the caller
+    that moved it: `recheck_all`'s work for that repository, with no judgement, so a
+    `revise` claim the change left due stays due for the link worker. None where that
+    worker would recheck nothing: links are off, or no memory links to the repository.
+    LeaseBusy while another pass checks it."""
+    if not settings.memory_code_links_enabled or (org, cns) not in await store.code_namespaces():
+        return None
+    result = link_pass.PassResult()
+    async with link_pass.repository_locks.lease(_lock_name(org, cns)):
+        await _recheck_repository(org, cns, link_pass.Budget(judgements=0), result)
+    return result
 
 
 def _lock_name(org: str, cns: str) -> str:
@@ -328,8 +344,13 @@ async def _recheck(
                 lost[before.qualified_name] = before.read_path
         found.append(_Read(a, own, before, now, defs, renamed, gone))
     elsewhere = await _elsewhere(org, cns, lost)
+    in_files = await links.file_links(org, cns, [(r.row, r.now) for r in found], head, files)
     moves: list[Move] = []
-    for r in found:
+    for r, file in zip(found, in_files, strict=True):
+        if file and file.replaced:
+            # the file now defines what the memory names: the finer links replace it
+            moves += [_anchored(r.row, d, head) for d in file.defined] or [Move(r.row, None)]
+            continue
         renamed, far = r.renamed, []
         candidates: list[Definition] = []
         mirror_unsure = False
@@ -367,6 +388,7 @@ async def _recheck(
             elsewhere=far,
             uncertain=renamed.uncertain or mirror_unsure,
             carried=renamed.carried,
+            cited=file.cited if file else "",
             head=head,
         )
         if after != r.before:
@@ -583,10 +605,27 @@ async def _recheck_pending(
         limit=int(settings.memory_code_links_batch),
     )
     moves = await _resolve_pending(org, cns, head, files, result, rows)
+    moves += await _file_links_beside(org, cns, moves)
     await _write_moves(await _current_moves(org, moves), head)
     result.rechecked += len(moves)
     if nxt != after:
         await cursor.write({"before": before, "after": list(nxt)} if nxt else {})
+
+
+async def _file_links_beside(org: str, cns: str, moves: list[Move]) -> list[Move]:
+    """The drops of the file links beside the definitions `moves` link: a memory's link
+    to a file goes once it has one to a definition in that file."""
+    at = {(m.row["memory_id"], m.link.path) for m in moves if m.link}
+    if not at:
+        return []
+    rows = await store.for_memories(org, sorted({mid for mid, _ in at}))
+    return [
+        Move(a, None)
+        for a in rows
+        if a["code_namespace"] == cns
+        and not a["qualified_name"]
+        and (a["memory_id"], a["path"]) in at
+    ]
 
 
 def _pending_definitions(
@@ -642,27 +681,32 @@ async def _resolve_pending(
             here = await links.at_head(files, head, target) if target is not None else None
         except code.ParseFailed:
             continue  # Keep the row pending for the next scan.
-        if here is None:
-            continue
-        anchored: PendingLink = {
-            **r,
-            "anchored_commit": head,
-            "anchored_path": here.path,
-            "anchored_hash": here.body_hash,
-            "anchored_name": here.qualified_name,
-            "baseline_commit": "",  # the baseline is the new anchor
-            "fingerprint_version": fingerprint_version(),  # hashed just now
-        }
-        link = Link(
-            path=here.path,
-            qualified_name=here.qualified_name,
-            body_hash=here.body_hash,
-            start_line=here.start_line,
-            end_line=here.end_line,
-            checked_hash=here.body_hash,
-        )
-        moves.append(Move(anchored, link))
+        if here is not None:
+            moves.append(_anchored(r, here, head))
     return moves
+
+
+def _anchored(r: LinkRow, here: Definition, head: str) -> Move:
+    """The move that links `r` (a pending name, or a file link) to `here`, a definition
+    the head has: anchored where it is now."""
+    anchored: LinkRow = {
+        **r,
+        "anchored_commit": head,
+        "anchored_path": here.path,
+        "anchored_hash": here.body_hash,
+        "anchored_name": here.qualified_name,
+        "baseline_commit": "",  # the baseline is the new anchor
+        "fingerprint_version": fingerprint_version(),  # hashed just now
+    }
+    link = Link(
+        path=here.path,
+        qualified_name=here.qualified_name,
+        body_hash=here.body_hash,
+        start_line=here.start_line,
+        end_line=here.end_line,
+        checked_hash=here.body_hash,
+    )
+    return Move(anchored, link)
 
 
 async def _relink(
@@ -757,14 +801,18 @@ async def _write_moves(moves: list[Move], head: str) -> None:
     """One new version per moved link, above the one read (a newer write stays); a link
     whose key changed is replaced in the same insert."""
     rows: list[LinkRow] = []
-    gone: list[LinkRow] = []
+    gone: dict[tuple[str, ...], LinkRow] = {}  # once each: a file link may become several
     revised = await policy.revised_namespaces([m.row for m in moves])
     for m in moves:
         a, link = m.row, m.link
-        relinked = (link.path, link.qualified_name) != (a["path"], a["qualified_name"])
+        was = (a["path"], a["qualified_name"])
+        relinked = link is None or (link.path, link.qualified_name) != was
         if relinked:
-            gone.append(a)
-        moved_from = relinked and bool(a["path"])
+            gone[(a["namespace"], a["memory_id"], *was)] = a
+        if link is None:
+            continue
+        # a file link leaves no former identity: a read matches one by its name
+        moved_from = relinked and bool(a["path"]) and bool(a["qualified_name"])
         # a correction holds only for a changed method its class did not carry: the
         # method's text cannot show what changed around it
         corrected = link.state == "changed" and not link.carried
@@ -794,14 +842,16 @@ async def _write_moves(moves: list[Move], head: str) -> None:
                 **_baseline_moved(a, link, head),
                 suggestion=a["suggestion"] if corrected else "",
                 judged_hash=a["judged_hash"] if corrected else "",
+                # a file link is never due: `revise` judges definitions
                 policy_due=int(
                     link.state == "changed"
+                    and bool(link.qualified_name)
                     and (a["org"], a["namespace"]) in revised
                     and (_edited(a, link) or bool(a["policy_due"]))
                 ),
             )
         )
-    await store.insert(store.tombstones(gone) + rows)
+    await store.insert(store.tombstones(list(gone.values())) + rows)
 
 
 def _edited(a: LinkRow, link: Link) -> bool:

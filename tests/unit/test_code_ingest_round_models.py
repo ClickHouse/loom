@@ -29,7 +29,7 @@ class _Repo(_ReadRepo):
 
 
 class _LLM:
-    provider, model = "fake", "fake-1"
+    provider, model = "constant", "constant-1"
 
     def __init__(self, fail: set[str] = frozenset()) -> None:  # type: ignore[assignment]
         self.calls: list[str] = []
@@ -47,6 +47,7 @@ class _LLM:
             raise RuntimeError("429")
 
         class _R:
+            provider = self.provider
             text = f"describes {scope}"
 
         return _R()

@@ -5,15 +5,14 @@
 // The block is `context.pack` (a curated, sectioned primer: pinned slots,
 // profile, relevant memories, procedures, recent runs), plus the code-index
 // orientation for an indexed checkout, the task inbox line, the recording
-// line and first-session notices. Before any of it the hook materializes an
-// install-time token (lib/plugin-options.mjs) and, with no credential at all,
-// signs the machine up (lib/first-session.mjs).
+// line and first-session notices. Before any of it the hook saves the token
+// it was given for the MCP header helper (lib/plugin-options.mjs) and, with no
+// credential at all, signs the machine up (lib/first-session.mjs).
 //
 // A hung server degrades to no primer; the unref'd exit timer bounds the
 // rest. LOOM_INJECT_CONTEXT=false turns the primer off.
 
 import {
-  agentMode,
   envNumber,
   envSwitch,
   gitToplevel,
@@ -49,24 +48,24 @@ import {
 import { checkoutRemotes, lookupIndexedRepo } from "../lib/repo-scope.mjs";
 import { readRecording, recordingFromNamespace, recordingPrimerLine, writeRecording } from "../lib/recording.mjs";
 import { teamRulesLine } from "../lib/file-context.mjs";
-import { applyPluginOptions, installTokenNotice, saveInstallServerUrl } from "../lib/plugin-options.mjs";
+import { applyPluginOptions, helperEnvHidden, installTokenNotice, saveInstall } from "../lib/plugin-options.mjs";
 import { cacheIsFresh, countsBody, renderTaskLine, summarizeCounts } from "../lib/task-inbox.mjs";
 import { listBody, renderCollectionsLine, toolsetAllows } from "../lib/collections-line.mjs";
 import { briefPrimerEnabled, primerLine } from "../lib/session-brief.mjs";
 import { readJsonFile, sweepStaleStateFiles, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
 async function main() {
-  // A token given at `claude plugin install --config token=…`
-  // reaches the hooks as an environment variable but never the MCP header
-  // helper; write it once to ~/.loom/config.json, where the helper (and the
-  // CLI, the SDK) read it. Before the token check below, so this very
-  // session's hooks use it too.
-  const optionPlan = applyPluginOptions();
-  // The notice is about Claude Code's MCP entry (Codex's is fixed in its
-  // plugin). An agent signs in as itself, so the config token is not what
-  // its tools send.
-  const optionNotice = hookClient() === "claude-code" && !agentMode() ? installTokenNotice(optionPlan) : "";
-  saveInstallServerUrl();
+  // A token in LOOM_API_KEY, in the file LOOM_API_KEY_FILE names or given at
+  // `claude plugin install --config token=…` reaches the hooks but never the
+  // MCP header helper of Claude Code's plugin; write it once to
+  // ~/.loom/config.json, where the helper (and the CLI, the SDK) read it.
+  // Before the token check below, so this very session's hooks use it too.
+  // Where `helperEnvHidden` is false (a hand-wired client, Codex, an agent)
+  // the two variables are not saved and no notice is printed.
+  const envHidden = helperEnvHidden();
+  const optionPlan = applyPluginOptions(process.env, {}, { envHidden });
+  const optionNotice = envHidden ? installTokenNotice(optionPlan) : "";
+  saveInstall();
   sweepStaleStateFiles();
   // Default ON; opt out with LOOM_INJECT_CONTEXT=false (see header).
   if (!envSwitch("LOOM_INJECT_CONTEXT", true)) {

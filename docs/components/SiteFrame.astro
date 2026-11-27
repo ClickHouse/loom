@@ -21,12 +21,7 @@ interface Props {
 
 const { title, description, path, home, locale: pageLocale, alternates } = Astro.props;
 const locale = home?.locale ?? pageLocale ?? "en";
-const shortLocale = locale === "zh-CN" ? "简体" : locale === "zh-Hant" ? "繁體" : locale.split("-")[0].toUpperCase();
 const labels = frameCopy[locale];
-const docsLocales = (Object.keys(siteLocales) as SiteLocale[]).flatMap((language) => {
-  const overview = documentationOverview(language);
-  return overview.hreflang === language ? [{ name: siteLocales[language].name, ...overview }] : [];
-});
 const pageAlternates = home ? homeAlternates : (alternates ?? []);
 const languageMenu = pageAlternates.flatMap(({ language, href }) =>
   language === "x-default" ? [] : [{ language, href, name: siteLocales[language].name }],
@@ -100,16 +95,18 @@ const navigation = [
           {!home && <Link className="mobile-start" href={startHref} hrefLang={startLanguage}>{labels.start}</Link>}
         </nav>
         <div class="header-actions">
-          {languageMenu.length > 0 && (
+          {languageMenu.length > 1 && (
             <details class="site-language">
-              <summary aria-label={`${labels.siteLanguage} · ${siteLocales[locale].name} (${shortLocale})`}>
+              <summary aria-label={`${labels.siteLanguage} · ${siteLocales[locale].name}`}>
+                <Icon name="globe" size="sm" aria-hidden="true" />
                 <span class="site-language-name">{siteLocales[locale].name}</span>
-                <span class="site-language-code" aria-hidden="true">{shortLocale}</span>
+                <Icon className="language-chevron" name="chevron-down" size="xs" aria-hidden="true" />
               </summary>
               <nav class="site-language-list" aria-label={labels.siteLanguage}>
                 {languageMenu.map(({ language, name, href }) => (
                   <Link href={href} lang={language} dir="auto" hrefLang={language} aria-current={language === locale ? "page" : undefined}>
-                    {name}
+                    <span>{name}</span>
+                    {language === locale && <Icon name="check" size="xs" aria-hidden="true" />}
                   </Link>
                 ))}
               </nav>
@@ -125,25 +122,19 @@ const navigation = [
     <Container component="main" display="block" id="content" className="shell" tabIndex={-1}><slot /></Container>
     <footer class="site-footer">
       <Container className="shell footer-inner" isResponsive={false} justifyContent="space-between" wrap="wrap">
-        <div>
-          <Link className="brand" href={brandHome}>
-            <span class="brand-mark" aria-hidden="true" set:html={loomLogo} />
-            <span lang="en" dir="ltr">ClickHouse <strong>Loom</strong></span>
-          </Link>
-        </div>
+        <Link className="brand" href={brandHome}>
+          <span class="brand-mark" aria-hidden="true" set:html={loomLogo} />
+          <span lang="en" dir="ltr">ClickHouse <strong>Loom</strong></span>
+        </Link>
         <nav aria-label={labels.resources}>
-          <Link href={startHref} hrefLang={startLanguage}>{labels.start}</Link>
-          <Link href="/adoption" hrefLang="en" aria-current={path === "/adoption" ? "page" : undefined}>{labels.adoption}</Link>
-          <Link href={repositoryUrl}>GitHub</Link>
-          <Link href={`${repositoryUrl}/releases`} hrefLang="en">{labels.releases}</Link>
-          <Link href="/docs/benchmarks/results" hrefLang="en">{labels.benchmarks}</Link>
-          <Link href="/telemetry" hrefLang="en">{labels.telemetry}</Link>
-        </nav>
-        <nav class="footer-languages" aria-labelledby="footer-language-label">
-          <span id="footer-language-label">{labels.docsLanguages}</span>
-          {docsLocales.map(({ name, href, hreflang }) => (
-            <Link href={href} lang={hreflang} dir="auto" hrefLang={hreflang}>{name}</Link>
-          ))}
+          <ul>
+            <li><Link href={startHref} hrefLang={startLanguage}>{labels.start}</Link></li>
+            <li><Link href="/use-cases" hrefLang="en" aria-current={path === "/use-cases" ? "page" : undefined}>{labels.useCases}</Link></li>
+            <li><Link href="/adoption" hrefLang="en" aria-current={path === "/adoption" ? "page" : undefined}>{labels.adoption}</Link></li>
+            <li><Link href="/docs/benchmarks/results" hrefLang="en">{labels.benchmarks}</Link></li>
+            <li><Link href={`${repositoryUrl}/releases`} hrefLang="en">{labels.releases}</Link></li>
+            <li><Link href="/telemetry" hrefLang="en">{labels.telemetry}</Link></li>
+          </ul>
         </nav>
       </Container>
     </footer>

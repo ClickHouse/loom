@@ -71,6 +71,12 @@ drain their rows.
 - **Absence checks.** A "nothing was written" assertion first waits for a
   later positive event from the same emitter. Without that barrier, a slow
   flush reads as absence.
+- **System logs.** Flush the logs the test reads, by name
+  (`SYSTEM FLUSH LOGS query_log`). A bare `SYSTEM FLUSH LOGS` waits for every
+  system log, and one the test never reads can outlast the server's 180 s
+  bound on a loaded runner (ClickHouse error 159). A log's table exists from
+  its first flush, so a test that needs a table to exist names that log too.
+  `tests/unit/test_system_log_flush_names.py` rejects a bare flush.
 
 ## Tiers
 

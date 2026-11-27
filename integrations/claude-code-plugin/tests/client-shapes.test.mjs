@@ -108,7 +108,7 @@ test("beginBody / sessionMemoryBody carry the client the hook was told", () => {
     assert.equal(b.consumer, "codex");
     const sm = sessionMemoryBody(scope, { session_id: "s9" }, [
       { role: "user", content: "fix the build" },
-      { role: "assistant", content: "done" },
+      { role: "assistant", content: "done: the lint step no longer fails" },
     ]);
     assert.equal(sm.run_id, "cx-s9");
     assert.ok(sm.extra_tags.includes("source:codex"));

@@ -17,6 +17,12 @@ replacement rows go out in one insert per table per pass. A pass that
 found nothing marks itself idle (`pass_context.mark_idle`), and the
 supervisor sleeps `code_embed_recovery_idle_interval_seconds`, instead of a
 per-repo scan and a per-repo FINAL read every 30 s whatever the backlog.
+
+Vectors written here change the shared `table_counts` and `coverage` rows, which
+only an ingest pass that indexed a commit republishes. So the first pass that
+finds a namespace it embedded with no stubs left republishes both rows for it,
+whatever other namespaces still have to embed, and a full-scan pass notes any
+namespace whose published rows trail its chunks.
 """
 
 from __future__ import annotations
@@ -27,7 +33,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.code.app.index import erasing
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now
+from server.core.errors import caller_text
 from server.llm import customer
 from server.settings import settings
 from server.workers import pass_context
@@ -55,6 +64,9 @@ _TABLES: tuple[tuple[str, Callable[[dict[str, Any]], str]], ...] = (
 # watermark per process, wherever the supervisor runs the pass.
 _watermark: dict[str, int] = {}
 _full_scan_at: float = 0.0
+# The (org, namespace) pairs whose chunks this process embedded since their
+# counts and coverage rows were last republished.
+_unpublished: set[tuple[str, str]] = set()
 
 
 def _full_scan_due(*, now: float | None = None) -> bool:
@@ -85,6 +97,8 @@ class CodeEmbedRecoveryResult:
     keys_seen: int = 0
     full_scan: bool = False
     errors: list[str] = field(default_factory=list)
+    # The namespaces this pass wrote chunk vectors to.
+    chunks_landed: set[tuple[str, str]] = field(default_factory=set)
 
     @property
     def idle(self) -> bool:
@@ -127,7 +141,13 @@ async def _run(result: CodeEmbedRecoveryResult) -> None:
     # attempts untouched, and the periodic full scan from zero finds them once
     # the org is back on (the watermark may have moved past them meanwhile).
     off = await customer.switched_off_orgs()
-    repos = [(cfg.org, cfg.namespace) for cfg in configured_repos() if cfg.org not in off]
+    # A namespace being erased is not scanned either: a row written after the purge
+    # would fail the erasure's residue check.
+    repos = [
+        (cfg.org, cfg.namespace)
+        for cfg in configured_repos()
+        if cfg.org not in off and not await erasing.being_erased(cfg.org, cfg.namespace)
+    ]
     result.full_scan = _full_scan_due()
     for table, text_of in _TABLES:
         embedded = await _recover_table(
@@ -144,6 +164,55 @@ async def _run(result: CodeEmbedRecoveryResult) -> None:
             result.chunks_embedded += embedded
         else:
             result.summaries_embedded += embedded
+    if result.full_scan:
+        await _note_behind(repo, set(repos) - _unpublished, result)
+    await _republish(repo, set(repos), embedder, max_attempts, result)
+
+
+async def _note_behind(
+    repo: Any, repos: set[tuple[str, str]], result: CodeEmbedRecoveryResult
+) -> None:
+    """Notes each namespace whose published counts or coverage trail its chunks.
+    `_unpublished` lives in memory, so a restart between the last vectors and the
+    drain loses it. Every full-scan pass checks, idle or not: the first after a
+    restart reads superseded stub versions from zero and is seldom idle."""
+    for org, ns in sorted(repos):
+        try:
+            with sequential_reads():  # a lagging replica must not read a current row as behind
+                behind = await repo.published_chunks_behind(org, ns)
+            if behind:
+                _unpublished.add((org, ns))
+        except Exception as e:  # noqa: BLE001 — the next full scan reads it again
+            logger.warning("code_embed_recovery: %s/%s counts not read: %s", org, ns, e)
+            result.errors.append(f"{org}/{ns}: published counts: {caller_text(e)}")
+
+
+async def _republish(
+    repo: Any,
+    repos: set[tuple[str, str]],
+    embedder: Any,
+    max_attempts: int,
+    result: CodeEmbedRecoveryResult,
+) -> None:
+    """The counts and coverage rows of each drained namespace, as the ingest pass
+    publishes them after a commit. A namespace this pass wrote no vectors to is
+    drained when it has no stub left, whatever other namespaces still have to
+    embed. An idle pass checks too: a failed insert can leave a live stub below
+    the watermark. A namespace whose republish failed stays unpublished, so the
+    next pass retries it. One this pass did not scan (removed, or its org
+    switched off) waits, so a removed one is never written after its purge."""
+    for org, ns in sorted((_unpublished & repos) - result.chunks_landed):
+        try:
+            with sequential_reads():  # a lagging replica must not replace a row with older figures
+                if await repo.pending_embed_chunks(org, ns, embedder.model_name, max_attempts, 1):
+                    continue  # its own stubs remain
+                await repo.refresh_coverage(org, ns, must_land=True)
+                await repo.refresh_table_counts(org, ns, must_land=True)
+        except Exception as e:  # noqa: BLE001 — never fail a pass over a cache row
+            logger.warning("code_embed_recovery: %s/%s not republished: %s", org, ns, e)
+            result.errors.append(f"{org}/{ns}: republish: {caller_text(e)}")
+            continue
+        _unpublished.discard((org, ns))
 
 
 # Scans a pass may chain while the pages hold only
@@ -301,6 +370,7 @@ async def _embed_rows(
     replacements: list[dict[str, Any]] = []
     embedded = 0
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    landed: set[tuple[str, str]] = set()
     for r in rows:
         groups.setdefault((str(r["org"]), str(r["namespace"])), []).append(r)
     for (org, ns), whole in groups.items():
@@ -327,8 +397,13 @@ async def _embed_rows(
             embedded += _stage_replacements(
                 repo, table, group, vectors, failures, max_attempts, result, replacements
             )
+            if vectors:
+                landed.add((org, ns))
     await repo.insert_rows(table, replacements)
     result.rows_written += len(replacements)
+    if table == "code_chunks":
+        _unpublished.update(landed)
+        result.chunks_landed.update(landed)
     return embedded
 
 
