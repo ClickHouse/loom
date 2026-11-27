@@ -40,7 +40,9 @@ async function loadWarehouse(env) {
   const row = response?.data?.[0];
   if (datasets.every((name) => Array.isArray(row?.[name]))) {
     try {
-      return Object.fromEntries(datasets.map((name) => [name, row[name].map((json) => JSON.parse(json))]));
+      const aggregates = Object.fromEntries(datasets.map((name) => [name, row[name].map((json) => JSON.parse(json))]));
+      const domains = Array.isArray(row.domains) ? row.domains.filter((domain) => typeof domain === "string") : null;
+      return { ...aggregates, domains };
     } catch {
       console.warn("Adoption Query API returned invalid data.");
       return {};
@@ -130,6 +132,7 @@ export async function loadAdoption(env = process.env, now = new Date()) {
       retention: warehouse.retention,
       activity: warehouse.activity ?? [],
       lifecycle: warehouse.lifecycle ?? [],
+      domains: warehouse.domains ?? null,
     },
     openSource: [
       {

@@ -21,6 +21,7 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
             retention: [],
             activity: [],
             lifecycle: [],
+            domains: ["company.example", "other.example", { domain: "private.example", accounts: 7 }],
             oss: [
               { day: "2025-01-01", source: "pypi", metric: "sdk_downloads", value: 2 },
               { day: "2026-10-01", source: "pypi", metric: "sdk_downloads", value: 3 },
@@ -59,6 +60,7 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
   );
 
   assert.deepEqual(queried, ["https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001?format=JSON"]);
+  assert.deepEqual(result.selfHosted.domains, ["company.example", "other.example"]);
   const archived = result.openSource.find(({ id }) => id === "pypi");
   assert.equal(archived.history[0].day, "2025-01-01");
   const byLabel = Object.fromEntries(
@@ -96,4 +98,5 @@ test("keeps Query API credentials off unrecognized endpoint URLs", async (t) => 
   );
   assert.ok(requests.every(([host, authorization]) => host !== "external.example" && authorization === undefined));
   assert.equal(result.selfHosted.totals, undefined);
+  assert.equal(result.selfHosted.domains, null);
 });
