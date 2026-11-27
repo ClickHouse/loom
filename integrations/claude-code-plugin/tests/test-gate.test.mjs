@@ -406,7 +406,6 @@ const RUN_GATE = {
 };
 const answered = (objs, gate = RUN_GATE, cwd = ROOT) =>
   runAnswered(gate, objs.flat(), {
-    changed: ["src/a.py", "tests/test_a.py"],
     root: ROOT,
     cwd,
     testExists: (p) => !p.includes("gone"),
@@ -420,7 +419,7 @@ test("a clean pytest run of the named test after the last change answers the gat
     answered([edit(), bash(".venv/bin/pytest /r/tests/test_a.py -q", "3 passed, 1 warning in 62.10s (0:01:02)")]),
     true,
   );
-  // A tool that is not a shell forgets nothing.
+  // A tool that neither edits nor runs a shell forgets nothing.
   assert.equal(answered([edit(), bash(SUITE, PASSED), call("Read", { file_path: "/r/src/a.py" }, "x")]), true);
   // Two files, two runs, no change between them.
   const two = {
@@ -487,9 +486,16 @@ test("a run's paths are read from the directory its command moved to", () => {
   }
 });
 
-test("a run before the tree's last change or another shell command answers nothing", () => {
+test("a run before the tree's last change, an edit or another shell command answers nothing", () => {
   assert.equal(answered([edit()]), false);
   assert.equal(answered([bash(SUITE, PASSED), edit()]), false);
+  // An edit that puts a file back as HEAD has it, or writes an ignored one, leaves no newer file.
+  for (const [tool, file] of [
+    ["Edit", "/r/src/b.py"],
+    ["Write", "/r/.cache/fixture.json"],
+  ]) {
+    assert.equal(answered([edit(), bash(SUITE, PASSED), call(tool, { file_path: file }, "updated")]), false, tool);
+  }
   // A change the transcript does not show as one, such as a subagent's edit: the file is newer.
   assert.equal(
     answered([edit(), bash(SUITE, PASSED), call("Agent", { prompt: "tidy src/a.py" }, "done", WROTE)]),
@@ -511,7 +517,30 @@ test("a run before the tree's last change or another shell command answers nothi
   // A result row without a time cannot be placed after the change.
   const [ran, result] = bash(SUITE, PASSED);
   assert.equal(answered([edit(), ran, { ...result, timestamp: undefined }]), false);
-  assert.equal(answered([edit(), bash("pytest tests -q; sed -i s/a/b/ src/a.py", "3 passed in 0.10s")]), false);
+  // The run's own command does more than run pytest and show output: its result row is later than what it wrote.
+  for (const more of [
+    "pytest tests -q; sed -i s/a/b/ src/a.py",
+    "pytest tests -q; ruff check --fix .",
+    "pytest tests -q && rm src/helper.py",
+    "pytest tests -q\npython scripts/gen.py",
+    "pytest tests -q | tee out.log",
+    "pytest tests -q > out.log",
+    "pytest tests -q; echo x > src/new.py",
+    "pytest tests -q; echo $(rm src/helper.py)",
+    "pytest tests -q; echo `rm src/helper.py`",
+    "pytest `rm src/helper.py` tests -q",
+  ]) {
+    assert.equal(answered([edit(), bash(more, "3 passed in 0.10s")]), false, more);
+  }
+  // Output handling is all that may follow.
+  for (const shown of [
+    "pytest tests -q 2>&1 | tail -20",
+    "pytest tests -q | head -50 && echo OK || echo FAIL",
+    "pytest tests -q 2>&1 | grep passed; echo exit=$?",
+    "(cd /r && pytest tests -q)",
+  ]) {
+    assert.equal(answered([edit(), bash(shown, "3 passed in 0.10s")]), true, shown);
+  }
   // The suite ran on the tree without the change.
   assert.equal(
     answered([edit(), bash("git stash -q; python -m pytest tests -q | tail -1; git stash pop -q", PASSED)]),

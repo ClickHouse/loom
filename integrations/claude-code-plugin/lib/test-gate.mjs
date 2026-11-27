@@ -360,8 +360,17 @@ function closesParen(text) {
   }
   return false;
 }
-// git subcommands that rewrite tracked files without naming them.
-const TREE_GIT = /\bgit\s+(?:stash|checkout|restore|reset|switch|apply|merge|rebase|pull|revert|cherry-pick|am)\b/;
+// What a command may hold from its first pytest on: pytest runs, and tail,
+// head, grep and echo, with no file redirect or backquote. Anything else may
+// change a file, and the command's result row is later than that change.
+// Quotes are not read, so a `|` or `;` inside one ends the simple command
+// there.
+const OUTPUT = /^\s*(?:(?:tail|head|grep|echo)(?=\s|$)|$)/;
+const onlyRuns = (tail) =>
+  tail
+    .replace(/\d?>&\d/g, " ")
+    .split(/[;&|()\n]/)
+    .every((part) => !/[<>`]/.test(part) && (OUTPUT.test(part) || part.match(PYTEST)));
 
 /** True when the output holds a clean pytest summary for each of `runs`
  *  invocations and no other summary: `| tail -5; echo exit=$?` hides the
@@ -379,18 +388,15 @@ function allPassed(output, runs) {
  * it stands, read in transcript order (Claude Code rows; sidechains
  * skipped). A run counts when its Bash command finished no earlier than
  * `since`, the newest time of an uncommitted or untracked file, so an edit
- * by a subagent or a script the transcript never shows forgets it. Any
- * other shell command after it forgets every earlier run: it may have
- * deleted or replaced a file, which leaves no newer time. A command may
- * change files and then test them (`cat >> tests/test_a.py <<EOF … EOF;
- * pytest tests`), so within one command only what follows its first pytest
- * is read for a change: a floor, since a change there that names no changed
- * path is not seen. A run's paths are read from the directory it ran in:
- * the row's own cwd, moved by at most one `cd` before the first run.
+ * by a subagent or a script the transcript never shows forgets it. An edit
+ * tool or any other shell command after it forgets every earlier run: it
+ * may have deleted a file or put one back as HEAD has it, which leaves no
+ * newer time. A command may change files and then test them
+ * (`cat >> tests/test_a.py <<EOF … EOF; pytest tests`), but not after its
+ * first pytest (`onlyRuns`). A run's paths are read from the directory it
+ * ran in: the row's own cwd, moved by at most one `cd` before the first run.
  */
-function cleanRuns(objs, { changed, root, cwd, since } = {}) {
-  const names = pathNamer(root, cwd);
-  const changes = (text) => TREE_GIT.test(text) || (changed || []).some((rel) => names(text, rel));
+function cleanRuns(objs, { root, cwd, since } = {}) {
   const rows = (objs || []).filter((o) => o && !o.isSidechain && Array.isArray(o.message && o.message.content));
   const results = new Map();
   for (const o of rows) {
@@ -407,6 +413,7 @@ function cleanRuns(objs, { changed, root, cwd, since } = {}) {
     for (const b of o.message.content) {
       if (!b || b.type !== "tool_use") continue;
       const name = normalizeToolName(b.name);
+      if (EDIT_TOOLS.has(name)) clean = [];
       if (name !== "Bash" && name !== "PowerShell") continue;
       const command = commandText(b.input);
       // Bash only: this reader follows no PowerShell move (`Set-Location`).
@@ -416,7 +423,6 @@ function cleanRuns(objs, { changed, root, cwd, since } = {}) {
         continue;
       }
       const before = command.slice(0, runs[0].index);
-      const after = command.slice(runs[0].index).replace(PYTEST, " ");
       const cd = [...before.matchAll(CD)];
       const result = results.get(b.id) || {};
       // --ignore drops a path the summary never mentions; a move the reader
@@ -430,7 +436,7 @@ function cleanRuns(objs, { changed, root, cwd, since } = {}) {
         (command.match(MOVE) || []).length === cd.length &&
         cd.every((m) => !closesParen(before.slice(m.index + m[0].length))) &&
         !command.includes("--ignore") &&
-        !changes(after);
+        onlyRuns(command.slice(runs[0].index));
       if (!ran) {
         clean = [];
         continue;
@@ -456,20 +462,21 @@ function cleanRuns(objs, { changed, root, cwd, since } = {}) {
  * transcript already answers it, so the gate has nothing to add: the
  * person's latest prompt ends by saying not to run tests, or the session's
  * last shell commands ran every named test clean with pytest (its file, or
- * a directory above it) and no file is newer: `lastModified()` is the
- * tree's newest file time in epoch ms. The stop then names no untested
- * function either. A gate that names a test missing from the checkout, or
- * only untested functions, still asks; so does one whose tests another
- * runner runs, unless the person ruled the run out. Read from Claude Code
- * transcript rows: a Codex rollout answers nothing, so its stop blocks.
+ * a directory above it), no edit tool was called after them and no file is
+ * newer: `lastModified()` is the tree's newest file time in epoch ms. The
+ * stop then names no untested function either. A gate that names a test
+ * missing from the checkout, or only untested functions, still asks; so
+ * does one whose tests another runner runs, unless the person ruled the run
+ * out. Read from Claude Code transcript rows: a Codex rollout answers
+ * nothing, so its stop blocks.
  */
-export function runAnswered(gate, objs, { changed, root, cwd, testExists, lastModified } = {}) {
+export function runAnswered(gate, objs, { root, cwd, testExists, lastModified } = {}) {
   const tests = gate && Array.isArray(gate.tests) ? gate.tests : [];
   const paths = [...new Set(tests.map((t) => String(t.test_path || "")))];
   if (!paths.length || !paths.every((p) => p && testExists(p))) return false;
   if (declinesTests(objs)) return true;
   if (!tests.every((t) => isPytest(t.run))) return false;
-  const clean = cleanRuns(objs, { changed, root, cwd, since: lastModified() });
+  const clean = cleanRuns(objs, { root, cwd, since: lastModified() });
   return paths.every((p) => clean.some((c) => p === c || p.startsWith(`${c}/`)));
 }
 

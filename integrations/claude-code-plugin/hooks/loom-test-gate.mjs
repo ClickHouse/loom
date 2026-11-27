@@ -143,7 +143,7 @@ async function main() {
     });
     return newestChange(root, untracked === null ? null : [...dirty, ...untracked.split("\0").filter(Boolean)]);
   };
-  if (runAnswered(gate, rows, { changed, root, cwd, testExists, lastModified })) {
+  if (runAnswered(gate, rows, { root, cwd, testExists, lastModified })) {
     scheduleExit(0);
     return;
   }
