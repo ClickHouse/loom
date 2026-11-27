@@ -41,6 +41,7 @@ import {
   codeArbitration,
   codeScopeLine,
   indexStatusBody,
+  instructionsRouteCode,
   localFirstBlock,
   renderPrimer,
   matchNoteLine,
@@ -149,6 +150,7 @@ async function main() {
       codeBlock,
       lines: [taskLine, briefsLine, collectionsText],
       recordingLine: conversationTools ? recordingPrimerLine(recording, scope.namespace) : "",
+      ownEntry: ownsMcpEntry(),
     }),
   );
   scheduleExit(0);
@@ -316,11 +318,13 @@ async function buildCodeBlock(scope, token, cwd) {
       ? await postBounded("code.map", { token_budget: budget, ...indexStatusBody(hit) }, { token, serverUrl })
       : null;
   const mapText = map && typeof map.map === "string" ? map.map.trim() : "";
-  // The plugin's own entry says how to route a lookup, so its primer names the
-  // checkout and says when the mirror stalled; another wiring gets the routing here.
-  const head = ownEntry
-    ? scopeLines(staleMirrorLine(status))
-    : [scopeLine, codeArbitration(status).trim()].filter(Boolean).join("\n\n");
+  // The plugin's own entry on a toolset with a `coding` part says how to route a
+  // lookup, so its primer names the checkout and says when the mirror stalled;
+  // any other toolset, and another wiring, gets the routing here.
+  const head =
+    ownEntry && instructionsRouteCode(process.env.CLAUDE_PLUGIN_OPTION_TOOLSET)
+      ? scopeLines(staleMirrorLine(status))
+      : [scopeLine, codeArbitration(status).trim()].filter(Boolean).join("\n\n");
   return mapText ? `${head}\n\n${mapText}` : head;
 }
 

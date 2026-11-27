@@ -7,7 +7,7 @@
 // is the client that opts in, at session start, where the agent orients.
 // LOOM_CONTEXT_RUNS=false leaves it out; LOOM_CONTEXT_RUNS_LIMIT bounds the rows.
 
-import { envNumber, envSwitch } from "./loom-client.mjs";
+import { envNumber, envSwitch, hookClient } from "./loom-client.mjs";
 import { recalledDataBlock } from "./prompt-recall.mjs";
 import { sessionRunId } from "./run-hook.mjs";
 import { blockKeyFor } from "./working-memory.mjs";
@@ -59,10 +59,20 @@ export function startPackBody(scope, payload, { tokenBudget = 1200, runId = "", 
 
 /** The line that names the repository's memory tag, or "" without a repository:
  *  hook captures carry the tag, and a fact the model saves about the repository
- *  needs it to be recalled with them. */
-export function repoTagLine(repo) {
+ *  needs it to be recalled with them. The plugin's own entry (`ownEntry`) is
+ *  bound to the repository by a header, and the server adds the tag to a save
+ *  that names none there, so its line only names the tag; another wiring is
+ *  told how to use it. */
+export function repoTagLine(repo, { ownEntry = false } = {}) {
   if (!repo || !repo.id) return "";
-  return `Memory about this repository carries tags: ["repo:${repo.id}"].`;
+  const tags = `tags: ["repo:${repo.id}"]`;
+  if (ownEntry) return `Memory about this repository carries ${tags}.`;
+  return (
+    `Repository ${repo.slug} — hook captures carry the tag \`repo:${repo.id}\`; ` +
+    `pass ${tags} to loom_search to stay within it. ` +
+    `When saving a fact about this repository with loom_memory_set, include ${tags} ` +
+    `alongside its other tags. Keep personal facts in your own namespace. Do not add this repository tag to unrelated facts.`
+  );
 }
 
 /**
@@ -82,9 +92,10 @@ export function renderPrimer({
   codeBlock = "",
   lines = [],
   recordingLine = "",
+  ownEntry = false,
 }) {
   const code = codeBlock.trim();
-  const tag = repoTagLine(repo);
+  const tag = repoTagLine(repo, { ownEntry });
   // One line for the checkout when its code text is one line. Beside a longer
   // code block, or none, the tag is its own line under a prefix the server
   // knows as Loom's own words, so capture never reads it as a fact.
@@ -135,12 +146,26 @@ export function notIndexedLine(remotes = []) {
 /** Whether the session's MCP entry is the Claude Code plugin's own, which
  *  Claude Code marks by running the plugin's hooks with CLAUDE_PLUGIN_ROOT.
  *  That entry's helper binds loom_code_* calls to the checkout's repository,
- *  its URL names the `plugin` profile, whose startup instructions say how to
- *  route a lookup, and its toolset is the plugin's `toolset` option. Any other
- *  wiring (Codex, a hand-wired client) mounts an entry these hooks cannot
- *  read, so its primer says all of it. */
-export function ownsMcpEntry(env = process.env) {
-  return Boolean(env.CLAUDE_PLUGIN_ROOT);
+ *  its URL names the `plugin` profile and its toolset is the plugin's
+ *  `toolset` option. Any other wiring (Codex, whose hooks name their client, or
+ *  a hand-wired client) mounts an entry these hooks cannot read, so its primer
+ *  says all of it. */
+export function ownsMcpEntry(env = process.env, client = hookClient(process.argv, env)) {
+  return Boolean(env.CLAUDE_PLUGIN_ROOT) && client === "claude-code";
+}
+
+/** Whether the startup instructions of the plugin's own entry say how to route
+ *  a code lookup: the server sends that paragraph to a toolset with a `coding`
+ *  part, read as the server does (parts split on `+`, a space or a comma,
+ *  lower-cased), and an unset option is its default, `coding`. Any other
+ *  toolset (`all`, `core`, `tracker`) gets the general rules, which route no
+ *  code lookup, so the primer keeps the arbitration there. An unknown value
+ *  takes the deployment's default toolset on the server, which this cannot know. */
+export function instructionsRouteCode(toolset) {
+  return String(toolset || "coding")
+    .toLowerCase()
+    .split(/[+ ,]+/)
+    .includes("coding");
 }
 
 /** One line for the primer naming the code namespace every loom_code_* call
@@ -214,11 +239,11 @@ function fetchedAt(status) {
   );
 }
 
-// The taught arbitration, for a wiring whose MCP entry this plugin does not
-// mount (Codex, a hand-wired client): the Claude Code plugin's own entry names
-// the `plugin` profile, whose startup instructions carry the routing. Injected
-// only when the repo is actually indexed so it never confuses sessions on
-// other projects.
+// The taught arbitration, for a session whose startup instructions do not
+// carry the routing: a wiring whose MCP entry this plugin does not mount
+// (Codex, a hand-wired client), and the plugin's own entry on a toolset
+// without a `coding` part (`instructionsRouteCode`). Injected only when the
+// repo is actually indexed so it never confuses sessions on other projects.
 const CODE_ARBITRATION =
   "# Loom code index: this repository is indexed (per-merge fresh).\n" +
   "- Use Loom first when indexed evidence is needed: loom_code_symbol for definitions, " +

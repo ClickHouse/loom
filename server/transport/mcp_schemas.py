@@ -402,7 +402,8 @@ def compact_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
 # compact  — first paragraph + argument tree only.
 # plugin   — the compact shapes for a coding-agent plugin whose hooks carry the
 #            routing: every tool of the toolset stays listed with or without the
-#            repository header, and the startup instructions are one paragraph.
+#            repository header, and a toolset with a `coding` part gets startup
+#            instructions of one paragraph.
 #            Only a URL names it (`?schema_profile=plugin`); a server that does
 #            not know the value answers with its default profile.
 

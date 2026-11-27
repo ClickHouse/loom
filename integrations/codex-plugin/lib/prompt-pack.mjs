@@ -188,17 +188,15 @@ export function searchBody(repo, prompt, { topK = 3, token } = {}) {
   };
 }
 
-// The confidence from which the code index labels its own answer low-risk
-// (`code_search_low_risk_from`). Below it the index rates its top results a
-// medium or high risk, and pointers sent from there missed the file to change
-// more often than they named it, while the model re-reads them on every later
-// request.
-export const MIN_CONFIDENCE = 0.55;
-
-/** Gate on the index's own verdict, not on the caller's optimism. */
-export function accept(res, minConfidence = MIN_CONFIDENCE) {
+/** Gate on the index's own verdict, not on the caller's optimism: the answer
+ *  it labels low-risk (`retrieval_risk`, banded by the deployment's own
+ *  settings), or `minConfidence` when the caller names one. Pointers from an
+ *  answer the index rates a medium or high risk missed the file to change more
+ *  often than they named it, and the model re-reads them on every later request. */
+export function accept(res, minConfidence = null) {
   if (!res || res.abstain) return false;
   if (!Array.isArray(res.results) || !res.results.length) return false;
+  if (minConfidence === null) return res.retrieval_risk === "low";
   return Number(res.retrieval_confidence || 0) >= minConfidence;
 }
 

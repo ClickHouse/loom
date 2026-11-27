@@ -41,7 +41,7 @@
     "toolset": {
       "type": "string",
       "title": "MCP toolset",
-      "description": "Which Loom tools the session lists: `coding` (default \u2014 memory, code tools, duplicate check, bisect candidates, PR check, blast radius) or a `+` union such as `coding+tracker` for the whole tracker plane. Every op stays callable by name.",
+      "description": "Which Loom tools the session lists: `coding` (default \u2014 memory, code tools, ranged read, pre-edit context, duplicate check, bisect candidates, PR check, blast radius) or a `+` union such as `coding+tracker` for the whole tracker plane. Every op stays callable by name.",
       "default": "coding"
     },
     "local_first": {

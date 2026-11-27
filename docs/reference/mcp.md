@@ -30,8 +30,8 @@ Query parameters on the URL select what `tools/list` shows for that connection:
   `full` (adds `outputSchema`) or `compact` (the first paragraph and the
   argument tree). A URL may also name `plugin`, the profile of a coding-agent
   plugin whose hooks carry the routing: the compact shapes, every tool of the
-  toolset listed with the repository header or without it, and startup
-  instructions of one paragraph. `LOOM_MCP_SCHEMA_PROFILE` does not take it.
+  toolset listed with the repository header or without it, and, on a toolset
+  with a `coding` part, startup instructions of one paragraph. `LOOM_MCP_SCHEMA_PROFILE` does not take it.
 
 Compact coding connections describe the common source workflows in the
 startup instructions. Find the other tools through discovery. When the `coding`

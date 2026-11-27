@@ -1,20 +1,12 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  MIN_CONFIDENCE,
-  accept,
-  renderPack,
-  searchBody,
-  searchQuery,
-  shouldAsk,
-  codeLookup,
-  lookupBody,
-} from "../lib/prompt-pack.mjs";
+import { accept, renderPack, searchBody, searchQuery, shouldAsk, codeLookup, lookupBody } from "../lib/prompt-pack.mjs";
 
 const RES = {
   abstain: false,
   retrieval_confidence: 0.81,
+  retrieval_risk: "low",
   results: [
     { path: "src/A.cpp", start_line: 10, end_line: 40, symbol: "DB::A::run", signature: "void run()" },
     { path: "src/B.cpp", start_line: 5, end_line: 9, symbol: "DB::B::go", signature: "" },
@@ -29,15 +21,17 @@ test("shouldAsk skips short prompts and slash commands", () => {
   assert.equal(shouldAsk("where do we retry s3 uploads"), true);
 });
 
-test("accept follows the index's own abstain and confidence", () => {
+test("accept follows the index's own abstain and risk label, or a named confidence", () => {
   assert.equal(accept(RES), true);
   assert.equal(accept({ ...RES, abstain: true }), false);
-  assert.equal(accept({ ...RES, retrieval_confidence: 0.3 }), false);
-  // Below the index's own low-risk line the pointers are not sent.
-  assert.equal(MIN_CONFIDENCE, 0.55);
-  assert.equal(accept({ ...RES, retrieval_confidence: 0.54 }), false);
-  assert.equal(accept({ ...RES, retrieval_confidence: 0.55 }), true);
-  assert.equal(accept({ ...RES, retrieval_confidence: 0.45 }, 0.4), true);
+  // The label is the deployment's own band: a confidence the plugin would
+  // call high is not sent when the index rates the answer a risk.
+  for (const risk of ["medium", "high", "abstain", undefined])
+    assert.equal(accept({ ...RES, retrieval_risk: risk }), false, String(risk));
+  assert.equal(accept({ ...RES, retrieval_confidence: 0.3 }), true);
+  // A threshold the caller names replaces the label.
+  assert.equal(accept({ ...RES, retrieval_confidence: 0.45, retrieval_risk: "medium" }, 0.4), true);
+  assert.equal(accept({ ...RES, retrieval_confidence: 0.3 }, 0.4), false);
   assert.equal(accept({ ...RES, results: [] }), false);
   assert.equal(accept(null), false);
 });

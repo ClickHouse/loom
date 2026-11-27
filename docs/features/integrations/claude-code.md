@@ -268,9 +268,9 @@ pure location and signature questions receive pointers. Large definitions remain
 elided and need a focused read. Returned bodies are delimited as untrusted data.
 It skips explicit memory questions,
 local-only changes and self-contained requests. Ambiguous or empty typed answers do
-not trigger another automatic lookup. Search pointers are sent only from the
-confidence at which the index labels its own answer low-risk (0.55,
-`LOOM_PROMPT_PACK_MIN_CONF`) and never when it abstains; they are candidates, and
+not trigger another automatic lookup. Search pointers are sent only when
+the index labels its own answer low-risk (or, with `LOOM_PROMPT_PACK_MIN_CONF`
+set, from that confidence) and never when it abstains; they are candidates, and
 the text does not tell the model to stop searching. Supply a task inside `<issue>...</issue>` when a harness adds instructions;
 the existing query helper extracts that block.
 
@@ -549,7 +549,7 @@ Beyond the off switches in the table:
 | `LOOM_PROMPT_RECALL_MIN_CONF`  | `0.5`                     | minimum `retrieval_confidence` before the prompt recall injects anything                   |
 | `LOOM_PROMPT_RECALL_MAX_CHARS` | `1200`                    | cap on the injected recall                                                                 |
 | `LOOM_PROMPT_PACK_TOP_K`       | `3`                       | pointers per prompt (`LOOM_PROMPT_PACK=off` turns the pack off)                            |
-| `LOOM_PROMPT_PACK_MIN_CONF`    | `0.55`                    | minimum `retrieval_confidence` before the prompt pack sends search pointers                |
+| `LOOM_PROMPT_PACK_MIN_CONF`    | unset                     | a `retrieval_confidence` gate for search pointers; unset, the index's low-risk label       |
 | `LOOM_FILE_CONTEXT_TTL_MIN`    | `30`                      | minutes before the same file's context is fetched again                                    |
 | `LOOM_BLAST_DEPTH`             | `1`                       | `code.impact` depth for the blast-radius line                                              |
 | `LOOM_TEST_GATE_DEPTH`         | `2`                       | hops the test gate follows (1–3)                                                           |
@@ -604,7 +604,7 @@ the Grep tool and the Bash tool respectively.
 | `loom-mentor`              | a hint names a plane or op you do not know; "what can Loom do"           | the situation → plane → op map and what each hint code means                                                                                                                                               |
 | `loom-optimize`            | "optimize my namespace", "memory search is bad", a namespace-health line | `namespace.audit`, a plan the owner approves, `memory.move` with redirects ([guide](../../guides/optimize-namespace.md))                                                                                   |
 | `loom-session`             | "save this session", "resume", "where was I on this branch"              | lists the saved briefs, restores the one the user picks (the brief with the client's compaction summary, or with `--transcript` every recorded turn as well), or saves one; it never loads a brief unasked |
-| `loom-status`              | a tool says unauthenticated, the primer is missing, "is Loom working?"   | checks the Node runtime (installs it only on your yes), runs the client check, names the one fix                                                                                                           |
+| `loom-status`              | a tool says unauthenticated, saved memory is absent, "is Loom working?"  | checks the Node runtime (installs it only on your yes), runs the client check, names the one fix                                                                                                           |
 | `improve-loom-for-my-repo` | the end of a session in which the code tools missed                      | turns the session's misses into reproducible findings for maintainers                                                                                                                                      |
 
 `loom-session` runs `bin/loom-brief.mjs` (`list`, `get [N | KEY] [--transcript]`,
@@ -625,7 +625,8 @@ the Grep tool and the Bash tool respectively.
 
 Start with `/loom:loom-status`; it names the cause in one line. It runs its checks with
 `sh`: on Windows without Git Bash, run `node <plugin root>/bin/loom-client-status.mjs`
-instead.
+instead. A session start that prints nothing is no fault on its own: the primer is
+empty when there is no indexed checkout, saved memory or notice to show.
 
 | Symptom                                                      | Cause                                              | Fix                                                                                                                                                                                                                |
 | ------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -633,7 +634,7 @@ instead.
 | every hook error quotes `[stdin]:1`, a `SyntaxError`         | Claude Code older than 2.1.139 drops `args`        | update Claude Code                                                                                                                                                                                                 |
 | hooks fail and nothing is captured, though Node is installed | the first `node` on that `PATH` is older than 18   | put Node.js 18+ first on that `PATH`, or run the `loom-status` skill; restart                                                                                                                                      |
 | MCP server "needs authentication"                            | no Node for the header helper, or no token found   | the `loom-status` skill names which                                                                                                                                                                                |
-| no primer, nothing captured                                  | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                                                                                                                                                                         |
+| nothing captured, and no primer where memory was saved       | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                                                                                                                                                                         |
 | tools answer, captures do not                                | the token is viewer-only on the write namespace    | mint a writer token                                                                                                                                                                                                |
 | Conversations page empty                                     | conversation logging is off for the namespace      | the **Record conversations** switch on the dashboard's Conversations page, or `conversation.set_logging`                                                                                                           |
 | a hook added in a new release never fires                    | the installed plugin is older than the server      | `claude plugin update loom@loom`                                                                                                                                                                                   |
