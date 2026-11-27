@@ -6,7 +6,7 @@
   },
   "scripts": {
     "dev": "npm run prepare-content && blume dev",
-    "prepare-content": "node scripts/prepare-content.mjs",
+    "prepare-content": "node scripts/sync-playground-engine.mjs --check && node scripts/prepare-content.mjs",
     "build": "npm run prepare-content && blume build && node scripts/mount-site-pages.mjs",
     "preview": "blume preview",
     "check": "blume check",

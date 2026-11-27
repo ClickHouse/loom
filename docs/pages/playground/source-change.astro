@@ -1,127 +1,168 @@
 ---
 import SiteFrame from "../../components/SiteFrame.astro";
 import { repositoryUrl } from "../../lib/site-identity.mjs";
-import recording from "../../lib/source-change-recording.json";
 
-const steps = [
-  {
-    id: "before",
-    label: "Before the edit",
-    branch: "main",
-    observation: recording.before,
-    explanation: "The saved lesson matches the code. The function retries on HTTP 503.",
-  },
-  {
-    id: "after",
-    label: "After the edit",
-    branch: "main",
-    observation: recording.after,
-    explanation:
-      "The function now retries on HTTP 429. Loom flags the lesson and identifies the commit that changed the code.",
-  },
-  {
-    id: "release",
-    label: "Release branch",
-    branch: "release",
-    observation: recording.release,
-    explanation: "The release branch still retries on HTTP 503. Loom returns the same lesson as fresh on this branch.",
-  },
-];
-const savedValue = recording.saved_value.split(/(`[^`]+`)/);
+const workflow = `${repositoryUrl}/actions/workflows/memory-evaluation.yml`;
 ---
 
 <SiteFrame
-  title="What happens to agent memory when code changes? | Loom"
-  description="Replay a Loom evaluation and see how one coding-agent memory is flagged after a source edit while remaining fresh on an unchanged Git branch."
+  title="Code-linked memory Playground | Loom"
+  description="Edit a sample Python function and run Loom’s code-link check to see how a saved lesson responds on two branches."
   path="/playground/source-change"
 >
-  <h1>What happens to agent memory when code changes?</h1>
-  <p class="lead">The test starts with a saved rule for retrying HTTP 503. Then the code changes. Step through a recorded Loom run to see what the next agent would read.</p>
+  <h1>Code-linked memory Playground</h1>
+  <p class="lead">Change the retry rule on <code>main</code>, then switch to <code>release</code>. Each check runs the same freshness rule Loom uses for code-linked memory.</p>
 
-  <section class="replay" aria-labelledby="replay-heading">
-    <h2 id="replay-heading">Follow the retry rule</h2>
-    <fieldset>
-      <legend>Choose a source revision</legend>
-      {steps.map(({ id, label }, index) => (
-        <label class="step">
-          <input type="radio" name="revision" value={id} checked={index === 0} />
-          <span>{label}</span>
-        </label>
-      ))}
-    </fieldset>
-
-    {steps.map(({ id, label, branch, observation, explanation }) => (
-      <div class="result" data-revision={id}>
-        <div class="result-grid">
-          <section class="site-panel source" aria-label={`Indexed source — ${label}`}>
-            <h3>Indexed source</h3>
-            <div class="file-bar">
-              <code>{recording.path}</code>
-              <span>{branch} branch</span>
-            </div>
-            <pre><code>{observation.code}</code></pre>
-            <p class="revision">Indexed commit <code title={observation.indexed_commit}>{observation.indexed_commit.slice(0, 12)}</code></p>
-          </section>
-          <section class="site-panel lesson" aria-label={`Loom response — ${label}`}>
-            <div class="lesson-heading">
-              <h3>Loom response</h3>
-              <span class:list={["state", observation.code_state]}>{observation.code_state}</span>
-            </div>
-            <p class="memory-key"><code>{recording.memory_key}</code></p>
-            <blockquote>{savedValue.map((part) => part.startsWith("`") ? <code>{part.slice(1, -1)}</code> : part)}</blockquote>
-            {observation.changed_since && (
-              <p class="revision">Changed at <code title={observation.changed_since}>{observation.changed_since.slice(0, 12)}</code></p>
-            )}
-          </section>
-        </div>
-        <p class="explanation">{explanation}</p>
+  <section class="workbench" aria-label="Retry rule example">
+    <section class="site-panel editor" aria-labelledby="editor-heading">
+      <div class="panel-heading">
+        <h2 id="editor-heading">Sample code</h2>
+        <span class="file"><code>retry.py</code></span>
       </div>
-    ))}
+      <pre><code>def should_retry(status: int) -&gt; bool:<br />    return status == <span id="retry-code">503</span></code></pre>
+      <form id="edit-retry" hidden>
+        <fieldset>
+          <legend>Branch</legend>
+          <label><input type="radio" name="branch" value="main" checked /> <code>main</code></label>
+          <label><input type="radio" name="branch" value="release" /> <code>release</code></label>
+        </fieldset>
+        <label class="status-label" for="retry-status">Retry on HTTP status</label>
+        <div class="edit-actions">
+          <input id="retry-status" name="status" type="number" min="100" max="599" step="1" value="429" required />
+          <button type="submit">Apply edit and check</button>
+          <button class="quiet" type="reset">Reset example</button>
+        </div>
+      </form>
+      <noscript><p>Enable JavaScript to edit the sample and run checks.</p></noscript>
+    </section>
+
+    <section class="site-panel lesson" aria-labelledby="lesson-heading">
+      <div class="panel-heading">
+        <h2 id="lesson-heading">Saved lesson</h2>
+        <span class="state" id="check-state" hidden></span>
+      </div>
+      <p><code>should_retry</code> retries on HTTP 503.</p>
+      <p id="check-feedback" class="feedback" role="status" aria-atomic="true"></p>
+      <details id="check-receipt" hidden>
+        <summary>View live response</summary>
+        <pre><code id="check-json"></code></pre>
+      </details>
+    </section>
   </section>
 
   <section class="site-section run" aria-labelledby="run-heading">
-    <div>
-      <h2 id="run-heading">Run it yourself</h2>
-      <p>Fork Loom and open <strong>Actions</strong> in your fork. Enable workflows if prompted, then select <strong>Coding-agent memory evaluation</strong> and choose <strong>Run workflow</strong>. GitHub starts a disposable ClickHouse container on its runner and publishes the results on the run page. It needs no service credentials or model keys.</p>
-      <div class="site-actions">
-        <a class="primary" href={`${repositoryUrl}/fork`}>Fork Loom on GitHub</a>
-        <a class="text-link" href="/docs/guides/compare-coding-agent-memory#reproduce-the-comparison">Run locally</a>
-      </div>
+    <h2 id="run-heading">Run the full Loom evaluation</h2>
+    <p>GitHub Actions starts Loom and a temporary ClickHouse container, runs the memory checks, and publishes a results summary and JSON artifact.</p>
+    <p>Open the workflow and select <strong>Run workflow</strong>. That button requires write access. You can fork Loom and enable Actions in your fork to run it there.</p>
+    <div class="site-actions">
+      <a class="primary" href={workflow}>Open the GitHub workflow</a>
+      <a class="text-link" href={`${repositoryUrl}/fork`}>Fork Loom</a>
+      <a class="text-link" href="/docs/guides/compare-coding-agent-memory#reproduce-the-comparison">Run locally</a>
     </div>
-    <p class="recording">This replay uses sample data and runs entirely in the browser. <a class="text-link" href={`${repositoryUrl}/commit/${recording.loom_revision}`}>View the Loom revision used for the recording</a>.</p>
   </section>
 </SiteFrame>
 
+<script>
+  const form = document.querySelector<HTMLFormElement>("#edit-retry")!;
+  const editor = document.querySelector<HTMLInputElement>("#retry-status")!;
+  const code = document.querySelector("#retry-code")!;
+  const state = document.querySelector<HTMLElement>("#check-state")!;
+  const feedback = document.querySelector("#check-feedback")!;
+  const receipt = document.querySelector<HTMLDetailsElement>("#check-receipt")!;
+  const json = document.querySelector("#check-json")!;
+  const baseline = Number(code.textContent);
+  const branchStatus = new Map([["main", baseline], ["release", baseline]]);
+  let branch = "main";
+  let pending: AbortController | undefined;
+
+  async function check() {
+    pending?.abort();
+    const request = new AbortController();
+    pending = request;
+    const checkedBranch = branch;
+    const status = branchStatus.get(checkedBranch)!;
+    code.textContent = String(status);
+    state.hidden = true;
+    receipt.hidden = true;
+    feedback.textContent = `Checking ${checkedBranch}…`;
+    try {
+      const response = await fetch(`/api/playground/check?status=${status}`, {
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]),
+      });
+      if (!response.ok) throw new Error(`Check returned HTTP ${response.status}`);
+      const result = await response.json();
+      if (result.code_state !== "fresh" && result.code_state !== "changed") {
+        throw new Error("Unexpected code state");
+      }
+      if (request.signal.aborted) return;
+      state.dataset.state = result.code_state;
+      state.textContent = result.code_state;
+      state.hidden = false;
+      feedback.textContent = result.code_state === "fresh"
+        ? `The lesson matches ${checkedBranch}.`
+        : `${checkedBranch} retries on HTTP ${status}. The saved lesson still says HTTP ${baseline}.`;
+      json.textContent = JSON.stringify({ branch: checkedBranch, ...result }, null, 2);
+      receipt.hidden = false;
+    } catch {
+      if (!request.signal.aborted) {
+        feedback.textContent = "The check could not finish. Apply the edit again or run the GitHub workflow below.";
+      }
+    }
+  }
+
+  form.addEventListener("change", ({ target }) => {
+    if (!(target instanceof HTMLInputElement) || target.name !== "branch") return;
+    branch = target.value;
+    editor.value = String(branchStatus.get(branch));
+    void check();
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    branchStatus.set(branch, editor.valueAsNumber);
+    void check();
+  });
+  form.addEventListener("reset", () => {
+    branchStatus.set("main", baseline);
+    branchStatus.set("release", baseline);
+    branch = "main";
+    void check();
+  });
+  form.hidden = false;
+  void check();
+</script>
+
 <style>
-  h1 { max-width: 24ch; font-size: clamp(2.25rem, 5.4vw, 5rem); text-wrap: balance; }
-  .replay { margin-top: clamp(2rem, 5vw, 3.5rem); }
-  fieldset { display: flex; flex-wrap: wrap; gap: 0.45rem; min-width: 0; margin: 0.65rem 0 1rem; padding: 0; border: 0; }
-  legend { padding: 0; margin-bottom: 0.45rem; color: var(--muted); font-size: 0.9rem; }
-  .step { position: relative; cursor: pointer; }
-  .step input { position: absolute; width: 1px; height: 1px; margin: 0; clip-path: inset(50%); }
-  .step span { display: flex; align-items: center; min-height: 2.75rem; padding: 0.45rem 0.9rem; border: 1px solid var(--line); border-radius: 0.35rem; font-weight: 600; }
-  .step:hover span { border-color: var(--accent); }
-  .step input:checked + span { color: #171500; background: var(--accent); border-color: var(--accent); }
-  .step input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 3px; }
-  .replay:has(input[value="before"]:checked) .result:not([data-revision="before"]),
-  .replay:has(input[value="after"]:checked) .result:not([data-revision="after"]),
-  .replay:has(input[value="release"]:checked) .result:not([data-revision="release"]) { display: none; }
-  .result-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
-  .file-bar, .lesson-heading { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 0.4rem 0.75rem; }
-  .file-bar { margin: 0.9rem 0 0.45rem; color: var(--muted); font-size: 0.9rem; }
-  pre { margin: 0; padding: 0.85rem; border-block: 1px solid var(--line); background: #151513; white-space: pre-wrap; overflow-wrap: anywhere; }
+  h1 { max-width: 22ch; font-size: clamp(2.3rem, 5.4vw, 5rem); text-wrap: balance; }
+  .lead { max-width: 61ch; }
+  .workbench { display: grid; grid-template-columns: 1.1fr 1fr; align-items: start; gap: 1rem; margin-top: clamp(1.75rem, 4vw, 3rem); }
+  .workbench > section { min-width: 0; }
+  .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 1rem; }
+  h2 { margin-top: 0; }
+  .panel-heading h2 { margin-bottom: 0; font-size: 1.25rem; }
   code { font-family: ui-monospace, monospace; }
-  .lesson-heading h3 { margin: 0; }
-  .state { padding: 0.2rem 0.65rem; border: 1px solid currentColor; border-radius: 0.3rem; font: 600 0.85rem ui-monospace, monospace; }
-  .fresh { color: #a1deb4; }
-  .changed { color: #f9bc72; }
-  .revision, .memory-key { color: var(--muted); font-size: 0.9rem; }
-  .revision code { color: #f5f3ed; }
-  blockquote { margin: 0 0 0.8rem; padding-inline-start: 0.8rem; border-inline-start: 2px solid var(--line); overflow-wrap: anywhere; }
-  .site-panel .revision:last-child { margin-bottom: 0; }
-  .explanation { margin: 0.75rem 0 0; max-width: 72ch; }
-  .run { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: start; gap: 1rem 3rem; }
-  .run p { max-width: 62ch; }
-  .recording { color: var(--muted); }
-  @media (max-width: 47rem) { .result-grid, .run { grid-template-columns: minmax(0, 1fr); } }
+  .file, .feedback { color: var(--muted); }
+  pre { margin: 0; padding: 0.85rem; border: 1px solid var(--line); border-radius: 0.35rem; background: #151513; overflow-wrap: anywhere; white-space: pre-wrap; }
+  #retry-code { color: var(--accent); }
+  fieldset { display: flex; gap: 0.6rem; min-width: 0; margin: 1rem 0; padding: 0; border: 0; }
+  legend, .status-label { margin-bottom: 0.45rem; font-size: 0.9rem; font-weight: 600; }
+  fieldset label { display: flex; gap: 0.4rem; align-items: center; min-height: 2.65rem; padding: 0.4rem 0.75rem; border: 1px solid var(--line); border-radius: 0.35rem; cursor: pointer; }
+  fieldset label:has(:checked) { border-color: var(--accent); }
+  input[type="radio"] { margin: 0; accent-color: var(--accent); }
+  .status-label { display: block; }
+  .edit-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; }
+  .edit-actions input, button { min-height: 2.7rem; border: 1px solid var(--line); border-radius: 0.35rem; font: inherit; }
+  .edit-actions input { width: 5rem; padding: 0.45rem 0.7rem; background: #151513; color: inherit; }
+  button { padding: 0.45rem 0.8rem; border-color: var(--accent); background: var(--accent); color: #171500; font-weight: 650; cursor: pointer; }
+  button.quiet { border-color: var(--line); color: inherit; background: transparent; }
+  button:hover, button.quiet:hover { border-color: #f5f3ed; }
+  :is(button, input, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .state { padding: 0.24rem 0.57rem; border: 1px solid currentColor; border-radius: 0.3rem; font: 600 0.85rem ui-monospace, monospace; }
+  .state[data-state="fresh"] { color: #a1deb4; }
+  .state[data-state="changed"] { color: #f9bc72; }
+  .feedback { min-height: 2.75em; }
+  summary { margin-bottom: 0.6rem; width: fit-content; color: var(--accent); cursor: pointer; }
+  details pre { font-size: 0.8rem; }
+  .run p { max-width: 68ch; }
+  @media (max-width: 48rem) { .workbench { grid-template-columns: minmax(0, 1fr); } }
 </style>
