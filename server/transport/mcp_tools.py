@@ -811,7 +811,7 @@ def _memory_section_lines(
     200-char lines, level with memory.ask at a fifth of the latency. The
     reading rule rides once, ahead of the block. Without a block (a later
     page) the agent reads the plain hit lines, which carry the block line's
-    note for stale code (`code_change.note`).
+    note for stale and moved code (`code_change.note`).
     """
     block = str(memory.get("reader_block") or "").strip()
     out: list[str] = []
@@ -844,7 +844,9 @@ def _memory_section_lines(
     for h in mem_hits[:top_k]:
         excerpt = (h.get("content_excerpt") or "").replace("\n", " ").strip()
         ns_label = h.get("namespace") or "-"
-        code = code_change.note(h.get("code_state") or "", h.get("code_changed_since") or "")
+        code = code_change.note(
+            h.get("code_state") or "", h.get("code_changed_since") or "", h.get("code_moved") or []
+        )
         why = why_note(h) if explain else (h.get("explanation") or "").replace("\n", " ").strip()
         out.append(
             f"  - [{h.get('memory_key')}] (ns={ns_label}){code} {excerpt[:200]}"

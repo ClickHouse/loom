@@ -1171,6 +1171,20 @@ async def test_a_startup_pack_with_no_query_reads_code_state_as_a_search_does(
 
 
 @pytest.mark.asyncio
+async def test_a_startup_pack_names_where_a_memorys_moved_code_is_now(served, monkeypatch) -> None:
+    served.heads += [_row("m"), _row("edited"), _row("other")]
+    served.links["m"] = [_moved_link("m")]
+    served.links["edited"] = [_moved_link("edited", "changed", changed_since="c0ffee" * 7)]
+    lines = await _startup_lines(monkeypatch, served, recent=["m", "edited", "other"], top_k=3)
+    by_key = {ln.split()[1]: ln.split("] ", 1) for ln in lines}
+    label, text = by_key["[memory:agent-a/m"]
+    assert "code_state" not in label and text == f"(code moved: {_NOW}) claim"
+    label, text = by_key["[memory:agent-a/edited"]
+    assert "code_state=changed@c0ffeec0ffee" in label and text == f"(code moved: {_NOW}) claim"
+    assert by_key["[memory:agent-a/other"][1] == "claim"
+
+
+@pytest.mark.asyncio
 async def test_a_startup_pack_serves_its_rows_unlabelled_when_the_links_cannot_be_read(
     served, monkeypatch
 ) -> None:
@@ -5169,6 +5183,210 @@ async def test_a_found_definition_that_cannot_be_fingerprinted_leaves_a_live_lin
     monkeypatch.setattr(files, "defs", no_fingerprints)
     moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
     assert [m.link.state for m in moves] == ["unresolved"]
+
+
+# ---- a memory whose code moved is served with where the code is now -----------------
+
+
+def _moved_link(mid: str = "m", state: str = "moved", **over: Any) -> dict[str, Any]:
+    """A link written against `reader::fetch_rows` in src/reader.py, now `load_rows`."""
+    was = {"path": "src/reader.py", "name": "reader::fetch_rows"}
+    return {
+        **_link(mid, state),
+        "path": "src/reader.py",
+        "qualified_name": "reader::load_rows",
+        "start_line": 12,
+        "end_line": 40,
+        "anchored_path": was["path"],
+        "anchored_name": was["name"],
+        "former": [was],
+        **over,
+    }
+
+
+_NOW = "`reader::fetch_rows` is now `reader::load_rows` at src/reader.py:12-40"
+
+
+def test_a_relocation_is_what_the_memory_was_written_as_when_the_code_is_elsewhere() -> None:
+    assert code_change.relocation(_moved_link()) == ("src/reader.py", "reader::fetch_rows")
+    # an edit beside the rename, and a claim the judge found to hold (re-anchored where the
+    # code is, read fresh): the text still says the old name
+    assert code_change.relocation(_moved_link(state="changed")) is not None
+    held = _moved_link(state="fresh", anchored_name="reader::load_rows")
+    assert code_change.relocation(held) == ("src/reader.py", "reader::fetch_rows")
+    # renamed back: the link is where the memory says it is
+    back = _moved_link(qualified_name="reader::fetch_rows")
+    back["former"].append({"path": "src/reader.py", "name": "reader::load_rows"})
+    assert code_change.relocation(back) is None
+    # the oldest identity the link keeps, not the one it left last
+    twice = _moved_link(qualified_name="reader::read_rows")
+    twice["former"].append({"path": "src/reader.py", "name": "reader::load_rows"})
+    assert code_change.relocation(twice) == ("src/reader.py", "reader::fetch_rows")
+
+
+def test_a_link_where_it_was_written_or_not_found_has_no_relocation() -> None:
+    fresh = {**_link("m", "fresh"), "path": "a.py", "qualified_name": "a::f"}
+    fresh |= {"anchored_path": "a.py", "anchored_name": "a::f"}
+    assert code_change.relocation(fresh) is None
+    assert code_change.relocation(_full(fresh)) is None
+    # a definition link that replaced a file link is anchored at the definition: the file
+    # identity a row may still keep is not what the memory called it
+    defined = fresh | {"former": [{"path": "old/a.py", "name": ""}]}
+    assert code_change.relocation(defined) is None
+    # a name not resolved yet has no place; a lost link's last place is not where the code is
+    pending = _full({**_link("m", "pending"), "qualified_name": "a::f"})
+    assert code_change.relocation(pending) is None
+    for state in ("unresolved", "missing"):
+        assert code_change.relocation(_moved_link(state=state)) is None
+
+
+def test_a_file_link_names_its_paths_and_a_move_that_kept_the_name_names_it_once() -> None:
+    # a file link keeps no former identity: it is written against its anchor
+    file = _moved_link(path="docs/new.md", qualified_name="", start_line=0, end_line=0)
+    file |= {"anchored_path": "docs/old.md", "anchored_name": "", "former": []}
+    (link,) = code_link_reads.relocated([_full(file)])
+    assert (link.was_path, link.was_symbol, link.symbol) == ("docs/old.md", "", "")
+    assert code_change.note("moved", moved=[link]) == (
+        " (code moved: `docs/old.md` is now `docs/new.md`)"
+    )
+    kept = _moved_link(path="src/io.py", qualified_name="reader::fetch_rows")
+    (link,) = code_link_reads.relocated([_full(kept)])
+    assert code_change.note("moved", moved=[link]) == (
+        " (code moved: `reader::fetch_rows` is now at src/io.py:12-40)"
+    )
+
+
+def test_a_note_names_two_relocated_links_counts_the_rest_and_keeps_a_warning() -> None:
+    one = code_link_reads.relocated([_full(_moved_link())])
+    assert code_change.note("moved", moved=one) == f" (code moved: {_NOW})"
+    assert code_change.note("fresh", moved=one) == f" (code moved: {_NOW})"
+    assert code_change.note("changed", "c0ffee" * 7, one) == (
+        " (its code changed since it was written, commit c0ffeec0ffee:"
+        f" check before relying on it; {_NOW})"
+    )
+    # a wire dict reads as the model does
+    assert code_change.note("moved", moved=[one[0].model_dump()]) == f" (code moved: {_NOW})"
+    names = ("b", "c", "d", "e")
+    four = [_full(_moved_link(qualified_name=f"reader::{n}")) for n in names]
+    note = code_change.note("moved", moved=code_link_reads.relocated(four))
+    assert note.count(" is now ") == 2 and note.endswith("; +2 more)")
+    # nothing relocated: the notes read as they did, and `moved` alone needs none
+    assert code_change.note("moved") == "" and code_change.label("moved") == ""
+    assert code_change.note("changed") == (
+        " (its code changed since it was written: check before relying on it)"
+    )
+    assert "moved" not in code_change.DEMOTED
+
+
+def test_a_note_is_one_bounded_line_whatever_the_repository_names() -> None:
+    long = _moved_link(path="src/" + "d/" * 300 + "a.py", qualified_name="m::" + "x" * 500)
+    long["former"] = [{"path": "old.py", "name": "m::`y`\nz" + "y" * 500}]
+    links = code_link_reads.relocated([_full(long | {"qualified_name": q}) for q in "abc"])
+    note = code_change.note("changed", "c0ffee" * 7, links)
+    assert "\n" not in note and note.count("`") == 4 * 2  # two links, two code spans each
+    assert len(note) < 1000
+
+
+@pytest.mark.asyncio
+async def test_a_hit_names_where_its_moved_code_is_now_and_keeps_its_rank(served) -> None:
+    served.heads += [_row(mid, memory_key=mid) for mid in ("moved", "edited", "back", "fresh")]
+    served.links.update(
+        moved=[_moved_link("moved")],
+        edited=[_moved_link("edited", "changed", changed_since="c1"), _link("edited", "fresh")],
+        back=[_moved_link("back", qualified_name="reader::fetch_rows")],
+        fresh=[{**_link("fresh", "fresh"), "path": "a.py", "qualified_name": "a::f"}],
+    )
+    hits = [_hit(mid) for mid in ("moved", "edited", "back", "fresh", "unlinked")]
+    await code_link_reads.annotate_hits(_search(), hits)
+    moved, edited, back, fresh, unlinked = hits
+    (link,) = moved.code_moved
+    assert link.model_dump() == {
+        "code_namespace": "code-a",
+        "path": "src/reader.py",
+        "symbol": "reader::load_rows",
+        "start_line": 12,
+        "end_line": 40,
+        "state": "moved",
+        "changed_since": "",
+        "suggestion": "",
+        "was_path": "src/reader.py",
+        "was_symbol": "reader::fetch_rows",
+    }
+    # naming the place moves nothing: only the edited one ranks down, as before
+    assert [(h.code_state, h._code_ranked_down) for h in hits] == [
+        ("moved", False),
+        ("changed", True),
+        ("moved", False),
+        ("fresh", False),
+        ("", False),
+    ]
+    assert [(m.state, m.changed_since) for m in edited.code_moved] == [("changed", "c1")]
+    assert back.code_moved == [] and fresh.code_moved == [] and unlinked.code_moved == []
+    # the field is on the wire, and a hit with nothing relocated carries it empty
+    assert moved.model_dump()["code_moved"][0]["was_symbol"] == "reader::fetch_rows"
+    assert fresh.model_dump()["code_moved"] == []
+
+
+@pytest.mark.asyncio
+async def test_only_current_links_into_readable_code_are_named(served, monkeypatch) -> None:
+    served.heads += [
+        _row("rewritten", memory_key="rewritten", sha="rewritten"),
+        _row("secret", memory_key="secret"),
+        _row("suggested", memory_key="suggested"),
+    ]
+    correction = {"suggestion": "it is load_rows now", "judged_hash": "h", "checked_hash": "h"}
+    served.links.update(
+        # made from the memory's earlier text: about something else until it is relinked
+        rewritten=[{**_moved_link("rewritten"), "inputs_hash": _inputs(_row("rewritten"))}],
+        secret=[_moved_link("secret", code_namespace="code-secret")],
+        suggested=[_moved_link("suggested", "changed", **correction)],
+    )
+
+    async def readable(org, nss):
+        return set(nss) - {"code-secret"}
+
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    hits = [_hit(mid) for mid in ("rewritten", "secret", "suggested")]
+    await code_link_reads.annotate_hits(_search(), hits)
+    rewritten, secret, suggested = hits
+    assert (rewritten.code_state, rewritten.code_moved) == ("", [])
+    assert (secret.code_state, secret.code_moved) == ("", [])
+    # the `revise` policy's correction stays on memory.get
+    assert [m.suggestion for m in suggested.code_moved] == [""]
+
+
+@pytest.mark.asyncio
+async def test_memory_get_serves_a_links_lines_and_what_it_was_written_as(monkeypatch) -> None:
+    head = _row("m")
+    stamp = {"memory_id": "m", "inputs_hash": _inputs(head)}
+    rows = [
+        _full(_moved_link() | stamp),
+        _full(_moved_link(state="missing", path="src/gone.py") | stamp),
+        _full(_moved_link(code_namespace="code-secret", path="src/z.py") | stamp),
+        _full(_moved_link(path="src/stale.py") | {"memory_id": "m", "inputs_hash": "older"}),
+    ]
+
+    async def for_memories(org, ids):
+        return rows
+
+    async def readable(org, nss):
+        return set(nss) - {"code-secret"}
+
+    monkeypatch.setattr(code_links.store, "for_memories", for_memories)
+    monkeypatch.setattr(code_links.code, "code_namespaces", lambda: ["code-a"])
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "code-a")
+    gone, moved = await code_link_reads.links_of("o", head)
+    assert (moved.path, moved.symbol, moved.start_line, moved.end_line) == (
+        "src/reader.py",
+        "reader::load_rows",
+        12,
+        40,
+    )
+    assert (moved.was_path, moved.was_symbol) == ("src/reader.py", "reader::fetch_rows")
+    # code that was not found keeps its last place, with no lines and no former name
+    assert (gone.state, gone.start_line, gone.end_line) == ("missing", 0, 0)
+    assert (gone.was_path, gone.was_symbol) == ("", "")
 
 
 # ---- a memory whose code changed ranks below its match ------------------------------

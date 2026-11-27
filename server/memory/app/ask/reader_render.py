@@ -63,8 +63,8 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
     order `memory.ask` would read them for this question (chronological for
     temporal questions, rank order otherwise). A hit from `label_namespace`
     names it beside its type: `(decision, code-acme)`. A hit whose linked code
-    changed, was not found again or went says so before its excerpt
-    (`code_change.note`)."""
+    changed, was not found again or went says so before its excerpt, and one whose
+    code is now at another name or path says where (`code_change.note`)."""
     if not hits:
         return ""
     from server.memory.app.ask.rendering import evidence_order
@@ -82,7 +82,9 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
             mtype = f"{mtype}, {label_namespace}"
         text = str(_get(h, "content_excerpt") or "")[:_EXCERPT_CHARS]
         code = code_change.note(
-            str(_get(h, "code_state") or ""), str(_get(h, "code_changed_since") or "")
+            str(_get(h, "code_state") or ""),
+            str(_get(h, "code_changed_since") or ""),
+            _get(h, "code_moved") or [],
         )
         parts.append(f"[{_date_of(h)}] [{key}] ({mtype}){code} {text}{_restatement_note(h, keys)}")
     return "\n\n".join(parts)

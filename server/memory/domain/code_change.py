@@ -16,6 +16,9 @@ what reads do:
 Under every policy, a memory that a search still serves ranks lower than its match
 (`rank_down`) on its first page when its worst link is changed, unresolved or missing.
 A memory a person pinned, locked or verified is only flagged.
+
+A link that sits at another name or path than the memory was written against is named
+on every read (`relocation`, `note`): the text still says the old name.
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ from server.memory.domain.trust import verification_state
 # a served link's states from best to worst: a memory shows its worst link's
 CodeState = Literal["fresh", "moved", "changed", "unresolved", "missing"]
 STATE_RANK: dict[str, int] = {s: i for i, s in enumerate(get_args(CodeState))}
+# the states of a link that is at a definition or file: its path, name and lines are current
+LOCATED: tuple[str, ...] = ("fresh", "moved", "changed")
 
 CodeChangePolicy = Literal["retire_removed", "flag", "revise"]
 POLICIES: tuple[CodeChangePolicy, ...] = get_args(CodeChangePolicy)
@@ -58,14 +63,71 @@ _NOTES = {
 DEMOTED = frozenset(_NOTES)
 
 
-def note(state: str, commit: str = "") -> str:
+def written_as(link: Mapping[str, Any]) -> tuple[str, str]:
+    """(path, qualified name) the memory's text was written against: the oldest identity
+    the link keeps, else its anchor (a claim the `revise` policy found to hold is
+    re-anchored where the code is, and its text still names the old place). A definition
+    link that replaced a file link was never that file: only an identity of the link's
+    own kind counts."""
+    of_symbol = bool(link.get("qualified_name"))
+    former = [f for f in link.get("former") or [] if bool(f["name"]) == of_symbol]
+    if former:
+        return str(former[0]["path"]), str(former[0]["name"])
+    return str(link.get("anchored_path") or ""), str(link.get("anchored_name") or "")
+
+
+def relocation(link: Mapping[str, Any]) -> tuple[str, str] | None:
+    """`written_as` of a link (a link row) that is at a definition or file under another
+    path or name; None for one where it was written, renamed back, or not found."""
+    was = written_as(link)
+    here = (str(link.get("path") or ""), str(link.get("qualified_name") or ""))
+    if link.get("state") not in LOCATED or not was[0] or was == here:
+        return None
+    return was
+
+
+# relocated links a note names before it counts the rest, and the characters of each path
+# or name it prints: a repository's own, so one line and bounded
+_NAMED = 2
+_NAME_CHARS = 120
+
+
+def _field(link: Any, name: str) -> str:
+    value = link.get(name) if isinstance(link, Mapping) else getattr(link, name, None)
+    text = " ".join(str(value or "").replace("`", "'").split())
+    return text if len(text) <= _NAME_CHARS else text[: _NAME_CHARS - 1] + "…"
+
+
+def _now(link: Any) -> str:
+    """`old` is now `new` at path:start-end, for one relocated link in its wire shape; a
+    definition that kept its name is named once, a file link by its paths."""
+    path, symbol, was = _field(link, "path"), _field(link, "symbol"), _field(link, "was_symbol")
+    if not symbol:
+        return f"`{_field(link, 'was_path')}` is now `{path}`"
+    start, end = int(_field(link, "start_line") or 0), int(_field(link, "end_line") or 0)
+    lines = f":{start}-{end}" if 0 < start <= end else ""
+    name = f"`{symbol}` " if symbol != was else ""
+    return f"`{was}` is now {name}at {path}{lines}"
+
+
+def moved_note(moved: Sequence[Any]) -> str:
+    """Where the code of a memory's relocated links (`moved`, each a code link in its wire
+    shape with `was_path` set) is now: the first `_NAMED`, then how many more; '' for none."""
+    named = "; ".join(_now(link) for link in moved[:_NAMED])
+    more = f"; +{len(moved) - _NAMED} more" if len(moved) > _NAMED else ""
+    return named + more
+
+
+def note(state: str, commit: str = "", moved: Sequence[Any] = ()) -> str:
     """The note a read line carries for a memory whose worst link is in `state`, naming
-    the commit that put it there; '' for a state that needs none."""
+    the commit that put it there and where its relocated links (`moved`) are now; '' for
+    a state that needs none with nothing relocated."""
+    now = moved_note(moved)
     if state not in _NOTES:
-        return ""
+        return f" (code moved: {now})" if now else ""
     what, ask = _NOTES[state]
     at = f", commit {commit[:12]}" if commit else ""
-    return f" ({what}{at}: {ask})"
+    return f" ({what}{at}: {ask}{'; ' + now if now else ''})"
 
 
 def label(state: str, commit: str = "") -> str:
