@@ -12,9 +12,9 @@ The [language support table](#language-support) distinguishes fast-tier symbols 
 edges from compiler-tier coverage.
 
 `code_ingest` and the compiler-tier workers are on by default and find nothing to do
-until a repository is configured ([repositories](repositories.md)); the other code
-workers are off until a deployment turns them on. The default `core` MCP toolset lists
-no code tools unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
+until a repository is configured ([repositories](repositories.md));
+[Workers](#workers) lists each worker's default. The default `core` MCP toolset lists no
+code tools unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
 
 ![The Repositories page: an indexed repository, its branches and its tracker](../../images/dashboard-repositories.png)
 

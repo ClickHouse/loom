@@ -185,10 +185,11 @@ loom-refresh:
 `code.refresh` is the only thing that indexes a push. Every configured repository then
 needs a CI job like the ones above. `/v1/health` reports `code_repos_untriggered` as an
 error, with a count and no repository name, while a repository is configured, the poller
-is off, the worker ledger holds no `code_ingest` pass from the last 14 days and no
+is off, the worker ledger holds no `code_ingest` pass from the last day and no
 `code.refresh` was ever recorded for that repository (`last_refresh_at` in
-`code.index_status`). The first `code.refresh` for the repository clears it within
-`LOOM_CODE_REPOS_REFRESH_SECONDS`.
+`code.index_status`). A poller's pass counts whatever it did, so after the poller is
+switched off the error can take a day to appear. The first `code.refresh` for the
+repository clears it within `LOOM_CODE_REPOS_REFRESH_SECONDS`.
 
 Operators watch `loom.code.tier_lag_seconds{tier}`; the lagging-tier runbook is in
 [code index operations](../../operations/code-index-operations.md).

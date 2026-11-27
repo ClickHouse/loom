@@ -88,13 +88,6 @@ def test_a_sandbox_layout_refusal_names_no_host_path(monkeypatch: pytest.MonkeyP
     )
     monkeypatch.setattr(sandbox, "sandbox_state", lambda: True)
     monkeypatch.setattr(settings, "code_ingest_enabled", True)
-    monkeypatch.setattr(settings, "code_repos_json", "")
-    monkeypatch.setattr(settings, "code_repo", "")
-    # no repository: no job is owed, so the layout is not a problem
-    assert "repo_sandbox" not in str(health._health_provider_fields(ch_ok=True)["problems"])
-    monkeypatch.setattr(settings, "code_repo", "acme/widget")
-    monkeypatch.setattr(settings, "code_org", "acme")
-    monkeypatch.setattr(settings, "code_namespace", "code-widget")
     problems = health._health_provider_fields(ch_ok=True)["problems"]
     text = str(problems)
     assert "repo_sandbox_layout_refused" in text and path not in text

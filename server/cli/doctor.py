@@ -546,7 +546,6 @@ def _doctor_problems() -> list[Any]:
     Empty when settings do not load (the `settings_load` check already says so)."""
     try:
         from server.code.app.index.sandbox import layout_refusal, sandbox_available
-        from server.code.domain.index.repos import known_repo_count
         from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
@@ -561,7 +560,6 @@ def _doctor_problems() -> list[Any]:
                 ch_reader_error=detail if status == "failing" else "",
                 code_tier_failures=tiers,
                 code_tier_names="all",  # the host's own view, with the deployment's credentials
-                code_repos=known_repo_count(),
             ),
         )
         if status == "not_probed" and detail:

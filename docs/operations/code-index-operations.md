@@ -803,9 +803,10 @@ rules instead of Docker's masks. Weigh that against running repository code with
 sandbox. `seccomp=unconfined` and `apparmor=unconfined` also work where the host does not
 restrict user namespaces, but they drop the whole profile.
 
-**Without the sandbox** Loom probes once per process, logs a warning and, once a
-repository is configured, reports `repo_jobs_unsandboxed` in `/v1/health` and
-`loom doctor`. With
+**Without the sandbox** Loom probes once per process, logs a warning and reports
+`repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. A server with no repository
+configured and no `LOOM_CODE_SANDBOX_REQUIRED` does not probe until someone adds one from
+the page, so its health says nothing of the sandbox until then. With
 `LOOM_CODE_SANDBOX_REQUIRED=true` every repository job is refused (above). Otherwise:
 
 - operator repositories (`LOOM_CODE_REPOS_JSON`) keep every tier, and their build steps

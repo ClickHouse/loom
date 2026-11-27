@@ -1,8 +1,9 @@
 """A configured repository nothing indexes is one `code_repos_untriggered` health error,
 fed from a per-process count (never a ClickHouse read in the probe): the poller is off,
-the worker ledger holds no ingest pass and the entry has no `code.refresh` on record.
-The count is read from the deployment's stores, so a process that runs no worker
-answers like any other. With no repository configured the sandbox is not reported on."""
+the worker ledger holds no recent ingest pass and the entry has no `code.refresh` on
+record. The count is read from the deployment's stores, so a process that runs no worker
+answers like any other. With no repository configured the sandbox is not reported on
+until something probes it."""
 
 from __future__ import annotations
 
@@ -15,8 +16,10 @@ from server.code.app.index import ingest_trigger
 from server.observability.problems import HealthState, collect_problems, derive_status
 from server.settings import settings
 
-ENTRIES = [SimpleNamespace(org="acme", namespace="code-widget", repo="acme/widget")]
-ENTRIES.append(SimpleNamespace(org="acme", namespace="code-gadget", repo="acme/gadget"))
+ENTRIES = [
+    SimpleNamespace(org="acme", namespace="code-widget", repo="acme/widget"),
+    SimpleNamespace(org="acme", namespace="code-gadget", repo="acme/gadget"),
+]
 
 
 class _Stores:
@@ -33,12 +36,9 @@ class _Stores:
             raise ConnectionError("store unreachable")
         return [{"worker": w} for w in self.passes if w.startswith(prefix)]
 
-    async def state_rows_with_prefix(self, prefix: str) -> list[dict[str, Any]]:
-        self.reads.append(f"state:{prefix}")
-        return [
-            {"org": "acme", "namespace": ns, "state_key": prefix, "state_value": "2026-01-01"}
-            for ns in self.refreshed
-        ]
+    async def state_values_for_keys(self, keys: list[str]) -> dict[str, dict[Any, str]]:
+        self.reads.append(f"state:{keys[0]}")
+        return {k: {("acme", ns): "2026-01-01" for ns in self.refreshed} for k in keys}
 
 
 @pytest.fixture(autouse=True)
@@ -164,20 +164,39 @@ def test_the_problem_counts_the_entries_and_names_none(monkeypatch: pytest.Monke
 
 
 @pytest.mark.parametrize(
-    ("repos", "required", "reported"),
-    [(0, False, False), (0, True, True), (1, False, True), (None, False, True)],
-    ids=["no-repository", "sandbox-required", "a-repository", "not-counted"],
+    ("repos", "probed", "required", "reported"),
+    [
+        (0, None, False, []),
+        (0, None, True, ["repo_sandbox_layout_refused"]),
+        (1, None, False, ["repo_sandbox_layout_refused"]),
+        (None, None, False, ["repo_sandbox_layout_refused"]),
+        # a refused `code.repo.add` probed and left no repository: the page reads this
+        (0, False, False, ["repo_jobs_unsandboxed", "repo_sandbox_layout_refused"]),
+        (1, False, False, ["repo_jobs_unsandboxed", "repo_sandbox_layout_refused"]),
+    ],
+    ids=[
+        "no-repository",
+        "sandbox-required",
+        "a-repository",
+        "not-counted",
+        "no-repository-probed",
+        "a-repository-probed",
+    ],
 )
-def test_the_sandbox_is_a_problem_only_where_a_repository_job_is_owed(
-    monkeypatch: pytest.MonkeyPatch, repos: int | None, required: bool, reported: bool
+def test_the_sandbox_is_silent_only_with_no_repository_and_no_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    repos: int | None,
+    probed: bool | None,
+    required: bool,
+    reported: list[str],
 ) -> None:
     monkeypatch.setattr(settings, "code_ingest_enabled", True)
     monkeypatch.setattr(settings, "code_sandbox_required", required)
     state = HealthState(
-        repo_sandbox=False, repo_sandbox_refusal="sandbox: /x is inside", code_repos=repos
+        repo_sandbox=probed, repo_sandbox_refusal="sandbox: /x is inside", code_repos=repos
     )
     codes = sorted(p.code for p in collect_problems(settings, state) if "sandbox" in p.code)
-    assert codes == (["repo_jobs_unsandboxed", "repo_sandbox_layout_refused"] if reported else [])
+    assert codes == reported
 
 
 def test_the_count_of_known_repositories_needs_no_registry_read(
