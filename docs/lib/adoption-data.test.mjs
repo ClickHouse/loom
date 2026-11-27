@@ -28,6 +28,8 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
               { day: "2026-10-01", source: "pypi", metric: "sdk_downloads", value: 3 },
               { day: "2026-11-03", source: "pypi", metric: "sdk_downloads", value: 4 },
               { day: "2026-11-08", source: "github", metric: "stars", value: 60 },
+              { day: "2026-11-10", source: "github", metric: "stars", value: 64 },
+              { day: "2026-11-07", source: "github", metric: "stars", value: 51 },
             ].map((row) => JSON.stringify(row)),
           },
         ],
@@ -62,6 +64,7 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
   );
   const selfHosted = await read("self-hosted");
   assert.deepEqual(selfHosted.selfHosted.domains, ["company.example", "other.example"]);
+  assert.deepEqual(selfHosted.archivedStars, { day: "2026-11-10", source: "github", metric: "stars", value: 64 });
   assert.deepEqual(selfHosted.openSource, []);
   assert.deepEqual(registries, []);
 
@@ -86,6 +89,7 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
   assert.equal(byLabel["TypeScript SDK downloads"].value, null);
   assert.equal(byLabel["Container pulls"].value, 1869);
   assert.deepEqual(byLabel["GitHub stars"].history, [
+    { day: "2026-11-07", value: 51 },
     { day: "2026-11-08", value: 60 },
     { day: "2026-11-10", value: 77 },
   ]);

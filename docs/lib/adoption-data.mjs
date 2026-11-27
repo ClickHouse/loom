@@ -99,10 +99,15 @@ async function loadOpenSource(warehouse, today) {
       ? releases.flatMap(({ assets }) => assets ?? []).reduce((total, asset) => total + asset.download_count, 0)
       : null;
   const counter = (source, metric, current) => {
-    const history = series(source, metric).map(({ day, value }) => ({ day, value }));
+    const history = series(source, metric)
+      .map(({ day, value }) => ({ day, value }))
+      .sort((left, right) => left.day.localeCompare(right.day));
     const value = numberOrNull(current);
     const latest = history.at(-1);
-    if (value !== null && history.length) history.push({ day: today, value });
+    if (value !== null && latest) {
+      if (latest.day === today) history.pop();
+      history.push({ day: today, value });
+    }
     return {
       value: value ?? latest?.value ?? null,
       day: value === null ? latest?.day : today,
@@ -157,19 +162,26 @@ export function createAdoptionReader(env, now) {
   const refreshedAt = now.toISOString();
   const today = refreshedAt.slice(0, 10);
   const warehouse = loadWarehouse(env);
-  const selfHosted = warehouse.then(({ totals, versions, retention, activity, lifecycle, domains }) => ({
-    today,
-    refreshedAt,
-    selfHosted: {
-      totals,
-      versions,
-      retention,
-      activity: activity ?? [],
-      lifecycle: lifecycle ?? [],
-      domains: domains ?? null,
-    },
-    openSource: [],
-  }));
+  const selfHosted = warehouse.then(({ totals, versions, retention, activity, lifecycle, domains, oss }) => {
+    const archivedStars = oss
+      ?.filter(({ source, metric, value }) => source === "github" && metric === "stars" && Number.isFinite(value))
+      .sort((left, right) => right.day.localeCompare(left.day))
+      .at(0);
+    return {
+      today,
+      refreshedAt,
+      archivedStars,
+      selfHosted: {
+        totals,
+        versions,
+        retention,
+        activity: activity ?? [],
+        lifecycle: lifecycle ?? [],
+        domains: domains ?? null,
+      },
+      openSource: [],
+    };
+  });
   let withOpenSource;
   return (tab) => {
     if (tab === "self-hosted") return selfHosted;
