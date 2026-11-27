@@ -37,25 +37,32 @@ prior decisions or procedures beyond the lessons returned with indexed source.
 The listing of code tools alone, described next, lists neither `loom_op` nor
 `loom_context_pack`.
 
-A `coding` connection bound to a repository lists the code tools alone when its
-URL carries `schema_profile=compact`. A compact profile that comes only from
-`LOOM_MCP_SCHEMA_PROFILE` does not narrow the listing: a client that did not ask
-for it keeps every tool of the roster. On the listing of code tools alone,
-`loom_op`, `loom_search`, `loom_context_pack`, `loom_activate`, the memory tools
-and `loom_tracker_duplicate_check` are not listed, and `prompts/list` and
-`resources/list` are empty. Its startup instructions carry the source workflows
-and the repository binding, with no memory, workspace or `loom_op` guidance. The
-`loom` prompt, `loom://primer` and `loom_activate`, asked for by name, carry the
-same source workflows. A mentor hint, and the `OP_NOT_ON_MCP` refusal of an op
-kept off MCP, name an op outside the listing by its dotted name; other refusals
-keep the tool names they spell. Lessons linked to source still arrive with code
-results. Every other tool stays callable by name, but a client that calls only
-listed tools cannot save or recall memory on this connection: leave
-`schema_profile=compact` off the URL for that. The coding-agent plugins send the
-`X-Loom-Code-Scope` header for a checkout they resolve to a repository, so those
-connections are bound; the URLs they ship name no profile. The lists of a
-`coding` URL that carries `schema_profile=compact` follow that header, so their
-`cacheScope` is `private` with the header or without it.
+A `coding` connection that the `X-Loom-Code-Scope` header binds to a repository
+lists the code tools alone when its URL carries `schema_profile=compact`. A
+compact profile that comes only from `LOOM_MCP_SCHEMA_PROFILE` does not narrow
+the listing: a client that did not ask for it keeps every tool of the roster.
+
+The listing of code tools alone leaves out:
+
+| Part                                | Left out                                                                                                                                                                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tools/list`                        | `loom_op`, `loom_search`, `loom_context_pack`, `loom_activate`, the memory tools and `loom_tracker_duplicate_check`.                                                                                              |
+| `prompts/list` and `resources/list` | Every entry: both are empty.                                                                                                                                                                                      |
+| Startup instructions                | Memory, workspace and `loom_op` guidance. They carry the source workflows and the repository binding. The `loom` prompt, `loom://primer` and `loom_activate`, asked for by name, carry the same source workflows. |
+| `loom_code_grep` arguments          | Beyond what every compact coding listing leaves out: `namespace` and `namespaces`, which the binding fills, and `path_prefix` and `langs`, which `path_globs` expresses.                                          |
+
+Every other tool stays callable by name, but a client that calls only listed
+tools cannot save or recall memory on this connection: leave
+`schema_profile=compact` off the URL for that. Lessons linked to source still
+arrive with code results. A mentor hint, and the `OP_NOT_ON_MCP` refusal of an
+op kept off MCP, name an op outside the listing by its dotted name; other
+refusals keep the tool names they spell.
+
+The coding-agent plugins send the `X-Loom-Code-Scope` header for a checkout they
+resolve to a repository, so those connections are bound; the URLs they ship name
+no profile. The lists of a `coding` URL that carries `schema_profile=compact`
+follow that header, so their `cacheScope` is `private` with the header or
+without it.
 
 With the automatic loading policy, compact coding connections load
 `code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
@@ -72,10 +79,8 @@ alone, a named tool outside the code tools is not listed.
 Compact coding connections list grep's main inputs for reading enclosing
 definitions. Use `mode: "files"` to list matching paths. Where `loom_op` is
 listed, use it with `{"op": "help", "query": "code.grep"}` to find controls for
-match excerpts, full bodies, related source, neighbours and deadlines. The
-listing of code tools alone also leaves out `namespace` and `namespaces`, which
-the binding fills, and `path_prefix` and `langs`, which `path_globs` expresses.
-Calls accept the full argument set.
+match excerpts, full bodies, related source, neighbours and deadlines. Calls
+accept the full argument set.
 
 On coding connections, `code.symbol` includes related indexed tests and nearby
 source with the definition. Set `include_examples: false` to omit the tests,
