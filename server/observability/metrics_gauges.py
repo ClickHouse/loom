@@ -280,6 +280,37 @@ def _register_code_lag_gauges(meter: Any, series: Callable[[str], Callable[[Any]
     )
 
 
+def _register_memory_link_gauges(meter: Any, series: Callable[[str], Callable[[Any], Any]]) -> None:
+    """How far each repository's memory links trail its index, and the links by state,
+    from `code_probe`'s series."""
+    meter.create_observable_gauge(
+        name="loom.memory.code_link_lag_commits",
+        callbacks=[series("memory_link_lag_commits")],
+        description="First-parent commits between the commit a repository's memory links "
+        "were last checked at (memory_links_checked) and its indexed head (git_head), per "
+        "repository holding a live link (`loom.namespace` is its code namespace). 0 = "
+        "every link state is the indexed head's. No observation = no live link, or no "
+        "check yet.",
+        unit="1",
+    )
+    meter.create_observable_gauge(
+        name="loom.memory.code_link_lag_seconds",
+        callbacks=[series("memory_link_lag_seconds")],
+        description="Seconds since the oldest indexed commit a repository's memory links "
+        "have not been checked at landed (committer time). 0 = caught up. It grows "
+        "while the link pass fails, is cut or is off as the index moves; this is the "
+        "memory-trails-code alert.",
+        unit="s",
+    )
+    meter.create_observable_gauge(
+        name="loom.memory.code_links",
+        callbacks=[series("memory_code_links")],
+        description="Live memory-to-code links per repository and `state` (fresh, moved, "
+        "changed, unresolved, missing, pending), counted on the code counts clock.",
+        unit="1",
+    )
+
+
 def _cached_series(cache: _TTLCache | None, key: str) -> Callable[[Any], Any]:
     """A gauge callback reading one attributed series out of a TTL cache."""
 
@@ -955,6 +986,7 @@ def register_state_gauges(
         _register_storage_gauges(meter, storage_probe)
         _register_agent_trust_gauges(meter, agent_trusts_probe)
         _register_code_lag_gauges(meter, _series)
+        _register_memory_link_gauges(meter, _series)
         _register_backlog_gauges(meter, reading)
         _register_process_gauges(meter)
         _register_store_gauges(meter, reading)

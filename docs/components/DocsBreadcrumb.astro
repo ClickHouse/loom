@@ -50,12 +50,12 @@ const trail = parents.filter(({ href }) => {
     <ol role="list">
       {trail.map(({ label, href }, index) => (
         <li>
-          {index > 0 && <Icon aria-hidden="true" name="chevron-right" size="xs" />}
+          {index > 0 && <Icon aria-hidden="true" className="rtl:-scale-x-100" name="chevron-right" size="xs" />}
           {href ? <Link href={href} size="sm">{label}</Link> : <Text component="span" color="muted" size="sm">{label}</Text>}
         </li>
       ))}
       <li>
-        <Icon aria-hidden="true" name="chevron-right" size="xs" />
+        <Icon aria-hidden="true" className="rtl:-scale-x-100" name="chevron-right" size="xs" />
         <Text aria-current="page" component="span" size="sm">{current.label}</Text>
       </li>
     </ol>

@@ -727,6 +727,101 @@ async def test_a_rename_alone_moves_the_link(env) -> None:
     assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "moved")
 
 
+async def test_a_file_link_follows_its_cited_lines_and_the_definition_its_memory_names(
+    env,
+) -> None:
+    repo = env
+    path = "src/widgets/dates.py"
+    src = "from http import http_date\n\n\ndef dump(o):\n    return http_date(o)\n"
+    c1 = repo.commit({path: src})
+    await _index(TRUNK, repo, c1, [path])
+    claim = "dates go through `http_date`"
+    cited = await _remember(MEM, "dates", claim, files=[path])
+    named = await _remember(MEM, "delta", "`dump_delta` returns seconds", files=[path])
+    # a qualified name waits as pending beside the file link
+    waited = await _remember(MEM, "millis", "`dates.dump_delta` is in seconds", files=[path])
+    rule = await _remember(MEM, "tiny", "keep this module tiny", files=[path])
+    await _pass()
+    # the file holds no definition any of them names
+    for mid in (cited, named, waited, rule):
+        assert [(link["symbol"], link["state"]) for link in await _links(mid)] == [("", "fresh")]
+
+    # c2: the function a memory names merges; the lines another one cites stay
+    merged = src + "\n\ndef dump_delta(o):\n    return o.total_seconds()\n"
+    c2 = repo.commit({path: merged})
+    await _index(TRUNK, repo, c2, [path])
+    await _pass()
+    for mid in (named, waited):  # the definition's link alone: no file link beside it
+        (link,) = await _links(mid)
+        assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("dump_delta", "fresh")
+    for mid in (cited, rule):
+        assert [(link["symbol"], link["state"]) for link in await _links(mid)] == [("", "fresh")]
+
+    # c3: a cited line and the merged function are edited; the rule cites neither
+    edited = merged.replace("return http_date(o)", "return http_date(o).lower()")
+    c3 = repo.commit({path: edited.replace("o.total_seconds()", "o.total_seconds() * 1000")})
+    await _index(TRUNK, repo, c3, [path])
+    await _pass()
+    for mid in (cited, named, waited):
+        assert [(link["state"], link["changed_since"]) for link in await _links(mid)] == [
+            ("changed", c3)
+        ]
+    assert [link["state"] for link in await _links(rule)] == ["fresh"]
+    assert (await _search(MEM, claim)).get("dates") == "changed"
+
+    # c4: the cited line is back
+    c4 = repo.commit({path: merged.replace("o.total_seconds()", "o.total_seconds() * 1000")})
+    await _index(TRUNK, repo, c4, [path])
+    await _pass()
+    assert [link["state"] for link in await _links(cited)] == ["fresh"]
+
+
+async def test_a_refresh_follows_the_links_to_the_head_it_indexed(env, monkeypatch) -> None:
+    """`code.refresh` with `wait`: the links read the pushed commit when it returns, with no
+    link pass in between and nothing judged; while another pass checks the repository the
+    refresh still answers, and the links wait."""
+    import server.code.app.index.ingest_pass as ingest_pass
+    from server.code.api.models_ingest import CodeRefreshInput
+    from server.code.app.index.pass_budget import CodeIngestResult
+    from server.code.app.ingest import handle_code_refresh
+    from server.memory.app import code_link_judge, code_link_pass, code_link_recheck
+    from server.settings import settings
+
+    repo = env
+    src = "def fetch_rows(conn, n):\n    rows = conn.read(n)\n    return [r for r in rows if r]\n"
+    c1 = repo.commit({"src/widgets/io.py": src})
+    await _index(TRUNK, repo, c1, ["src/widgets/io.py"])
+    await _set_policy(MEM, "revise")
+    mid = await _remember(MEM, "fetch-rows", "`fetch_rows` drops empty rows")
+    await _pass()
+    assert [link["state"] for link in await _links(mid)] == ["fresh"]
+    c2 = repo.commit({"src/widgets/io.py": src.replace("if r]", "if r is not None]")})
+    judged: list[str] = []
+
+    async def ingest(org: str = "", namespace: str = "") -> CodeIngestResult:
+        # the refresh's ingest pass, as `_index` stands in for it everywhere in this file
+        await _index(namespace, repo, c2, ["src/widgets/io.py"])
+        return CodeIngestResult(commits=1, head=c2)
+
+    async def judge(claim: str, before: str, after: str) -> tuple[str, str]:
+        judged.append(claim)
+        return "holds", ""
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(ingest_pass, "run_pass", ingest)
+    monkeypatch.setattr(code_link_judge, "judge_claim", judge)
+    refresh = CodeRefreshInput(org=ORG, namespace=TRUNK, wait=True)
+    async with code_link_pass.repository_locks.lease(code_link_recheck._lock_name(ORG, TRUNK)):
+        out = await handle_code_refresh(refresh)
+    assert (out.triggered, out.head_after) == (True, c2)
+    assert [link["state"] for link in await _links(mid)] == ["fresh"]
+    out = await handle_code_refresh(refresh)
+    assert (out.triggered, out.head_after) == (True, c2)
+    (link,) = await _links(mid)
+    assert (link["state"], link["changed_since"]) == ("changed", c2)
+    assert judged == []  # a `revise` claim waits for the link worker's budget
+
+
 async def test_a_file_named_by_its_basename_resolves_to_its_one_live_path(env) -> None:
     from server.code.app.memory_links import live_paths
 
@@ -1364,6 +1459,150 @@ async def test_validate_counts_only_repositories_the_caller_may_read(env) -> Non
     assert (await stale_for((MEM, TRUNK))).count == 1
     memory_only = await stale_for((MEM,))
     assert (memory_only.count, memory_only.samples) == (0, [])
+
+
+async def test_validate_counts_unlinked_code_memories_by_cause(env) -> None:
+    """A memory that names code and holds no link reads as one whose code is current;
+    the report counts each under why it has none, from the rows the pass stored and the
+    pass's cursors, and tells a caller nothing of a repository they may not read."""
+    import json
+    import time
+
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.code.app import memory_links
+    from server.identity.api.models_namespace_catalog import NamespaceValidateInput
+    from server.identity.app.namespace_validate import handle_namespace_validate
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app.write import handle_memory_set
+    from server.operations.base import Role
+
+    repo = env
+    c1 = repo.commit({"src/reader.py": _READER})
+    await _index(TRUNK, repo, c1, ["src/reader.py"])
+    await _remember(MEM, "linked", "`fetch_page` keeps the url")
+    await _remember(MEM, "unresolved", "`no_such_helper_anywhere` is slow")
+    await _remember(MEM, "branch-file", "The exporter lives here.", files=["src/exporter.py"])
+    await _remember(MEM, "unmerged", "`Planner.plan_route` returns the stops")
+    await handle_memory_set(  # no `repo:` tag, and not a code namespace
+        MemorySetInput(
+            org=ORG,
+            namespace=MEM,
+            agent="claude-code",
+            memory_key="untagged",
+            value="`fetch_page` keeps the url",
+        )
+    )
+    await _pass()
+    was = [await memory_links.link_cursor(name) for name in ("queue", "backfill")]
+    # the worker's own cursors, as its pass over those writes leaves them
+    read_to = [time.time_ns() // 1000, 0, "", "", "", "", "", ""]
+    await memory_links.set_link_cursor("queue", json.dumps(read_to))
+    await memory_links.set_link_cursor("backfill", _BACKFILL_DONE)
+    try:
+        await _remember(MEM, "unread", "`fetch_page` retries twice")  # after that pass
+
+        async def unlinked(namespaces: tuple[str, ...]) -> dict[str, Any]:
+            set_current_auth(
+                AuthInfo(
+                    subject="it@example.com",
+                    org=ORG,
+                    namespaces=namespaces,
+                    roles=(Role.VIEWER,),
+                    is_service_account=False,
+                )
+            )
+            try:
+                report = await handle_namespace_validate(
+                    NamespaceValidateInput(org=ORG, namespace=MEM, sample_limit=10)
+                )
+            finally:
+                set_current_auth(None)
+            assert not [line for line in report.skipped if line.startswith("code_unlinked")]
+            return {
+                f.check.removeprefix("code_unlinked_"): f
+                for f in report.findings
+                if f.check.startswith("code_unlinked_")
+            }
+
+        found = await unlinked((MEM, TRUNK))
+        assert {cause: [s["memory_key"] for s in f.samples] for cause, f in found.items()} == {
+            "no_repository": ["untagged"],
+            "file_not_indexed": ["branch-file"],
+            "name_unresolved": ["unresolved"],
+            "pending": ["unread", "unmerged"],  # the last written first
+        }
+        assert [s["waits_for"] for s in found["pending"].samples] == ["link_pass", "trunk"]
+        assert all(f.severity == "info" and f.count == len(f.samples) for f in found.values())
+        # without the repository, every one of them names none, the linked one too
+        memory_only = await unlinked((MEM,))
+        assert {cause: f.count for cause, f in memory_only.items()} == {
+            "no_repository": 6,
+            "file_not_indexed": 0,
+            "name_unresolved": 0,
+            "pending": 0,
+        }
+    finally:
+        for name, value in zip(("queue", "backfill"), was, strict=True):
+            await memory_links.set_link_cursor(name, value)
+
+
+async def test_links_trail_an_indexed_commit_until_the_next_pass(env, monkeypatch) -> None:
+    """With no pass since a commit was indexed, the repository's links are one commit
+    behind its index: the lag series read so from the stored watermarks and the mirror,
+    the health snapshot counts the repository once that has lasted, and one pass clears
+    both."""
+    from server.core.ch import get_client
+    from server.memory.app import code_link_lag
+    from server.observability import otel_probes
+    from server.settings import settings
+
+    repo = env
+    src = "def lagging_value():\n    return 1\n"
+    c1 = repo.commit({"src/lag.py": src})
+    await _index(TRUNK, repo, c1, ["src/lag.py"])
+    mid = await _remember(MEM, "lag", "`lagging_value` returns one")
+    await _pass()
+
+    async def lag() -> dict[str, float]:
+        rows = await get_client().query_all(otel_probes._CODE_STATE_SQL)
+        series = otel_probes._code_lag_series(
+            [(r["org"], r["namespace"], r["k"], r["v"], r["s"]) for r in rows],
+            tip_of=lambda git_dir, branch: "",
+        )
+        return {
+            name: value
+            for name, points in series.items()
+            for value, attrs in points
+            if (attrs["loom.org"], attrs["loom.namespace"]) == (ORG, TRUNK)
+        }
+
+    current = {"memory_link_lag_commits": 0.0, "memory_link_lag_seconds": 0.0}
+    assert await lag() == current
+    # a link pass may take this long: past it, a repository still behind is a warning
+    monkeypatch.setattr(settings, "memory_code_links_enabled", True)
+    monkeypatch.setattr(settings, "memory_code_links_interval_seconds", 0)
+    monkeypatch.setattr(settings, "memory_code_links_max_pass_seconds", 0.01)
+    code_link_lag.reset_for_tests()
+    try:
+        await code_link_lag.refresh()
+        assert code_link_lag.behind() == 0
+
+        c2 = repo.commit({"src/lag.py": src.replace("1", "2")})
+        await _index(TRUNK, repo, c2, ["src/lag.py"])  # indexed, and no pass since
+        behind = await lag()
+        assert behind["memory_link_lag_commits"] == 1.0 and behind["memory_link_lag_seconds"] >= 0
+        await code_link_lag.refresh()
+        await asyncio.sleep(0.05)
+        assert code_link_lag.behind() == 1
+
+        await _pass()
+        assert await lag() == current
+        await code_link_lag.refresh()
+        assert code_link_lag.behind() == 0
+        assert [link["state"] for link in await _links(mid)] == ["changed"]
+    finally:
+        code_link_lag.reset_for_tests()
 
 
 async def test_stale_links_count_and_sample_each_memory_once(env) -> None:
