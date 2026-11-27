@@ -487,20 +487,24 @@ async def pending(
     *,
     days: int,
     after: tuple[str, ...] | None,
+    before: int,
     limit: int,
     ch: _CHClient | None = None,
 ) -> tuple[list[PendingLink], tuple[str, ...] | None]:
-    """A page of pending names and pre-index markers in link key order."""
+    """Read pending names and pre-index markers from the current scan cycle."""
     since = f"AND {_past(_KEY_COLUMNS, _KEY_TYPES)} " if after else ""
     rows = _links(
         await (ch or _default_client()).query_all(
             f"SELECT *, checked_at < now() - INTERVAL {{days:UInt32}} DAY AS expired {_LIVE} "
             "AND org = {org:String} AND code_namespace = {cns:String} AND state = 'pending' "
-            f"{since}ORDER BY {_KEY} LIMIT {{lim:UInt32}}",
+            "AND version < {before:UInt64} "
+            f"{since}ORDER BY {_KEY} LIMIT {{lim:UInt32}} "
+            "SETTINGS optimize_move_to_prewhere_if_final = 0",
             params={
                 "org": org,
                 "cns": code_namespace,
                 "days": int(days),
+                "before": before,
                 "lim": int(limit),
                 **_past_params(after or ()),
             },

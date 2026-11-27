@@ -123,11 +123,15 @@ async def test_reads_are_scoped_as_their_callers_rely_on() -> None:
             ["changed"],
         )
     after = ("o", "c", "", "pkg.Reader", "n", "e1a292a3-4ef7-43c9-8153-9bed78a73d35")
-    assert await store.pending("o", "c", days=14, after=after, limit=2, ch=ch) == ([], None)
+    assert await store.pending("o", "c", days=14, after=after, before=100, limit=2, ch=ch) == (
+        [],
+        None,
+    )
     sql, params = ch.sql[-1]
-    assert "memory_id > {a5:UUID}" in sql
+    assert "memory_id > {a5:UUID}" in sql and "version < {before:UInt64}" in sql
     assert "ORDER BY org, code_namespace, path, qualified_name, namespace, memory_id" in sql
     assert params["days"] == 14 and params["lim"] == 2 and params["a5"] == after[-1]
+    assert params["before"] == 100
     assert await store.policy_due("o", "c", "v", limit=50, ch=ch) == ["m"]
     assert ch.sql[-1][1]["lim"] == 50
     assert await store.code_namespaces(ch=ch) == [("o", "c")]

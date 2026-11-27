@@ -9,6 +9,8 @@ import itertools
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cache
+from time import time_ns
+from typing import Any
 
 from server.code.app import memory_links as code
 from server.code.domain.anchor import (
@@ -34,6 +36,7 @@ from server.memory.app.code_link_reads import (
     current,
     memory_inputs,
 )
+from server.memory.domain.code_link_keys import pending_cursor_prefix
 from server.memory.store import code_links as store
 from server.memory.store.code_links import Former, LinkRow, PendingLink
 from server.memory.store.key_write_lock import LeaseBusy
@@ -570,20 +573,26 @@ async def _elsewhere(org: str, cns: str, lost: dict[str, str]) -> dict[str, list
 async def _recheck_pending(
     org: str, cns: str, head: str, files: link_pass.RepoReads, result: link_pass.PassResult
 ) -> None:
-    cursor = link_pass.Cursor[list[str]](f"pending/{org}/{cns}", [])
-    after = tuple(await cursor.read()) or None
-    rows, nxt = await store.pending(
-        org,
-        cns,
-        days=int(settings.memory_code_links_pending_days),
-        after=after,
-        limit=int(settings.memory_code_links_batch),
-    )
-    moves = await _resolve_pending(org, cns, head, files, result, rows)
-    await _write_moves(await _current_moves(org, moves), head)
-    result.rechecked += len(moves)
-    if nxt != after:
-        await cursor.write(list(nxt or ()))
+    cursor = link_pass.Cursor[dict[str, Any]](f"{pending_cursor_prefix(org)}{cns}", {})
+    # Erasure clears the cursor under the same lease. Keep the page read and
+    # publication inside the lease so a pre-erasure key cannot be written back.
+    async with links.queue_lease():
+        state = await cursor.read()
+        after = tuple(state.get("after") or ()) or None
+        before = int(state.get("before") or time_ns())
+        rows, nxt = await store.pending(
+            org,
+            cns,
+            days=int(settings.memory_code_links_pending_days),
+            after=after,
+            before=before,
+            limit=int(settings.memory_code_links_batch),
+        )
+        moves = await _resolve_pending(org, cns, head, files, result, rows)
+        await _write_moves(await _current_moves(org, moves), head)
+        result.rechecked += len(moves)
+        if nxt != after:
+            await cursor.write({"before": before, "after": list(nxt)} if nxt else {})
 
 
 def _pending_definitions(

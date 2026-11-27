@@ -43,7 +43,7 @@ from server.erasure.store.scope_reads import (
 )
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OPEN_JOB, OWED_SHAS
-from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
+from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, pending_cursor_prefix
 from server.settings import settings
 
 
@@ -763,6 +763,14 @@ async def _scrub_link_cursors(
             "SETTINGS lightweight_deletes_sync = 2",
             params={"ns": _LINK_CURSOR_NS, "key": r["state_key"], "v": version},
         )
+
+    # Pending scan positions are derived from link keys. Reset every scan of
+    # this org so even an old physical version cannot keep an erased key.
+    await ch.execute(
+        f"DELETE FROM {_CURSORS} WHERE org = '' AND namespace = {{ns:String}} "
+        "AND startsWith(state_key, {prefix:String}) SETTINGS lightweight_deletes_sync = 2",
+        params={"ns": _LINK_CURSOR_NS, "prefix": pending_cursor_prefix(org)},
+    )
 
 
 async def delete_code_links_by_namespace(

@@ -396,31 +396,47 @@ async def test_a_pending_name_is_retried_until_the_pending_days_pass(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_the_pending_scan_repeats_a_failed_page_and_wraps_after_the_last(monkeypatch) -> None:
-    limit = 7
-    monkeypatch.setattr(settings, "memory_code_links_batch", limit)
-    reads = []
-    saved = {}
-    first = ("o", "code-a", "", "pkg.First", "memory", "first-id")
-    events = []
+async def test_the_pending_scan_retries_writes_and_wraps_despite_new_links(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "memory_code_links_batch", 1)
+    clock = iter((100, 101, 103))
+    monkeypatch.setattr(code_link_recheck, "time_ns", clock.__next__)
+    keys = [(("o", "code-a", "", "pkg.First", "memory", "first-id"), 99)]
+    first, _ = keys[0]
+    earlier = ("o", "code-a", "", "pkg.Before", "memory", "before-id")
+    later = ("o", "code-a", "", "pkg.Later", "memory", "later-id")
+    reads, events, cursors = [], [], {}
+    leased = False
+
+    @contextlib.asynccontextmanager
+    async def lease():
+        nonlocal leased
+        assert not leased
+        leased = True
+        try:
+            yield
+        finally:
+            leased = False
 
     async def load_cursor(name):
-        return saved.get(name, "")
+        assert leased
+        return cursors.get(name, "")
 
     async def write_cursor(name, value):
-        saved[name] = value
+        assert leased
+        cursors[name] = value
         events.append(("cursor", json.loads(value)))
 
-    async def pending(org, cns, *, days, after=None, limit=None):
-        assert (org, cns) == ("o", "code-a")
-        assert limit == 7
-        reads.append(after)
-        return [], first if not after else None
+    async def pending(org, cns, *, days, after, before, limit):
+        assert leased and (org, cns, limit) == ("o", "code-a", 1)
+        reads.append((after, before))
+        eligible = sorted(key for key, version in keys if key > (after or ()) and version < before)
+        return [], eligible[0] if eligible else None
 
     async def indexed(*_args):
         return "head"
 
     async def publish(*_args):
+        assert leased
         events.append(("publish", None))
         if len(reads) == 1:
             raise RuntimeError("write unavailable")
@@ -435,6 +451,7 @@ async def test_the_pending_scan_repeats_a_failed_page_and_wraps_after_the_last(m
         ("checked_head", indexed),
     ):
         monkeypatch.setattr(code_links.code, name, callback)
+    monkeypatch.setattr(code_links, "queue_lease", lease)
     monkeypatch.setattr(code_links.store, "pending", pending)
     monkeypatch.setattr(code_links.store, "insert", nothing)
     monkeypatch.setattr(code_link_recheck, "_write_moves", publish)
@@ -446,17 +463,53 @@ async def test_the_pending_scan_repeats_a_failed_page_and_wraps_after_the_last(m
     budget = code_link_pass.Budget(judgements=0)
     with pytest.raises(RuntimeError, match="write unavailable"):
         await code_link_recheck._recheck_repository("o", "code-a", budget, result)
-    assert not saved
+    assert not cursors
+    await code_link_recheck._recheck_repository("o", "code-a", budget, result)
+    keys.extend([(earlier, 102), (later, 102)])
     await code_link_recheck._recheck_repository("o", "code-a", budget, result)
     await code_link_recheck._recheck_repository("o", "code-a", budget, result)
-    assert reads == [None, None, first]
+    assert reads == [(None, 100), (None, 101), (first, 101), (None, 103)]
     assert events == [
         ("publish", None),
         ("publish", None),
-        ("cursor", list(first)),
+        ("cursor", {"before": 101, "after": list(first)}),
         ("publish", None),
-        ("cursor", []),
+        ("cursor", {}),
+        ("publish", None),
+        ("cursor", {"before": 103, "after": list(earlier)}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_relinking_a_preindex_marker_plans_its_names_off_the_loop(monkeypatch) -> None:
+    from threading import get_ident
+
+    loop_thread = get_ident()
+    observed = []
+    plan = code_links._plan
+
+    def checked_plan(*args, **kwargs):
+        observed.append(get_ident())
+        return plan(*args, **kwargs)
+
+    async def indexed(*_args):
+        return "head"
+
+    async def candidates(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(code_links.code, "indexed_head", indexed)
+    monkeypatch.setattr(code_links.code, "candidates", candidates)
+    monkeypatch.setattr(code_links, "_plan", checked_plan)
+    memory = _row("m1", value="`Reader.not_defined`", inputs="input")
+    rows, gone, unparsed = await code_links.link_each(
+        "o", "code-a", [memory], {}, code_link_pass.RepoReads("o", "code-a")
+    )
+    assert observed and all(thread != loop_thread for thread in observed)
+    assert [(row["qualified_name"], row["state"]) for row in rows] == [
+        ("Reader.not_defined", "pending")
+    ]
+    assert gone == unparsed == []
 
 
 def test_the_worker_row_and_its_table() -> None:
