@@ -33,6 +33,8 @@ test("counts distinct company domains in the selected directory", () => {
   assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: null }, 30).companyCount, null);
   assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: null }, 90).companyCount, 1);
   assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: { 30: [] } }, 30).companyCount, 0);
+  const personalDomains = { 30: ["web.de", "t-online.de", "magenta.de"] };
+  assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: personalDomains }, 30).companyCount, 0);
 });
 
 test("allowlists shareable ranges, grains, and thresholds", () => {
