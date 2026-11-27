@@ -724,6 +724,33 @@ class SymbolsMixin(CodeRepoBase):
             out.setdefault(str(r["qualified_name"]), []).append(str(r["symbol_id"]))
         return out
 
+    async def symbols_named(
+        self, org: str, ns: str, names: list[str], *, per_name: int
+    ) -> list[dict[str, Any]]:
+        """Live `(name, qualified_name, path)` rows whose bare name is one of `names`, at
+        most `per_name` name-table keys per name: a name with that many says nothing
+        about where it is defined. Keys come from the name-keyed side table (a point
+        read per name) and the live rows from the full key, as in `symbols_by_name`."""
+        if not names:
+            return []
+        rows: list[dict[str, Any]] = await self._ch.query_all(
+            """
+            SELECT name, qualified_name, path
+            FROM loom.code_symbols FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND (tier, qualified_name, symbol_id) IN (
+                  SELECT tier, qualified_name, symbol_id
+                  FROM loom.code_symbol_names
+                  WHERE org = {org:String} AND namespace = {ns:String}
+                    AND name IN {names:Array(String)}
+                  LIMIT {per_name:UInt32} BY name
+              )
+              AND tombstoned_at IS NULL
+            """,
+            {"org": org, "ns": ns, "names": names, "per_name": per_name},
+        )
+        return rows
+
     async def symbols_fuzzy(
         self,
         org: str,

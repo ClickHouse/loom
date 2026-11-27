@@ -132,6 +132,7 @@ class _SearchState:
     card_rows: list[dict[str, Any]] = dc_field(default_factory=list)
     concept_rows: list[dict[str, Any]] = dc_field(default_factory=list)
     hyde_rows: list[dict[str, Any]] = dc_field(default_factory=list)
+    definition_rows: list[dict[str, Any]] = dc_field(default_factory=list)
     # the ranking phases' parts of score_explanation
     fan_in_explain: str = ""
     fusion_signals: bool = False

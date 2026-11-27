@@ -63,6 +63,11 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
     await repo.vector_search_cards(
         ORG, NS, MODEL, SMALL_VEC, path_prefix=prefix, pool=5, skip_tests=True
     )
+    # The definition leg's reads: the named symbols, then the chunks that define them
+    await repo.symbols_named(ORG, NS, ["bulk_update", "combine"], per_name=32)
+    await repo.definition_chunks(
+        ORG, NS, MODEL, [("src/a.py", "pkg.a::Query::combine")], scope=scope
+    )
     await repo.symbol_names_for_paths(ORG, NS, ["src/a.py", "src/b.py"])
     await repo.scope_file_count(ORG, NS, MODEL, scope or _scope("globs"), path_prefix=prefix)
     regex = c["scope"] == "regex"

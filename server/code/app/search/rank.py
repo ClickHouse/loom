@@ -54,7 +54,9 @@ async def _rank_units(
     # Provenance BEFORE anchoring and the fusion priors reorder anything:
     # which leg found each chunk and where that leg ranked it.
     prov = leg_provenance(lexical_rows, vector_rows)
-    only = _extra_via_labels(prov, history_rows, card_rows, concept_rows, hyde_rows)
+    only = _extra_via_labels(
+        prov, history_rows, card_rows, concept_rows, hyde_rows, st.definition_rows
+    )
     ranked = []
     for row, score in fused:
         u = unit_from_chunk(row, score=score)

@@ -93,6 +93,49 @@ class SearchMixin(CodeRepoBase):
         )
         return rows
 
+    async def definition_chunks(
+        self,
+        org: str,
+        ns: str,
+        model: str,
+        definitions: list[tuple[str, str]],
+        *,
+        scope: SearchScope | None = None,
+    ) -> list[dict[str, Any]]:
+        """The chunk each `(path, qualified name)` definition starts in, in the shape
+        the fusion consumes. A chunk's `scope` is the qualified name of the function or
+        class it holds, the key the symbol table shares with it. A keyed read of the
+        definitions' files; `scope` adds a constrained search's predicates, so a
+        definition outside them is not returned. The two IN lists admit a name defined
+        in another listed file; the caller keeps the pairs it asked for."""
+        if not definitions:
+            return []
+        scope_sql, scope_params = _scope_sql(scope)
+        rows: list[dict[str, Any]] = await self._ch.query_all(
+            f"""
+            SELECT chunk_id, path, scope, kind, start_line, end_line,
+                   content, symbol_ids, context_description
+            FROM loom.code_chunks FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND embedding_model = {{model:String}} AND tombstoned_at IS NULL
+              AND path IN {{paths:Array(String)}}
+              AND scope IN {{names:Array(String)}}
+              AND kind IN ('function', 'class_skeleton')
+              {scope_sql}
+            ORDER BY path, scope, start_line
+            LIMIT 1 BY path, scope
+            """,
+            {
+                "org": org,
+                "ns": ns,
+                "model": model,
+                "paths": sorted({path for path, _ in definitions}),
+                "names": sorted({name for _, name in definitions}),
+                **scope_params,
+            },
+        )
+        return rows
+
     async def vector_search_cards(
         self,
         org: str,
