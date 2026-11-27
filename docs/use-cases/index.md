@@ -1,3 +1,7 @@
+---
+description: "Find Loom guides for agent memory, document search, code intelligence, handoffs between agents, and agent observability."
+---
+
 # Use cases
 
 Each page answers one question people and agents ask when they look for a tool: what Loom
