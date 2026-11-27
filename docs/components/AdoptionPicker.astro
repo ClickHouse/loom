@@ -1,0 +1,53 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import { InputElement, InputWrapper } from "@clickhouse/click-ui/InputWrapper";
+import AdoptionState from "./AdoptionState.astro";
+
+interface Props {
+  path: string;
+  anchor: string;
+  name: string;
+  label: string;
+  value: string;
+  state: Record<string, string | number>;
+  options: { value: string; label: string; group?: string }[];
+}
+
+const { path, anchor, name, label, value, state, options } = Astro.props;
+const groups = Map.groupBy(options, (option) => option.group);
+---
+
+<form method="post" action={`${path}#${anchor}`} class="metric-picker" data-adoption-picker>
+  <AdoptionState state={state} omit={[name]} />
+  <InputWrapper id={`adoption-pick-${name}`} {label} orientation="vertical">
+    <InputElement as="select" id={`adoption-pick-${name}`} {name}>
+      {Array.from(groups, ([group, entries]) => group ? (
+        <optgroup label={group}>
+          {entries.map((entry) => <option value={entry.value} selected={entry.value === value}>{entry.label}</option>)}
+        </optgroup>
+      ) : entries.map((entry) => (
+        <option value={entry.value} selected={entry.value === value}>{entry.label}</option>
+      )))}
+    </InputElement>
+  </InputWrapper>
+  <Button type="secondary" htmlType="submit" label="Apply" aria-label={`Apply ${label.toLowerCase()}`} />
+</form>
+
+<script>
+  document.querySelectorAll<HTMLFormElement>("[data-adoption-picker]").forEach((form) => {
+    const select = form.querySelector("select");
+    if (!select) return;
+    select.addEventListener("change", () => form.requestSubmit());
+    form.dataset.ready = "";
+  });
+</script>
+
+<style>
+  .metric-picker { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem; min-inline-size: 0; }
+  .metric-picker[data-ready] :global(button) { display: none; }
+  .metric-picker :global(select) {
+    max-inline-size: 100%;
+    min-inline-size: min(14rem, 100%);
+    min-block-size: 2.75rem;
+  }
+</style>

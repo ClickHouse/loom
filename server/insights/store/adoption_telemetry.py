@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -17,46 +17,55 @@ ts >= {{start:DateTime('UTC')}} AND ts < {{end:DateTime('UTC')}}
   AND mirror_marked = 0 AND {not_mirror_sql()}
 """
 
+# The transport writes the authenticated subject independently of the request's user_id.
+_IDENTIFIED_ACCOUNT = "org NOT IN ('', '-', '*') AND subject NOT IN ('', '-', '*')"
+# The ledger stamps each process as hostname:pid and uses unknown when no host is available.
+_KNOWN_PROCESS = "instance NOT IN ('', '-') AND NOT startsWith(instance, 'unknown:')"
+_DAILY_COUNTS = ("daily_successful_requests", "active_accounts", "serving_processes")
+
 ADOPTION_SQL = f"""
+WITH
+    ts >= {{window_start:DateTime('UTC')}} AS in_window,
+    status_class = 'ok' AND in_window AS window_success,
+    status_class = 'ok' AND {{complete_day:UInt8}} = 1 AS day_success
 SELECT
-    2::UInt8 AS schema_version,
     {{installation_id:String}} AS installation_id,
     {{loom_version:String}} AS loom_version,
     version() AS clickhouse_version,
     (SELECT count() FROM loom.namespaces FINAL
      WHERE active = 1 AND {not_mirror_sql()}) AS total_namespaces,
-    count() AS requests,
-    countIf(status_class = 'ok') AS successful_requests,
-    countIf(status_class = 'server') AS server_errors,
-    uniqIf(org, status_class = 'ok' AND org NOT IN ('', '-')) AS active_orgs,
-    uniqIf(tuple(org, namespace), status_class = 'ok' AND namespace NOT IN ('', '-'))
+    countIf(in_window) AS requests,
+    countIf(window_success) AS successful_requests,
+    countIf(in_window AND status_class = 'server') AS server_errors,
+    uniqIf(org, window_success AND org NOT IN ('', '-')) AS active_orgs,
+    uniqIf(tuple(org, namespace), window_success AND namespace NOT IN ('', '-'))
         AS active_namespaces,
-    uniqIf(tuple(org, agent), status_class = 'ok' AND agent NOT IN ('', '-')) AS active_agents,
-    uniqIf(tuple(org, namespace, session_id), status_class = 'ok' AND session_id NOT IN ('', '-'))
+    uniqIf(tuple(org, agent), window_success AND agent NOT IN ('', '-')) AS active_agents,
+    uniqIf(tuple(org, namespace, session_id), window_success AND session_id NOT IN ('', '-'))
         AS active_sessions,
-    countIf(status_class = 'ok' AND startsWith(operation, 'memory.')) AS memory_requests,
-    countIf(status_class = 'ok' AND startsWith(operation, 'code.')) AS code_requests,
-    countIf(status_class = 'ok' AND startsWith(operation, 'knowledge.')) AS knowledge_requests,
-    countIf(status_class = 'ok' AND startsWith(operation, 'conversation.'))
+    countIf(window_success AND startsWith(operation, 'memory.')) AS memory_requests,
+    countIf(window_success AND startsWith(operation, 'code.')) AS code_requests,
+    countIf(window_success AND startsWith(operation, 'knowledge.')) AS knowledge_requests,
+    countIf(window_success AND startsWith(operation, 'conversation.'))
         AS conversation_requests,
-    countIf(status_class = 'ok' AND startsWith(operation, 'tracker.')) AS tracker_requests,
-    countIf(status_class = 'ok' AND startsWith(operation, 'task.')) AS task_requests,
-    countIf(status_class = 'ok' AND transport = 'mcp') AS mcp_requests,
-    countIf(status_class = 'ok' AND transport = 'http') AS http_requests,
-    sum(llm_calls) AS llm_calls,
-    sum(input_tokens) AS input_tokens,
-    sum(output_tokens) AS output_tokens,
-    sum(embedding_tokens) AS embedding_tokens
+    countIf(window_success AND startsWith(operation, 'tracker.')) AS tracker_requests,
+    countIf(window_success AND startsWith(operation, 'task.')) AS task_requests,
+    countIf(window_success AND transport = 'mcp') AS mcp_requests,
+    countIf(window_success AND transport = 'http') AS http_requests,
+    sumIf(llm_calls, in_window) AS llm_calls,
+    sumIf(input_tokens, in_window) AS input_tokens,
+    sumIf(output_tokens, in_window) AS output_tokens,
+    sumIf(embedding_tokens, in_window) AS embedding_tokens,
+    countIf(day_success) AS daily_successful_requests,
+    uniqExactIf(tuple(org, subject), day_success AND {_IDENTIFIED_ACCOUNT}) AS active_accounts,
+    if(daily_successful_requests = 0, 0,
+       nullIf(uniqExactIf(instance, day_success AND {_KNOWN_PROCESS}), 0)) AS serving_processes
 FROM loom.agent_events
 WHERE {_REQUEST_SCOPE}
 SETTINGS optimize_move_to_prewhere_if_final = 0
 """
 
-# Attribute requests to the contact domain of their namespace.
-DOMAINS_SQL = f"""
-SELECT contacts.domain, uniqExact(contacts.email) AS user_count,
-       sum(activity.requests) AS successful_requests
-FROM (
+_CONTACTS_SQL = f"""
     SELECT
         org, namespace,
         lowerUTF8(trimBoth(contact_email)) AS email,
@@ -65,19 +74,66 @@ FROM (
     WHERE active = 1 AND classification = 'standard' AND {not_mirror_sql()}
       AND (org, namespace) NOT IN {{restricted:Array(Tuple(String, String))}}
       AND contact_email != ''
-) AS contacts
+"""
+
+_VALID_CONTACT_DOMAIN = """
+length(contacts.domain) <= 253
+  AND match(contacts.domain, concat('^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?[.])+',
+                           '(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)$'))
+"""
+
+# Attribute requests to the contact domain of their namespace.
+_DOMAINS_SQL = f"""
+SELECT contacts.domain, uniqExact(contacts.email) AS user_count,
+       sum(activity.requests) AS successful_requests
+FROM ({_CONTACTS_SQL}) AS contacts
 LEFT JOIN (
     SELECT org, namespace, count() AS requests
     FROM loom.agent_events
     WHERE {_REQUEST_SCOPE} AND status_class = 'ok'
     GROUP BY org, namespace
 ) AS activity USING (org, namespace)
-WHERE length(contacts.domain) <= 253
-  AND match(contacts.domain, concat('^(?:[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?[.])+',
-                           '(?:[a-z]{{2,63}}|xn--[a-z0-9](?:[a-z0-9-]{{0,57}}[a-z0-9])?)$'))
+WHERE {_VALID_CONTACT_DOMAIN}
 GROUP BY contacts.domain
+"""
+
+DOMAINS_SQL = f"""
+{_DOMAINS_SQL}
 ORDER BY successful_requests DESC, user_count DESC, contacts.domain
 LIMIT 30
+SETTINGS optimize_move_to_prewhere_if_final = 0
+"""
+
+DAILY_DOMAINS_SQL = f"""
+{_DOMAINS_SQL}
+HAVING successful_requests > 0
+ORDER BY contacts.domain
+SETTINGS optimize_move_to_prewhere_if_final = 0
+"""
+
+DAILY_DOMAIN_ACTIVITY_SQL = f"""
+SELECT
+    contacts.domain,
+    uniqExact(contacts.email) AS user_count,
+    uniqExactIf(tuple(contacts.org, activity.subject), activity.identified) AS active_accounts,
+    sum(activity.requests) AS successful_requests,
+    if(successful_requests = 0, 0,
+       nullIf(uniqExactIf(activity.instance, activity.known_process), 0)) AS serving_processes
+FROM ({_CONTACTS_SQL}) AS contacts
+LEFT JOIN (
+    SELECT
+        org, namespace, subject, instance,
+        {_IDENTIFIED_ACCOUNT} AS identified,
+        {_KNOWN_PROCESS} AS known_process,
+        count() AS requests
+    FROM loom.agent_events
+    WHERE {_REQUEST_SCOPE} AND status_class = 'ok'
+    GROUP BY org, namespace, subject, instance
+) AS activity USING (org, namespace)
+WHERE {_VALID_CONTACT_DOMAIN}
+GROUP BY contacts.domain
+HAVING successful_requests > 0
+ORDER BY contacts.domain
 SETTINGS optimize_move_to_prewhere_if_final = 0
 """
 
@@ -88,27 +144,56 @@ async def window_report(
     installation_id: UUID,
     *,
     restricted: set[tuple[str, str]] | None,
+    share_domain_activity: bool = False,
     ch: CHClient,
 ) -> dict[str, Any]:
+    complete_day = end.hour == 0
+    activity_params = {"start": end - timedelta(days=1) if complete_day else start, "end": end}
     params = {
-        "start": start,
-        "end": end,
+        **activity_params,
+        "window_start": start,
+        "complete_day": int(complete_day),
         "installation_id": str(installation_id),
         "loom_version": __version__,
     }
+    domains: list[dict[str, Any]] = []
+    domain_activity: list[dict[str, Any]] = []
     with sequential_reads():
-        domains = (
-            await ch.query_all(
-                DOMAINS_SQL, {"start": start, "end": end, "restricted": sorted(restricted)}
-            )
-            if restricted is not None
-            else []
-        )
+        if restricted is not None:
+            domain_params = {**activity_params, "restricted": sorted(restricted)}
+            if complete_day and share_domain_activity:
+                activity = await ch.query_all(DAILY_DOMAIN_ACTIVITY_SQL, domain_params)
+                domains = [
+                    {name: row[name] for name in ("domain", "user_count", "successful_requests")}
+                    for row in activity
+                ]
+                domain_activity = [
+                    {
+                        name: row[name]
+                        for name in (
+                            "domain",
+                            "active_accounts",
+                            "successful_requests",
+                            "serving_processes",
+                        )
+                    }
+                    for row in activity
+                ]
+            else:
+                domains = await ch.query_all(
+                    DAILY_DOMAINS_SQL if complete_day else DOMAINS_SQL, domain_params
+                )
         # Read totals last so late ledger rows can only increase the total.
         report = await ch.query_one(ADOPTION_SQL, params)
     if report is None:
         raise RuntimeError("adoption aggregation returned no row")
+    if complete_day:
+        report["domain_activity"] = domain_activity
+    else:
+        for name in _DAILY_COUNTS:
+            del report[name]
     return {
+        "schema_version": 3 if complete_day else 2,
         **report,
         "day": start.date().isoformat(),
         "window_start": start.isoformat(),

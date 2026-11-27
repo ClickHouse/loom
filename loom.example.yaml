@@ -5031,6 +5031,10 @@ settings:
   # them. [restart]
   # adoption_telemetry_share_domains: true
 
+  # Share daily account, successful request and serving process counts for contact
+  # domains. Requires domain sharing. [restart]
+  # adoption_telemetry_share_domain_activity: false
+
   # Seconds between adoption checks and retries. A report covers 12 hours. [restart]
   # adoption_telemetry_interval_seconds: 3600
 

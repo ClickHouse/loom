@@ -39,28 +39,42 @@ and noon UTC. The worker allows an hour for ledger rows to arrive before reporti
 When it acquires the worker lease, it attempts delivery immediately if the latest
 completed window has no acknowledgement. It reports idle windows and retries a failed
 delivery while that window is still the most recent completed one.
+On an upgrade, a window already acknowledged under version 2 keeps its existing
+report. Daily measurements begin with the next version 3 report.
 
 ### What is sent
 
-| Columns                                                                                                                | Meaning                                                                                                                                                                                 |
-| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema_version`, `installation_id`, `day`                                                                             | Report format version, installation UUID and UTC usage date                                                                                                                             |
-| `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                           |
-| `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                            |
-| `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                  |
-| `user_domains`                                                                                                         | Up to 30 namespace contact domains with distinct contact counts and successful requests. Domain sharing is enabled by default. Restricted namespaces and private mirrors are excluded.  |
-| `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                             |
-| `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace. |
-| `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                 |
-| `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                        |
-| `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                |
+| Columns                                                                                                                | Meaning                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`, `installation_id`, `day`                                                                             | Report format version, installation UUID and UTC usage date                                                                                                                                                                              |
+| `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                                                                            |
+| `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                                                                             |
+| `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                                                                   |
+| `user_domains`                                                                                                         | Contact domains from standard namespaces with distinct contact counts and successful requests. The noon UTC report includes up to 30 domains. The midnight report includes domains with successful requests across the complete UTC day. |
+| `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                                                                              |
+| `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace.                                                  |
+| `daily_successful_requests`                                                                                            | Total eligible successful requests in the complete UTC day. Included in the second report of that day.                                                                                                                                   |
+| `active_accounts`                                                                                                      | Distinct authenticated accounts per organization with at least one eligible successful request in the complete UTC day. Included in the second report of that day.                                                                       |
+| `serving_processes`                                                                                                    | Distinct known server processes with at least one eligible successful request in the complete UTC day. Included in the second report of that day.                                                                                        |
+| `domain_activity`                                                                                                      | Daily active accounts, successful requests, and serving processes in standard namespaces grouped by shared contact domain. Included when deployments opt in to domain activity sharing.                                                  |
+| `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                                                                  |
+| `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                                                                         |
+| `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                                                                 |
 
 The report excludes private mirror events, benchmark traffic, background traffic, and
 unclassified routes. It contains no full email addresses, names, operation strings,
-actor identifiers, customer content, or credentials. Email domains come from contact
+actor identifiers, process identifiers, customer content, or credentials. Email domains come from contact
 addresses on active standard namespaces, including self-reported addresses from password
-signup. Verified companies enroll separately. A reporting installation with zero
-successful requests is idle for that window. A missing report leaves its activity unknown.
+signup. Active accounts include service accounts. Loom counts each authenticated identity
+once per organization and installation per UTC day. The public totals add these counts
+across installations without deduplicating accounts shared by multiple installations.
+Serving process counts include web workers and can include more than one process when a
+server restarts during the day. A reporting installation with zero successful requests is idle
+for that window. A missing report leaves its activity unknown.
+
+If a report exceeds 1 MiB, Loom omits optional domain activity details first. It
+then includes as many domain names as fit, starting with the most successful
+requests. The report still includes aggregate usage.
 
 ### Can I disable telemetry?
 
@@ -72,17 +86,25 @@ Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false` on every server and worker rep
 to omit domains while sending aggregate usage. In a settings file, set
 `adoption_telemetry_share_domains: false`.
 
+Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY=true` on every server and worker
+replica to share daily usage counts for reported contact domains. In a settings file,
+set `adoption_telemetry_share_domain_activity: true`. Domain activity sharing is off by
+default and requires domain sharing. Only standard namespaces with a contact domain
+shared in the same report contribute to the public domain activity counts.
+
 ### Adoption dashboard
 
 The [collector deployment guide](../../../deploy/telemetry/README.md) covers the
 warehouse and dashboard setup. The public [adoption page](https://loom.clickhouse.com/adoption)
 shows aggregate self-hosted usage and open-source distribution metrics. The
 self-hosted summary includes today's completed reporting windows. The directory
-shows every self-reported contact domain from version 2 reports with attributed
-successful requests in today's completed reporting windows or the previous 30 or
-90 UTC days. The directory orders names by those requests. The one-year view
-uses the 90-day directory, the longest period under the public domain-sharing
-notice. Use the domain-sharing setting above to omit domains from your reports.
+shows contact domains from version 2 and 3 reports with attributed successful requests
+in the public directory's lookback period and orders names by those requests. The
+one-year view uses the 90-day directory. Domain activity sharing adds successful
+requests, active installations, active accounts, serving processes, the latest
+reported Loom version, and first retained and latest activity dates for each domain.
+Those details use reports from installations that opted in to sharing domain activity.
+Use the domain-sharing setting above to omit domains from your reports.
 `loom_adoption_windows` contains one report per
 `(installation_id, window_start)`. The daily rollup adds request counts and
 uses the peak half-day distinct count for each installation.
@@ -103,30 +125,32 @@ columns:
 Track the managed stage from pilot requests and conversations with the company. A company
 can enroll several installations under one company ID. The Self-hosted tab shows
 reporting coverage, deployment growth, activity, feature and transport usage,
-model usage, installation size, versions, retention, and the number of verified
-companies with an active installation. Growth, activity and period comparisons
+model usage, installation size, versions, and retention. Growth, activity and period comparisons
 use complete UTC days. Growth counts each installation once at its first
 successful request in retained telemetry. Changes to coverage and report expiration
 can change the observed total. Activity counts installations with a successful
 request in each period and sums successful requests.
 Installation size uses the median of the daily counts for active installations.
-Lifecycle charts count arrivals, consecutive activity, returns after gaps, and
-absence of qualifying activity in completed periods. An installation that stops
-reporting can appear inactive. Domain lifecycle uses attributed requests from
-deployments with domain sharing enabled.
-Choose a 30-, 90-, or 365-day lookback. Activity shows daily, weekly, or
-monthly buckets. Lifecycle thresholds apply to each selected week or month.
-The activity table and CSV include projected request volume when every
-completed day in the current period has data. The projection uses the daily
-average. Chart links carry the selection, and CSV exports contain aggregate
-values.
+Lifecycle compares complete UTC weeks or months. Both the displayed period and
+the previous period need adoption reports in every reporting window. An instance
+is new when it first reaches the selected successful-request threshold in
+retained telemetry. It is retained when it meets the threshold in consecutive
+periods, reactivated when it returns after a break, and inactive when it qualified
+in the previous period only. An installation that stops reporting can appear inactive.
+
+Domain lifecycle applies the same definitions to successful requests attributed
+to each reported domain, summed across installations. An instance can change
+while its domain stays active. All qualifying domains count, including shared
+email providers. The weekly threshold is seven thirtieths of the monthly threshold.
+Net change is new plus reactivated minus newly inactive. The activity CSV
+uses the average through the most recent completed day to project request volume
+when every completed day in the current period has data.
 
 The restricted `loom_adoption_top_domains_30d` view ranks the top 50 domains by
 attributed successful requests and includes the number of active installations
-and the sum of latest account counts across installations. A contact reported
-by several installations can contribute more than once. Company records,
-attributed counts for each domain, and pilot stages stay in the access-controlled
-warehouse.
+and the sum of latest contact counts across installations. A contact reported
+by several installations can contribute more than once. Enrollment records,
+report-level contact counts, and pilot stages stay in the access-controlled warehouse.
 
 ## Open-source adoption
 

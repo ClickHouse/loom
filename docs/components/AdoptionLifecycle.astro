@@ -1,114 +1,210 @@
 ---
-import { Table } from "@clickhouse/click-ui/Table";
+import { Panel } from "@clickhouse/click-ui/Panel";
 import { Text } from "@clickhouse/click-ui/Text";
-import { periodOffset } from "../lib/adoption-view.mjs";
+import { Title } from "@clickhouse/click-ui/Title";
+import { periodEnd, periodStart, scaleLimit } from "../lib/adoption-chart-series.mjs";
+import { daysBefore, periodOffset } from "../lib/adoption-view.mjs";
+import AdoptionTrend from "./AdoptionTrend.astro";
 
 interface Props {
-  title: string;
+  label: string;
   grain: "week" | "month";
-  rows: { bucket: string; new: number; retained: number; reactivated: number; inactive: number }[];
+  rows: { bucket: string; retained: number; new: number; reactivated: number; inactive: number }[];
+  rangeStart?: string;
+  rangeEnd?: string;
 }
 
-const { title, grain, rows } = Astro.props;
-const status = [
-  { key: "retained", label: "Retained" },
-  { key: "new", label: "New" },
-  { key: "reactivated", label: "Reactivated" },
+const { label, grain, rows, rangeStart, rangeEnd } = Astro.props;
+const categories = [
+  { key: "retained", name: "Retained" },
+  { key: "new", name: "New" },
+  { key: "reactivated", name: "Reactivated" },
+  { key: "inactive", name: "Became inactive" },
 ] as const;
-const start = rows.at(0)?.bucket ?? "";
-const end = rows.at(-1)?.bucket ?? "";
-const position = (day: string) => periodOffset(start, day, grain) + 1;
-const maxActive = Math.max(
-  0,
-  ...rows.map(({ retained, new: newCount, reactivated }) => retained + newCount + reactivated),
-);
-const maxInactive = Math.max(0, ...rows.map(({ inactive }) => inactive));
-const max = Math.max(1, maxActive, maxInactive);
+const completeStart = rangeStart && periodStart(rangeStart, grain);
+const startLimit =
+  rangeStart && completeStart && completeStart < rangeStart ? periodEnd(completeStart, grain) : completeStart;
+const completeEnd = rangeEnd && periodStart(rangeEnd, grain);
+const endLimit =
+  rangeEnd && completeEnd && periodEnd(completeEnd, grain) > daysBefore(rangeEnd, -1)
+    ? periodStart(daysBefore(completeEnd, 1), grain)
+    : completeEnd;
+const periods = rows
+  .filter(
+    (row) =>
+      /^\d{4}-\d{2}-\d{2}$/.test(row.bucket) &&
+      Number.isFinite(Date.parse(row.bucket)) &&
+      periodStart(row.bucket, grain) === row.bucket &&
+      (!startLimit || row.bucket >= startLimit) &&
+      (!endLimit || row.bucket <= endLimit) &&
+      categories.every(({ key }) => Number.isSafeInteger(row[key]) && row[key] >= 0),
+  )
+  .sort((left, right) => left.bucket.localeCompare(right.bucket));
+const first = startLimit ?? periods[0]?.bucket;
+const last = endLimit ?? periods.at(-1)?.bucket;
+const bins = first && last ? periodOffset(first, last, grain) + 1 : 0;
+const positiveMax = Math.max(0, ...periods.map((row) => row.retained + row.new + row.reactivated));
+const negativeMax = Math.max(0, ...periods.map((row) => row.inactive));
+const upper = Math.max(1, scaleLimit(positiveMax), scaleLimit(negativeMax / 4));
+const lower = negativeMax > 0 ? scaleLimit(Math.max(negativeMax, upper / 5)) : 0;
+const scale = upper + lower;
+const baseline = (upper * 100) / scale;
 const number = new Intl.NumberFormat("en-US");
-const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const signed = new Intl.NumberFormat("en-US", { signDisplay: "exceptZero" });
+const tick = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 const dates = new Intl.DateTimeFormat("en", {
-  month: "short",
-  day: "numeric",
-  ...(start.slice(0, 4) !== end.slice(0, 4) && { year: "numeric" }),
+  month: grain === "month" ? "long" : "short",
+  ...(grain === "week" ? { day: "numeric" } : {}),
+  year: "numeric",
   timeZone: "UTC",
 });
-const labelDay = (day: string) => dates.format(Date.parse(day));
+const marks = periods.map((row) => {
+  const day = row.bucket;
+  const index = periodOffset(first ?? day, day, grain);
+  const date =
+    grain === "month"
+      ? dates.format(Date.parse(day))
+      : dates.formatRange(new Date(day), new Date(daysBefore(periodEnd(day, grain), 1)));
+  const total = row.retained + row.new + row.reactivated;
+  const net = row.new + row.reactivated - row.inactive;
+  const tooltip = [
+    ...categories.map(({ key, name }) => ({ name, value: number.format(row[key]) })),
+    { name: "Active total", value: number.format(total) },
+    { name: "Net change", value: signed.format(net) },
+  ];
+  const accessibleLabel = [date, ...tooltip.map(({ name, value }) => name + " " + value)].join(" · ");
+  return { row, day, index, date, total, net, tooltip, accessibleLabel };
+});
+const latest = marks.at(-1);
 ---
 
-{rows.length ? <figure aria-label={title}>
-  <ul class="legend" aria-hidden="true">
-    {status.map(({ label, key }) => <li><i class={key}></i>{label}</li>)}
-    <li><i class="inactive"></i>Became inactive</li>
-  </ul>
-  <div class="plot" aria-hidden="true">
-    <div class="scale">
-      <span>{compact.format(max)}</span>
-      <span>0</span>
-      {maxInactive > 0 && <span>{compact.format(max)}</span>}
-    </div>
-    <div class:list={["bars", { diverging: maxInactive > 0 }]} style={"--periods:" + position(end)}>
-      {rows.map((row) => (
-        <div class="bar" style={"grid-column:" + position(row.bucket)} title={labelDay(row.bucket) + " · " + status.map(({ key, label }) => label + " " + number.format(row[key])).join(" · ") + " · Became inactive " + number.format(row.inactive)}>
-          <div class="active-bar">
-            {status.map(({ key }) => <span class={key} style={"block-size:" + (row[key] * 100) / max + "%"}></span>)}
+<Panel className="lifecycle-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
+  <Title type="h3" size="sm">{label}</Title>
+  {marks.length > 0 && bins > 0 ? (
+    <>
+      <ul class="legend" aria-label="Lifecycle series">
+        {categories.map(({ key, name }) => (
+          <li><span class:list={["swatch", key]} aria-hidden="true" /><Text size="sm" color="muted">{name}</Text></li>
+        ))}
+      </ul>
+      <figure class="lifecycle" data-adoption-trend tabindex="0" aria-label={label + " lifecycle. Latest period " + latest?.accessibleLabel}>
+        <div class="stacked-plot">
+          <div class="stacked-scale" aria-hidden="true" style={`--baseline:${baseline}%`}>
+            <span class="scale-upper">{tick.format(upper)}</span>
+            <span class="scale-zero">0</span>
+            {lower > 0 && <span class="scale-lower">{tick.format(-lower)}</span>}
           </div>
-          {maxInactive > 0 && <div class="inactive-bar"><span class="inactive" style={"block-size:" + (row.inactive * 100) / max + "%"}></span></div>}
+          <div class="stacked-marks" style={`--bins:${bins};--baseline:${baseline}%`}>
+            {marks.map(({ row, index, date, total, tooltip, accessibleLabel }) => (
+              <button
+                class="period"
+                data-adoption-mark
+                type="button"
+                tabindex="-1"
+                aria-label={accessibleLabel}
+                style={`--index:${index + 1};--position:${((index + 0.5) * 100) / bins}%;--inactive-size:${(row.inactive * 100) / scale}%`}
+              >
+                <span class="period-stack" aria-hidden="true">
+                  <span class="active-stack">
+                    {categories.slice(0, -1).map(({ key }) => (
+                      <span class={key} style={`block-size:${(row[key] * 100) / upper}%`} />
+                    ))}
+                  </span>
+                  <span class="inactive" />
+                  {total === 0 && row.inactive === 0 && <span class="reported-zero" />}
+                </span>
+                <span class="period-detail" aria-hidden="true">
+                  <strong>{date}</strong>
+                  {tooltip.map(({ name, value }) => <span>{name}<b>{value}</b></span>)}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
-      ))}
-    </div>
-  </div>
-  <figcaption>
-    <div class="dates" aria-hidden="true">
-      <time datetime={start}>{labelDay(start)}</time>
-      {end !== start && <time datetime={end}>{labelDay(end)}</time>}
-    </div>
-    {maxInactive > 0 && <Text size="sm" color="muted">Bars below the baseline count installations or domains that became inactive.</Text>}
-  </figcaption>
-  <details>
-    <summary>View lifecycle data</summary>
-    <Table
-      aria-label={title}
-      size="sm"
-      mobileLayout="scroll"
-      headers={["Period start (UTC)", ...status.map(({ label }) => label), "Became inactive"].map((label) => ({ label, scope: "col" }))}
-      rows={rows.map((row) => ({
-        id: row.bucket,
-        items: [row.bucket, ...status.map(({ key }) => number.format(row[key])), number.format(row.inactive)].map((label) => ({ label })),
-      }))}
-    />
-  </details>
-</figure> : <Text size="sm" color="muted">No completed periods with qualifying activity.</Text>}
+      </figure>
+      <div class="net-change">
+        <Text size="sm">Net change <span class="net-definition">· New + reactivated − became inactive</span></Text>
+        <AdoptionTrend
+          rows={marks.map(({ day, net: value }) => ({ day, value }))}
+          label={label + " · Net change"}
+          {grain}
+          axisStart={first}
+          axisEnd={last}
+          mode="line"
+          color="info"
+          compact
+        />
+      </div>
+    </>
+  ) : (
+    <Text size="sm" color="muted">No complete periods with reported lifecycle data.</Text>
+  )}
+</Panel>
 
 <style>
-  figure { margin: 0.8rem 0 0; inline-size: 100%; min-inline-size: 0; font-variant-numeric: tabular-nums; }
-  .legend { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; padding: 0; margin: 0 0 0.85rem; list-style: none; font-size: 0.78rem; }
-  .legend li { display: inline-flex; align-items: center; gap: 0.38rem; }
-  .legend i { inline-size: 0.62rem; block-size: 0.62rem; border-radius: 1px; }
+  .lifecycle-card { min-inline-size: 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; padding: 0; margin: 0.25rem 0 0.45rem; list-style: none; }
+  .legend li { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .swatch { inline-size: 0.65rem; block-size: 0.65rem; border-radius: 1px; }
   .retained { background: var(--accent); }
   .new { background: var(--click-alert-color-text-success); }
   .reactivated { background: var(--click-alert-color-text-info); }
-  .inactive { background: repeating-linear-gradient(135deg, var(--click-alert-color-text-warning) 0 1px, var(--surface) 1px 4px); }
-  .plot { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.65rem; }
-  .scale { display: flex; flex-direction: column; justify-content: space-between; align-items: end; margin-block: -0.5em; font-size: 0.75rem; color: var(--muted); }
-  .bars {
+  .inactive { background: repeating-linear-gradient(135deg, var(--click-alert-color-text-warning) 0 1px, transparent 1px 4px); }
+  .lifecycle { margin: 0; inline-size: 100%; min-inline-size: 0; font-variant-numeric: tabular-nums; }
+  .stacked-plot { display: grid; grid-template-columns: 3rem minmax(0, 1fr); gap: 0.55rem; }
+  .stacked-scale { position: relative; color: var(--muted); font-size: 0.75rem; }
+  .stacked-scale span { position: absolute; inset-inline-end: 0; transform: translateY(-50%); }
+  .scale-upper { inset-block-start: 0; }
+  .scale-zero { inset-block-start: var(--baseline); }
+  .scale-lower { inset-block-start: 100%; }
+  .stacked-marks {
+    position: relative;
     display: grid;
-    grid-template-columns: repeat(var(--periods), minmax(0, 1fr));
-    gap: min(0.4rem, calc(20% / var(--periods)));
+    grid-template-columns: repeat(var(--bins), minmax(0, 1fr));
     block-size: clamp(7rem, 12vw, 13rem);
     background: linear-gradient(var(--line), var(--line)) top / 100% 1px no-repeat,
+      linear-gradient(var(--muted), var(--muted)) left var(--baseline) / 100% 1px no-repeat,
       linear-gradient(var(--line), var(--line)) bottom / 100% 1px no-repeat;
   }
-  .bars.diverging { background: linear-gradient(var(--line), var(--line)) top / 100% 1px no-repeat,
-    linear-gradient(var(--muted), var(--muted)) center / 100% 1px no-repeat,
-    linear-gradient(var(--line), var(--line)) bottom / 100% 1px no-repeat;
+  .period {
+    grid-column: var(--index);
+    grid-row: 1;
+    min-inline-size: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    text-align: start;
+    cursor: default;
   }
-  .bar { display: grid; grid-row: 1; min-inline-size: 0; inline-size: 100%; max-inline-size: 2.5rem; margin-inline: auto; }
-  .diverging .bar { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
-  .active-bar { display: flex; flex-direction: column-reverse; }
-  .inactive-bar { display: flex; flex-direction: column; }
-  .dates { display: flex; justify-content: space-between; gap: 0.45rem; padding-inline-start: 2rem; margin-block-start: 0.45rem; }
-  figcaption { color: var(--muted); font-size: 0.77rem; }
-  figcaption p { margin-block-start: 0.5rem; }
-  details { margin-block-start: 0.55rem; }
-  summary { cursor: pointer; padding-block: 0.5rem; color: var(--click-global-color-text-link-default); font-size: 0.86rem; }
+  .period:focus-visible { outline: 1px solid var(--accent); outline-offset: 0; }
+  .period-stack { display: block; block-size: 100%; inline-size: min(74%, 2.5rem); margin-inline: auto; }
+  .active-stack { display: flex; flex-direction: column-reverse; block-size: var(--baseline); }
+  .period-stack > .inactive { display: block; block-size: var(--inactive-size); }
+  .reported-zero { display: block; block-size: 1px; background: var(--accent); }
+  .period-detail {
+    display: none;
+    position: absolute;
+    z-index: 2;
+    inset-inline-start: clamp(0px, calc(var(--position) - 5.75rem), 100% - 11.5rem);
+    inset-block-end: calc(100% + 0.35rem);
+    inline-size: min(11.5rem, 100%);
+    padding: 0.5rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    pointer-events: none;
+  }
+  .period-detail > strong { display: block; margin-block-end: 0.2rem; }
+  .period-detail > span { display: flex; justify-content: space-between; gap: 0.25rem; }
+  .period:focus .period-detail { display: block; }
+  @media (hover: hover) and (pointer: fine) {
+    .period:hover .period-detail { display: block; }
+    .stacked-marks:has(.period:hover) .period:focus:not(:hover) .period-detail { display: none; }
+  }
+  .net-change { display: grid; inline-size: 100%; min-inline-size: 0; gap: 0.65rem; margin-block-start: 0.75rem; padding-block-start: 0.7rem; border-block-start: 1px solid var(--line); }
+  .net-definition { color: var(--muted); }
 </style>
