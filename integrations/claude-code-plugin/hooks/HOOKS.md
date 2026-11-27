@@ -121,8 +121,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   `LOOM_CODE_MAP_TOKEN_BUDGET` of 100 or more, the repo map; the task inbox line
   (`LOOM_TASK_INBOX_LINE=off`); the saved-briefs line (only with
   `LOOM_SESSION_BRIEF_PRIMER=on`); the collections line
-  (`LOOM_COLLECTIONS_LINE=off`); the recording line, which states the
-  owner's Record conversations switch; and a once-a-day notice when
+  (`LOOM_COLLECTIONS_LINE=off`); where the session's toolset lists the
+  conversation tools, the recording line, which states the owner's Record
+  conversations switch; and a once-a-day notice when
   ~/.claude.json also mounts the same server. Outside an indexed checkout the
   code line says why no index was looked up (no checkout, no remote, not
   indexed, no answer in time), so the hook prints nothing only with
@@ -135,13 +136,17 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   toolset with a `coding` part (the default) that profile's startup
   instructions say how to route a lookup, so the checkout is one line (the
   code namespace, the fetch time of a stalled mirror, the memory tag). The
-  server adds the tag to a save only on a bound connection, so the line only
-  names the tag there; in a checkout with no indexed repository, or with
-  `LOOM_MCP_CODE_SCOPE=off`, it is the full repository tag line. Any
+  tag is one short instruction to save memory about the repository with it:
+  the server adds the tag to a save only on a bound connection, and the hook
+  cannot see whether the helper sent the header, so the model is told to pass
+  it in every session of this entry. Any
   other toolset (`all`, `core`, `tracker`) gets the server's general rules,
   which route no code lookup, so its primer keeps the arbitration rules under
   the short scope line. The recording line is printed only when the toolset
-  lists the conversation tools (`all`). Any other wiring (Codex, whose hooks
+  lists the conversation tools (`all`). A union holding `all`, `readonly` or
+  `assistant` is no toolset the server serves and takes the deployment's
+  default, so it keeps both the arbitration rules and the recording line. Any
+  other wiring (Codex, whose hooks
   name their client, or a hand-wired client) mounts an entry the hook cannot
   read, so its primer keeps the full scope line, the arbitration rules, the
   full repository tag line and the recording line.

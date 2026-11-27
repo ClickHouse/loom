@@ -42,7 +42,6 @@ import {
   checkoutDir,
   codeArbitration,
   codeScopeLine,
-  headerBinds,
   indexStatusBody,
   instructionsRouteCode,
   localFirstBlock,
@@ -53,7 +52,7 @@ import {
   staleMirrorLine,
   startPackBody,
 } from "../lib/session-start.mjs";
-import { checkoutRemotes, lookupIndexedRepo, readCache, scopeKey } from "../lib/repo-scope.mjs";
+import { checkoutRemotes, lookupIndexedRepo } from "../lib/repo-scope.mjs";
 import {
   listsConversationTools,
   readRecording,
@@ -153,18 +152,10 @@ async function main() {
       codeBlock,
       lines: [taskLine, briefsLine, collectionsText],
       recordingLine: conversationTools ? recordingPrimerLine(recording, scope.namespace) : "",
-      bound: entryBound(checkoutDir(payload)),
+      ownEntry: ownsMcpEntry(),
     }),
   );
   scheduleExit(0);
-}
-
-/** Whether a header binds the plugin's own entry to the repository of the
- *  checkout at `cwd`: read from the cache the code block's lookup filled, which
- *  is where that entry's helper reads the header from. */
-function entryBound(cwd) {
-  const key = scopeKey(gitToplevel(cwd));
-  return ownsMcpEntry() && Boolean(key) && headerBinds(readCache(key));
 }
 
 /** The Record conversations switch for this scope: the flusher's cached

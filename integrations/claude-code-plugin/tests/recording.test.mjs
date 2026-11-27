@@ -63,8 +63,9 @@ test("a toolset value splits into lower-cased, de-duplicated parts, as the serve
 });
 
 test("only a toolset that lists the conversation tools gets the primer's conversation line", () => {
-  for (const toolset of ["all", "ALL", "coding+all", "all,tracker"])
-    assert.equal(listsConversationTools(toolset), true);
+  // `all` lists them; a union with a whole listing takes the server's default toolset, which may.
+  for (const toolset of ["all", "ALL", "coding+all", "all,tracker", "coding+readonly", "assistant coding"])
+    assert.equal(listsConversationTools(toolset), true, toolset);
   for (const toolset of ["coding", "coding+tracker", "core", "readonly", "", undefined, "wall"])
     assert.equal(listsConversationTools(toolset), false, String(toolset));
 });

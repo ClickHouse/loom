@@ -14,3 +14,10 @@ export function toolsetParts(toolset) {
     ),
   ];
 }
+
+/** Whether the server reads the value as no toolset it serves: only curated
+ *  rosters join a union, so one holding `all`, `readonly` or `assistant` (each
+ *  a whole listing) takes the deployment's default toolset. */
+export function unknownUnion(parts) {
+  return parts.length > 1 && parts.some((p) => ["all", "readonly", "assistant"].includes(p));
+}

@@ -6,11 +6,11 @@
 // (tests to run, untested touched functions) and block the stop ONCE per
 // distinct change with a reason that names them. "This session's" is read
 // from the transcript: dirty paths an edit tool targeted or a shell command
-// named, written since the session began; a tree left dirty before the
-// session does not gate a turn that changed nothing. A Claude Code
-// transcript that already answers the ask does not block either
-// (`runAnswered` in lib/test-gate.mjs); a Codex rollout answers nothing, so
-// its stop blocks.
+// named, written since the session began (by the file's modification time);
+// a tree left dirty before the session does not gate a turn that changed
+// nothing. A Claude Code transcript that already answers the ask does not
+// block either (`runAnswered` in lib/test-gate.mjs); a Codex rollout answers
+// nothing, so its stop blocks.
 //
 // Fail-open everywhere: no token, not an indexed repo, clean tree, nothing
 // of the tree touched this session, server down, second stop on the same

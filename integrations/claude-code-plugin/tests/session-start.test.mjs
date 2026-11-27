@@ -13,7 +13,6 @@ import {
   checkoutDir,
   codeArbitration,
   codeScopeLine,
-  headerBinds,
   indexStatusBody,
   instructionsRouteCode,
   localFirstBlock,
@@ -26,6 +25,7 @@ import {
   wantsRuns,
 } from "../lib/session-start.mjs";
 import { recalledDataBlock } from "../lib/prompt-recall.mjs";
+import { readCache, writeCache } from "../lib/repo-scope.mjs";
 
 const scope = { org: "o", namespace: "coding", agent: "claude-code", project: "loom", tags: [] };
 
@@ -122,18 +122,13 @@ test("the plugin's own MCP entry is Claude Code's: its hooks run with CLAUDE_PLU
   assert.equal(ownsMcpEntry({ CLAUDE_PLUGIN_ROOT: "/p", LOOM_CLIENT: "my-agent" }), false);
 });
 
-test("a header binds the plugin's connection only for an indexed entry, with the scope switch on", () => {
-  const entry = { indexed: true, org: "o", namespace: "code-x" };
-  assert.equal(headerBinds(entry, {}), true);
-  assert.equal(headerBinds(entry, { LOOM_MCP_CODE_SCOPE: "off" }), false);
-  for (const none of [null, { indexed: false }, { indexed: false, unresolved: true }, { indexed: true, org: "o" }])
-    assert.equal(headerBinds(none, {}), false, JSON.stringify(none));
-});
-
 test("the startup instructions route a code lookup only on a toolset with a coding part", () => {
   for (const toolset of ["coding", "", undefined, "coding+tracker", "Tracker, Coding", "tasks coding"])
     assert.equal(instructionsRouteCode(toolset), true, String(toolset));
   for (const toolset of ["all", "core", "tracker", "readonly", "assistant", "core+tracker"])
+    assert.equal(instructionsRouteCode(toolset), false, toolset);
+  // Only curated rosters join a union: the server answers these with its default toolset.
+  for (const toolset of ["coding+all", "coding readonly", "assistant,coding"])
     assert.equal(instructionsRouteCode(toolset), false, toolset);
 });
 
@@ -216,10 +211,10 @@ const CODE = '# Loom code index: acme/app @ main; pass namespace "code-app" on l
 
 test("renderPrimer: notices, the checkout's one line, the primer under its heading, then the lines", () => {
   const repo = { slug: "acme/app", id: "r1" };
-  const tag = 'Memory about this repository carries tags: ["repo:r1"].';
-  assert.equal(repoTagLine(repo, { bound: true }), tag);
+  const tag = 'Save memory about this repository with tags: ["repo:r1"].';
+  assert.equal(repoTagLine(repo, { ownEntry: true }), tag);
   const full = renderPrimer({
-    bound: true,
+    ownEntry: true,
     notices: ["Signed up.", "", "Duplicate MCP entry."],
     project: "app",
     repo,
@@ -233,19 +228,19 @@ test("renderPrimer: notices, the checkout's one line, the primer under its headi
     `Signed up.\n\nDuplicate MCP entry.\n\n${CODE} ${tag}\n\n# Loom memory primer — project: app\n\n${recalledDataBlock("facts here")}\n\n2 tasks waiting\n\n3 saved briefs\n\nRecording is on.\n`,
   );
   // An indexed checkout with nothing else to say: one line.
-  assert.equal(renderPrimer({ bound: true, project: "app", repo, codeBlock: CODE }), `${CODE} ${tag}\n`);
+  assert.equal(renderPrimer({ ownEntry: true, project: "app", repo, codeBlock: CODE }), `${CODE} ${tag}\n`);
   // A longer code block, or none, leaves the tag its own line under Loom's prefix.
   assert.equal(
-    renderPrimer({ bound: true, project: "app", repo, codeBlock: `${CODE}\nTeam file rules live in "x".` }),
+    renderPrimer({ ownEntry: true, project: "app", repo, codeBlock: `${CODE}\nTeam file rules live in "x".` }),
     `${CODE}\nTeam file rules live in "x".\n\n# Loom memory primer: ${tag}\n`,
   );
   assert.equal(
-    renderPrimer({ bound: true, project: "app", repo, rendered: "  ", lines: ["t"] }),
+    renderPrimer({ ownEntry: true, project: "app", repo, rendered: "  ", lines: ["t"] }),
     `# Loom memory primer: ${tag}\n\nt\n`,
   );
 });
 
-test("a session no header binds to the repository is told how to use the repository's tag", () => {
+test("a session whose MCP entry the plugin does not mount is told how to use the repository's tag", () => {
   const line = repoTagLine({ slug: "acme/app", id: "r1" });
   assert.match(line, /^Repository acme\/app — hook captures carry the tag `repo:r1`; /);
   assert.match(line, /pass tags: \["repo:r1"\] to loom_search to stay within it\./);
@@ -258,6 +253,12 @@ test("a session no header binds to the repository is told how to use the reposit
     renderPrimer({ project: "app", repo: { slug: "acme/app", id: "r1" }, lines: ["t"] }),
     `# Loom memory primer: ${line}\n\nt\n`,
   );
+  // Its one-line scope opens with no prefix capture knows, so the tag keeps its own.
+  const scopeOnly = codeScopeLine({ org: "o", namespace: "code-app", repo: "acme/app" });
+  assert.equal(
+    renderPrimer({ project: "app", repo: { slug: "acme/app", id: "r1" }, codeBlock: scopeOnly }),
+    `${scopeOnly}\n\n# Loom memory primer: ${line}\n`,
+  );
 });
 
 test("renderPrimer prints nothing for a session with nothing of its own to hear", () => {
@@ -267,7 +268,7 @@ test("renderPrimer prints nothing for a session with nothing of its own to hear"
 });
 
 test("the primer says once per session only what differs between checkouts", () => {
-  const out = renderPrimer({ bound: true, project: "app", repo: { slug: "acme/app", id: "r1" }, codeBlock: CODE });
+  const out = renderPrimer({ ownEntry: true, project: "app", repo: { slug: "acme/app", id: "r1" }, codeBlock: CODE });
   assert.ok(Buffer.byteLength(out) <= 220, `${Buffer.byteLength(out)} bytes`);
   // How to route a lookup holds in every session: the MCP instructions say it.
   assert.doesNotMatch(out, /Use Loom first|ToolSearch|loom_code_symbol|loom_conversation/);
@@ -284,12 +285,12 @@ for (const repo of [
   { slug: "acme/other", id: "r2" },
 ]) {
   test(`the primer names ${repo.slug}'s own tag for memory about it`, () => {
-    for (const bound of [true, false]) {
-      const out = renderPrimer({ bound, project: "app", repo });
+    for (const ownEntry of [true, false]) {
+      const out = renderPrimer({ ownEntry, project: "app", repo });
       assert.ok(out.includes(`tags: ["repo:${repo.id}"]`));
       assert.match(
         out,
-        /^# Loom memory primer: (Memory about this repository|Repository) /,
+        /^# Loom memory primer: (Save memory about this repository|Repository) /,
         "a prefix capture knows as Loom's",
       );
     }
@@ -357,7 +358,7 @@ function startSession(url, cwd, home, { client, env = {} } = {}) {
   });
 }
 
-const TAG_OWN = String.raw`Memory about this repository carries tags: \["repo:[0-9a-f]+"\]\.`;
+const TAG_OWN = String.raw`Save memory about this repository with tags: \["repo:[0-9a-f]+"\]\.`;
 const SCOPE_OWN = String.raw`# Loom code index: x\/y @ main; pass namespace "code-x" on loom_code_\* calls\.`;
 
 /** A checkout whose origin is `slug` (x/y is the indexed one) and a home,
@@ -418,18 +419,14 @@ for (const toolset of ["all", "core", "tracker"]) {
 }
 
 // The server adds the tag to a save only on a connection the helper's header
-// binds; without the header the model has to include the tag itself.
-const TAG_TOLD = String.raw`hook captures carry the tag \`repo:[0-9a-f]+\`; pass tags: \["repo:[0-9a-f]+"\] to loom_search to stay within it\. When saving a fact about this repository with loom_memory_set, include tags: \["repo:[0-9a-f]+"\] alongside its other tags\.[^\n]*`;
-
+// binds, and the hook cannot see whether the helper sent one. The line is an
+// instruction, so it holds either way.
 test("the plugin's session in a checkout no index holds is told to tag what it saves about the repository", async (t) => {
   const { home, dir } = checkout(t, "z/w");
   const loom = await fakeLoom();
   t.after(loom.close);
   const out = await startSession(loom.url, dir, home, { env: PLUGIN });
-  assert.match(
-    out,
-    new RegExp(`^# Loom code index: z\\/w is not an indexed repository\\. Repository z\\/w — ${TAG_TOLD}\n$`),
-  );
+  assert.match(out, new RegExp(`^# Loom code index: z\\/w is not an indexed repository\\. ${TAG_OWN}\n$`));
 });
 
 test("the plugin's session with the scope header switched off is told to tag what it saves", async (t) => {
@@ -437,7 +434,18 @@ test("the plugin's session with the scope header switched off is told to tag wha
   const loom = await fakeLoom();
   t.after(loom.close);
   const out = await startSession(loom.url, dir, home, { env: { ...PLUGIN, LOOM_MCP_CODE_SCOPE: "off" } });
-  assert.match(out, new RegExp(`^${SCOPE_OWN} Repository x\\/y — ${TAG_TOLD}\n$`));
+  assert.match(out, new RegExp(`^${SCOPE_OWN} ${TAG_OWN}\n$`));
+});
+
+test("the plugin's session whose helper read a cached miss, and sent no header, is told to tag what it saves", async (t) => {
+  const { home, dir } = checkout(t);
+  const loom = await fakeLoom();
+  t.after(loom.close);
+  // The helper answers from the shared cache; the hook's own lookup then finds the index.
+  writeCache(dir, { ts: Date.now(), indexed: false }, home);
+  const out = await startSession(loom.url, dir, home, { env: PLUGIN });
+  assert.match(out, new RegExp(`^${SCOPE_OWN} ${TAG_OWN}\n$`));
+  assert.equal(readCache(dir, Date.now(), home).indexed, true);
 });
 
 test("a session outside any checkout still hears why no index was looked up; only LOOM_CODE_MAP=false is silent", async (t) => {

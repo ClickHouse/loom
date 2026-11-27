@@ -9,9 +9,8 @@
 
 import { envNumber, envSwitch, hookClient } from "./loom-client.mjs";
 import { recalledDataBlock } from "./prompt-recall.mjs";
-import { scopeHeader } from "./repo-scope.mjs";
 import { sessionRunId } from "./run-hook.mjs";
-import { toolsetParts } from "./toolset.mjs";
+import { toolsetParts, unknownUnion } from "./toolset.mjs";
 import { blockKeyFor } from "./working-memory.mjs";
 
 /** The recent-runs shortlist in the session-start primer, off unless
@@ -61,14 +60,14 @@ export function startPackBody(scope, payload, { tokenBudget = 1200, runId = "", 
 
 /** The line that names the repository's memory tag, or "" without a repository:
  *  hook captures carry the tag, and a fact the model saves about the repository
- *  needs it to be recalled with them. On a connection a header binds to the
- *  repository (`bound`, see `headerBinds`) the server adds the tag to a save
- *  that names none, so the line only names the tag; any other session is told
- *  to include it. */
-export function repoTagLine(repo, { bound = false } = {}) {
+ *  needs it to be recalled with them. The plugin's own entry (`ownEntry`) gets
+ *  one short instruction: the tag the model passes is the one the server adds
+ *  to a save on a connection bound to the repository, so the line holds
+ *  whether or not this connection is bound. */
+export function repoTagLine(repo, { ownEntry = false } = {}) {
   if (!repo || !repo.id) return "";
   const tags = `tags: ["repo:${repo.id}"]`;
-  if (bound) return `Memory about this repository carries ${tags}.`;
+  if (ownEntry) return `Save memory about this repository with ${tags}.`;
   return (
     `Repository ${repo.slug} — hook captures carry the tag \`repo:${repo.id}\`; ` +
     `pass ${tags} to loom_search to stay within it. ` +
@@ -95,15 +94,16 @@ export function renderPrimer({
   codeBlock = "",
   lines = [],
   recordingLine = "",
-  bound = false,
+  ownEntry = false,
 }) {
   const code = codeBlock.trim();
-  const tag = repoTagLine(repo, { bound });
-  // One line for the checkout when its code text is one line. Beside a longer
-  // code block, or none, the tag is its own line under a prefix the server
-  // knows as Loom's own words, so capture never reads it as a fact.
+  const tag = repoTagLine(repo, { ownEntry });
+  // One line for the checkout when its code text is one line under a prefix
+  // the server knows as Loom's own words. Beside any other code block, or
+  // none, the tag is its own line under such a prefix, so capture never reads
+  // it as a fact.
   const checkout =
-    code && !code.includes("\n")
+    code.startsWith("# Loom code index") && !code.includes("\n")
       ? [code, tag].filter(Boolean).join(" ")
       : [code, tag && `# Loom memory primer: ${tag}`].filter(Boolean).join("\n\n");
   const primer = rendered.trim();
@@ -149,7 +149,7 @@ export function notIndexedLine(remotes = []) {
 /** Whether the session's MCP entry is the Claude Code plugin's own, which
  *  Claude Code marks by running the plugin's hooks with CLAUDE_PLUGIN_ROOT.
  *  That entry's helper binds loom_code_* calls to the checkout's repository
- *  when the checkout resolved to an indexed one (`headerBinds`), its URL names
+ *  when the checkout resolved to an indexed one, its URL names
  *  the `plugin` profile and its toolset is the plugin's `toolset` option. Any
  *  other wiring (Codex, whose hooks name their client, or a hand-wired client)
  *  mounts an entry these hooks cannot read, so its primer says all of it. */
@@ -157,23 +157,17 @@ export function ownsMcpEntry(env = process.env, client = hookClient(process.argv
   return Boolean(env.CLAUDE_PLUGIN_ROOT) && client === "claude-code";
 }
 
-/** Whether the helper of the plugin's own entry sends the header that binds the
- *  connection to the checkout's repository: it sends one for an indexed `entry`
- *  of the cache every hook shares, unless LOOM_MCP_CODE_SCOPE is off. Only on a
- *  bound connection does the server add the repository's tag to a save. */
-export function headerBinds(entry, env = process.env) {
-  return envSwitch("LOOM_MCP_CODE_SCOPE", true, env) && Object.keys(scopeHeader(entry)).length > 0;
-}
-
 /** Whether the startup instructions of the plugin's own entry say how to route
  *  a code lookup: the server sends that paragraph to a toolset with a `coding`
  *  part, read as the server does (parts split on `+`, a space or a comma,
  *  lower-cased), and an unset option is its default, `coding`. Any other
  *  toolset (`all`, `core`, `tracker`) gets the general rules, which route no
- *  code lookup, so the primer keeps the arbitration there. An unknown value
- *  takes the deployment's default toolset on the server, which this cannot know. */
+ *  code lookup, so the primer keeps the arbitration there. So does a union the
+ *  server does not serve (`unknownUnion`): it takes the deployment's default
+ *  toolset, which this cannot know. */
 export function instructionsRouteCode(toolset) {
-  return toolsetParts(toolset || "coding").includes("coding");
+  const parts = toolsetParts(toolset || "coding");
+  return parts.includes("coding") && !unknownUnion(parts);
 }
 
 /** One line for the primer naming the code namespace every loom_code_* call
