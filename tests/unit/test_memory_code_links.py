@@ -396,6 +396,46 @@ async def test_a_pending_name_is_retried_until_the_pending_days_pass(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_the_recheck_never_links_a_raw_tool_observation_that_waits(monkeypatch) -> None:
+    # an observation's waiting rows: a `*` marker and a pending name
+    waiting = [
+        _full(
+            {
+                "memory_id": mid,
+                "memory_key": f"obs:s1:{mid}",
+                "qualified_name": name,
+                "state": "pending",
+                "expired": 0,
+                "version": 1,
+            }
+        )
+        for mid, name in (("marker", code_links.AWAITING_INDEX), ("name", "Reader.get"))
+    ]
+    written: list[Any] = []
+
+    async def insert(out):
+        written.extend(out)
+
+    async def read(*args, **kwargs):
+        raise AssertionError("read an observation to link it")
+
+    monkeypatch.setattr(code_links.store, "insert", insert)
+    monkeypatch.setattr(code_links.store, "memory_heads", read)
+    monkeypatch.setattr(code_links.code, "candidates", read)
+    files = code_link_pass.RepoReads("o", "code-a")
+    assert (
+        await code_link_recheck._resolve_pending(
+            "o", "code-a", "c2", files, code_link_pass.PassResult(), waiting
+        )
+        == []
+    )
+    assert [(r["qualified_name"], r["tombstoned_at"] is not None) for r in written] == [
+        (code_links.AWAITING_INDEX, True),
+        ("Reader.get", True),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_the_pending_scan_retries_writes_and_wraps_despite_new_links(monkeypatch) -> None:
     monkeypatch.setattr(settings, "memory_code_links_batch", 1)
     monkeypatch.setattr(settings, "memory_code_links_pending_days", 3)
@@ -908,6 +948,36 @@ async def test_a_hit_is_the_stored_memory_its_leg_read(served) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_hit_carries_the_commit_of_its_worst_readable_link(served, monkeypatch) -> None:
+    served.heads += [_row(mid, memory_key=mid) for mid in ("both", "edited", "live")]
+    served.links.update(
+        both=[
+            {**_link("both", "changed"), "path": "a.py", "changed_since": "c1"},
+            {**_link("both", "missing"), "path": "b.py", "changed_since": "c2"},
+        ],
+        edited=[{**_link("edited", "changed"), "path": "a.py", "changed_since": "c1"}],
+        live=[{**_link("live", "moved"), "path": "a.py", "changed_since": "c0"}],
+    )
+    hits = [_hit(mid) for mid in ("both", "edited", "live", "unlinked")]
+    await code_link_reads.annotate_hits(_search(), hits)
+    assert [(h.code_state, h.code_changed_since) for h in hits] == [
+        ("missing", "c2"),
+        ("changed", "c1"),
+        ("moved", ""),  # a state no read notes names no commit
+        ("", ""),
+    ]
+
+    async def readable(org, nss):
+        return set()
+
+    # code the caller may not read gives neither a state nor a commit
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    unread = [_hit("edited")]
+    await code_link_reads.annotate_hits(_search(), unread)
+    assert (unread[0].code_state, unread[0].code_changed_since) == ("", "")
+
+
+@pytest.mark.asyncio
 async def test_a_key_several_agents_share_is_the_memory_its_row_names(served) -> None:
     served.heads += [_row("a1", memory_key="k", agent="a1"), _row("a2", memory_key="k", agent="a2")]
     served.links.update(a1=[_link("a1", "fresh")], a2=[_link("a2", "missing")])
@@ -1018,6 +1088,127 @@ async def test_a_pending_link_keeps_a_memory_whose_other_code_is_gone(served) ->
     hits = [_hit("k")]
     await code_link_reads.annotate_hits(_search(), hits)
     assert [h.code_state for h in hits] == ["missing"]
+
+
+async def _startup_lines(monkeypatch, served, *, pinned=(), recent=(), top_k=2) -> list[str]:
+    """The memory lines of a zero-query startup pack whose two listings return the served
+    heads with these ids."""
+    from server.memory.api.models_context import ContextPackInput
+    from server.memory.app.context_pack import handle_context_pack
+
+    rows = {
+        h["mid"]: SimpleNamespace(
+            **h, confidence=1.0, valid_at=None, created_at=datetime(2026, 1, 1)
+        )
+        for h in served.heads
+    }
+
+    async def listing(ident, *, pinned_only=False, **kw):
+        return [rows[mid] for mid in (pinned if pinned_only else recent)]
+
+    class NoClickHouse:
+        def __getattr__(self, name):
+            async def refuse(*a, **k):
+                raise RuntimeError("no ClickHouse in a unit test")
+
+            return refuse
+
+    monkeypatch.setattr("server.memory.store.list_by_namespace", listing)
+    monkeypatch.setattr("server.core.ch._ch", NoClickHouse())
+    out = await handle_context_pack(
+        ContextPackInput(
+            org="o",
+            namespace="agent-a",
+            agent="a",
+            mode="startup",
+            top_k=top_k,
+            only_sections=["memories"],
+        )
+    )
+    return out.sections.get("memories", "").splitlines()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("held", "state", "policy", "kept_current", "label"),
+    [
+        ({}, "missing", "", True, None),  # the code is gone and nobody holds the memory
+        ({"pinned": 1}, "missing", "", True, "code_state=missing@c0ffeec0ffee]"),
+        ({}, "changed", "", True, "code_state=changed@c0ffeec0ffee]"),
+        ({}, "missing", code_change.FLAG, True, "code_state=missing@c0ffeec0ffee]"),
+        ({}, "missing", "", False, "code_state=missing@c0ffeec0ffee]"),
+    ],
+)
+async def test_a_startup_pack_with_no_query_reads_code_state_as_a_search_does(
+    served, monkeypatch, held, state, policy, kept_current, label
+) -> None:
+    monkeypatch.setattr(settings, "memory_code_links_enabled", kept_current)
+    served.heads += [_row("m", **held), _row("other")]
+    served.links["m"] = [{**_link("m", state), "changed_since": "c0ffee" * 7}]
+    if policy:
+        served.policy["agent-a"] = policy
+    lines = await _startup_lines(
+        monkeypatch, served, pinned=["m"] if held else [], recent=["m", "other"]
+    )
+    mine = [ln for ln in lines if "memory:agent-a/m " in ln]
+    if label is None:
+        assert mine == []
+    else:
+        assert len(mine) == 1 and label in mine[0]
+    # a memory with no link reads as it did
+    assert [ln for ln in lines if "memory:agent-a/other " in ln and "code_state" not in ln]
+
+
+@pytest.mark.asyncio
+async def test_a_startup_pack_serves_its_rows_unlabelled_when_the_links_cannot_be_read(
+    served, monkeypatch
+) -> None:
+    async def down(org, idents):
+        raise RuntimeError("link store down")
+
+    monkeypatch.setattr(code_links.store, "live_links", down)
+    served.heads.append(_row("gone"))
+    served.links["gone"] = [_link("gone", "missing")]
+    lines = await _startup_lines(monkeypatch, served, recent=["gone"])
+    assert len(lines) == 1 and "memory:agent-a/gone " in lines[0]
+    assert "code_state" not in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_a_startup_row_left_out_for_gone_code_gives_its_place_to_the_next(
+    served, monkeypatch
+) -> None:
+    served.heads += [_row("gone"), _row("a"), _row("b"), _row("c")]
+    served.links["gone"] = [_link("gone", "missing")]
+    lines = await _startup_lines(monkeypatch, served, recent=["gone", "a", "b", "c"], top_k=2)
+    assert [ln.split()[1] for ln in lines] == ["[memory:agent-a/a", "[memory:agent-a/b"]
+
+
+@pytest.mark.asyncio
+async def test_a_startup_key_two_agents_hold_is_served_from_the_row_whose_code_is_there(
+    served, monkeypatch
+) -> None:
+    served.heads += [
+        _row("newer", memory_key="k", agent="a1", value="newer"),
+        _row("older", memory_key="k", agent="a2", value="older"),
+    ]
+    served.links["newer"] = [_link("newer", "missing")]
+    lines = await _startup_lines(monkeypatch, served, recent=["newer", "older"])
+    assert len(lines) == 1 and "memory:agent-a/k " in lines[0] and lines[0].endswith(" older")
+
+
+@pytest.mark.asyncio
+async def test_a_startup_pack_reads_no_link_where_no_repository_is_indexed(
+    served, monkeypatch
+) -> None:
+    async def unread(org, idents):
+        raise AssertionError("no link read without an indexed repository")
+
+    monkeypatch.setattr(code_links.store, "live_links", unread)
+    monkeypatch.setattr(code_links.code, "code_namespaces", list)
+    served.heads.append(_row("m"))
+    lines = await _startup_lines(monkeypatch, served, recent=["m"])
+    assert len(lines) == 1 and "memory:agent-a/m " in lines[0]
 
 
 @pytest.mark.asyncio
@@ -1280,11 +1471,11 @@ async def test_a_finished_sweep_waits_before_its_next_cycle(monkeypatch) -> None
         return None, 0
 
     monkeypatch.setattr(code_links.store, "sweep_page", sweep_page)
-    done = await code_links.sweep_erased({}, 10, code_link_pass.PassResult())
+    done = await code_links.sweep_unlinkable({}, 10, code_link_pass.PassResult())
     assert pages == [None] and "done_at" in done
-    assert await code_links.sweep_erased(done, 10, code_link_pass.PassResult()) == done
+    assert await code_links.sweep_unlinkable(done, 10, code_link_pass.PassResult()) == done
     stale = {"done_at": time.time() - settings.memory_code_links_sweep_interval_s - 1}
-    await code_links.sweep_erased(stale, 10, code_link_pass.PassResult())
+    await code_links.sweep_unlinkable(stale, 10, code_link_pass.PassResult())
     assert pages == [None, None]
 
 
@@ -3689,6 +3880,52 @@ async def test_a_memory_that_links_nothing_is_linked_once(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_raw_tool_observation_is_never_linked_and_loses_the_links_it_holds(
+    monkeypatch,
+) -> None:
+    def observed(mid: str) -> dict[str, Any]:
+        # a tool call's row: its session's `repo:` tag, and output that names code
+        return _row(
+            mid, memory_key=f"obs:s1:{mid}", tags=["repo:r"], value="`Reader.read_rows` leaks"
+        )
+
+    # a stored link made from the observation as it is: a lesson's would still hold
+    held = _full(
+        {
+            "memory_id": "held",
+            "code_namespace": "code-r",
+            "inputs_hash": code_link_reads.memory_inputs(observed("held"), "code-r"),
+        }
+    )
+    written: list[dict[str, Any]] = []
+    dropped: list[tuple[str, set[str]]] = []
+
+    async def for_memories(org, ids):
+        return [held]
+
+    async def insert(rows):
+        written.extend(rows)
+
+    async def drop_unlinkable(org, ids):
+        dropped.append((org, set(ids)))
+        return len(ids)
+
+    async def link(org, cns, memories, existing, files):
+        raise AssertionError(f"linked {[m['memory_key'] for m in memories]}")
+
+    monkeypatch.setattr(code_links.store, "for_memories", for_memories)
+    monkeypatch.setattr(code_links.store, "insert", insert)
+    monkeypatch.setattr(code_links.store, "drop_unlinkable", drop_unlinkable)
+    monkeypatch.setattr(code_links, "_link", link)
+    for module in (code_links, code_link_reads):
+        monkeypatch.setattr(module, "code_namespace_for", lambda org, ns, tags: "code-r")
+    result = code_link_pass.PassResult()
+    await code_links._link_org("o", [observed("new"), observed("held")], result)
+    assert (written, dropped) == ([], [("o", {"held"})])
+    assert (result.linked, result.unlinked) == (0, 1)
+
+
+@pytest.mark.asyncio
 async def test_the_policy_drops_the_links_of_a_memory_that_is_gone(world) -> None:
     world.rows["deleted"] = _row("deleted", tombstoned_at="2026-01-01")
     world.states.update(erased=["changed"], deleted=["changed"])  # "erased" has no head
@@ -3725,14 +3962,14 @@ async def test_a_stalled_queue_is_backfilled_once_while_it_catches_up(monkeypatc
         scans.append(after)
         return None  # one page: done
 
-    async def sweep_erased(cursor, limit, result):
+    async def sweep_unlinkable(cursor, limit, result):
         return cursor
 
     monkeypatch.setattr(code_links.code, "link_cursor", link_cursor)
     monkeypatch.setattr(code_links.code, "set_link_cursor", set_link_cursor)
     monkeypatch.setattr(code_links.code, "configured_code_namespaces", lambda: [["o", "c"]])
     monkeypatch.setattr(code_links.store, "queue_horizon", queue_horizon)
-    for fn in (link_queued, backfill, sweep_erased):
+    for fn in (link_queued, backfill, sweep_unlinkable):
         monkeypatch.setattr(code_links, fn.__name__, fn)
     for _ in range(5):
         await worker._link_writes(10, code_link_pass.PassResult())
@@ -3746,7 +3983,7 @@ async def test_a_stalled_queue_is_backfilled_once_while_it_catches_up(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_an_unread_registry_links_nothing_but_still_sweeps_erased_memories(
+async def test_an_unread_registry_links_nothing_but_still_sweeps(
     monkeypatch,
 ) -> None:
     from server.code.domain.index import repos
@@ -3768,7 +4005,7 @@ async def test_an_unread_registry_links_nothing_but_still_sweeps_erased_memories
         calls.append("link")
         return position
 
-    async def sweep_erased(cursor, limit, result):
+    async def sweep_unlinkable(cursor, limit, result):
         calls.append("sweep")
         return cursor
 
@@ -3780,7 +4017,7 @@ async def test_an_unread_registry_links_nothing_but_still_sweeps_erased_memories
     monkeypatch.setattr(code_links.code, "configured_code_namespaces", unread)
     monkeypatch.setattr(code_links.store, "queue_horizon", queue_horizon)
     monkeypatch.setattr(code_links, "link_queued", link_queued)
-    monkeypatch.setattr(code_links, "sweep_erased", sweep_erased)
+    monkeypatch.setattr(code_links, "sweep_unlinkable", sweep_unlinkable)
     await worker._link_writes(10, code_link_pass.PassResult())
     assert calls == ["sweep"] and cursors["repos"] == '[["o", "c"]]'
 
@@ -3845,14 +4082,14 @@ async def test_an_empty_registry_snapshot_neither_links_nor_restarts_the_backfil
         scans.append(after)
         return None
 
-    async def sweep_erased(cursor, limit, result):
+    async def sweep_unlinkable(cursor, limit, result):
         return cursor
 
     monkeypatch.setattr(code_links.code, "link_cursor", link_cursor)
     monkeypatch.setattr(code_links.code, "set_link_cursor", set_link_cursor)
     monkeypatch.setattr(code_links.code, "configured_code_namespaces", lambda: configured.pop(0))
     monkeypatch.setattr(code_links.store, "queue_horizon", queue_horizon)
-    for fn in (link_queued, backfill, sweep_erased):
+    for fn in (link_queued, backfill, sweep_unlinkable):
         monkeypatch.setattr(code_links, fn.__name__, fn)
     await worker._link_writes(10, code_link_pass.PassResult())  # the registry read failed
     assert json.loads(cursors["repos"]) == [["o", "c"]]
@@ -3942,6 +4179,40 @@ async def test_a_move_of_a_memory_gone_since_it_was_read_is_dropped(monkeypatch,
     assert await code_link_recheck._current_moves("o", [move]) == []
     head = _row("m1")
     assert await code_link_recheck._current_moves("o", [move]) == [move]
+
+
+@pytest.mark.asyncio
+async def test_move_validation_checks_each_memory_off_the_event_loop(monkeypatch) -> None:
+    from threading import get_ident
+
+    heads = [_row("m1"), _row("m2")]
+    inputs_now = code_link_reads.inputs_now
+    inputs = {head["mid"]: inputs_now("o", head) for head in heads}
+    main_thread = get_ident()
+    checked = []
+
+    def read_inputs(org, head):
+        assert get_ident() != main_thread
+        checked.append(head["mid"])
+        return inputs_now(org, head)
+
+    async def memory_heads(org, ids):
+        return heads
+
+    monkeypatch.setattr(code_link_reads, "inputs_now", read_inputs)
+    monkeypatch.setattr(code_links.store, "memory_heads", memory_heads)
+    moves = []
+    for mid, path, stamp in (
+        ("m1", "a.py", inputs["m1"]),
+        ("m2", "b.py", inputs["m2"]),
+        ("m1", "c.py", "stale"),
+        ("m1", "d.py", inputs["m1"]),
+    ):
+        row = _full({"memory_id": mid, "path": path, "inputs_hash": stamp})
+        moves.append(code_link_recheck.Move(row, code_link_pass.link_of(row)))
+
+    assert await code_link_recheck._current_moves("o", moves) == [moves[0], moves[1], moves[3]]
+    assert sorted(checked) == ["m1", "m2"]
 
 
 def test_the_settle_window_has_a_floor() -> None:

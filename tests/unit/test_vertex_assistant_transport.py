@@ -298,12 +298,17 @@ async def test_vertex_assistant_reports_unavailable_adc_without_sending(
     adc: AsyncMock,
 ) -> None:
     sent, _ = model_wire
-    adc.side_effect = vertex_auth.VertexCredentialsError(
-        "Vertex AI could not read Google credentials"
-    )
+    adc.side_effect = vertex_auth.VertexCredentialsError("private credential provider response")
     turn = Turn()
 
-    with pytest.raises(AssistantUpstreamError, match="could not read Google credentials"):
+    with pytest.raises(AssistantUpstreamError) as failure:
         _ = [text async for text in model_for("vertex", _MODEL).stream(_MESSAGES, [], 20, turn)]
+    assert failure.value.to_detail() == {
+        "code": "ASSISTANT_UPSTREAM_FAILED",
+        "message": "Vertex AI credentials are unavailable. "
+        "Check Google Application Default Credentials and IAM.",
+        "retry_after_s": 5,
+    }
+    assert failure.value.__cause__ is None
     assert not turn.sent
     assert not sent

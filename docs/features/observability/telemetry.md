@@ -36,9 +36,9 @@ Replicas sharing that authority report under one UUID. If the worker detail show
 `missing_deployment_id` on a deployment that applies migrations manually, start the
 server once with `LOOM_BOOT_MIGRATE=true` to record its authority. Windows start at midnight
 and noon UTC. The worker allows an hour for ledger rows to arrive before reporting.
-It reports idle windows and retries an unsuccessful delivery while that window is
-still the most recent completed one. An unreachable collector does not interrupt
-the application.
+When it acquires the worker lease, it attempts delivery immediately if the latest
+completed window has no acknowledgement. It reports idle windows and retries a failed
+delivery while that window is still the most recent completed one.
 
 ### What is sent
 

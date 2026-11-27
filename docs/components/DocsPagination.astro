@@ -1,0 +1,70 @@
+---
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Text } from "@clickhouse/click-ui/Text";
+import { withMountedBase } from "blume/components/islands/base-path.ts";
+import type { FlatPage } from "blume/components/layout/nav-utils.ts";
+import { EN_UI, type UIStrings } from "blume/core/i18n-ui.ts";
+
+interface Props {
+  prev: FlatPage | null;
+  next: FlatPage | null;
+  strings: UIStrings["page"];
+}
+
+const { prev, next, strings } = Astro.props;
+const labels = { ...EN_UI.page, ...strings };
+const neighbors = [
+  { page: prev, label: labels.previous, direction: "previous", icon: "arrow-left" },
+  { page: next, label: labels.next, direction: "next", icon: "arrow-right" },
+] as const;
+---
+
+{(prev || next) && (
+  <nav aria-label={labels.pagination} class="docs-pagination mx-auto mt-12 max-w-content border-border border-t pt-6">
+    {neighbors.map(({ page, label, direction, icon }) => page && (
+      <Link className={`page-neighbor ${direction}`} href={withMountedBase(page.route)}>
+        <Icon aria-hidden="true" className="rtl:-scale-x-100" name={icon} size="sm" />
+        <span class="neighbor-copy">
+          <Text component="span" color="muted" size="xs">{label}</Text>
+          <Text component="span" size="sm" weight="medium">{page.label}</Text>
+        </span>
+      </Link>
+    ))}
+  </nav>
+)}
+
+<style>
+  .docs-pagination {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .docs-pagination :global(.page-neighbor) {
+    min-inline-size: 0;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--click-global-color-stroke-default);
+    border-radius: var(--blume-radius);
+    color: var(--click-global-color-text-default);
+  }
+
+  .docs-pagination :global(.page-neighbor:hover) {
+    border-color: var(--click-global-color-accent-default);
+    text-decoration: none;
+  }
+
+  .docs-pagination :global(.next) {
+    grid-column: 2;
+    flex-direction: row-reverse;
+    justify-content: flex-start;
+    text-align: end;
+  }
+
+  .neighbor-copy {
+    display: grid;
+    gap: 0.125rem;
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+</style>
