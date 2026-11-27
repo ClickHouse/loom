@@ -229,9 +229,11 @@ LOOM_VERTEX_PROJECT=<google-cloud-project-id>
 LOOM_VERTEX_LOCATION=global
 ```
 
-Select a location where the model is available. Use a regional endpoint when your
-data residency policy requires it. Activate Vertex AI after all server and worker
-replicas support the provider. If Models & keys has saved settings, use **Use
+Select a region, `eu`, `us`, or `global` where the model is available. Choose an
+endpoint that meets your data residency requirements. Activate Vertex AI or change
+its location after all server and worker replicas support the selected configuration.
+Before rolling back to a build that rejects that location, restore a location and
+model the target build supports. If Models & keys has saved settings, use **Use
 environment configuration** to restore the deployment settings. If the reset changes
 the embedder, Loom rebuilds the vectors.
 
