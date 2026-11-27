@@ -418,6 +418,11 @@ The worker checks pending names in pages and links them when it finds their defi
 on trunk. It drops names older than `memory_code_links_pending_days` (14 by default),
 measured when the scan starts.
 
+A memory whose key starts with `obs:` is a raw tool observation (`observe.record` keys a
+tool call's row `obs:<session_id>:<sha8>`) and is never linked: it records a tool call, not
+a lesson, though a coding plugin's carries its session's `repo:` tag and quotes the code a
+tool read.
+
 A link records the definition's fingerprint: all its overloads and the conditions that
 select them, as tokens, so whitespace, comments (not a Go `//go:` directive or a Python
 `# type:` comment) and most of what formatters change (trailing commas and other optional
@@ -497,7 +502,9 @@ not show in it; `results` keeps the move.
 `memory.ask` re-sorts the search's rows by similarity and recency while
 `memory_ask_recency_weight` is above 0 (0.2 by default), and its identifier
 lookups place their own rows; a `context.pack` startup read with no query does not
-search. A move does not show in any of these.
+search: it lists pinned, then recent memories, leaves out a memory whose code is gone
+under the namespace's policy, and labels one whose code changed, was not found again or
+went, as a search does. A move does not show in any of these.
 
 `revise` judges a changed link once per edit, within a per-pass budget
 (`memory_code_links_revise_per_pass`). A memory labelled `high` sensitivity is never sent
@@ -552,9 +559,12 @@ The links are read where the code is:
   names the first indexed commit at which it read so; `context.pack` decision lines
   carry the same note, and its memory lines a `code_state=<state>@<commit>` label.
 - `memory.get` returns the links as `code` (with any `suggestion`); `memory.search` hits
-  read from a memory's own row carry its worst link as `code_state` (a chunk, record or
-  summary hit carries none and is never left out); `memory.ask` notes the memories whose
-  code moved, changed or went.
+  read from a memory's own row carry its worst link as `code_state` and, when that is
+  `changed`, `unresolved` or `missing`, the commit that put it there, when one is known,
+  as `code_changed_since` (a chunk, record or summary hit carries neither and is never
+  left out). A `render="reader"` block and every page of `loom_search`'s text say so on
+  such a hit's line, with the same note as a `memory.for_file` line; `memory.ask` notes
+  the memories whose code moved, changed or went.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read.
 

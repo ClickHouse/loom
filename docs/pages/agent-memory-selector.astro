@@ -1,4 +1,9 @@
 ---
+import { Button } from "@clickhouse/click-ui/Button";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
 import SiteFrame from "../components/SiteFrame.astro";
 
 type Requirement = "credentials" | "code-changes" | "audit";
@@ -100,8 +105,8 @@ const plans: Plan[] = [
   description="Choose a memory setup for coding agents and copy a test checklist for your repository. Compare Git instructions, file-backed MCP, and a self-hosted service."
   path="/agent-memory-selector"
 >
-  <h1>Choose a memory setup for your coding agents</h1>
-  <p class="lead">Choose what agents need to remember and which access controls you need. Get a checklist to test the setup on a repository.</p>
+  <Title type="h1" size="xl" family="brand">Choose a memory setup for your coding agents</Title>
+  <Text color="muted" className="lead">Choose what agents need to remember and which access controls you need. Get a checklist to test the setup on a repository.</Text>
 
   <div class="selector">
     <form id="memory-input" class="site-panel memory-input" aria-label="Memory requirements" hidden>
@@ -119,32 +124,32 @@ const plans: Plan[] = [
     </form>
 
     <div class="recommendations">
-      <p id="recommendation-status" class="visually-hidden" role="status"></p>
+      <Text color="muted" id="recommendation-status" className="visually-hidden" role="status"></Text>
       {plans.map(({ id, name, fit, tradeoff, checks, links }) => (
-        <section class="site-panel memory-plan" data-memory-plan={id} aria-labelledby={`${id}-title`}>
-          <h2 id={`${id}-title`}>{name}</h2>
-          <p>{fit}</p>
-          <p>{tradeoff}</p>
-          <h3>Test it on your repository</h3>
+        <Panel orientation="vertical" alignItems="start" gap="none" hasBorder role="region" className="site-panel memory-plan" data-memory-plan={id} aria-labelledby={`${id}-title`}>
+          <Title type="h2" size="lg" id={`${id}-title`}>{name}</Title>
+          <Text color="muted">{fit}</Text>
+          <Text color="muted">{tradeoff}</Text>
+          <Title type="h3" size="md">Test it on your repository</Title>
           <ol>
             {checks.map(({ text, requirement }) => <li data-requirement={requirement}>{text}</li>)}
           </ol>
           <div class="verification-links">
-            {links.map(({ label, href, requirement }) => <a href={href} data-requirement={requirement}>{label}</a>)}
+            {links.map(({ label, href, requirement }) => <Link href={href} data-requirement={requirement}>{label}</Link>)}
           </div>
-        </section>
+        </Panel>
       ))}
       <div class="selector-actions" id="selector-actions" hidden>
-        <button class="primary" id="copy-checklist" type="button">Copy evaluation checklist</button>
-        <p id="copy-status" role="status"></p>
+        <Button id="copy-checklist" type="primary" htmlType="button">Copy evaluation checklist</Button>
+        <Text color="muted" id="copy-status" role="status"></Text>
       </div>
     </div>
   </div>
 
-  <p class="comparison-link">
-    <a class="text-link" href="/playground/source-change">Try the Playground</a>
-    <a class="text-link" href="/docs/guides/compare-coding-agent-memory">Compare the three setups on the same repository</a>
-  </p>
+  <Text color="muted" className="comparison-link">
+    <Link className="text-link" href="/playground/source-change">Try the Playground</Link>
+    <Link className="text-link" href="/docs/guides/compare-coding-agent-memory">Compare the three setups on the same repository</Link>
+  </Text>
 </SiteFrame>
 
 <script>
@@ -206,7 +211,7 @@ const plans: Plan[] = [
 
 <style>
   h1 { max-width: min(22ch, 100%); font-size: clamp(2.25rem, 5vw, 4.9rem); text-wrap: balance; }
-  .selector { display: grid; grid-template-columns: minmax(16rem, 0.9fr) minmax(0, 1.35fr); align-items: start; gap: 1rem; margin-top: 2rem; }
+  .selector { display: grid; grid-template-columns: clamp(16rem, 32vw, 33rem) minmax(0, 1fr); align-items: start; gap: 1rem; margin-top: 2rem; }
   .selector:has(.memory-input[hidden]) { grid-template-columns: minmax(0, 1fr); }
   .recommendations, .verification-links { display: grid; gap: 0.75rem; min-width: 0; }
   .memory-input fieldset { display: grid; gap: 0.25rem; padding: 0; margin: 0; min-width: 0; border: 0; }

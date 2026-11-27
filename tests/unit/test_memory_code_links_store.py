@@ -1,6 +1,7 @@
 """The link store's statements against a recording client: an insert drops its rows
 again for memories an erasure removed meanwhile, writes that follow a read take the
-version after it, and each read is scoped as its callers rely on."""
+version after it, and each read is scoped as its callers rely on. Which memories the
+drop counts as holding no links is real SQL on clickhouse-local."""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import pytest
 
 from server.memory.store import code_links as store
 from server.settings import settings
+from tests.unit import clickhouse_local
 from tests.unit.clock_fake import ManualClock
 
 
@@ -360,3 +362,36 @@ async def test_lesson_excerpts_are_read_only_from_the_lesson_namespaces() -> Non
     assert "namespace IN {nss:Array(String)}" in sql and params["nss"] == ["me", "team"]
     assert await code_plane_reads.served_excerpts("o", [], [memory], limit=3, ch=ch) == []
     assert len(ch.sql) == 1
+
+
+@pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_the_drop_takes_the_links_of_a_raw_tool_observation_and_of_a_memory_gone(
+    tmp_path,
+) -> None:
+    keys = {
+        "lesson": "flask/json/default-serializer",
+        "observed": "obs:s1:0a1b2c3d",
+        "deleted": "flask/json/removed",
+        "erased": "flask/json/erased",
+    }
+    ids = {name: f"00000000-0000-0000-0000-00000000000{n}" for n, name in enumerate(keys, 1)}
+    ch = clickhouse_local.KeptCH(
+        tmp_path, clickhouse_local.ddl("memory"), clickhouse_local.ddl("memory_code_links")
+    )
+    for name in ("lesson", "observed", "deleted"):  # "erased" has no row left
+        await ch.execute(
+            "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+            "memory_id, value, status, tombstoned_at, version) VALUES "
+            f"('o', 'n', 'a', '-', '-', '{keys[name]}', '{ids[name]}', '\"`_default` text\"', "
+            f"'active', {'now()' if name == 'deleted' else 'NULL'}, 1)"
+        )
+    for name in keys:
+        await ch.execute(
+            "INSERT INTO loom.memory_code_links (org, code_namespace, path, qualified_name, "
+            "namespace, memory_id, memory_key, agent, state, version) VALUES ('o', 'c', "
+            f"'src/flask/app.py', 'f', 'n', '{ids[name]}', '{keys[name]}', 'a', 'fresh', 1)"
+        )
+    assert await store.drop_unlinkable("o", set(ids.values()), ch=ch) == 3
+    left = await ch.query_all(f"SELECT memory_key {store._LIVE} ORDER BY memory_key")
+    assert [r["memory_key"] for r in left] == [keys["lesson"]]

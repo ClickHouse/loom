@@ -1,4 +1,10 @@
 ---
+import { GridContainer } from "@clickhouse/click-ui/GridContainer";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
 import SiteFrame from "./SiteFrame.astro";
 import { documentationLink } from "./documentation-link";
 import { enterpriseCopy } from "./enterprise-copy";
@@ -42,50 +48,50 @@ const evaluation = [
 <SiteFrame title={copy.title} description={copy.description} path={path} locale={locale} alternates={enterpriseAlternates}>
   <div class="enterprise-intro">
     <div>
-      <h1>{copy.heading}</h1>
-      <p class="lead">{copy.lead}</p>
+      <Title type="h1" size="xl" family="brand">{copy.heading}</Title>
+      <Text color="muted" className="lead">{copy.lead}</Text>
       <div class="site-actions">
-        <a class="primary" href={plan.href} hreflang={plan.hreflang}>{plan.label}<span class="link-arrow" aria-hidden="true">→</span></a>
-        <a class="secondary" href={security.href} hreflang={security.hreflang}>{security.label}</a>
+        <Link className="primary" href={plan.href} hrefLang={plan.hreflang}>{plan.label}<Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+        <Link className="secondary" href={security.href} hrefLang={security.hreflang}>{security.label}</Link>
       </div>
     </div>
-    <section class="site-panel deployment" aria-labelledby="deploy-title">
-      <h2 id="deploy-title">{copy.deploymentHeading}</h2>
-      <p>{copy.deploymentIntro}</p>
+    <Panel orientation="vertical" alignItems="start" gap="none" hasBorder role="region" className="site-panel deployment" aria-labelledby="deploy-title">
+      <Title type="h2" size="lg" id="deploy-title">{copy.deploymentHeading}</Title>
+      <Text color="muted">{copy.deploymentIntro}</Text>
       {deployment.map(({ title, detail, href, hreflang, label }) => (
         <article>
-          <h3>{title}</h3>
-          <p>{detail}</p>
-          <a href={href} hreflang={hreflang}>{label} <span class="link-arrow" aria-hidden="true">→</span></a>
+          <Title type="h3" size="md">{title}</Title>
+          <Text color="muted">{detail}</Text>
+          <Link href={href} hrefLang={hreflang}>{label} <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
         </article>
       ))}
-    </section>
+    </Panel>
   </div>
 
   <section class="site-section" aria-labelledby="controls-title">
     <div class="section-copy">
-      <h2 id="controls-title">{copy.controlsHeading}</h2>
-      <p>{copy.controlsIntro}</p>
+      <Title type="h2" size="lg" id="controls-title">{copy.controlsHeading}</Title>
+      <Text color="muted">{copy.controlsIntro}</Text>
     </div>
-    <div class="site-grid controls">
+    <GridContainer className="site-grid controls" isResponsive={false}>
       {controls.map(({ title, detail, href, hreflang, label }) => (
-        <article class="site-panel">
-          <h3>{title}</h3>
-          <p>{detail}</p>
-          <a href={href} hreflang={hreflang}>{label} <span class="link-arrow" aria-hidden="true">→</span></a>
-        </article>
+        <Panel orientation="vertical" alignItems="start" gap="none" hasBorder role="article" className="site-panel">
+          <Title type="h3" size="md">{title}</Title>
+          <Text color="muted">{detail}</Text>
+          <Link href={href} hrefLang={hreflang}>{label} <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+        </Panel>
       ))}
-    </div>
+    </GridContainer>
   </section>
 
   <section class="site-section evaluation" aria-labelledby="evaluate-title">
     <div class="section-copy">
-      <h2 id="evaluate-title">{copy.evaluateHeading}</h2>
-      <p>{copy.evaluateIntro}</p>
+      <Title type="h2" size="lg" id="evaluate-title">{copy.evaluateHeading}</Title>
+      <Text color="muted">{copy.evaluateIntro}</Text>
     </div>
     <div class="site-actions">
       {evaluation.map(({ href, hreflang, label, className }) => (
-        <a class={className} href={href} hreflang={hreflang}>{label}</a>
+        <Link className={className} href={href} hrefLang={hreflang}>{label}</Link>
       ))}
     </div>
   </section>
@@ -101,6 +107,7 @@ const evaluation = [
   .controls .site-panel { display: flex; flex-direction: column; align-items: start; }
   .controls a { margin-top: auto; }
   .evaluation { padding: clamp(1.1rem, 3vw, 2.45rem); border: 1px solid var(--line); border-inline-start: 0.2rem solid var(--accent); background: var(--surface); }
+  @media (min-width: 85rem) { .controls { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
   @media (max-width: 59rem) { .enterprise-intro { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 39rem) { .controls { grid-template-columns: minmax(0, 1fr); } }
 </style>

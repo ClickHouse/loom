@@ -86,7 +86,7 @@ const hasEstimate = rows.some(({ estimate }) => estimate !== null);
   .columns {
     display: grid;
     grid-template-columns: repeat(var(--periods), minmax(0, 1fr));
-    height: clamp(9rem, 24vw, 15rem);
+    height: clamp(9rem, 24vw, 22rem);
     gap: min(0.5rem, calc(20% / var(--periods)));
     border-bottom: 1px solid var(--line);
     background: repeating-linear-gradient(to top, transparent 0 calc(25% - 1px), var(--line) calc(25% - 1px) 25%);

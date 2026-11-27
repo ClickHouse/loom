@@ -1,0 +1,95 @@
+---
+import data from "blume:data";
+import { withMountedBase } from "blume/components/islands/base-path.ts";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Text } from "@clickhouse/click-ui/Text";
+import { documentationOverview } from "./documentation-link";
+import { frameCopy } from "./site-frame-copy";
+import { siteLocales, type SiteLocale } from "./site-locales";
+
+interface Crumb {
+  label: string;
+  route?: string;
+}
+
+interface Props {
+  crumbs: Crumb[];
+  strings?: { breadcrumb?: string };
+  centered?: boolean;
+  wide?: boolean;
+}
+
+const { crumbs, strings, centered = false, wide = false } = Astro.props;
+const language = Astro.currentLocale ?? "en";
+const locale = Object.hasOwn(siteLocales, language) ? (language as SiteLocale) : "en";
+const current = crumbs.at(-1);
+const navigation = data.navigationByLocale[locale] ?? data.navigation;
+const section = navigation.tabs.find(({ path }) => current?.route === path || current?.route?.startsWith(`${path}/`));
+const home = documentationOverview(locale);
+const parents = [
+  { label: frameCopy[locale].docs, href: home.href },
+  ...(section ? [{ label: section.label, href: withMountedBase(section.href ?? section.path) }] : []),
+  ...crumbs.slice(0, -1).map(({ label, route }) => ({ label, href: route && withMountedBase(route) })),
+];
+const linked = new Set([Astro.url.pathname.replace(/\/$/, "")]);
+const trail = parents.filter(({ href }) => {
+  if (!href) return true;
+  if (linked.has(href)) return false;
+  linked.add(href);
+  return true;
+});
+---
+
+{current && trail.length > 0 && (
+  <nav
+    aria-label={strings?.breadcrumb ?? "Breadcrumb"}
+    class:list={["docs-breadcrumb", !wide && ["mx-auto", centered ? "max-w-[54rem]" : "max-w-content"]]}
+    data-loom-docs-breadcrumb
+  >
+    <ol role="list">
+      {trail.map(({ label, href }, index) => (
+        <li>
+          {index > 0 && <Icon aria-hidden="true" name="chevron-right" size="xs" />}
+          {href ? <Link href={href} size="sm">{label}</Link> : <Text component="span" color="muted" size="sm">{label}</Text>}
+        </li>
+      ))}
+      <li>
+        <Icon aria-hidden="true" name="chevron-right" size="xs" />
+        <Text aria-current="page" component="span" size="sm">{current.label}</Text>
+      </li>
+    </ol>
+  </nav>
+)}
+
+<style>
+  .docs-breadcrumb {
+    margin-block-end: 1.125rem;
+    color: var(--blume-muted-foreground);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+
+  .docs-breadcrumb ol {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .docs-breadcrumb li {
+    display: flex;
+    align-items: center;
+    min-inline-size: 0;
+    gap: 0.5rem;
+    overflow-wrap: anywhere;
+  }
+
+  .docs-breadcrumb :global(a:not(:hover, :focus)) {
+    color: var(--click-global-color-text-muted);
+  }
+
+  .docs-breadcrumb :global(svg) { flex: none; }
+</style>

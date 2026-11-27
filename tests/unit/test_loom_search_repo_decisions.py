@@ -121,6 +121,7 @@ async def _assemble(
     explain: bool = False,
     namespace: str = "me",
     namespace_scope: Literal["this", "all_mine"] = "all_mine",
+    page: str = "",
 ) -> dict[str, Any]:
     """The loom_search payload search_sections assembles around a memory
     leg that answers `out` (no knowledge hits) for a search addressed to
@@ -146,7 +147,7 @@ async def _assemble(
         namespace_scope=namespace_scope,
         recipe="",
         bodies="excerpt",
-        page="",
+        page=page,
         explain=explain,
         repo_namespace=TRUNK,
         tracker_plan=None,
@@ -729,6 +730,64 @@ async def test_a_decision_answer_first_withholds_leaves_the_mcp_text(monkeypatch
     assert payload["withheld"]["memory"] == 1
     text = mcp_tools.search_answer(payload, {"query": BASE.query}, "me", "s1")["content"][0]["text"]
     assert "[home_fact]" in text and "decision:evict" not in text
+
+
+_COMMIT = "c0ffee" * 6 + "abcd"
+_CODE_NOTE = (
+    " (its code changed since it was written, commit c0ffeec0ffee: check before relying on it)"
+)
+
+
+def _changed(key: str) -> _MemorySearchHit:
+    """A hit as the code annotation leaves one whose code changed."""
+    hit = _hit(key, 0.8, "me")
+    hit.code_state, hit.code_changed_since = "changed", _COMMIT
+    return hit
+
+
+@pytest.mark.asyncio
+async def test_a_hit_whose_code_changed_says_so_in_the_block(monkeypatch) -> None:
+    out = _output([_changed("evict_rule"), _hit("note-a", 0.7, "me")])
+    section = (await _assemble(monkeypatch, out))["memory"]
+    assert section["reader_block"].split("\n\n") == [
+        f"[undated] [evict_rule] (semantic){_CODE_NOTE} text of evict_rule",
+        "[undated] [note-a] (semantic) text of note-a",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_later_page_says_a_hits_code_changed_on_its_plain_line(monkeypatch) -> None:
+    """A parked page carries no reader block: the agent reads the plain hit lines."""
+    from server.memory.app import search_pages
+    from server.memory.app.search import handle_memory_search
+    from server.transport import mcp_tools
+    from tests.unit._memory_search_pkg import patch_handler_name
+
+    content = search_pages.encode_page(
+        query=BASE.query,
+        top_k=BASE.top_k,
+        candidates_total=5,
+        tail=[_changed("evict_rule"), _hit("note-a", 0.7, "me")],
+        namespaces_searched=["me"],
+        namespaces_skipped=[],
+    )
+
+    class _Parked:
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, str]:
+            return {"content": content}
+
+    patch_handler_name(monkeypatch, "get_client", _Parked)
+    handle = search_pages.make_handle(search_pages.page_blob_key(content), 0)
+    parked = await handle_memory_search(BASE.model_copy(update={"page": handle}))
+    assert parked.reader_block == ""
+    payload = await _assemble(monkeypatch, parked, page=handle)
+    answer = mcp_tools.search_answer(payload, {"query": BASE.query, "page": handle}, "me", "s1")
+    assert (
+        f"  - [evict_rule] (ns=me){_CODE_NOTE} text of evict_rule\n"
+        "  - [note-a] (ns=me) text of note-a"
+    ) in answer["content"][0]["text"]
+    stale = answer["structuredContent"]["memory"]["results"][0]
+    assert (stale["code_state"], stale["code_changed_since"]) == ("changed", _COMMIT)
 
 
 @pytest.mark.asyncio

@@ -1,28 +1,34 @@
+---
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+---
 <figure class="context-preview">
   <figcaption>Code-linked memory <span>Example</span></figcaption>
   <div class="example">
-    <div class="prompt">
-      <p class="label">Agent question</p>
-      <p>Why do we retry HTTP 503 responses?</p>
-    </div>
-    <div class="record">
+    <Panel className="prompt" orientation="vertical" color="muted" gap="none" hasBorder>
+      <Text color="muted" className="label">Agent question</Text>
+      <Text color="muted">Why do we retry HTTP 503 responses?</Text>
+    </Panel>
+    <Panel className="record" orientation="vertical" color="muted" gap="none" hasBorder>
       <div class="record-heading">
-        <p class="label">Saved decision</p>
-        <span class="match">Matches source</span>
+        <Text color="muted" className="label">Saved decision</Text>
+        <Badge text="Matches source" state="success" size="sm" />
       </div>
-      <p class="decision">Retry on 503 to recover from a temporary outage.</p>
+      <Text color="muted" className="decision">Retry on 503 to recover from a temporary outage.</Text>
       <div class="source">
         <span class="label">Linked source</span>
         <code>retry.py <span>·</span> main</code>
       </div>
       <pre><code><span>def</span> should_retry(status):
     <span>return</span> status == <mark>503</mark></code></pre>
-    </div>
+    </Panel>
   </div>
 </figure>
 
 <style>
   .context-preview {
+    container-type: inline-size;
     min-width: 0;
     margin: 0;
     border: 1px solid var(--line);
@@ -49,21 +55,39 @@
       var(--surface);
   }
   .prompt, .record {
+    align-items: stretch;
     padding: clamp(0.85rem, 1.65vw, 1.25rem);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--page);
   }
   .prompt { margin-inline-end: clamp(0rem, 4vw, 2.5rem); }
   .prompt p + p, .decision { margin-top: 0.3rem; color: inherit; font-weight: 580; }
   .record { position: relative; margin-block-start: 1.1rem; margin-inline-start: clamp(0rem, 4vw, 2.5rem); }
   .record::before { content: ""; position: absolute; inset-block-end: 100%; inset-inline-start: 1rem; height: 1.1rem; border-inline-start: 1px solid var(--accent); }
   .record-heading, .source { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.35rem 0.6rem; }
-  .match { padding: 0.16rem 0.42rem; border-radius: var(--radius); color: var(--click-feedback-color-success-foreground); background: var(--click-feedback-color-success-background); font-size: 0.74rem; }
   .source { margin-top: 0.9rem; padding-top: 0.75rem; border-top: 1px solid var(--line); }
   code { font: 500 0.82rem/1.6 ui-monospace, monospace; }
   .source code span { color: var(--muted); }
   pre { margin: 0.55rem 0 0; padding: 0.65rem 0.75rem; border-radius: var(--radius); background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; }
   pre span { color: var(--click-alert-color-text-info); }
   mark { color: var(--accent); background: transparent; }
+
+  @container (min-width: 52rem) {
+    .example {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+      gap: 1.75rem;
+      align-items: start;
+      padding-block: clamp(2.25rem, 5cqi, 4rem);
+    }
+
+    .prompt, .record { margin: 0; }
+
+    .record::before {
+      inset-block: 2rem auto;
+      inset-inline: auto 100%;
+      inline-size: 1.75rem;
+      block-size: 0;
+      border-inline-start: 0;
+      border-block-start: 1px solid var(--accent);
+    }
+  }
 </style>

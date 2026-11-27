@@ -8,7 +8,8 @@ repository's indexed head in the bare mirror; the index only proposes candidates
 rules are `server.code.domain.anchor`.
 
 A memory whose repository cannot be read yet waits behind a `*` marker, and the queue
-moves on.
+moves on. A raw tool observation is the session's record, not a lesson about the code
+its output quotes: it is never linked.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
@@ -52,8 +54,9 @@ async def link_queued(
     after: QueuePosition | None, limit: int, result: link_pass.PassResult
 ) -> QueuePosition | None:
     """Link the memories queued after `after`: a new or rewritten memory gets the links
-    its text and files name, a deleted or no longer served one loses them. Returns the
-    cursor: the last position read, or the read's cutoff when nothing was queued."""
+    its text and files name; a deleted or no longer served one, and a raw tool
+    observation, loses them. Returns the cursor: the last position read, or the read's
+    cutoff when nothing was queued."""
     heads, positions, cutoff = await store.queued_memories(
         after, limit, code.code_namespaces(), lag_s=int(settings.memory_code_links_settle_seconds)
     )
@@ -98,12 +101,12 @@ async def _link_org(
         existing[a["memory_id"]].append(a)
     todo: dict[str, list[dict[str, Any]]] = defaultdict(list)
     stale: list[LinkRow] = []
-    deleted: set[str] = set()
+    unlinkable: set[str] = set()
     for r in rows:
         links = existing.get(r["mid"], [])
-        if r.get("tombstoned_at") is not None:
+        if r.get("tombstoned_at") is not None or is_observation(r):
             if links:
-                deleted.add(r["mid"])  # its links go outright, not as tombstones
+                unlinkable.add(r["mid"])  # its links go outright, not as tombstones
             continue
         tags = [str(t) for t in r.get("tags") or []]
         cns = code_namespace_for(org, str(r["namespace"]), tags)
@@ -118,8 +121,8 @@ async def _link_org(
             todo[cns].append(r)
         else:
             stale.extend(links)
-    if deleted:
-        result.unlinked += await store.drop_gone(org, deleted)
+    if unlinkable:
+        result.unlinked += await store.drop_unlinkable(org, unlinkable)
     out = store.tombstones(stale)
     result.unlinked += len(stale)
     linked: list[str] = []
@@ -156,6 +159,12 @@ async def _relink_rewritten(
     newer = [h for h in heads if inputs_now(org, h) != read.get(h["mid"])]
     if newer:
         await _link_org(org, newer, result, rereads=rereads)
+
+
+def is_observation(row: Mapping[str, Any]) -> bool:
+    """Whether `row` (a memory head or a link) is of a raw tool observation: any memory
+    whose key starts `obs:`, as `observe.record` writes it."""
+    return str(row["memory_key"]).startswith("obs:")
 
 
 def _names_a_repository(memory: dict[str, Any], tags: list[str], links: list[LinkRow]) -> bool:
@@ -357,11 +366,12 @@ def _link_row(
     )
 
 
-async def sweep_erased(
+async def sweep_unlinkable(
     cursor: dict[str, Any], limit: int, result: link_pass.PassResult
 ) -> dict[str, Any]:
-    """Drop the links of gone memories in the next page of the link table, a page a pass,
-    a new cycle `memory_code_links_sweep_interval_s` after the last; the cursor to store."""
+    """Drop the links of unlinkable memories (`store.sweep_page`) in the next page of the
+    link table, a page a pass, a new cycle `memory_code_links_sweep_interval_s` after the
+    last; the cursor to store."""
     if time.time() - float(cursor.get("done_at", 0)) < settings.memory_code_links_sweep_interval_s:
         return cursor
     try:
