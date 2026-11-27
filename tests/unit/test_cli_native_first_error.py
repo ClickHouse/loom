@@ -447,7 +447,7 @@ def test_first_role_producer_failure_is_retrieved_and_does_not_skip_safe_drain(n
 
     with pytest.raises(OSError) as caught:
         _ch.run_connected(work, orgs=("o",))
-    assert caught.value is first
+    assert caught.value is first and command.unfinished_line(first) is None
     assert native.events[-3:] == ["pg", "certificate", "ch"]
     assert all(task.done() and not task._log_traceback for task in producers)
 
@@ -482,7 +482,7 @@ def test_a_process_that_cannot_certify_succeeds_at_once_and_stays_registered(
     else:
         native.client.query_one = AsyncMock(return_value=None)
         reason = (
-            "this ClickHouse records no storage authority "
+            "this ClickHouse has not recorded its storage authority yet "
             "(a boot with LOOM_BOOT_MIGRATE on records it)"
         )
     elapsed = []

@@ -242,17 +242,13 @@ async def _authority_settled(
     ch: Any, participant: UUID, proof: str, *, end: float, own: bool = False
 ) -> bool:
     """Fresh authority selection and positive absence, under one caller-owned end.
-    A process that can never show them for itself raises `Uncertifiable`."""
+    A process that cannot show them for itself raises `Uncertifiable`."""
     try:
         async with asyncio.timeout_at(end):
-            if own and not proof:
-                raise retirement.Uncertifiable(
-                    "this host gives no process identity (no readable /proc)"
-                )
             recorded = await pg_profile.recorded_authority(ch)
             if own and recorded is None and settings.storage_authority == "clickhouse":
                 raise retirement.Uncertifiable(
-                    "this ClickHouse records no storage authority "
+                    "this ClickHouse has not recorded its storage authority yet "
                     "(a boot with LOOM_BOOT_MIGRATE on records it)"
                 )
             if (
@@ -271,13 +267,21 @@ async def _authority_settled(
                 legacy = False
             elif len(parts) in (6, 7, 8):
                 legacy = True
+            elif own and not proof:
+                legacy = False  # nothing to certify with; the authority is still asked
             else:
                 return False
             if recorded["authority"] == "clickhouse":
-                return not own or not pg.authority_state_present()
-            if not settings.pg_dsn:
-                return False
-            return await pg.retirement_settled(participant, recorded, legacy=legacy, end=end)
+                settled = not own or not pg.authority_state_present()
+            else:
+                settled = bool(settings.pg_dsn) and await pg.retirement_settled(
+                    participant, recorded, legacy=legacy, end=end
+                )
+            if settled and own and not proof:
+                raise retirement.Uncertifiable(
+                    "this host gives no process identity (no readable /proc)"
+                )
+            return settled
     except retirement.Uncertifiable:
         raise
     except Exception:  # noqa: BLE001 — missing or inconsistent authority evidence refuses retirement.

@@ -22,8 +22,8 @@ class ProcessStopping(RuntimeError):
 
 
 class Uncertifiable(RuntimeError):
-    """This process settled its writes but lacks evidence its retirement needs,
-    and no wait supplies it: its row stays, and a provider change waits for it."""
+    """This process settled its writes but cannot itself supply evidence its
+    retirement needs: its row stays, and a provider change waits for it."""
 
 
 class RetirementGate:

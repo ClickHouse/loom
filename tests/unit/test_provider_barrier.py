@@ -491,8 +491,9 @@ async def test_boot_enrolls_before_migrating_only_once_the_heartbeat_columns_exi
 async def test_a_process_that_cannot_certify_says_so_only_once_its_writes_settled(
     setup, monkeypatch, missing
 ):
-    """No wait supplies a host proof or the deployment's authority record, so the
-    refusal is named instead of retried; a write that may still land comes first."""
+    """A process supplies neither a host proof nor the deployment's authority record
+    itself, so the refusal is named instead of retried; a write that may still land
+    comes first."""
     from server.core import retirement, rmt_carry
 
     client = barrier._default_client()
@@ -508,6 +509,26 @@ async def test_a_process_that_cannot_certify_says_so_only_once_its_writes_settle
     with pytest.raises(retirement.Uncertifiable):
         await barrier._retire_until(client, monotonic() + 1)
     assert not await barrier.retire_at_shutdown(client, budget_s=1)
+    barrier.record_retirement.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_process_without_a_proof_counts_its_postgres_sessions_first(setup, monkeypatch):
+    from server.core import pg, retirement
+
+    record = {"authority": "postgres", "deployment_id": str(UUID(int=1)), "epoch": 1}
+    client = barrier._default_client()
+    monkeypatch.setattr(client, "query_one", AsyncMock(return_value=record))
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(settings, "pg_dsn", "postgresql://loom@pg.example.com/loom")
+    monkeypatch.setattr(barrier, "participant_proof", lambda: "")
+    census = AsyncMock(return_value=False)
+    monkeypatch.setattr(pg, "retirement_settled", census)
+    assert not await barrier.retire_process(client, end=monotonic() + 1)
+    census.return_value = True
+    with pytest.raises(retirement.Uncertifiable):
+        await barrier.retire_process(client, end=monotonic() + 1)
+    assert [call.kwargs["legacy"] for call in census.await_args_list] == [False, False]
     barrier.record_retirement.assert_not_awaited()
 
 

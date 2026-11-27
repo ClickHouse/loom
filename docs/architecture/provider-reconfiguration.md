@@ -60,13 +60,14 @@ A failed startup likewise cannot certify unfinished producers. Model-transition
 `drained` is reversible and does not certify permanent retirement.
 
 A process cannot certify its own retirement on a host that gives no process identity
-(no readable `/proc`), or on a ClickHouse deployment that records no storage authority
-(a boot with `LOOM_BOOT_MIGRATE` on records it). No wait supplies either, so the
-process stops retrying once its writes have settled: a `loom` command logs one warning
-and exits with the status of its work, a server logs the same at shutdown, and the row
-stays nonretired, so a transition waits for it. A command whose writes or retirement
-do not settle within `LOOM_NATIVE_COMMAND_DRAIN_TIMEOUT_S` exits 1 with one line that
-names its participant.
+(no readable `/proc`), or on a ClickHouse deployment that has not recorded its storage
+authority yet (a boot with `LOOM_BOOT_MIGRATE` on records it). The process can supply
+neither itself, so it stops retrying once its writes have settled: a `loom` command logs
+one warning and exits with the status of its work, a server's shutdown logs the reason,
+and the row stays nonretired, so a transition waits for it. No command can retire a row
+written without a process identity: nothing proves its process stopped. A command whose
+writes or retirement do not settle within `LOOM_NATIVE_COMMAND_DRAIN_TIMEOUT_S` exits 1
+with one line that names its participant.
 
 The ninth `host_proof` field, `cell-retirement-v1`, identifies this lifecycle.
 Only the guarded shutdown or verified-death writer publishes certified retirement.

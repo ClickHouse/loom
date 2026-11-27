@@ -200,10 +200,12 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
     except AuthorityMismatch:
         raise
     except Exception as e:  # noqa: BLE001 — a mint without verified enrollment is refused
-        print(
-            f"  ✗ token mint did not complete in its enrolled scope: {type(e).__name__}",
-            file=sys.stderr,
+        from server.insights.app.provider_command import unfinished_line
+
+        line = unfinished_line(e) or (
+            f"token mint did not complete in its enrolled scope: {type(e).__name__}"
         )
+        print(f"  ✗ {line}", file=sys.stderr)
         return 1
 
 

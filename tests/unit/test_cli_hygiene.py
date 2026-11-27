@@ -312,25 +312,45 @@ def test_a_command_refused_for_another_deployment_prints_one_line_and_exits_2(
     ]
 
 
+def _unfinished(*_: object, **_declared: object) -> int:
+    from server.insights.app.provider_command import UNFINISHED
+
+    error = TimeoutError()
+    error.add_note(UNFINISHED)
+    raise error
+
+
+@pytest.mark.parametrize("proof", ["", "a host proof"])
 def test_a_shutdown_failure_after_the_work_prints_one_line_and_exits_1(
-    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], proof: str
 ) -> None:
     from server.cli.dispatch import _dispatch
     from server.core.provider_process import process_identity
-    from server.insights.app.provider_command import UNFINISHED
+    from server.insights.app import provider_command
 
-    def _func(_: argparse.Namespace) -> int:
-        error = TimeoutError()
-        error.add_note(UNFINISHED)
-        raise error
-
-    assert _dispatch(argparse.Namespace(cmd="decisions", func=_func)) == 1
+    monkeypatch.setattr(provider_command, "participant_proof", lambda: proof)
+    assert _dispatch(argparse.Namespace(cmd="decisions", func=_unfinished)) == 1
     me = process_identity()
+    remedy = (
+        f"until `loom participant retire --participant {me}` runs on this host"
+        if proof
+        else "that no command can retire: this host gives no process identity"
+    )
     assert capsys.readouterr().err.strip().splitlines() == [
         "✗ the command's work is done, but its shutdown did not complete (TimeoutError): "
         f"a deferred write may not have landed, and a provider change waits for participant {me} "
-        f"until `loom participant retire --participant {me}` runs on this host"
+        f"{remedy}"
     ]
+
+
+def test_a_mint_whose_shutdown_failed_prints_that_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _auth_on_with(monkeypatch, "a-real-secret-that-is-not-the-default")
+    monkeypatch.setattr(access, "run_connected", _unfinished)
+    assert cli.main(_MINT) == 1
+    err = capsys.readouterr().err.strip()
+    assert err.startswith("✗ the command's work is done, but its shutdown did not complete")
 
 
 def test_any_other_command_error_keeps_its_traceback() -> None:

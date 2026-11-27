@@ -12,7 +12,7 @@ from server.core.background import drain_task_sets, flush_registered_buffers
 from server.core.ch import get_client, set_query_tag
 from server.core.ch_errors import error_line
 from server.core.model_work_gate import get_model_work_gate
-from server.core.provider_process import process_identity
+from server.core.provider_process import participant_proof, process_identity
 from server.insights.app.provider_barrier import _retire_until, register_process
 from server.insights.app.provider_runtime import load_active_configuration
 from server.settings import settings
@@ -135,7 +135,9 @@ async def participant_command() -> AsyncIterator[None]:
         try:
             await _finish_participant()
         except Exception as error:
-            error.add_note(UNFINISHED)  # `loom` reports it in one line (`unfinished_line`)
+            # A tracked producer's own failure is not the shutdown's: it keeps its traceback.
+            if error is not retirement.get_gate().producer_failure:
+                error.add_note(UNFINISHED)  # `loom` reports it in one line (`unfinished_line`)
             raise
 
 
@@ -145,10 +147,15 @@ def unfinished_line(error: BaseException) -> str | None:
     if UNFINISHED not in getattr(error, "__notes__", ()):
         return None
     me = process_identity()
+    remedy = (
+        f"until `loom participant retire --participant {me}` runs on this host"
+        if participant_proof()
+        else "that no command can retire: this host gives no process identity"
+    )
     return (
         f"the command's work is done, but its shutdown did not complete ({error_line(error)}): "
         f"a deferred write may not have landed, and a provider change waits for participant {me} "
-        f"until `loom participant retire --participant {me}` runs on this host"
+        f"{remedy}"
     )
 
 
