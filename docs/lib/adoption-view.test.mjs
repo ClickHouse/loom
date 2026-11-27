@@ -18,8 +18,8 @@ test("counts distinct company domains in the selected directory", () => {
   const data = {
     domains: ["legacy.example"],
     domainDirectories: {
-      30: ["company.example", "Company.Example", "gmail.com", "outlook.com", "proton.me", "other.example"],
-      90: ["company.example", "other.example", "older.example", "yahoo.com"],
+      30: ["company.example", "Company.Example", "gmail.com", "outlook.com", "protonmail.ch", "other.example"],
+      90: ["company.example", "other.example", "older.example", "yahoo.com", "myyahoo.com", "yahoo.fr"],
     },
   };
   assert.deepEqual(adoptionDomainsForRange(data, 30), {
