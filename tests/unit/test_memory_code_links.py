@@ -925,19 +925,19 @@ async def test_a_pending_link_keeps_a_memory_whose_other_code_is_gone(served) ->
 
 async def _startup_lines(monkeypatch, served, *, pinned=(), recent=(), top_k=2) -> list[str]:
     """The memory lines of a zero-query startup pack whose two listings return the served
-    heads under these keys."""
+    heads with these ids."""
     from server.memory.api.models_context import ContextPackInput
     from server.memory.app.context_pack import handle_context_pack
 
     rows = {
-        h["memory_key"]: SimpleNamespace(
+        h["mid"]: SimpleNamespace(
             **h, confidence=1.0, valid_at=None, created_at=datetime(2026, 1, 1)
         )
         for h in served.heads
     }
 
     async def listing(ident, *, pinned_only=False, **kw):
-        return [rows[k] for k in (pinned if pinned_only else recent)]
+        return [rows[mid] for mid in (pinned if pinned_only else recent)]
 
     class NoClickHouse:
         def __getattr__(self, name):
@@ -1015,6 +1015,19 @@ async def test_a_startup_row_left_out_for_gone_code_gives_its_place_to_the_next(
     served.links["gone"] = [_link("gone", "missing")]
     lines = await _startup_lines(monkeypatch, served, recent=["gone", "a", "b", "c"], top_k=2)
     assert [ln.split()[1] for ln in lines] == ["[memory:agent-a/a", "[memory:agent-a/b"]
+
+
+@pytest.mark.asyncio
+async def test_a_startup_key_two_agents_hold_is_served_from_the_row_whose_code_is_there(
+    served, monkeypatch
+) -> None:
+    served.heads += [
+        _row("newer", memory_key="k", agent="a1", value="newer"),
+        _row("older", memory_key="k", agent="a2", value="older"),
+    ]
+    served.links["newer"] = [_link("newer", "missing")]
+    lines = await _startup_lines(monkeypatch, served, recent=["newer", "older"])
+    assert len(lines) == 1 and "memory:agent-a/k " in lines[0] and lines[0].endswith(" older")
 
 
 @pytest.mark.asyncio

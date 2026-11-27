@@ -355,8 +355,8 @@ async def _pack_profile(st: _PackState) -> None:
 async def _pack_startup_recall(st: _PackState) -> None:
     """Zero-query startup recall: at session start an agent wants cheap
     pins + recency, not a paid semantic search. Pull pinned memories first,
-    then the most-recent active ones (recency-ordered), dedup, read their code
-    links as a search does, and render the memories block — no embedding
+    then the most-recent active ones (recency-ordered), read their code links
+    as a search does, dedup, and render the memories block — no embedding
     round-trip. Fires only for mode='startup' with no query; real queries still
     go through search."""
     input = st.input
@@ -405,25 +405,23 @@ async def _pack_startup_recall(st: _PackState) -> None:
         log.warning("context.pack startup recall failed: %s", e)
         return
 
-    seen: set[str] = set()
-    hits: list[Any] = []
-    for r in [*pinned, *recent]:  # pins first, then recency; dedup by key
-        if r.memory_key in seen or r.status not in ("active", "conflicted"):
-            continue
-        seen.add(r.memory_key)
-        hits.append(
-            SimpleNamespace(
-                row=r, memory_key=r.memory_key, _row_identity=(r.agent, r.user_id, r.session_id)
-            )
+    hits = [
+        SimpleNamespace(
+            row=r, memory_key=r.memory_key, _row_identity=(r.agent, r.user_id, r.session_id)
         )
-    # Before the cut to k: a memory left out because its code is gone gives its place to
-    # the next row.
+        for r in [*pinned, *recent]  # pins first, then recency
+        if r.status in ("active", "conflicted")
+    ]
+    # Before the dedup by key and the cut to k: a memory left out because its code is
+    # gone gives its place to the next row, which may hold its key. The recent listing
+    # has k rows to spare, so up to k rows left out are replaced.
     await annotate_hits(input, hits)
-    hits = hits[:k]
+    by_key: dict[str, Any] = {}
+    for h in hits:
+        by_key.setdefault(h.memory_key, h)
+    hits = list(by_key.values())[:k]
     if not hits:
         return
-    rows = [h.row for h in hits]
-    code_state = {h.memory_key: code_change.label(*_code_state_and_commit(h)) for h in hits}
 
     evidence = [
         EvidenceItem(
@@ -441,9 +439,10 @@ async def _pack_startup_recall(st: _PackState) -> None:
             ),
             conflict=(r.status == "conflicted"),
             author=author_label([getattr(r, "actor", "")]),
-            code_state=code_state[r.memory_key],
+            code_state=code_change.label(*_code_state_and_commit(h)),
         )
-        for r in rows
+        for h in hits
+        for r in [h.row]
     ]
     packed = pack_evidence(
         evidence,
@@ -453,7 +452,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
             default_section_tokens.get("memories", 300),
         ),
     )
-    row_of = {f"memory:{input.namespace}/{r.memory_key}": r.memory_key for r in rows}
+    row_of = {f"memory:{input.namespace}/{h.memory_key}": h.memory_key for h in hits}
     st.put(
         "memories",
         packed.rendered,
