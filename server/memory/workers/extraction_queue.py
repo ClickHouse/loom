@@ -17,10 +17,6 @@ claimed again forever. A held call (the org switched off, the enqueuer's
 identity refused, asked to wait or unread) marks the row `held` until the
 hold ends, no attempt spent.
 
-What a replay spent on model calls is one `worker.extraction_queue` ledger row
-under the request's org, namespace, agent, user and session, however the
-replay ended, so it counts toward that namespace's and user's daily caps.
-
 On by default: `defer` is opt-in per call, so an enabled worker with an
 empty queue costs one indexed SELECT per interval and no LLM call. Turning
 the worker off while callers defer strands their saves as `pending`.

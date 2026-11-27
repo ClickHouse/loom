@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -35,7 +36,9 @@ from server.memory.app import extraction_queue as queue
 from server.memory.app import pending_disclosure
 from server.memory.workers import extraction_queue as worker
 from server.observability import cost_accumulator
+from server.observability.budget import budget_snapshot
 from server.workers.status import get_registry
+from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl
 
 
 class StubCH:
@@ -855,8 +858,34 @@ async def test_a_replay_that_ends_early_after_a_model_call_still_bills_its_sessi
         assert (await run).failures == ["q-s1: pending"]
 
     (event,) = emitted
-    assert (event.org, event.namespace, event.session_id) == ("org-a", "one", "s1")
+    identity = (event.org, event.namespace, event.agent, event.user_id, event.session_id)
+    assert identity == ("org-a", "one", "agent-s1", "user-s1", "s1")
     assert (event.input_tokens, event.output_tokens, event.llm_calls) == (300, 30, 1)
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_replays_stored_row_is_spend_of_its_namespace_and_its_user(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The row as the ledger table stores it, read by the statement the daily caps and
+    `cost.budget_status` share."""
+    emitted = _ledger(monkeypatch)
+    monkeypatch.setitem(cost_accumulator.PRICE_PER_1K_TOKENS, "fake-echo-1", (0.001, 0.005))
+    _spending(monkeypatch, [_session_row("org-a", "one", "s1")], {"s1": (1000, 100)})
+    await worker.run_pass(worker.ExtractionQueueConfig())
+
+    ch = KeptCH(tmp_path, ddl("agent_events"), ddl("agent_events_private"), ddl("namespaces"))
+    (row,) = (event.to_row() for event in emitted)
+    del row["args"]  # empty, the column's default: the local insert cannot type an empty map
+    await ch.insert("loom.agent_events", [row])
+
+    async def spent(user_id: str) -> tuple[float, float]:
+        read = await budget_snapshot("org-a", "one", user_id=user_id, read_uncapped=True, ch=ch)
+        return read.spent, read.user_spent
+
+    assert await spent("user-s1") == (0.0015, 0.0015)
+    assert await spent("someone-else") == (0.0015, 0.0)
 
 
 @pytest.mark.asyncio
