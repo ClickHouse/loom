@@ -205,7 +205,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
         <Link size="sm" href="#reported-contact-domains">Reported contact domains</Link>
       </div>
       {totals ? <>
-        <div class="metrics">
+        {totals.operations > 0 && <div class="metrics">
           {overview.map(([label, key, description]) => {
             const change = compare ? relativeChange(totals[key], previous[key]) : null;
             return <Panel className="metric" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
@@ -214,11 +214,12 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
               {change !== null && <Text className="change" size="sm">{signedPercent.format(change)} vs. previous {filters.days} days</Text>}
             </Panel>;
           })}
-        </div>
+        </div>}
         <div class="coverage">
           <div>
             <Text className="coverage-title" size="sm" weight="semibold">{totals.days_reported} of {filters.days} days reported</Text>
             <Text size="sm" color="muted">{number.format(totals.reporting)} installations sent telemetry. The latest report arrived on <time datetime={totals.last_reported}>{shortDate(totals.last_reported)}</time>.</Text>
+            {totals.operations === 0 && <Text size="sm" color="muted">No successful requests were reported in this window.</Text>}
           </div>
           <ProgressBar className="coverage-meter" type="small" progress={(totals.days_reported / filters.days) * 100} aria-hidden="true" />
         </div>
@@ -245,7 +246,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
         {archivedStars && <Panel className="proof-card repository" orientation="vertical" alignItems="start" gap="xs" padding="lg" hasBorder fillWidth>
           <BigStat className="statistic" height="auto" label="GitHub stars" title={number.format(archivedStars.value)} order="titleBottom" size="lg" />
           <Text size="sm" color="muted">Snapshot from <time datetime={archivedStars.day}>{shortDate(archivedStars.day)}</time></Text>
-          <Link size="sm" href={adoptionUrl(filters, { tab: "oss" })}>Explore open-source activity</Link>
+          <Link className="text-link" size="sm" href={adoptionUrl(filters, { tab: "oss" })}>Explore open-source activity</Link>
         </Panel>}
       </div>
       {!archivedStars && <Link className="open-source-link" size="sm" href={adoptionUrl(filters, { tab: "oss" })}>Explore open-source activity</Link>}
