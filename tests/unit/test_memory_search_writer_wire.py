@@ -42,4 +42,10 @@ def test_writer_serialization_honors_projection() -> None:
     )
     hit._row_identity = ("writer-b", "alice", "shared")
     assert hit.model_dump(include={"memory_key"}) == {"memory_key": "seat"}
-    assert "agent" not in hit.model_dump(exclude={"agent"})
+    wire = hit.model_dump(exclude={"agent"})
+    assert "agent" not in wire
+    assert (wire["user_id"], wire["session_id"]) == ("alice", "shared")
+    output = MemorySearchOutput(results=[hit], embedding_model="test")
+    assert output.model_dump(mode="json", include={"results": {0: {"session_id"}}}) == {
+        "results": [{"session_id": "shared"}],
+    }

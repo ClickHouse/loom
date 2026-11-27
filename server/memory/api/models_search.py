@@ -483,8 +483,11 @@ class _MemorySearchHit(BaseModel):
         # `tags` is on the wire only when the request asked for it: None = not
         # requested, so the key is dropped.
         data: dict[str, Any] = handler(self)
-        if self._row_identity is not None:
-            data["agent"], data["user_id"], data["session_id"] = self._row_identity
+        identity = self._row_identity
+        if identity is not None:
+            for name, value in zip(("agent", "user_id", "session_id"), identity, strict=True):
+                if name in data:
+                    data[name] = value
         if self.tags is None:
             data.pop("tags", None)
         if self.use_guidance is None:
