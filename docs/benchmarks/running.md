@@ -126,6 +126,9 @@ calibration JSON to any gated bench with `--judge-calibration`.
 
 ### Code index
 
+For coding agents, use [paired setup and qualification](paired-agent-setup.md)
+to separate source tools, optional retrieval and application-owned context.
+
 The code benches need a server that indexes the fixture's repository (ClickHouse/ClickHouse
 for the default fixture) and a real embedder. Org and namespace come from
 `LOOM_CODE_ORG` / `LOOM_CODE_NAMESPACE` or `--org` / `--namespace`.
