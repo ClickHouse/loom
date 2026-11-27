@@ -30,19 +30,31 @@ import {
 
 export const prerender = false;
 
-Astro.response.headers.set("Cache-Control", "public, max-age=0, must-revalidate");
-Astro.response.headers.set("Vercel-CDN-Cache-Control", "public, s-maxage=3600, stale-while-revalidate=86400");
-
 const filters = adoptionFilters(Astro.url.searchParams);
 const dataset = Astro.url.searchParams.get("csv");
 const tab = dataset ? (dataset === "downloads" || dataset === "stars" ? "oss" : "self-hosted") : filters.tab;
 const { today, archivedStars, selfHosted, openSource } = await loadPublishedAdoption(tab);
 const { totals: summaries, retention, versions, activity, lifecycle, domains } = selfHosted;
+const warehouseAvailable = Array.isArray(summaries) && domains !== null;
+if (warehouseAvailable) {
+  Astro.response.headers.set("Cache-Control", "public, max-age=0, must-revalidate");
+  Astro.response.headers.set(
+    "Vercel-CDN-Cache-Control",
+    tab === "self-hosted"
+      ? "public, s-maxage=60, stale-while-revalidate=60"
+      : "public, s-maxage=3600, stale-while-revalidate=86400",
+  );
+} else {
+  Astro.response.headers.set("Cache-Control", "no-store");
+}
 const totals = summaries?.find(({ range_days, comparison }) => range_days === filters.days && comparison === "current");
-const previous = summaries?.find(
-  ({ range_days, comparison }) => range_days === filters.days && comparison === "previous",
+const currentComplete = summaries?.find(
+  ({ range_days, comparison }) => range_days === filters.days && comparison === "current_complete",
 );
-const compare = totals?.days_reported === filters.days && previous?.days_reported === filters.days;
+const previousComplete = summaries?.find(
+  ({ range_days, comparison }) => range_days === filters.days && comparison === "previous_complete",
+);
+const compare = currentComplete?.days_reported === filters.days && previousComplete?.days_reported === filters.days;
 const cutoff = daysBefore(today, filters.days);
 const lastCompleteDate = daysBefore(today, 1);
 const number = new Intl.NumberFormat("en-US");
@@ -80,7 +92,11 @@ if (dataset) {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="loom-${dataset}.csv"`,
-      "Cache-Control": "public, max-age=300",
+      "Cache-Control": !warehouseAvailable
+        ? "no-store"
+        : tab === "self-hosted"
+          ? "public, max-age=60"
+          : "public, max-age=300",
     },
   });
 }
@@ -131,6 +147,8 @@ const overview = [
 const date = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const shortDate = (day: string) => date.format(Date.parse(day));
 const windowLabel = date.formatRange(new Date(cutoff), new Date(lastCompleteDate)) + " UTC";
+const selfHostedWindowLabel =
+  date.formatRange(new Date(cutoff), new Date(totals?.last_reported === today ? today : lastCompleteDate)) + " UTC";
 const thresholdsLabel = (threshold: number) =>
   threshold ? thresholds[threshold] + " successful requests" : thresholds[threshold];
 const labeledOptions = (labels: Record<string, string>) =>
@@ -199,24 +217,24 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
       <div class="section-heading">
         <div>
           <Title type="h2" size="lg" id="self-hosted-title">Self-hosted usage</Title>
-          <Text size="sm" color="muted">{windowLabel}</Text>
+          <Text size="sm" color="muted">{selfHostedWindowLabel}</Text>
         </div>
         <Link size="sm" href="#reported-contact-domains">Reported contact domains</Link>
       </div>
       {totals ? <>
         {totals.operations > 0 && <div class="metrics">
           {overview.map(([label, key, description]) => {
-            const change = compare ? relativeChange(totals[key], previous[key]) : null;
+            const change = compare ? relativeChange(currentComplete[key], previousComplete[key]) : null;
             return <Panel className="metric" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
               <BigStat className="statistic" height="auto" label={label} title={metricValue(totals[key])} order="titleBottom" size="lg" />
               <Text color="muted" size="sm">{description}</Text>
-              {change !== null && <Text className="change" size="sm">{signedPercent.format(change)} vs. previous {filters.days} days</Text>}
+              {change !== null && <Text className="change" size="sm">Complete days {signedPercent.format(change)} vs. previous {filters.days} days</Text>}
             </Panel>;
           })}
         </div>}
         <div class="coverage">
           <div>
-            <Text className="coverage-title" size="sm" weight="semibold">{totals.days_reported} of {filters.days} days reported</Text>
+            <Text className="coverage-title" size="sm" weight="semibold">{totals.days_reported} of {filters.days} complete days reported</Text>
             <Text size="sm" color="muted">{number.format(totals.reporting)} installations sent telemetry. Latest reporting date <time datetime={totals.last_reported}>{shortDate(totals.last_reported)}</time> UTC.</Text>
             {totals.operations === 0 && <Text size="sm" color="muted">No successful requests were reported in this window.</Text>}
           </div>
@@ -231,7 +249,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
       <div class:list={["proof", { split: archivedStars }]}>
         <Panel className="proof-card" id="reported-contact-domains" orientation="vertical" alignItems="start" gap="xs" padding="lg" hasBorder fillWidth>
           <Title type="h3" size="md">Reported contact domains</Title>
-          <Text size="sm" color="muted">Namespace contact domains shared by installations with a successful request in the last 90 complete UTC days.</Text>
+          <Text size="sm" color="muted">Shared contact domains with a successful request in a completed reporting window today or in the previous 90 UTC days.</Text>
           {domains === null ? (
             <Text className="empty-state" size="sm">The domain list is unavailable.</Text>
           ) : domains.length > 0 ? (
