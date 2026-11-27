@@ -16,33 +16,90 @@ with no session capture or code shunt; the [Claude Code](claude-code.md) and
 
 ## Local single-user server
 
-A single-user server on the same machine takes MCP calls without a token.
+Use the tokenless setup when the Copilot harness can reach your single-user Loom server
+at `localhost:7777` from the machine or container where the harness runs. Otherwise, use
+an [authenticated Loom server](#any-other-server) the harness can reach.
+
+In a chat with the **Copilot** harness selected, run **Chat: Open Customizations**,
+open **MCP Servers**, and select **Add Server** in the **User** group. Choose HTTP,
+enter `http://localhost:7777/mcp`, name the server `loom`, and select
+**Global → Copilot Global**. Add
+`?toolset=coding` to the URL if the session uses the code index
+([choosing a toolset](mcp-clients.md#choosing-a-toolset)).
+If **Copilot Global** is missing, check the
+[Copilot harness requirements](https://code.visualstudio.com/docs/agents/run/agent-harnesses#_requirements-and-setup).
+You can also use the [personal configuration file](#any-other-server) with the
+local URL and omit `headers` for a tokenless server.
+
+### Install links for the editor profile
+
 [Add Loom to VS Code](https://vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522loom%2522%252C%2522type%2522%253A%2522http%2522%252C%2522url%2522%253A%2522http%253A%252F%252Flocalhost%253A7777%252Fmcp%2522%257D) ·
-[Add Loom to VS Code Insiders](https://insiders.vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522loom%2522%252C%2522type%2522%253A%2522http%2522%252C%2522url%2522%253A%2522http%253A%252F%252Flocalhost%253A7777%252Fmcp%2522%257D) adds a `servers.loom`
-entry to the user profile's `mcp.json`, with the `type` and `url` the dashboard and
-`loom install --client vscode` give VS Code. The links' payload, URL-encoded into
-`vscode:mcp/install?<payload>`, is:
+[Add Loom to VS Code Insiders](https://insiders.vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522loom%2522%252C%2522type%2522%253A%2522http%2522%252C%2522url%2522%253A%2522http%253A%252F%252Flocalhost%253A7777%252Fmcp%2522%257D)
+
+The links open the server details in VS Code. Review the configuration and select
+**Install**. Both links carry this server configuration:
 
 ```json
 { "name": "loom", "type": "http", "url": "http://localhost:7777/mcp" }
 ```
 
-The links open VS Code's install prompt. From a terminal,
-`code --add-mcp '{"name":"loom","type":"http","url":"http://localhost:7777/mcp"}'` does
-the same. Coding sessions that use the code index add `?toolset=coding` to `url`
-([choosing a toolset](mcp-clients.md#choosing-a-toolset)).
+To install directly from a terminal, run:
+
+```bash
+code --add-mcp '{"name":"loom","type":"http","url":"http://localhost:7777/mcp"}'
+```
+
+Both methods add `servers.loom` to the editor profile's `mcp.json`. The dashboard
+provides a matching configuration to copy into that file. The Copilot harness can receive
+[eligible editor entries](https://code.visualstudio.com/docs/agents/reference/mcp-configuration#_editor-forwarding-to-copilot)
+from a connected editor.
 
 ## Any other server
 
-Write the entry with its token:
+On the host running the Copilot harness, add the entry below to `mcpServers` in
+`$COPILOT_HOME/mcp-config.json`, or `~/.copilot/mcp-config.json` if `COPILOT_HOME` is
+unset. For a remote session, edit the file on the remote host or in the container
+where the harness runs. Replace `https://loom.example.com` with your server URL. Set
+`LOOM_API_KEY` to your [Loom token](../../getting-started/connect-a-coding-agent.md#what-you-need)
+in the Agent Host's launch environment so the token stays out of the file. If you
+change that environment, restart the client or Agent Host so it inherits the variable.
+
+```json
+{
+  "mcpServers": {
+    "loom": {
+      "type": "http",
+      "url": "https://loom.example.com/mcp?toolset=coding",
+      "headers": { "Authorization": "Bearer ${LOOM_API_KEY}" },
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+See the [Copilot configuration reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration)
+for other destinations and authentication options. For a cloud session that uses
+another provider, use that provider's MCP configuration.
+
+### Editor profile for the Local harness
+
+If you still use the deprecated Local harness, `loom install` writes the
+literal bearer token into the editor's `mcp.json`:
 
 ```bash
 loom install --client vscode --server-url https://loom.example.com --token "$LOOM_API_KEY" --toolset coding
 ```
 
-This merges a `servers.loom` entry (`type: "http"`, `url` and an `Authorization` header)
-into the user profile's `mcp.json`, leaving `settings.json` alone. To keep the token out
-of the file, write the entry by hand with an input VS Code prompts for once and stores:
+This merges a `servers.loom` entry into `mcp.json` for the default profile in
+VS Code Stable at the standard user data location. To use a named profile,
+VS Code Insiders, or a different user data location, open the intended profile,
+run **MCP: Open User Configuration**, and choose
+**VS Code User Configuration** if prompted. If the picker only offers Copilot
+configuration, run **MCP: Add Server**, choose **HTTP**, enter your Loom MCP URL,
+name the server `loom`, and choose **Global → User Configuration (deprecated)**
+to create the editor file. To keep the token out of `mcp.json`, add or update the
+`loom` entry and add the `loom-token` input to have VS Code prompt for and store
+the token. Keep the other entries in the file:
 
 ```json
 {
@@ -59,10 +116,26 @@ of the file, write the entry by hand with an input VS Code prompts for once and 
 }
 ```
 
-Open the agent mode chat and check that the `loom_*` tools are listed;
-[checking the connection](mcp-clients.md#checking-the-connection) covers a `401`.
-Then [verify shared memory through two MCP sessions](mcp-clients.md#verify-shared-memory-through-mcp)
-to check that a second authorized client can retrieve a saved decision.
+The `${input:loom-token}` form works in the Local harness. Editor entries that use
+input prompts cannot be forwarded to the Copilot harness.
+
+## Verify the connection
+
+In the chat you configured, open **Chat: Open Customizations → MCP Servers** and
+select `loom`. Check that the entry comes from the file you configured and that
+the HTTP URL points to your Loom server. If you also have a forwarded `loom`
+entry, give the native entry a distinct name such as `loomNative` before testing.
+Ask the agent to call `loom_activate` from the server you configured. Expand the
+tool call and confirm which server answered and that it returned the Loom session
+primer.
+If the tool is missing, check the session target and where you saved the entry.
+If Copilot returns `401`, check that the Agent Host inherited `LOOM_API_KEY`, then see
+[checking the connection](mcp-clients.md#checking-the-connection).
+For an authenticated connection, ask the same chat to call `loom_memory_get`
+from the configured server. Give it the key and namespace of a memory you saved
+under the same Loom user identity, then check the returned value.
+To verify save and recall separately from Copilot, run the
+[two-session memory check](mcp-clients.md#verify-shared-memory-through-mcp).
 
 ## Agent instructions
 

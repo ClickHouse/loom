@@ -28,7 +28,7 @@ saved in Claude Code](#verify-shared-memory-between-claude-code-and-codex).
 - **The server URL**, for example `https://loom.example.com`, or `http://localhost:7777`
   for a stack started with `loom up`.
 - **A writer token for your namespace**, except against a single-user server on the same
-  machine: there the plugins and the install links for
+  machine: there the plugins and the local connections for
   [Cursor](../features/integrations/cursor.md#mcp-tools) and
   [VS Code](../features/integrations/vscode.md#local-single-user-server) connect without one.
   Create one in the dashboard at
@@ -101,12 +101,15 @@ plugin](../features/integrations/cursor.md#plugin) (untested in Cursor), which c
 MCP entry and Loom's skills.
 
 For Cursor or VS Code against a single-user server on the same machine, no token is needed:
-use the [Cursor](../features/integrations/cursor.md#mcp-tools) or
-[VS Code](../features/integrations/vscode.md#local-single-user-server) install link. Otherwise, in the dashboard,
+use the [Cursor install link](../features/integrations/cursor.md#mcp-tools) or follow the
+[VS Code setup](../features/integrations/vscode.md#local-single-user-server). To connect
+the Copilot harness to another Loom server, use its
+[personal MCP configuration](../features/integrations/vscode.md#any-other-server).
+For configurations managed by the editor, in the dashboard,
 open **Settings → Tokens**, fill in the **New token** form (press **New token** first if a
-token exists) and press **Create token**, then choose your client (Cursor, VS Code, Cline,
-Windsurf, Zed, Gemini CLI, OpenCode or Claude Desktop) under **Connect**: the dialog shows the entry for its
-config file, with the token in it. For any other MCP client, copy the entry from
+token exists) and press **Create token**, then choose your client under **Connect**.
+The dialog shows the entry for its config file, with the token in it. The **VS Code**
+option gives you the editor profile entry. For any other MCP client, copy the entry from
 [MCP clients](../features/integrations/mcp-clients.md). With the `loom` CLI installed
 (`pip install -e .` from a clone of the repository), one command writes the entry instead:
 

@@ -159,8 +159,8 @@ Run it from your home directory, or another
 [directory only you can write to](./docs/getting-started/quickstart.md#fast-path-released-image-no-clone).
 The installer starts Loom and ClickHouse, applies migrations and prints the dashboard URL:
 **http://localhost:7777/**; on a new install it then checks that a memory saves and reads
-back. On a terminal it also offers to connect the coding agents it finds (Claude Code, Codex,
-VS Code) and, on a new install, opens the dashboard. The image includes the server,
+back. On a terminal it also offers to connect Claude Code, Codex and the VS Code editor
+profile when it finds them and, on a new install, opens the dashboard. The image includes the server,
 workers, dashboard and Python, TypeScript and Go compiler indexers, plus the C++ one on
 `amd64`; TypeScript dependencies are prepared automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
 
@@ -243,9 +243,9 @@ entry](./docs/features/integrations/cursor.md#mcp-tools), which needs no token:
 
 [![Add Loom to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=loom&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0Ojc3NzcvbWNwP3Rvb2xzZXQ9Y29kaW5nIn0%3D)
 
-For VS Code agent mode on the machine running a personal installation, the buttons below
-add the [local MCP entry](./docs/features/integrations/vscode.md#local-single-user-server),
-which needs no token:
+In VS Code, [add Loom to Copilot](./docs/features/integrations/vscode.md#local-single-user-server)
+from the session's MCP settings. On the machine running a personal installation,
+the buttons below add a local entry to the editor profile, which needs no token:
 
 [![Add Loom to VS Code](https://img.shields.io/badge/VS_Code-Add_Loom-0098FF?logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522loom%2522%252C%2522type%2522%253A%2522http%2522%252C%2522url%2522%253A%2522http%253A%252F%252Flocalhost%253A7777%252Fmcp%2522%257D)
 [![Add Loom to VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Add_Loom-24bfa5?logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522loom%2522%252C%2522type%2522%253A%2522http%2522%252C%2522url%2522%253A%2522http%253A%252F%252Flocalhost%253A7777%252Fmcp%2522%257D)

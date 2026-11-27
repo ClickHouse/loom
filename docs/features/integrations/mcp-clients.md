@@ -10,23 +10,25 @@ Model Context Protocol. With Loom, agents in different clients can use the same
 server and recall decisions saved in a namespace they have permission to read.
 
 Loom serves its operations as MCP tools at `<loom>/mcp`. A streamable-HTTP client connects
-with a URL and a bearer token (none on a single-user server; Cursor and VS Code have
-install links for that case: [Cursor](cursor.md#mcp-tools),
-[VS Code](vscode.md#local-single-user-server)); a stdio-only client goes through the
+with a URL and a bearer token (none on a single-user server; see local setup for
+[Cursor](cursor.md#mcp-tools) and [VS Code](vscode.md#local-single-user-server)); a
+stdio-only client goes through the
 `mcp-remote` bridge. A tool call runs the same auth, rate limit, audit and idempotency
 path as `POST /v1/<op>`. The protocol is in the [MCP reference](../../reference/mcp.md).
 
 ## Plugin or plain MCP
 
-| You run                                                             | Use                                                                                          | You get                                                                                                                                          |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Claude Code                                                         | the [Claude Code plugin](claude-code.md)                                                     | tools, capture hooks, code shunt, skills, the code-scope header                                                                                  |
-| Codex                                                               | the [Codex plugin](codex.md)                                                                 | the same, with Codex wiring                                                                                                                      |
-| Cursor                                                              | the [Cursor plugin](cursor.md#plugin) (untested in Cursor) or `loom install --client cursor` | the tools; the `loom` and `loom-code` skills from the plugin; capture through the [`sessionEnd` hook](cursor.md#transcript-capture) you register |
-| Claude Desktop, VS Code, Cline, Windsurf, Zed, Gemini CLI, OpenCode | `loom install --client <name>` ([below](#wire-a-client-with-loom-install))                   | the tools; capture only through a [transcript template](index.md#transcript-capture-hooks)                                                       |
-| an orchestrator running several agents                              | one MCP mount per agent ([frameworks.md](frameworks.md))                                     | shared memory across the agents                                                                                                                  |
+| You run                                                    | Use                                                                                          | You get                                                                                                                                          |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude Code                                                | the [Claude Code plugin](claude-code.md)                                                     | tools, capture hooks, code shunt, skills, the code-scope header                                                                                  |
+| Codex                                                      | the [Codex plugin](codex.md)                                                                 | the same, with Codex wiring                                                                                                                      |
+| Cursor                                                     | the [Cursor plugin](cursor.md#plugin) (untested in Cursor) or `loom install --client cursor` | the tools; the `loom` and `loom-code` skills from the plugin; capture through the [`sessionEnd` hook](cursor.md#transcript-capture) you register |
+| Claude Desktop, Cline, Windsurf, Zed, Gemini CLI, OpenCode | `loom install --client <name>` ([below](#wire-a-client-with-loom-install))                   | the tools; capture only through a [transcript template](index.md#transcript-capture-hooks)                                                       |
+| VS Code                                                    | the [Copilot or editor profile setup](vscode.md)                                             | the tools; capture only through a [transcript template](index.md#transcript-capture-hooks)                                                       |
+| an orchestrator running several agents                     | one MCP mount per agent ([frameworks.md](frameworks.md))                                     | shared memory across the agents                                                                                                                  |
 
-A plain MCP entry gives the tools only: no session capture, primer or code shunt. Loom
+A plain MCP entry does not install session hooks or the code shunt. The
+`loom_activate` tool can load the session primer on demand. Loom
 still records an implicit run per MCP session and names the agent after the client's
 `clientInfo.name` (`Cursor` becomes `cursor`). To teach the agent when to call the tools,
 add the [agent instructions](agent-instructions.md) block to a coding client's rule file,
@@ -200,10 +202,13 @@ Two more URL parameters shape a connection:
   register `loom-tracker` at `?toolset=tracker` beside `loom` at `?toolset=coding`, for
   example with `loom install --client cursor --name loom-tracker --toolset tracker`.
 
+`loom install --client vscode` writes to the [default Stable editor profile](vscode.md#editor-profile-for-the-local-harness)
+at the standard user data location. For a native Copilot configuration, follow the
+[VS Code setup](vscode.md).
+
 ## Other editors and agents
 
-[`loom install`](#what-it-writes-per-client) covers the clients in its table; VS Code also
-has [install links](vscode.md#local-single-user-server). Each client below reaches
+[`loom install`](#what-it-writes-per-client) covers the clients in its table. Each client below reaches
 `<loom>/mcp` with its own config. In the entries, `URL` is `http://localhost:7777/mcp` for
 a single-user server on the same machine (no header needed) or
 `https://loom.example.com/mcp` with a token; add `?toolset=coding` for a coding agent that
