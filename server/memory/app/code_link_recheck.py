@@ -639,7 +639,7 @@ async def _resolve_pending(
         try:
             here = await links.at_head(files, head, target) if target is not None else None
         except code.ParseFailed:
-            continue  # stays pending: retried next pass
+            continue  # Keep the row pending for the next scan.
         if here is None:
             continue
         anchored: PendingLink = {
