@@ -197,8 +197,6 @@ SELECT
     max(daily.day) AS last_reported,
     uniqExact(daily.installation_id) AS reporting,
     uniqExactIf(daily.installation_id, daily.successful_requests > 0) AS active,
-    uniqExactIf(enrolled.company_id, enrolled.company_id != '' AND daily.successful_requests > 0)
-        AS verified_companies,
     sum(daily.successful_requests) AS operations,
     sum(daily.requests) AS requests,
     sum(daily.server_errors) AS server_errors,
@@ -220,7 +218,6 @@ SELECT
     sum(daily.output_tokens) AS output_tokens,
     sum(daily.embedding_tokens) AS embedding_tokens
 FROM loom_product_analytics.loom_external_adoption_daily AS daily
-LEFT JOIN loom_product_analytics.loom_adoption_enrollments AS enrolled USING (installation_id)
 ARRAY JOIN [30, 90, 365] AS range_days
 WHERE daily.day >= today_utc - 2 * range_days AND daily.day <= today_utc
 GROUP BY range_days, comparison;

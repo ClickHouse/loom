@@ -9,25 +9,21 @@ import { Title } from "@clickhouse/click-ui/Title";
 
 interface Props {
   domains: string[] | null;
-  rankedDomains: string[] | null;
+  ranked: boolean;
   days: number;
   filterHref: string;
 }
 
-const { domains, rankedDomains, days, filterHref } = Astro.props;
+const { domains, ranked, days, filterHref } = Astro.props;
 const pageSize = 12;
 const queryLimit = 253;
 const anchor = "#reported-contact-domains";
 const params = Astro.url.searchParams;
 const query = (params.get("domain_q") ?? "").trim().slice(0, queryLimit);
 const normalizedQuery = query.toLowerCase();
-const canSort = rankedDomains !== null && rankedDomains.length > 1;
+const canSort = ranked && (domains?.length ?? 0) > 1;
 const alphabetical = canSort && params.get("domain_sort") === "name";
-const legacyDomains = days === 90 ? domains : null;
-const published =
-  rankedDomains?.map((domain, index) => ({ domain, rank: index + 1 })) ??
-  legacyDomains?.map((domain) => ({ domain, rank: null })) ??
-  null;
+const published = domains?.map((domain, index) => ({ domain, rank: ranked ? index + 1 : null })) ?? null;
 const matching = published?.filter(({ domain }) => domain.toLowerCase().includes(normalizedQuery)) ?? [];
 if (alphabetical) matching.sort((left, right) => left.domain.localeCompare(right.domain, "en-US"));
 const lastPage = Math.max(1, Math.ceil(matching.length / pageSize));
@@ -40,7 +36,7 @@ const number = new Intl.NumberFormat("en-US");
 const visibleCount =
   visible.length > 1 ? number.formatRange(offset + 1, offset + visible.length) : number.format(offset + 1);
 const tableHeaders = [
-  ...(rankedDomains !== null
+  ...(ranked
     ? [
         {
           label: "Rank",
@@ -55,7 +51,7 @@ const tableHeaders = [
     label: "Contact domain",
     scope: "col",
     overflowMode: "wrap" as const,
-    "aria-sort": alphabetical || rankedDomains === null ? ("ascending" as const) : undefined,
+    "aria-sort": alphabetical || !ranked ? ("ascending" as const) : undefined,
   },
 ];
 
@@ -107,7 +103,7 @@ function directoryHref(nextPage: number, byName = alphabetical, search = query) 
             ? `${visibleCount} of ${number.format(matching.length)} matching ${matching.length === 1 ? "domain" : "domains"}`
             : "No domains match your search."
           : `${visibleCount} of ${number.format(published.length)} published ${published.length === 1 ? "domain" : "domains"}`}
-        {rankedDomains !== null && matching.length > 0 && " · Rank reflects attributed successful requests"}
+        {ranked && matching.length > 0 && " · Rank reflects attributed successful requests"}
       </Text>
       {visible.length > 0 && <Table
         aria-label="Published contact domains"

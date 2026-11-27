@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   activityForRange,
   adoptionCsv,
+  adoptionDomainsForRange,
   adoptionFilters,
   adoptionGrowthForRange,
   adoptionUrl,
@@ -12,6 +13,27 @@ import {
   relativeChange,
   summarizeOss,
 } from "./adoption-view.mjs";
+
+test("counts distinct company domains in the selected directory", () => {
+  const data = {
+    domains: ["legacy.example"],
+    domainDirectories: {
+      30: ["company.example", "Company.Example", "gmail.com", "outlook.com", "proton.me", "other.example"],
+      90: ["company.example", "other.example", "older.example", "yahoo.com"],
+    },
+  };
+  assert.deepEqual(adoptionDomainsForRange(data, 30), {
+    days: 30,
+    domains: data.domainDirectories[30],
+    ranked: true,
+    companyCount: 2,
+  });
+  assert.equal(adoptionDomainsForRange(data, 90).companyCount, 3);
+  assert.deepEqual(adoptionDomainsForRange(data, 365), adoptionDomainsForRange(data, 90));
+  assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: null }, 30).companyCount, null);
+  assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: null }, 90).companyCount, 1);
+  assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: { 30: [] } }, 30).companyCount, 0);
+});
 
 test("allowlists shareable ranges, grains, and thresholds", () => {
   const filters = adoptionFilters(

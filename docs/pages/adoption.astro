@@ -19,6 +19,7 @@ import { loadPublishedAdoption } from "../lib/adoption-data.mjs";
 import {
   activityForRange,
   adoptionCsv,
+  adoptionDomainsForRange,
   adoptionFilters,
   adoptionGrowthForRange,
   adoptionUrl,
@@ -72,7 +73,7 @@ const series = activityForRange(activity, filters, today);
 const growthSeries = adoptionGrowthForRange(selfHosted.growth, filters, today);
 const latestGrowth = selfHosted.growth?.findLast(({ grain }) => grain === "day");
 const growthCoverage = selfHosted.growthCoverage;
-const directoryDays = Math.min(filters.days, 90);
+const domainDirectory = adoptionDomainsForRange(selfHosted, filters.days);
 const lifecycleGroups = [
   { entity: "deployment", threshold: filters.installation, title: "Installation lifecycle" },
   { entity: "domain", threshold: filters.domain, title: "Domain lifecycle" },
@@ -144,9 +145,8 @@ const metricGroups = [
 ];
 const overview = [
   ["Active installations", "active", "Ran at least one successful request"],
-  ["Reporting installations", "reporting", "Sent telemetry in the selected window"],
+  ["Reporting installations", "reporting", "Sent at least one telemetry report, including idle installations"],
   ["Successful requests", "operations", "Across reporting installations"],
-  ["Verified companies", "verified_companies", "Enrolled companies with an active installation"],
 ];
 const date = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const shortDate = (day: string) => date.format(Date.parse(day));
@@ -307,6 +307,12 @@ const ossCounterGroups = [
                 {change !== null && <Text className="change" size="sm">Complete days {signedPercent.format(change)} vs. previous {filters.days} days</Text>}
               </Panel>;
             })}
+            <Panel className="metric" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
+              <BigStat className="statistic" height="auto" label="Company domains" title={metricValue(domainDirectory.companyCount)} order="titleBottom" size="sm" />
+              <Text color="muted" size="sm">{domainDirectory.companyCount === null
+                ? "Domain data is unavailable for this period."
+                : `From the ${domainDirectory.days}-day domain directory. Excludes common personal email providers.`}</Text>
+            </Panel>
           </div>
           <div class="coverage">
             <div>
@@ -422,9 +428,9 @@ const ossCounterGroups = [
       </section>
 
       <AdoptionDomainDirectory
-        domains={selfHosted.domains}
-        rankedDomains={selfHosted.domainDirectories?.[directoryDays] ?? null}
-        days={directoryDays}
+        domains={domainDirectory.domains}
+        ranked={domainDirectory.ranked}
+        days={domainDirectory.days}
         filterHref={adoptionUrl(filters, { tab: "self-hosted" })}
       />
     </section>}
@@ -514,11 +520,11 @@ const ossCounterGroups = [
           </div>
           <div>
             <dt>Installation activity</dt>
-            <dd>An installation counts once per period. An active installation recorded a successful request. Coverage depends on which installations report.</dd>
+            <dd>A reporting installation sent at least one telemetry report. An active installation recorded a successful request. Each installation counts once per period.</dd>
           </div>
           <div>
-            <dt>Reported organizations</dt>
-            <dd>Verified companies enroll separately. The public directory uses domains shared through optional namespace contact reporting.</dd>
+            <dt>Company domains</dt>
+            <dd>Each distinct reported contact domain with a successful request counts once. Common personal email providers are excluded. The one-year view uses the 90-day domain directory.</dd>
           </div>
           <div>
             <dt>Comparison and projection</dt>
