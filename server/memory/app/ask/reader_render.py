@@ -63,8 +63,8 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
     order `memory.ask` would read them for this question (chronological for
     temporal questions, rank order otherwise). A hit from `label_namespace`
     names it beside its type: `(decision, code-acme)`. A hit whose linked code
-    changed, was not found again or went says so before its excerpt, with the
-    commit (`code_change.note`)."""
+    changed, was not found again or went says so before its excerpt
+    (`code_change.note`)."""
     if not hits:
         return ""
     from server.memory.app.ask.rendering import evidence_order

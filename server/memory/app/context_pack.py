@@ -507,8 +507,7 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
 
 
 def _code_state_and_commit(hit: Any) -> tuple[str, str]:
-    """The hit's code state and the commit that put it there ('' for a state no note
-    names)."""
+    """The hit's `code_state` and `code_changed_since`."""
     return (
         str(getattr(hit, "code_state", "") or ""),
         str(getattr(hit, "code_changed_since", "") or ""),

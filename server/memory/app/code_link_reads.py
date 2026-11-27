@@ -259,10 +259,10 @@ async def _annotation_reads(
 
 async def annotate_hits(input: Any, hits: list[Any]) -> None:
     """Set each search hit's `code_state` to its worst link in a repository the caller
-    may read and `code_changed_since` to that link's commit (the links themselves on
-    `_code_links`), mark for a lower rank (`_code_ranked_down`) the hits whose code
-    changed or went, and drop, in place, the hits about code that is gone
-    (`code_change.hidden`)."""
+    may read and `code_changed_since` to the commit of that state
+    (`code_change.worst_commit`; the links themselves on `_code_links`), mark for a lower
+    rank (`_code_ranked_down`) the hits whose code changed or went, and drop, in place,
+    the hits about code that is gone (`code_change.hidden`)."""
     try:
         memories, seen, policies = await _annotation_reads(input, hits)
     except Exception as e:  # noqa: BLE001 — the links are additive to the read

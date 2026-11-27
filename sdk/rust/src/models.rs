@@ -156,7 +156,8 @@ pub struct SearchHit {
     pub created_at: String,
     #[serde(default)]
     pub code_state: String,
-    /// The commit that put `code_state` at changed, unresolved or missing; empty otherwise.
+    /// The commit that put `code_state` at changed, unresolved or missing; empty for any
+    /// other state, and when no commit is known.
     #[serde(default)]
     pub code_changed_since: String,
     #[serde(default)]
