@@ -1,6 +1,7 @@
 import type { MouseEvent, ReactNode } from "react";
 import { Link } from "@clickhouse/click-ui/Link";
 import type { HelpOutlineEntry } from "../../api/help";
+import { HELP_HOME_PAGE, viewHref } from "../../lib/state";
 import { inline, renderBlocks } from "../assistant/AnswerText";
 
 /**
@@ -121,5 +122,6 @@ export function helpHref(target: string, page: string): string | null {
 }
 
 export function pageHref(page: string): string {
-  return `/help?page=${encodeURIComponent(page)}`;
+  const home = viewHref("help");
+  return page === HELP_HOME_PAGE ? home : `${home}?page=${encodeURIComponent(page)}`;
 }

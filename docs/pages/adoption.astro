@@ -24,7 +24,9 @@ Astro.response.headers.set("Cache-Control", "public, max-age=0, must-revalidate"
 Astro.response.headers.set("Vercel-CDN-Cache-Control", "public, s-maxage=3600, stale-while-revalidate=86400");
 
 const filters = adoptionFilters(Astro.url.searchParams);
-const { today, refreshedAt, selfHosted, openSource } = await loadPublishedAdoption();
+const dataset = Astro.url.searchParams.get("csv");
+const tab = dataset ? (dataset === "downloads" || dataset === "stars" ? "oss" : "self-hosted") : filters.tab;
+const { today, refreshedAt, selfHosted, openSource } = await loadPublishedAdoption(tab);
 const { totals: summaries, retention, versions, activity, lifecycle, domains } = selfHosted;
 const totals = summaries?.find(({ range_days, comparison }) => range_days === filters.days && comparison === "current");
 const previous = summaries?.find(
@@ -63,7 +65,6 @@ const sources = {
   npm: "https://www.npmjs.com/package/@clickhouse/loom",
   GHCR: "https://github.com/ClickHouse/loom/pkgs/container/loom",
 };
-const dataset = Astro.url.searchParams.get("csv");
 if (dataset) {
   const rows = adoptionCsv(dataset, series, lifecycleGroups, oss);
   if (!rows) return new Response("Unknown dataset", { status: 404 });
@@ -138,7 +139,7 @@ const overview = [
     <a href={adoptionUrl(filters, { tab: "oss" })} aria-current={filters.tab === "oss" ? "page" : undefined}>Open source</a>
   </nav>
 
-  <form method="get" class="filters" aria-label="Adoption filters">
+  <form method="get" action="/adoption" class="filters" aria-label="Adoption filters" data-adoption-filters>
     <input type="hidden" name="tab" value={filters.tab} />
     <label>Lookback
       <select name="days">
@@ -176,7 +177,7 @@ const overview = [
     <button class="secondary" type="submit">Apply filters</button>
   </form>
 
-  <section id="self-hosted" class="view" aria-labelledby="self-hosted-title" hidden={filters.tab !== "self-hosted"}>
+  {filters.tab === "self-hosted" && <section id="self-hosted" aria-labelledby="self-hosted-title">
     <div class="section-title">
       <div>
         <h2 id="self-hosted-title">Self-hosted</h2>
@@ -295,9 +296,9 @@ const overview = [
         </article>
       )}
     </div>
-  </section>
+  </section>}
 
-  <section id="oss" class="view" aria-labelledby="oss-title" hidden={filters.tab !== "oss"}>
+  {filters.tab === "oss" && <section id="oss" aria-labelledby="oss-title">
     <div class="section-title">
       <div>
         <h2 id="oss-title">Open-source adoption</h2>
@@ -353,7 +354,7 @@ const overview = [
         : <p>Daily snapshots will appear as they are collected.</p>}
     </article>
     <p class="notice">Downloads can include automated builds and retries.</p>
-  </section>
+  </section>}
 
   <section id="methodology" class="methodology" aria-labelledby="methodology-title">
     <h2 id="methodology-title">How we measure adoption</h2>
@@ -374,6 +375,14 @@ const overview = [
   </section>
   <p class="refreshed">Source data fetched <time datetime={refreshedAt}>{today} at {refreshedAt.slice(11, 16)} UTC</time></p>
 </SiteFrame>
+
+<script>
+  import { omitDefaultAdoptionFilters } from "../lib/adoption-view.mjs";
+
+  document.querySelector<HTMLFormElement>("[data-adoption-filters]")?.addEventListener("formdata", ({ formData }) => {
+    omitDefaultAdoptionFilters(formData);
+  });
+</script>
 
 <style>
   h1 { font-size: clamp(2.8rem, 7vw, 5.6rem); }

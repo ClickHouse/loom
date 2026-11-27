@@ -64,8 +64,6 @@ export default defineConfig({
     ],
   },
   navigation: {
-    actions: [{ label: "Product site", href: siteUrl }],
-    featured: [{ label: "Product site", href: siteUrl, icon: "house" }],
     tabs: [
       {
         label: {
@@ -109,7 +107,6 @@ export default defineConfig({
   },
   footer: {
     links: [
-      { label: "Loom product site", href: siteUrl },
       { label: "Glossary", href: "/glossary" },
       { label: "Benchmark results", href: "/benchmarks/results" },
     ],

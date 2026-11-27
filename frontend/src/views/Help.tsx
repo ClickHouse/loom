@@ -1,7 +1,7 @@
 import { type MouseEvent, useEffect, useState } from "react";
 import { Accordion } from "@clickhouse/click-ui/Accordion";
 import { Link } from "@clickhouse/click-ui/Link";
-import { useStore } from "../lib/state";
+import { HELP_HOME_PAGE, urlParam, useStore } from "../lib/state";
 import { type HelpPage, helpPage } from "../api/help";
 import { Loading, PageHeader } from "../components/ui";
 import { PageContainer } from "../layout/PageContainer";
@@ -13,7 +13,7 @@ type State = { kind: "loading" } | { kind: "ready"; page: HelpPage } | { kind: "
 
 /** The page `?page=` names, as the build ships it; the index of the docs when none. */
 function pageParam(): string {
-  return new URLSearchParams(window.location.search).get("page") || "index.md";
+  return urlParam("page") || HELP_HOME_PAGE;
 }
 
 /**
@@ -74,17 +74,17 @@ export function Help() {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
     e.preventDefault();
     const url = new URL(href, window.location.origin);
-    openDocsPage(url.searchParams.get("page") ?? "index.md", url.hash.slice(1));
+    openDocsPage(url.searchParams.get("page") ?? HELP_HOME_PAGE, url.hash.slice(1));
   };
 
   const title = state.kind === "ready" && state.page.found ? state.page.title : "Documentation";
-  const home = pageHref("index.md");
+  const home = pageHref(HELP_HOME_PAGE);
   return (
     <PageContainer>
       <PageHeader
         title={title}
         actions={
-          path !== "index.md" && (
+          path !== HELP_HOME_PAGE && (
             <Link href={home} onClick={(e: MouseEvent) => follow(e, home)}>
               Documentation home
             </Link>

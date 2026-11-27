@@ -25,7 +25,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { restrictedReason } from "../lib/namespaceUpdate";
 import { useGrantRows } from "../lib/useGrantRows";
-import { useStore, useIdentity } from "../lib/state";
+import { setViewParam, urlParam, useStore, useIdentity } from "../lib/state";
 import { hasPlatformAdminClaim, holdsAdminGrant } from "../lib/role";
 import { fmtInt, relativeTime, listTime, parseChTime, refreshDetail } from "../lib/format";
 import { humanizeError, errorLine } from "../lib/errorWords";
@@ -139,18 +139,6 @@ function Mono({ children, className = "" }: { children: React.ReactNode; classNa
   return <span className={`font-mono text-xs ${className}`}>{children}</span>;
 }
 
-function readRepoParam(): string | null {
-  if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get("repo");
-}
-
-function writeRepoParam(ns: string | null) {
-  const url = new URL(window.location.href);
-  if (ns) url.searchParams.set("repo", ns);
-  else url.searchParams.delete("repo");
-  window.history.replaceState(null, "", url.toString());
-}
-
 // ---------------------------------------------------------------------------
 // Repos list
 // ---------------------------------------------------------------------------
@@ -159,7 +147,7 @@ export function CodeView() {
   const identity = useIdentity();
   const [repos, setRepos] = useState<CodeRepoSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(readRepoParam);
+  const [selected, setSelected] = useState(() => urlParam("repo"));
 
   // The page announces a first index that became searchable or failed between two polls
   // (the approvals bell has no generic feed yet).
@@ -196,7 +184,7 @@ export function CodeView() {
 
   const select = (ns: string | null) => {
     setSelected(ns);
-    writeRepoParam(ns);
+    setViewParam("repo", ns);
   };
 
   const current = useMemo(

@@ -27,6 +27,17 @@
   border-block-end: 1px solid var(--blume-border);
 }
 
+[data-blume-doc-grid] {
+  max-inline-size: 88rem;
+  margin-inline: auto;
+}
+
+@media (min-width: 88rem) {
+  [data-blume-header] {
+    padding-inline: calc((100% - 88rem) / 2 + 3.5rem);
+  }
+}
+
 [data-blume-header] nav a {
   min-block-size: 2.25rem;
   border-radius: var(--blume-radius);
@@ -60,6 +71,10 @@
   color: var(--blume-foreground);
   font-size: 1rem;
   line-height: 1.7;
+}
+
+.prose > :where(p, blockquote) {
+  max-inline-size: 60ch;
 }
 
 .prose :where(h1) {
@@ -208,12 +223,6 @@
 
 blume-mermaid .edgeLabel p {
   color: var(--blume-foreground) !important;
-}
-
-@media (min-width: 64rem) {
-  [data-blume-nav-drawer] > nav:has(> ul > li > a[href="https://loom.clickhouse.com/"]) {
-    display: none;
-  }
 }
 
 .prose:has(> :is(#start-here, #find-and-share-context, #plan-a-deployment)) > h1 + p {
