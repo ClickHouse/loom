@@ -61,6 +61,7 @@ test("on, in an indexed checkout: one code.search, the pointers injected, no hoo
         JSON.stringify({
           abstain: false,
           retrieval_confidence: 0.6,
+          retrieval_risk: "low",
           results: [{ path: "src/Merge/Executor.h", start_line: 10, end_line: 40, symbol: "DB::Executor" }],
         }),
       );
@@ -97,7 +98,7 @@ test("on, in an indexed checkout: one code.search, the pointers injected, no hoo
 const WIRE = JSON.parse(fs.readFileSync(new URL("./fixtures/code-query-wire.json", import.meta.url), "utf8"));
 const REPLIES = WIRE.responses;
 
-async function contractFixture(t, replies = REPLIES) {
+async function contractFixture(t, replies = REPLIES, extraEnv = {}) {
   const dir = checkout();
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-query-tmp-")));
   fs.writeFileSync(
@@ -138,6 +139,7 @@ async function contractFixture(t, replies = REPLIES) {
     LOOM_API_KEY: "test-token",
     LOOM_PROMPT_PACK: "on",
     LOOM_HOOK_DEBUG: "on",
+    ...extraEnv,
   });
   let promptId = 0;
   return {
@@ -185,6 +187,17 @@ test("a later prompt receives changed evidence even at the same indexed span", a
   replies["code.search"].results[0].signature = "(value, strict)";
   assert.match((await ask(prompt)).out, /value, strict/);
   assert.equal(seen.length, 2);
+});
+
+test("search pointers follow the index's own risk label unless a confidence is named", async (t) => {
+  const replies = structuredClone(REPLIES);
+  replies["code.search"].retrieval_risk = "medium";
+  const prompt = "How are nested record prefixes combined before validation?";
+  const quiet = await contractFixture(t, replies);
+  assert.equal((await quiet.ask(prompt)).out, "");
+  assert.equal(quiet.seen.length, 1);
+  const named = await contractFixture(t, replies, { LOOM_PROMPT_PACK_MIN_CONF: "0.4" });
+  assert.match((await named.ask(prompt)).out, /src\/parser\.py:10-14/);
 });
 
 for (const kind of ["calls", "overrides", "inherits"]) {

@@ -64,10 +64,14 @@ from server.transport.mcp_op import (
     routes_writes,
 )
 from server.transport.mcp_schemas import (
+    PLUGIN_SCHEMA_PROFILE,
     _shape_schema,
     _strip_blob_fields_from_knowledge,
     _strip_org_from_input_schema,
+    apply_schema_profile,
+    compact_shapes,
     model_schema,
+    resolve_schema_profile,
     strip_model_docstring,
 )
 
@@ -523,10 +527,10 @@ def _upfront_tools(configured: str, toolset: str, profile: str) -> set[str]:
     if configured.strip().casefold() != "auto":
         return {name.strip() for name in configured.split(",") if name.strip()}
     if toolset == "coding":
-        # Outside the compact profile the instructions send a definition lookup to
+        # Outside the compact shapes the instructions send a definition lookup to
         # code.symbol, so it loads with the pre-edit read and literal search.
         names = {"code.edit_context", "code.grep"}
-        return names if profile == "compact" else names | {"code.symbol"}
+        return names if compact_shapes(profile) else names | {"code.symbol"}
     return {"code.search", "code.symbol", "code.grep", "search.query", LOOM_OP_TOOL_NAME}
 
 
@@ -558,6 +562,9 @@ _CODE_ONLY_GREP_OMITTED_ARGS = _COMPACT_CODING_GREP_OMITTED_ARGS | {
     "path_prefix",
     "langs",
 }
+# A plugin's listing keeps `namespace`: its session start names the checkout's,
+# and a call may name another repository's.
+_PLUGIN_GREP_OMITTED_ARGS = _CODE_ONLY_GREP_OMITTED_ARGS - {"namespace"}
 
 
 def code_only_listing(toolset: str | None, schema_profile: str | None) -> bool:
@@ -597,7 +604,6 @@ async def _tools_descriptor(
     (`code_only_listing`). ``toolset`` is the per-request ``?toolset=`` override.
     """
     from server.settings import settings
-    from server.transport.mcp_schemas import apply_schema_profile, resolve_schema_profile
 
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
     profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
@@ -640,10 +646,14 @@ async def _tools_descriptor(
                 input_schema, set(ASSISTANT_FORCED_ARGS.get(op.name, {})) | ASSISTANT_DROPPED_ARGS
             )
             input_schema = _with_identity(input_schema, op)
-        if profile == "compact" and toolset == "coding" and op.name == "code.grep":
+        if compact_shapes(profile) and toolset == "coding" and op.name == "code.grep":
             input_schema = _without(
                 input_schema,
-                _CODE_ONLY_GREP_OMITTED_ARGS if code_only else _COMPACT_CODING_GREP_OMITTED_ARGS,
+                _CODE_ONLY_GREP_OMITTED_ARGS
+                if code_only
+                else _PLUGIN_GREP_OMITTED_ARGS
+                if profile == PLUGIN_SCHEMA_PROFILE
+                else _COMPACT_CODING_GREP_OMITTED_ARGS,
             )
             # JSON Schema numeric bounds do not constrain a string alternative.
             input_schema["properties"]["context_lines"]["type"] = "integer"

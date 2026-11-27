@@ -11,7 +11,9 @@ import {
   gateSignature,
   renderGate,
   sessionScope,
+  sessionStart,
   venvPython,
+  writtenSince,
 } from "../lib/test-gate.mjs";
 
 const GATE = {
@@ -50,7 +52,20 @@ test("render dedupes commands, lists unknown-runner tests and untested names", (
   assert.equal((text.match(/pytest tests\/unit\/test_a\.py/g) || []).length, 1);
   assert.match(text, /also reached \(no known runner\): src\/x\/tests\/gtest_parts\.cpp/);
   assert.match(text, /no test reaches: MergeTreeData::renameTempPartAndAdd, Foo::bar\./);
-  assert.match(text, /Run the tests and rely on green/);
+  assert.match(text, /\. Run the tests before finishing, or say why not\.$/);
+});
+
+test("plain pytest runs fold into one command; a run with an option stays its own", () => {
+  const gate = (runs) => ({ obligations: true, tests: runs.map((run) => ({ run })) });
+  assert.equal(
+    renderGate(gate(["pytest tests/a.py", "pytest tests/b.py"]), { python: "python3" }),
+    "Loom test gate: run: python3 -m pytest tests/a.py tests/b.py. Run the tests before finishing, or say why not.",
+  );
+  assert.match(
+    renderGate(gate(["npm test", "pytest tests/a.py", "pytest -k slow tests/c.py", "pytest tests/b.py::test_x"])),
+    /run: npm test ; pytest tests\/a\.py tests\/b\.py::test_x ; pytest -k slow tests\/c\.py\. /,
+  );
+  assert.match(renderGate(gate(["pytest tests/a.py"])), /run: pytest tests\/a\.py\. /);
 });
 
 test("render caps and counts the overflow", () => {
@@ -61,7 +76,9 @@ test("render caps and counts the overflow", () => {
     untested_total: 0,
   };
   const text = renderGate(many, { maxRuns: 2 });
-  assert.match(text, /pytest t0\.py ; pytest t1\.py \(\+4 more\)/);
+  assert.match(text, /run: pytest t0\.py t1\.py \(\+4 more\)\./);
+  const mixed = { ...many, tests: Array.from({ length: 6 }, (_, i) => ({ run: `npm test t${i}` })) };
+  assert.match(renderGate(mixed, { maxRuns: 2 }), /run: npm test t0 ; npm test t1 \(\+4 more\)\./);
 });
 
 test("a deleted indexed test is reported as missing, never prescribed as a runnable command", () => {
@@ -234,6 +251,28 @@ import { commentOnlyDiff, withPython } from "../lib/test-gate.mjs";
 const hunk = (file, lines) =>
   `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -1,0 +2 @@\n${lines.join("\n")}\n`;
 
+test("a file last written before the session began is not the session's change", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-since-"));
+  try {
+    for (const f of ["old.py", "new.py"]) fs.writeFileSync(path.join(dir, f), "x = 1\n");
+    const began = Date.parse("2001-09-09T01:46:40.000Z");
+    fs.utimesSync(path.join(dir, "old.py"), new Date(began - 1000), new Date(began - 1000));
+    fs.utimesSync(path.join(dir, "new.py"), new Date(began + 1000), new Date(began + 1000));
+    const rows = [
+      { type: "user", message: { content: "hi" } },
+      { type: "assistant", timestamp: "2001-09-09T01:46:40.000Z" },
+    ];
+    assert.equal(sessionStart(rows), began);
+    assert.equal(sessionStart([{ type: "user" }, { timestamp: "nope" }]), 0);
+    assert.equal(sessionStart(undefined), 0);
+    // A deleted file has no time and stays; an unknown start keeps every path.
+    assert.deepEqual(writtenSince(dir, ["old.py", "new.py", "gone.py"], began), ["new.py", "gone.py"]);
+    assert.deepEqual(writtenSince(dir, ["old.py", "new.py"], 0), ["old.py", "new.py"]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a comment- or blank-only diff owes no test", () => {
   assert.equal(commentOnlyDiff(hunk("server/naming.py", ["+# loomcheck"])), true);
   assert.equal(commentOnlyDiff(hunk("lib/a.mjs", ["+// note", "+", "-/* old */"])), true);
@@ -267,7 +306,7 @@ test("nothing to run asks for a test, not for running tests", () => {
     untested: [{ qualified_name: "server.naming::validate_namespace_name" }],
   });
   assert.match(text, /no test reaches: server\.naming::validate_namespace_name/);
-  assert.match(text, /Add a test that reaches it, or say why the change needs none/);
+  assert.match(text, /Add a test that reaches it, or say why none is needed\.$/);
   assert.doesNotMatch(text, /Run the tests/);
 });
 
@@ -707,9 +746,10 @@ test("the hook blocks a change whose tests never ran and lets an answered one st
     execFileSync("git", args, { cwd: dir, stdio: "ignore" });
   }
   fs.appendFileSync(path.join(dir, "src/a.py"), "def g():\n    return 2\n");
-  // The change is older than the transcript rows, until something rewrites a file.
+  const change = call("Edit", { file_path: path.join(dir, "src/a.py") }, "updated");
+  // The change is as old as the session's first row, until something rewrites a file.
   const touch = (file, when) => fs.utimesSync(path.join(dir, file), when, when);
-  touch("src/a.py", new Date(1e12 - 1000));
+  touch("src/a.py", new Date(change[0].timestamp));
   fs.writeFileSync(
     cachePathFor(dir, tmp),
     JSON.stringify({ ts: Date.now(), indexed: true, org: "o", namespace: "code-x", repo: "x/y", prefixes: [] }),
@@ -745,7 +785,6 @@ test("the hook blocks a change whose tests never ran and lets an answered one st
       child.on("close", () => resolve(out));
       child.stdin.end(JSON.stringify({ cwd: dir, session_id: session, transcript_path: transcript }));
     });
-  const change = call("Edit", { file_path: path.join(dir, "src/a.py") }, "updated");
   try {
     const ran = [change, bash(SUITE, PASSED)];
     const no = [said("Fix f. Do not run the test suite."), change];
@@ -771,6 +810,12 @@ test("the hook blocks a change whose tests never ran and lets an answered one st
     touch("src/b.py", new Date(1e12 - 1000));
     touch("src/a.py", new Date());
     assert.match(await stop("edited-after-run", ran), /"decision":"block"/);
+    // A tree left dirty before the session: reading or running the file changes nothing.
+    touch("src/a.py", new Date(1e12 - 1000));
+    assert.equal(
+      await stop("only-read", [bash("cat src/a.py", "def f():"), bash("grep -n g src/a.py", "3:def g():")]),
+      "",
+    );
   } finally {
     server.closeAllConnections();
     server.close();

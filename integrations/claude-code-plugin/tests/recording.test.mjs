@@ -10,9 +10,11 @@ import {
   recordingCachePath,
   recordingFromAppends,
   recordingFromNamespace,
+  listsConversationTools,
   recordingPrimerLine,
   writeRecording,
 } from "../lib/recording.mjs";
+import { toolsetParts } from "../lib/toolset.mjs";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "loom-rec-"));
 
@@ -53,6 +55,19 @@ test("the cache is per server + org + namespace and expires", () => {
   assert.equal(fs.existsSync(recordingCachePath("https://a", "acme", "ns3", dir)), false);
   fs.writeFileSync(recordingCachePath("https://a", "acme", "ns4", dir), "{nope");
   assert.equal(readRecording("https://a", "acme", "ns4", { now, tmp: dir }), null);
+});
+
+test("a toolset value splits into lower-cased, de-duplicated parts, as the server reads it", () => {
+  assert.deepEqual(toolsetParts("Coding+tracker, coding  ALL"), ["coding", "tracker", "all"]);
+  for (const none of ["", " ", undefined, null]) assert.deepEqual(toolsetParts(none), []);
+});
+
+test("only a toolset that lists the conversation tools gets the primer's conversation line", () => {
+  // `all` lists them; a union with a whole listing takes the server's default toolset, which may.
+  for (const toolset of ["all", "ALL", "coding+all", "all,tracker", "coding+readonly", "assistant coding"])
+    assert.equal(listsConversationTools(toolset), true, toolset);
+  for (const toolset of ["coding", "coding+tracker", "core", "readonly", "", undefined, "wall"])
+    assert.equal(listsConversationTools(toolset), false, String(toolset));
 });
 
 test("the primer states the switch instead of claiming automatic logging", () => {

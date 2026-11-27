@@ -40,7 +40,7 @@ from server.transport.mcp_identity import (
 )
 from server.transport.mcp_op import keep_first_marks
 from server.transport.mcp_op import reachable as loom_op_reachable
-from server.transport.mcp_schemas import resolve_schema_profile
+from server.transport.mcp_schemas import PLUGIN_SCHEMA_PROFILE, resolve_schema_profile
 from server.transport.mcp_tools import (
     _emit_mcp_event,
     assistant_connection,
@@ -553,7 +553,8 @@ async def _initialize_instructions(
     wording for implicit scopes and read usage hints during the session. Other
     connections also get their current mentor hint. A connection that lists the
     code tools alone (`code_only_listing`) carries no memory, workspace or
-    `loom_op` text. Clients control display and
+    `loom_op` text, and a coding-agent plugin's (`_plugin_instructions`) one
+    paragraph, since its hooks carry the routing. Clients control display and
     context limits. The profile comes only with a verified
     bearer: an anonymous probe (discovery_only / open modes) must not read
     profile content.
@@ -565,6 +566,9 @@ async def _initialize_instructions(
         return _assistant_primer(await _caller_defaults(auth, assistant=True))
     defaults = await _caller_defaults(auth)
     coding = "coding" in toolset_parts(toolset)
+    if coding and _plugin_connection(schema_profile):
+        profile = await _profile_section(auth, defaults) if auth is not None else ""
+        return _plugin_instructions(toolset, defaults) + profile
     rules = (
         _coding_instructions(toolset, defaults, schema_profile=schema_profile)
         if coding
@@ -591,6 +595,37 @@ async def _initialize_instructions(
     mentor = "" if coding else await _mentor_line(auth, defaults, toolset)
     # the rules and the mentor line are rendered apart: mark each op once across both
     return keep_first_marks(rules + scope_line + workspace + mentor) + profile
+
+
+def _plugin_connection(schema_profile: str | None) -> bool:
+    """Whether the URL names the plugin profile: a coding-agent plugin's connection."""
+    return str(schema_profile or "").lower() == PLUGIN_SCHEMA_PROFILE
+
+
+def _plugin_instructions(toolset: str | None, defaults: dict[str, Any] | None) -> str:
+    """The startup text of a coding-agent plugin's connection: what the tool families
+    are for, in one paragraph. The upfront tools' own descriptions say when to call
+    them, the client's tool search names the deferred ones, and the plugin's hooks say
+    the rest when it applies: the checkout's code namespace at session start, the Loom
+    call in place of a local read they refuse, a file's memories before an edit and
+    recalled memories beside the prompt."""
+    tool = _tool_refs(toolset)
+    save = tool["memory.set"]
+    text = (
+        f"Use Loom first for unchanged indexed code and tests ({tool['code.search']} finds "
+        "behavior), local tools for edits, tests, Git and working-copy changes. "
+        "`loom_search` recalls saved memory, "
+        + (f"{save} saves a fact when the user asks, and " if save else "and ")
+        + '`loom_op` (`op="help"`) finds other operations.'
+    )
+    if defaults and not defaults["namespace"]:
+        names = ", ".join(f"`{ns}`" for ns in defaults.get("readable") or [])
+        text += (
+            f" No default namespace: pass `namespace` ({names}) on memory and tracker calls."
+            if names
+            else " This token can read no namespace."
+        )
+    return name_ops_for_toolset(text, toolset)
 
 
 def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:

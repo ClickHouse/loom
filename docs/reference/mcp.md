@@ -28,7 +28,10 @@ Query parameters on the URL select what `tools/list` shows for that connection:
 - `?schema_profile=` picks the listing's shape: `standard` (the curated
   description and the input schema; the default, `LOOM_MCP_SCHEMA_PROFILE`),
   `full` (adds `outputSchema`) or `compact` (the first paragraph and the
-  argument tree).
+  argument tree). A URL may also name `plugin`, the profile of a coding-agent
+  plugin whose hooks carry the routing: the compact shapes, every tool of the
+  toolset listed with the repository header or without it, and, on a toolset
+  with a `coding` part, startup instructions of one paragraph. `LOOM_MCP_SCHEMA_PROFILE` does not take it.
 
 Compact coding connections describe the common source workflows in the
 startup instructions. Find the other tools through discovery. When the `coding`
@@ -59,14 +62,15 @@ op kept off MCP, name an op outside the listing by its dotted name; other
 refusals keep the tool names they spell.
 
 The coding-agent plugins send the `X-Loom-Code-Scope` header for a checkout they
-resolve to a repository, so those connections are bound; the URLs they ship name
-no profile. The lists of a `coding` connection whose URL carries
+resolve to a repository, so those connections are bound. The Codex plugin's URL
+names no profile and the Claude Code plugin's names `plugin`, so both list the
+memory tools. The lists of a `coding` connection whose URL carries
 `schema_profile=compact` follow that header, so their `cacheScope` is `private`
 with the header or without it.
 
 With the automatic loading policy, a connection on the `coding` toolset loads
 `code.edit_context` and `code.grep` up front, and `code.symbol` outside the
-compact profile. Use `code.edit_context` with a
+compact shapes. Use `code.edit_context` with a
 definition name or location to read implementation, indexed tests, and linked
 lessons together. Supply multiple literal clues from the same definition to
 resolve it when individual clues also appear in other definitions. A method
