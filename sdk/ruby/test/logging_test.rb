@@ -109,13 +109,13 @@ class LoggingTest < LoomTest
 
     client(logger: @log)
 
-    assert_equal ['LOOM_LOG_LEVEL: invalid log level "loud"; expected one of debug, info, warn, error, off; using warn'],
+    assert_equal ["LOOM_LOG_LEVEL: invalid log level; expected one of debug, info, warn, error, off; using warn"],
                  @log.at(:warn)
   end
 
   def test_an_unreadable_log_level_argument_raises
     error = assert_raises(ArgumentError) { client(logger: @log, log_level: "loud") }
-    assert_match(/log_level: invalid log level "loud"/, error.message)
+    assert_equal "log_level: invalid log level; expected one of debug, info, warn, error, off", error.message
   end
 
   def test_the_configured_logger_and_level_are_used
@@ -157,15 +157,19 @@ class LoggingTest < LoomTest
     redacted.each_value { |v| refute_includes v, "session_secret" }
   end
 
-  def test_an_unreadable_loom_log_level_holding_a_secret_is_not_echoed
-    ENV["LOOM_LOG_LEVEL"] = "Bearer #{KEY}"
+  # Neither a token nor a letters-only secret is repeated, from either source.
+  def test_an_unreadable_log_level_is_never_echoed
+    ["Bearer #{KEY}", "SyntheticLettersOnlySecret", "loud"].each do |value|
+      @log = Capture.new
+      ENV["LOOM_LOG_LEVEL"] = value
+      client(logger: @log)
 
-    client(logger: @log)
-
-    assert_equal ["LOOM_LOG_LEVEL: invalid log level (value not shown); expected one of debug, info, warn, error, off; " \
-                  "using warn"], @log.at(:warn)
-    error = assert_raises(ArgumentError) { client(logger: @log, log_level: KEY) }
-    refute_includes error.message, KEY
+      assert_equal ["LOOM_LOG_LEVEL: invalid log level; expected one of debug, info, warn, error, off; using warn"],
+                   @log.at(:warn), value
+      ENV.delete("LOOM_LOG_LEVEL")
+      error = assert_raises(ArgumentError) { client(logger: @log, log_level: value) }
+      refute_includes error.message, value
+    end
   end
 
   def test_the_debug_line_drops_the_user_information_from_the_base_url

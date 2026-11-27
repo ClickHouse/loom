@@ -36,22 +36,18 @@ module ClickHouse
       # The user information in a URL: "https://user:secret@host" keeps "https://host".
       URL_USERINFO = %r{\b([a-z][a-z0-9+.-]*://)[^\s/?#@]+@}i
 
-      # A level name as it may appear in an error: a plain word, else not shown at all,
-      # since a misplaced secret is not a plain word.
-      PLAIN_WORD = /\A[A-Za-z]{1,16}\z/
-
       BEARER = /\b(Bearer|Basic|Token)\s+([A-Za-z0-9._~+\/=-]{8,})/i
 
       module_function
 
-      # A level from a String or Symbol, naming +source+ when it is not one.
+      # A level from a String or Symbol, naming +source+ when it is not one. The value
+      # itself is never repeated: a credential set there by mistake would reach the log.
       def parse_level(value, source)
         key = value.to_s.strip.downcase
         return key.to_sym if LEVELS.include?(key.to_sym)
         return STDLIB_ALIASES[key] if STDLIB_ALIASES.key?(key)
 
-        shown = PLAIN_WORD.match?(value.to_s.strip) ? value.to_s.inspect : "(value not shown)"
-        raise ArgumentError, "#{source}: invalid log level #{shown}; expected one of #{LEVELS.join(", ")}"
+        raise ArgumentError, "#{source}: invalid log level; expected one of #{LEVELS.join(", ")}"
       end
 
       # A secret as a log line may show it: "…" and, past 8 characters, its last four.
