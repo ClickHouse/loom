@@ -69,6 +69,24 @@ def test_lexical_statement_byte_for_byte() -> None:
     }
 
 
+def test_a_path_penalty_changes_only_the_order_the_pool_is_cut_on() -> None:
+    from server.code.store.index.sql import path_penalty_sql
+
+    sql, params = _statement(noise_penalty=0.35)
+    factor, factor_params = path_penalty_sql("path", 0.35, 1.0)
+    assert sql == _TODAY.replace("ORDER BY lex_score DESC", f"ORDER BY lex_score * {factor} DESC")
+    assert params == {
+        "org": "o",
+        "ns": "n",
+        "model": "m",
+        "tokens": ["merge", "tree"],
+        "gate_query": "merge tree",
+        "idfs": [2.5, 0.7],
+        "pool": 200,
+        **factor_params,
+    }
+
+
 # ---- corpus stats ------------------------------------------------------------
 
 
@@ -142,8 +160,8 @@ def test_code_term_df_refresh_replaces_the_snapshot_hourly() -> None:
 
 
 def test_search_gates_on_every_query_token_and_times_the_leg() -> None:
-    """The service hands the leg its tokens and idfs (every token gates) and
-    records the leg's wall time."""
+    """The service hands the leg its tokens and idfs (every token gates) and the
+    path penalties the pool is cut on, and records the leg's wall time."""
     from server.code.app import search as cs
 
     seen: dict[str, Any] = {}
@@ -185,5 +203,5 @@ def test_search_gates_on_every_query_token_and_times_the_leg() -> None:
     res = asyncio.run(run())
     tokens, idfs = seen["args"][3], seen["args"][4]
     assert tokens and len(idfs) == len(tokens)
-    assert set(seen["kw"]) == {"path_prefix", "pool", "scope"}
+    assert set(seen["kw"]) == {"path_prefix", "pool", "scope", "noise_penalty", "prose_penalty"}
     assert "lexical_leg_ms" in res.retrieval_work

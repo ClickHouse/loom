@@ -49,6 +49,9 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
         [1.0] * len(tokens),
         path_prefix=prefix,
         scope=scope,
+        # the pool cut on the ranking's path penalties
+        noise_penalty=0.35 if c["path_penalties"] else 1.0,
+        prose_penalty=0.25 if c["path_penalties"] else 1.0,
     )
     await repo.vector_search_chunks(ORG, NS, MODEL, SMALL_VEC, path_prefix=prefix, scope=scope)
     await repo.vector_shortlist_ids(
@@ -436,6 +439,7 @@ def cases() -> list[Case]:
                 "scope": ("none", "globs", "regex"),
                 "path_prefix": (False, True),
                 "token_gate": ("words", "underscores"),
+                "path_penalties": (False, True),
             },
         ),
         Case(

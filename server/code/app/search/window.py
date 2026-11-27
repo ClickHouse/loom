@@ -7,10 +7,9 @@ import logging
 
 from server.code.app import fan_in as code_fan_in
 from server.code.app import history as code_history
-from server.code.app.search.priors import _TEST_INTENT_TOKENS
+from server.code.app.search.priors import asks_for_tests
 from server.code.app.search.state import _POOL_KEEP, _SearchState
 from server.code.app.spans import code_span, span_attrs
-from server.code.domain.extract.tokenize import code_tokens
 from server.code.domain.idents import embedded_idents
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
@@ -148,10 +147,6 @@ def _diversify(ranked: list[CodeUnit], top_k: int) -> list[CodeUnit]:
     return unique + dupes
 
 
-def _has_test_intent(query: str) -> bool:
-    return bool(frozenset(code_tokens(query)) & _TEST_INTENT_TOKENS)
-
-
 def _same_path_in_window(ranked: list[CodeUnit], top_k: int) -> int:
     """Units in the top-k window that share a path with an earlier unit in
     it — the slots saturation would touch. 0 = the window is already one
@@ -171,14 +166,14 @@ def _saturation_skip_reason(
     """Where several units of one file ARE the answer, saturation is off:
     a path_prefix scopes the search to a subtree the asker chose; a
     symbol-shaped query asks for one identifier's definition and uses,
-    which live together; a test-intent query wants the cases of one test
-    file. A natural-language query naming an identifier found in the
+    which live together; a query that asks for tests wants the cases of one
+    test file. A natural-language query naming an identifier found in the
     relevance window has the same locality as the symbol route."""
     if path_prefix:
         return "path_prefix"
     if route.startswith("symbol"):
         return "symbol"
-    if _has_test_intent(query):
+    if asks_for_tests(query):
         return "test_intent"
     named = embedded_idents(query)
     if named and any(

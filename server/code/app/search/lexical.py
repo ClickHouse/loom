@@ -28,9 +28,12 @@ async def _lexical_leg(
     work: dict[str, int],
     path_prefix: str,
     scope: SearchScope | None,
+    path_penalties: tuple[float, float],
 ) -> tuple[list[dict[str, Any]], list[str], list[float]]:
     """The lexical leg: corpus stats for the idfs, then the chunk scan.
-    `scope` is the constraint's predicate, None when unconstrained."""
+    `scope` is the constraint's predicate, None when unconstrained;
+    `path_penalties` are the ranking's (test path, prose file) factors, which
+    the scan cuts its pool on."""
     rows: list[dict[str, Any]] = []
     if not run_lexical:
         return rows, tokens, []
@@ -59,6 +62,8 @@ async def _lexical_leg(
                     path_prefix=path_prefix,
                     pool=_POOL,
                     scope=scope,
+                    noise_penalty=path_penalties[0],
+                    prose_penalty=path_penalties[1],
                 )
                 # Leg wall time in ms so a bench can read the leg's cost off
                 # the response instead of a trace (int: retrieval_work's type).

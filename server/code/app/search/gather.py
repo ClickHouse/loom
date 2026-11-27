@@ -9,6 +9,7 @@ from server.code.app import history as code_history
 from server.code.app.search.history import _history_leg, _history_route_units
 from server.code.app.search.hyde import _hyde_config
 from server.code.app.search.lexical import _lexical_leg
+from server.code.app.search.priors import pool_penalties
 from server.code.app.search.state import _SearchState
 from server.code.app.search.symbol import _fuzzy_symbol_vote
 from server.code.app.search.vector import _QueryVecMemo, _vector_leg_rows
@@ -108,6 +109,13 @@ async def _gather_legs(
         concept_stats=st.concept_stats,
         llm_legs=llm_legs,
     )
+    # The lexical pool is cut on the path penalties `_rank_units` will apply: none with
+    # the fusion signals off
+    path_penalties = (
+        pool_penalties(query, prose_eligible=not constrained and shape != "symbol")
+        if settings.code_fusion_signals
+        else (1.0, 1.0)
+    )
     # the fuzzy-symbol vote needs the query alone, so it runs beside the legs; under a
     # deadline a late leg is dropped and named
     (
@@ -133,6 +141,7 @@ async def _gather_legs(
                     work=work,
                     path_prefix=path_prefix,
                     scope=scope if constrained else None,
+                    path_penalties=path_penalties,
                 ),
                 ([], tokens, []),
             ),

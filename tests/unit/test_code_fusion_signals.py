@@ -162,7 +162,7 @@ def test_prose_penalty_skips_documentation_questions() -> None:
 
 
 def test_prose_paths_are_matched_by_file_not_by_directory_word() -> None:
-    from server.code.app.search.priors import is_prose_path
+    from server.code.domain.index.path_class import is_prose_path
 
     assert is_prose_path("doc/en/changelog.rst")
     assert is_prose_path("CHANGES")

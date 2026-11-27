@@ -1,4 +1,5 @@
-"""The lexical gate admits every scored identifier and rejects partial tokens."""
+"""The lexical gate admits every scored identifier and rejects partial tokens, and
+the pool is cut on the path penalties."""
 
 from __future__ import annotations
 
@@ -67,3 +68,33 @@ async def test_identifier_gate_keeps_identity_model_prefix_and_pool() -> None:
         "o", "n", "m", ["__init__"], [1.0], path_prefix="src/", pool=1
     )
     assert len(rows) == 1 and rows[0]["path"] in {"src/one.py", "src/two.py"}
+
+
+@pytest.mark.asyncio
+async def test_a_path_penalty_keeps_the_pool_for_source_rows() -> None:
+    rows = (
+        _row("tests/test_merge.py", "merge tree select"),
+        _row("docs/merge.txt", "merge tree select"),
+        _row("src/merge.py", "merge tree"),
+        _row("src/CMakeLists.txt", "merge tree"),
+    )
+    tokens, idfs = ["merge", "tree", "select"], [1.0, 1.0, 1.0]
+
+    async def pool(n: int, **penalties: float) -> list[tuple[str, float]]:
+        found = await _repo(*rows).lexical_search_chunks(
+            "o", "n", "m", tokens, idfs, pool=n, **penalties
+        )
+        return [(r["path"], r["lex_score"]) for r in found]
+
+    # the test and the doc match one more term, so they are the whole pool
+    assert {p for p, _ in await pool(2)} == {"tests/test_merge.py", "docs/merge.txt"}
+    # cut on the ranking's factors, the pool goes to the source rows
+    cut = await pool(2, noise_penalty=0.35, prose_penalty=0.25)
+    assert {p for p, _ in cut} == {"src/merge.py", "src/CMakeLists.txt"}
+    # a test row that makes the cut keeps its rank and its score
+    kept = await pool(3, noise_penalty=0.35, prose_penalty=0.25)
+    assert kept[0] == ("tests/test_merge.py", 3.0)
+    assert {p for p, _ in kept[1:]} == {"src/merge.py", "src/CMakeLists.txt"}
+    # a question that asks for tests cuts on the prose factor alone
+    asked = await pool(2, prose_penalty=0.25)
+    assert asked[0] == ("tests/test_merge.py", 3.0) and asked[1][0].startswith("src/")

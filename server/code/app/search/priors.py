@@ -13,6 +13,8 @@ from typing import Any
 from server.code.app import fan_in as code_fan_in
 from server.code.domain.extract.tokenize import code_tokens
 from server.code.domain.idents import embedded_idents
+from server.code.domain.index import query_trim
+from server.code.domain.index.path_class import is_noise_path, is_prose_path
 from server.code.domain.units import CodeUnit
 from server.core.datetimes import naive_utc_now
 from server.settings import settings
@@ -67,20 +69,14 @@ def _dir_match(path: str, recent_dirs: list[str]) -> bool:
 
 # ---- fusion rank priors: post-fusion path / definition signals that lift
 # recall@10 over plain RRF, all deterministic and LLM-free. Path-noise prior:
-# test/example/fuzzer code is indexed on purpose (agents ask "how is X tested"), but for
-# a conceptual question the implementation should outrank its tests — demote, never
-# drop.
-_NOISE_DIR_RE = re.compile(r"(?:^|/)(?:tests?|examples?|fuzzers|benchmarks)(?:/|$)")
-
-
-_NOISE_FILE_RE = re.compile(r"(?:^|/)(?:test_[^/]+|[^/]+_(?:test|fuzz))\.(?:h|hpp|cpp|cc|cxx)$")
-
-
+# test/example/fuzzer code (`path_class.is_noise_path`) is indexed on purpose (agents
+# ask "how is X tested"), but for a conceptual question the implementation should
+# outrank its tests — demote, never drop.
 # 0.35 with tests/ and ci/ in the corpus: a grid on the C++ conceptual fixture (penalty
 # {0.5, 0.35, 0.25}) read r@5 0.741/0.769/0.769, r@10 0.801/0.810/0.810 — knee at 0.35,
 # recovering most of the dilution the larger corpus caused (0.778 without tests/ and
-# ci/). Test-intent queries skip this penalty, so the multilang lane is unaffected
-# (0.500 either way).
+# ci/). A question that asks for tests skips this penalty, so the multilang lane is
+# unaffected (0.500 either way).
 _NOISE_PENALTY = 0.35
 
 
@@ -93,18 +89,8 @@ _CATALOGUE_FILE_RE = re.compile(
 )
 
 
-# Prose files — documentation, release notes, changelogs — by extension or by a
-# changelog-style name, never by a directory word (`src/Coordination/Changelog.cpp`
-# is code). A bug report's words are the ones the release notes repeat, so prose
-# outranks the source it describes: asked with public bug reports, a prose file
-# ranked first on a quarter of them although every fix changed only source.
-_PROSE_EXT_RE = re.compile(r"\.(?:md|mdx|markdown|rst|adoc|txt)$", re.I)
-_PROSE_NAME_RE = re.compile(
-    r"(?:^|/)(?:CHANGELOG|CHANGES|HISTORY|NEWS|RELEASE[-_]?NOTES)(?:\.[a-z]+)?$", re.I
-)
-_CODE_EXT_RE = re.compile(r"\.(?:py|pyi|h|hpp|c|cc|cpp|cxx|go|rs|ts|tsx|js|jsx|java|kt|sql|sh)$")
-
-# Query tokens that mean the asker wants documentation; the prose penalty skips them.
+# Query tokens that mean the asker wants documentation (`path_class.is_prose_path`);
+# the prose penalty skips a question that carries one.
 _DOC_INTENT_TOKENS = frozenset(
     {
         "doc",
@@ -120,15 +106,6 @@ _DOC_INTENT_TOKENS = frozenset(
         "manual",
     }
 )
-
-
-def is_prose_path(path: str) -> bool:
-    """True for a documentation or release-notes file (`CMakeLists.txt` is build code)."""
-    if path.rsplit("/", 1)[-1].lower() == "cmakelists.txt":
-        return False
-    if _PROSE_EXT_RE.search(path):
-        return True
-    return bool(_PROSE_NAME_RE.search(path)) and not _CODE_EXT_RE.search(path)
 
 
 def _prose_penalty(*, eligible: bool) -> float:
@@ -194,6 +171,40 @@ _TEST_INTENT_TOKENS = frozenset(
 )
 
 
+def _asks_for(query: str, words: frozenset[str]) -> bool:
+    """True when the query is a question that carries one of `words`.
+
+    A query the lexical leg asks whole (at most `LEXICAL_TOKEN_CAP` lexemes) is a
+    question, and a word of it says what to return. A longer one is a pasted report (an
+    issue body, a traceback, a prompt): "the test fails" or "the documentation says"
+    tells where the problem showed, and the code to change is source. A test or a doc
+    named in a short query carries the word (`test_foo`, `tests/unit/a.py`, `README.md`),
+    so naming one asks for it."""
+    tokens = code_tokens(query)
+    return len(tokens) <= query_trim.LEXICAL_TOKEN_CAP and not words.isdisjoint(tokens)
+
+
+def asks_for_tests(query: str) -> bool:
+    """True when the asker wants test or CI code: the test-path penalty, the fan-in
+    prior, the kind prior and file saturation are off."""
+    return _asks_for(query, _TEST_INTENT_TOKENS)
+
+
+def asks_for_docs(query: str) -> bool:
+    """True when the asker wants documentation: the prose penalty is off."""
+    return _asks_for(query, _DOC_INTENT_TOKENS)
+
+
+def pool_penalties(query: str, *, prose_eligible: bool) -> tuple[float, float]:
+    """The factors `_apply_fusion_signals` multiplies a test path and a prose file by on
+    this query (1.0 = not applied), for the lexical leg to cut its pool on: a row the
+    ranking will demote must not take a pool slot from one it will keep."""
+    return (
+        1.0 if asks_for_tests(query) else _NOISE_PENALTY,
+        1.0 if asks_for_docs(query) else _prose_penalty(eligible=prose_eligible),
+    )
+
+
 def _apply_fusion_signals(
     ranked: list[CodeUnit],
     query: str,
@@ -204,15 +215,15 @@ def _apply_fusion_signals(
 ) -> list[CodeUnit]:
     """Path-noise penalty, stem affinity, embedded-identifier boost, file coherence —
     and, when `prior_cap` > 0, the fan-in prior: x(1 + cap * log1p(fan_in) / log1p(max
-    fan_in in the pool)), read from CodeUnit.fan_in, skipped under test intent and on
-    noise paths (the same two exemptions as the penalty), never applied to a unit
+    fan_in in the pool)), read from CodeUnit.fan_in, skipped when the query asks for
+    tests and on noise paths (the same two exemptions as the penalty), never applied to a unit
     without callers. Calibration ran before this on the raw fusion, so abstention is
     unaffected. Default cap 0 = the prior is not computed."""
     if not ranked:
         return ranked
     q_tokens = frozenset(code_tokens(query))
-    test_intent = bool(q_tokens & _TEST_INTENT_TOKENS)
-    if q_tokens & _DOC_INTENT_TOKENS:
+    test_intent = asks_for_tests(query)
+    if asks_for_docs(query):
         prose_penalty = 1.0
     keywords = frozenset(t for t in q_tokens if len(t) > 2 and t not in _QUERY_STOPWORDS)
     embedded = embedded_idents(query)
@@ -221,7 +232,7 @@ def _apply_fusion_signals(
     scored: list[tuple[CodeUnit, float]] = []
     for u in ranked:
         s = u.score
-        noisy = bool(_NOISE_DIR_RE.search(u.path) or _NOISE_FILE_RE.search(u.path))
+        noisy = is_noise_path(u.path)
         if not test_intent and noisy:
             s *= _NOISE_PENALTY
         if catalogue_penalty != 1.0 and _CATALOGUE_FILE_RE.search(u.path):
@@ -282,7 +293,7 @@ def _apply_fusion_signals(
 #   - the query names a file or a path ("src/IO/WriteBufferFromS3.cpp",
 #     "parseQuery.cpp:120"): the asker wants that file's chunks whatever
 #     their kind — no prior;
-#   - test intent (see _TEST_INTENT_TOKENS): test bodies are mostly `other`
+#   - the query asks for tests (`asks_for_tests`): test bodies are mostly `other`
 #     chunks (SQL, shell, pytest functions the C++ chunker never sees as
 #     functions) — no prior, as with the path-noise penalty;
 #   - structural phrasing ("the class that ...", "struct holding ...",
@@ -380,8 +391,7 @@ def _apply_kind_prior(
         return ranked, f"kind_prior={label}"
     if query_names_file(query):
         return ranked, f"kind_prior={label}:skip_file"
-    q_tokens = frozenset(code_tokens(query))
-    if q_tokens & _TEST_INTENT_TOKENS:
+    if asks_for_tests(query):
         return ranked, f"kind_prior={label}:skip_test_intent"
     named = structural_kind(query)
     out: list[CodeUnit] = []

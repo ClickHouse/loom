@@ -12,7 +12,7 @@ from typing import Any
 from server.code.domain.index.grep_plan import GREP_FINAL_SETTINGS
 from server.code.domain.search_scope import SearchScope
 from server.code.store.index.base import CodeRepoBase
-from server.code.store.index.sql import _scope_sql, skip_tests_sql
+from server.code.store.index.sql import _scope_sql, path_penalty_sql, skip_tests_sql
 from server.core.datetimes import naive_utc_now as _now
 
 
@@ -30,6 +30,8 @@ class SearchMixin(CodeRepoBase):
         path_prefix: str = "",
         pool: int = 200,
         scope: SearchScope | None = None,
+        noise_penalty: float = 1.0,
+        prose_penalty: float = 1.0,
     ) -> list[dict[str, Any]]:
         """Lexical leg over app-tokenized lexemes: the idf-weighted sum of
         `countSubstrings` over the deduplicated lexemes. tf counts space-bounded
@@ -40,6 +42,15 @@ class SearchMixin(CodeRepoBase):
 
         `scope` adds the pattern / path predicates to the plain WHERE after
         the identity keys; unset, the statement is unchanged byte for byte.
+
+        `noise_penalty` and `prose_penalty` are the factors the ranking will
+        multiply a test path and a prose file by. Below 1, the pool is the top
+        rows by `lex_score` times that factor: tests and docs repeat the
+        vocabulary of the source they cover, and a row the ranking demotes must
+        not take a pool slot from a source row it keeps. The rows return in
+        `lex_score` order, as without the penalties: the cut decides which rows
+        are candidates, not their rank. Rows with one score keep the cut's
+        order, source first. At 1 the statement is unchanged byte for byte.
 
         The String query form of `hasAnyTokens` tokenizes the query with
         the text index's splitByNonAlpha tokenizer. Its Array form takes
@@ -64,6 +75,11 @@ class SearchMixin(CodeRepoBase):
             "{tokens:Array(String)}, {idfs:Array(Float32)}))"
         )
         scope_sql, scope_params = _scope_sql(scope)
+        cut = "lex_score"
+        cut_params: dict[str, Any] = {}
+        if noise_penalty != 1.0 or prose_penalty != 1.0:
+            factor, cut_params = path_penalty_sql("path", noise_penalty, prose_penalty)
+            cut = f"lex_score * {factor}"
         rows = await self._ch.query_all(
             f"""
             SELECT chunk_id, path, scope, kind, start_line, end_line,
@@ -76,7 +92,7 @@ class SearchMixin(CodeRepoBase):
               AND {score} > 0
               {where_prefix}
               {scope_sql}
-            ORDER BY lex_score DESC
+            ORDER BY {cut} DESC
             LIMIT {{pool:UInt32}}
             """,
             {
@@ -89,8 +105,11 @@ class SearchMixin(CodeRepoBase):
                 **({"gate_query": " ".join(tokens)} if gate else {}),
                 **({"prefix": path_prefix} if path_prefix else {}),
                 **scope_params,
+                **cut_params,
             },
         )
+        if cut_params:
+            rows.sort(key=lambda r: -float(r["lex_score"]))
         return rows
 
     async def vector_search_cards(
