@@ -71,20 +71,21 @@ def linear_sample_context() -> dict[str, Any]:
         return {"context_error": type(error).__name__}
 
 
-def mildest(
+def middle(
     pairs: list[tuple[float, float]], over: Callable[[float, float], bool]
 ) -> tuple[float, float]:
-    """The (small, big) pair of times a linear-cost judge reads. `over` is the judge's own
-    test of one pair: the pair read is the one that grew least among those not over, or
-    among them all when every one is over.
+    """The (small, big) pair of times a linear-cost judge reads: the middle one, once the
+    pairs are ordered with those not over first (`over` is the judge's own test of one
+    pair) and each group by growth. So a step is over when most of its pairs are: two of
+    three.
 
-    Each pair is a size and 4 times it, timed back to back, so a step fails only when
-    every pair is over. A minimum taken at each size apart keeps one small-size run that
-    was faster than its neighbours, which no later run can undo, and a linear cost then
-    reads as over 8 times. A slow small-size run in one pair can hide a step; nothing is
-    carried, so the next run reports it."""
-    passed = [pair for pair in pairs if not over(*pair)]
-    return min(passed or pairs, key=lambda p: p[1] / max(p[0], 1e-9))
+    Each pair is a size and 4 times it, timed back to back. One run far from its
+    neighbours, fast or slow, changes one pair, and the other two outvote it. A minimum
+    taken at each size apart keeps one fast small-size run, which no later run can undo,
+    and a linear cost then reads as over 8 times; the pair that grew least keeps one slow
+    small-size run, and a quadratic cost then reads as under 8 times."""
+    ranked = sorted(pairs, key=lambda p: (over(*p), p[1] / max(p[0], 1e-9)))
+    return ranked[(len(ranked) - 1) // 2]
 
 
 def assert_linear(
@@ -97,8 +98,8 @@ def assert_linear(
 ) -> None:
     """`cost(big)` is under `ratio` times `cost(small)` (8 suits 4 times the size: a
     quadratic one takes 16) or under `floor` seconds. The two are timed back to back; a
-    pair over `ratio` is timed twice more, and the cost fails only when every pair does
-    (`mildest`). No absolute bound: a linear cost at `big` takes several times as long
+    pair over `ratio` is timed twice more, and the cost fails when two of the three pairs
+    do (`middle`). No absolute bound: a linear cost at `big` takes several times as long
     on a slow runner as on a fast one."""
     samples: list[dict[str, Any]] = []
     original = cost
@@ -116,7 +117,7 @@ def assert_linear(
     pairs = [(cost(small), cost(big))]
     if pairs[0][1] > ratio * pairs[0][0]:
         pairs += [(cost(small), cost(big)) for _ in range(2)]
-    a, b = mildest(pairs, over)
+    a, b = middle(pairs, over)
     try:
         assert not over(a, b), (a, b)
     except AssertionError as error:

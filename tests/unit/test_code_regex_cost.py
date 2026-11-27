@@ -33,7 +33,7 @@ from collections.abc import Callable
 
 import pytest
 
-from tests.unit.code_fixtures import mildest
+from tests.unit.code_fixtures import middle
 from tests.unit.lane_walks import BOUND_S, LANE_FLOOR_S, RATIO, WALKS, lane_over
 
 _PACKAGES = ("server.code.domain.extract", "server.code.app.index")
@@ -193,9 +193,9 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
             continue
         pairs = [(small, cost(4 * _N))]
         if over(*pairs[0]):
-            # Timers jitter on a loaded host: two more pairs, and `mildest` reads one.
+            # Timers jitter on a loaded host: two more pairs, and `middle` reads one.
             pairs += [(cost(_N), cost(4 * _N)) for _ in range(2)]
-            small, big = mildest(pairs, over)
+            small, big = middle(pairs, over)
             if over(small, big):
                 slow.append((unit, round(small, 3), round(big, 3)))
     assert not slow, f"{name}: (unit, N s, 4N s) {slow}"
@@ -220,6 +220,7 @@ def test_the_pattern_judge_reads_pairs_timed_back_to_back(
     # one N run twice as fast as the two after it: its pair reads 9 times, the others 4.5
     assert passes([0.05, 0.45, 0.1, 0.45, 0.1, 0.45])
     assert not passes([0.05, 0.8, 0.1, 1.6, 0.05, 0.8])  # 16 times on every pair
+    assert not passes([0.05, 0.8, 0.15, 0.8, 0.05, 0.8])  # and with one N run 3 times as slow
     assert not passes([2.5])  # over the bound at N: 4N is not timed
 
 
@@ -261,8 +262,8 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
         pairs = [(cost(n // 4), cost(n))]
         if _over(*pairs[0]):
             pairs += [(cost(n // 4), cost(n)) for _ in range(2)]
-            small, big = mildest(pairs, _over)
-            if _over(small, big):
+            if all(_over(small, big) for small, big in pairs):
+                small, big = min(pairs, key=lambda p: p[1] / max(p[0], 1e-9))  # the mildest
                 return n, round(small, 4), round(big, 4)
     return None
 
@@ -421,14 +422,15 @@ def test_judged_step_tells_a_cache_step_from_growth_over_linear() -> None:
     # quadratic growth is 16 times on every pair, whichever run was fast
     assert judged({1: [0.01, 0.02, 0.02], 4: [0.32, 0.33, 0.34]}) == ("N", True)
     assert judged({1: [0.01], 4: [0.12, 0.12, 0.12, 0.24], 16: [1.9, 3.8]}) == ("4N", True)
-    # a pair whose N run was 3 times as slow hides a quadratic step; the next run reports it
-    assert judged({1: [0.02, 0.06, 0.02], 4: [0.32]}) == ("N", False)
+    # one pair whose N run was 3 times as slow does not hide a quadratic step; two do
+    assert judged({1: [0.02, 0.06, 0.02], 4: [0.32]}) == ("N", True)
+    assert judged({1: [0.02, 0.06, 0.06], 4: [0.32]}) == ("N", False)
     # A pair is over by the class guard's whole test, not by its growth alone. One under
-    # 50 ms at 4N is not over, though the pairs beside it grew less.
-    assert judged({1: [0.007, 0.003, 0.007], 4: [0.060, 0.045, 0.060]}) == ("N", False)
-    # Nor is one that grew under 8 times, though a pair over 2 s at 16N grew less.
+    # 50 ms at 4N is not over, though it grew most: two of the three are not.
+    assert judged({1: [0.007, 0.003, 0.015], 4: [0.060, 0.045, 0.060]}) == ("N", False)
+    # And one over 2 s at 16N is over, though it grew least: two of the three are.
     spiked = {1: [0.01], 4: [0.12, 0.12, 0.12, 0.12, 0.4], 16: [1.0, 0.95, 2.1]}
-    assert judged(spiked) == ("4N", False)
+    assert judged(spiked) == ("4N", True)
     sizes: list[int] = []
     times = {1: 0.01, 4: 0.1, 16: 0.4}
 

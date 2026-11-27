@@ -34,8 +34,8 @@ def test_untraced_leaves_the_collector_as_it_found_it() -> None:
         # One small run about twice as fast as the two after it, as timed on a runner: the
         # first pair reads over 8 times, the other two under 5.
         ([0.262, 2.161, 0.463, 2.242, 0.451, 2.223], ["small", "big"] * 3, 8.0, 0.0),
-        # The second pair is under the floor, though the two beside it grew less.
-        ([0.007, 0.060, 0.003, 0.045, 0.007, 0.060], ["small", "big"] * 3, 8.0, 0.05),
+        # The second pair grew most but is under the floor, so two of the three are not over.
+        ([0.007, 0.060, 0.003, 0.045, 0.015, 0.060], ["small", "big"] * 3, 8.0, 0.05),
     ],
 )
 def test_linear_cost_success_does_not_collect_failure_context(
@@ -60,8 +60,12 @@ def test_linear_cost_success_does_not_collect_failure_context(
     assert observed == calls
 
 
-# The six values: three pairs that grew 16, 17 and 18 times, the mildest first.
-@pytest.mark.parametrize("values", [[1.0, 8.0], [1.0, 16.0, 2.0, 34.0, 3.0, 54.0]])
+# Three pairs that grew 17, 16 and 18 times, the middle one first; then 16 times on every
+# pair but the second, whose small run was 3 times as slow.
+_OVER = [[1.0, 8.0], [1.0, 17.0, 2.0, 32.0, 3.0, 54.0], [1.0, 16.0, 3.0, 16.0, 1.0, 16.5]]
+
+
+@pytest.mark.parametrize("values", _OVER)
 def test_context_is_collected_after_the_original_failed_judge(
     monkeypatch: pytest.MonkeyPatch, values: list[float]
 ) -> None:
@@ -169,7 +173,7 @@ def test_real_failure_context_contains_numeric_state_without_input_text() -> Non
     assert numeric(context)
 
 
-@pytest.mark.parametrize("values", [[1.0, 8.0], [1.0, 16.0, 2.0, 34.0, 3.0, 54.0]])
+@pytest.mark.parametrize("values", _OVER)
 def test_failed_cost_samples_keep_values_and_boundary_context(values: list[float]) -> None:
     calls: list[str] = []
     measurements = iter(values)
@@ -372,14 +376,17 @@ def test_sql_failure_keeps_the_complete_sample_context(
 @pytest.mark.parametrize(
     ("values", "judged", "linear"),
     [
-        ([1.0, 4.0], (1.0, 4.0), True),  # a pair under 8 times is not timed again
-        ([1.0, 8.0, 2.0, 18.0, 1.0, 9.0], (1.0, 8.0), False),  # over on every pair
+        ([1.0, 4.0, 1.0, 5.0, 1.0, 3.0], (1.0, 4.0), True),
+        ([1.0, 8.0, 1.0, 10.0, 1.0, 9.0], (1.0, 9.0), False),  # over on every pair
         # One N run about twice as fast as the other two, as timed on a runner: with it in
         # the first pair that pair reads 8 times, the other two under 5.
-        ([0.0188, 0.1506, 0.0425, 0.1507, 0.0353, 0.1525], (0.0425, 0.1507), True),
-        # The second pair is under the floor, though the two beside it grew less.
-        ([0.012, 0.11, 0.004, 0.09, 0.012, 0.11], (0.004, 0.09), True),
-        ([0.004, 0.09], (0.004, 0.09), True),  # a pair under the floor is not timed again
+        ([0.0188, 0.1506, 0.0425, 0.1507, 0.0353, 0.1525], (0.0353, 0.1525), True),
+        # The second pair grew most but is under the floor, so two of the three are not over.
+        ([0.012, 0.11, 0.004, 0.09, 0.03, 0.11], (0.004, 0.09), True),
+        # 16 times, with one N run 3 times as slow: the other two pairs are still over,
+        # whichever pair it falls in.
+        ([3.0, 16.0, 1.0, 16.5, 1.0, 16.0], (1.0, 16.0), False),
+        ([1.0, 16.0, 1.0, 16.5, 3.0, 16.0], (1.0, 16.0), False),
     ],
 )
 def test_walk_samples_preserve_judged_costs_and_boundary_context(
@@ -395,7 +402,7 @@ def test_walk_samples_preserve_judged_costs_and_boundary_context(
 
     clocks = iter(
         value
-        for index, value in enumerate([50.0, *values])  # the first walk is not judged
+        for index, value in enumerate([50.0, 50.0, *values])  # the first two: not judged
         for value in (index * 100.0, index * 100.0 + value)
     )
     events: list[tuple[str, object]] = []
@@ -431,13 +438,13 @@ def test_walk_samples_preserve_judged_costs_and_boundary_context(
     small, big = lane_walks.walk_cost("observed", floor=0.1, diagnostics=samples)
     assert (small, big) == pytest.approx(judged)
     assert (big < 0.1 or big < 8.0 * small) == linear
-    sizes = [100_000, 400_000] * (len(values) // 2)
+    sizes = [100_000, 400_000] * 3
     assert [sample["n"] for sample in samples] == sizes
     assert [sample["cpu_s"] for sample in samples] == pytest.approx(values)
-    walked = [100_000, *sizes]
+    walked = [100_000, 400_000, *sizes]
     assert [value for event, value in events if event == "source"] == walked
     assert [value for event, value in events if event == "walk"] == [str(n) for n in walked]
-    assert len([event for event, _ in events if event == "snapshot"]) == 2 * len(values)
+    assert len([event for event, _ in events if event == "snapshot"]) == 12
     for sample in samples:
         assert sample["after"]["boundary"] > sample["before"]["boundary"]
 
@@ -454,7 +461,7 @@ def test_walk_sample_keeps_the_original_walker_error(
 
     def walk(text: str) -> None:
         seen.append(text)
-        if len(seen) == 2:  # the first walk is not judged and leaves no sample
+        if len(seen) == 3:  # the first two walks are not judged and leave no sample
             raise failure
 
     monkeypatch.setattr(lane_walks, "WALKS", [("observed", walk, lambda n: "private source")])
@@ -463,7 +470,7 @@ def test_walk_sample_keeps_the_original_walker_error(
     with pytest.raises(RuntimeError) as error:
         lane_walks.walk_cost("observed", diagnostics=samples)
     assert error.value is failure
-    assert seen == ["private source"] * 2
+    assert seen == ["private source"] * 3
     assert len(samples) == 1
     assert samples[0]["n"] == 100_000
     assert samples[0]["cpu_s"] is None
@@ -482,7 +489,7 @@ def test_walk_context_error_keeps_selected_costs(
     def unavailable() -> int:
         raise RuntimeError("private observer error")
 
-    costs = [1.0] + [1.0, large] * 3  # the first walk is not judged
+    costs = [1.0, large] * 4  # the first walk at each size is not judged
     clocks = iter(t for i, cost in enumerate(costs) for t in (10.0 * i, 10.0 * i + cost))
     monkeypatch.setattr(code_fixtures.time, "thread_time_ns", unavailable)
     monkeypatch.setattr(lane_walks, "WALKS", [("observed", lambda text: None, lambda n: "")])
@@ -491,7 +498,7 @@ def test_walk_context_error_keeps_selected_costs(
     small, big = lane_walks.walk_cost("observed", diagnostics=samples)
     assert (small, big) == (1.0, large)
     assert (big < 0.1 or big < 8.0 * small) == (large == 4.0)
-    assert len(samples) == (2 if large == 4.0 else 6)  # a pair over is timed twice more
+    assert len(samples) == 6
     for sample in samples:
         assert sample["before"] == sample["after"] == {"context_error": "RuntimeError"}
     assert "private observer error" not in json.dumps(samples)
@@ -509,7 +516,7 @@ def test_walk_without_diagnostics_does_not_collect_context(
 
     monkeypatch.setattr(lane_walks, "linear_sample_context", forbidden)
     monkeypatch.setattr(lane_walks, "WALKS", [("observed", lambda text: None, lambda n: "")])
-    clocks = iter(range(12))
+    clocks = iter(range(16))
     monkeypatch.setattr(lane_walks, "time", SimpleNamespace(process_time=lambda: next(clocks)))
     assert lane_walks.walk_cost("observed") == (1, 1)
 
