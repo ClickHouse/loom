@@ -49,6 +49,7 @@ import {
 
 const ENABLED = envSwitch("LOOM_TEST_GATE", true);
 const DEPTH = Math.min(3, Math.max(1, Number(process.env.LOOM_TEST_GATE_DEPTH || 2)));
+const PLAIN = ["-c", "core.quotePath=false"];
 
 async function main() {
   if (!ENABLED) {
@@ -73,7 +74,8 @@ async function main() {
     scheduleExit(0);
     return;
   }
-  const dirty = git(["diff", "--name-only", "HEAD"], root, { timeoutMs: 2000 })
+  // Paths as the file system names them: git quotes a non-ASCII one otherwise.
+  const dirty = git([...PLAIN, "diff", "--name-only", "HEAD"], root, { timeoutMs: 2000 })
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
@@ -106,7 +108,6 @@ async function main() {
   }
   const diffHash = crypto.createHash("sha1").update(diff).digest("hex").slice(0, 16);
   const decision = decideBlock(readSessionState("testgate", payload.session_id), gateSignature(changed, diffHash));
-  writeSessionState("testgate", payload.session_id, decision.cache);
   if (!decision.block) {
     scheduleExit(0);
     return;
@@ -138,7 +139,10 @@ async function main() {
   // untracked file. Infinity when one cannot be read (a deleted file, a
   // listing that failed), so that no test run counts as later.
   const lastModified = () => {
-    const untracked = git(["ls-files", "--others", "--exclude-standard"], root, { timeoutMs: 2000, fallback: null });
+    const untracked = git([...PLAIN, "ls-files", "--others", "--exclude-standard"], root, {
+      timeoutMs: 2000,
+      fallback: null,
+    });
     if (untracked === null) return Infinity;
     let last = 0;
     try {
@@ -154,6 +158,8 @@ async function main() {
     scheduleExit(0);
     return;
   }
+  // Saved only now: a stop that showed nothing has not used the change's one block.
+  writeSessionState("testgate", payload.session_id, decision.cache);
   const needsPython = (gate?.tests || []).some((t) => /^pytest(\s|$)/.test(String(t?.run || "")));
   const out = gatePayload(renderGate(gate, { python: needsPython ? checkoutPython(root) : undefined, testExists }));
   if (out) process.stdout.write(JSON.stringify(out) + "\n");

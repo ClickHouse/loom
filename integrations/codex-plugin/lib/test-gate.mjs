@@ -304,14 +304,15 @@ function pathNamer(root, cwd) {
 }
 
 // "Do not run the test suite", "don't run any tests yet": an instruction
-// that opens its clause and ends it. `do not run tests/test_slow.py` and
-// `don't run the tests that need Docker` rule out some tests, `agents that
-// do not run tests` only mentions the phrase: neither rules out the run.
+// that opens its clause and ends its sentence. `do not run tests/test_slow.py`
+// and `don't run the tests, except tests/test_a.py` rule out some tests,
+// `agents that do not run tests` only mentions the phrase: neither rules out
+// the run.
 const DECLINES = new RegExp(
   "(?:^|[.!?;:,(\\n—–]\\s*|\\s-\\s+|\\b(?:please|and|but|so|then|also|just)\\s+)" +
     "(?:do\\s+not|don['’]?t|never)\\s+run\\s+(?:(?:the|any)\\s+)?(?:tests|test\\s+suite)" +
-    "(?=(?:\\s+(?:yet|now|again|please|at\\s+all|for\\s+now|this\\s+time))?[ \\t]*" +
-    "(?:$|\\n|[.!?;:,)—–]+(?:\\s|$)|\\s(?:-|and|or|but)\\s))",
+    "(?=(?:\\s+(?:yet|now|again|please|at\\s+all|for\\s+now|this\\s+time))?[ \\t]*\\)?" +
+    "(?:$|\\n|[.!?]+(?:\\s|$)))",
   "i",
 );
 
@@ -351,6 +352,20 @@ const CLEAN = /^=*\s*\d+ passed(?:, \d+ (?:skipped|xfailed|xpassed|warnings?))* 
 const CD = /(?:^|[;&|(\n])\s*cd\s+([^\s;&|)]+)/g;
 const MOVE = /\b(?:cd|pushd|popd)\s/g;
 const unquoted = (word) => word.replace(/^["']|["']$/g, "");
+// pytest flags known to take no value. The word after any other flag written
+// without `=` may be its value (`--cov src`, `--rootdir sub`), not a path
+// that ran.
+const BARE = /^-[qvxsl]+$/;
+
+/** True when `text` closes a parenthesis it did not open. */
+function closesParen(text) {
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")" && --depth < 0) return true;
+  }
+  return false;
+}
 // git subcommands that rewrite tracked files without naming them.
 const TREE_GIT = /\bgit\s+(?:stash|checkout|restore|reset|switch|apply|merge|rebase|pull|revert|cherry-pick|am)\b/;
 
@@ -409,14 +424,15 @@ function cleanRuns(objs, { changed, root, cwd, since } = {}) {
       const cd = [...before.matchAll(CD)];
       const result = results.get(b.id) || {};
       // --ignore drops a path the summary never mentions; a move the reader
-      // cannot follow (a second `cd`, one between two runs, `pushd`) leaves
-      // the paths unknown.
+      // cannot follow (a second `cd`, one between two runs, one in a subshell
+      // that closed before the run, `pushd`) leaves the paths unknown.
       const ran =
         allPassed(result.output, runs.length) &&
         result.at >= since &&
         runs.every((run) => ranHere(command.slice(0, run.index))) &&
         cd.length < 2 &&
         (command.match(MOVE) || []).length === cd.length &&
+        cd.every((m) => !closesParen(before.slice(m.index + m[0].length))) &&
         !command.includes("--ignore") &&
         !changes(after);
       if (!ran) {
@@ -426,9 +442,12 @@ function cleanRuns(objs, { changed, root, cwd, since } = {}) {
       const dir = o.cwd || cwd;
       const base = cd.length ? path.resolve(dir || root || "", unquoted(cd[0][1])) : dir;
       for (const run of runs) {
+        let value = false;
         for (const word of run[1].split(/\s+/)) {
-          const rel = word.startsWith("-") ? "" : relativeToRoot(root, unquoted(word), base);
+          const flag = word.startsWith("-");
+          const rel = flag || value ? "" : relativeToRoot(root, unquoted(word), base);
           if (rel) clean.push(rel);
+          value = flag && !word.includes("=") && !BARE.test(word);
         }
       }
     }

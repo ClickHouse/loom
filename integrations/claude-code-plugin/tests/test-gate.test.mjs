@@ -450,6 +450,10 @@ test("a run's paths are read from the directory its command moved to", () => {
   assert.equal(answered([edit(), bash("cd sub && pytest tests -q", "3 passed in 0.10s")], nested), true);
   assert.equal(answered([edit(), bash("cd sub && pytest tests -q", "3 passed in 0.10s")]), false);
   assert.equal(answered([edit(), bash("(cd sub && pytest tests -q)", "3 passed in 0.10s")]), false);
+  assert.equal(
+    answered([edit(), bash("cd sub && echo $(date) && pytest tests -q", "3 passed in 0.10s")], nested),
+    true,
+  );
   assert.equal(answered([edit(), bash("cd /tmp && pytest tests -q", "3 passed in 0.10s")]), false);
   assert.equal(
     answered([edit(), bash("pytest sub -q; cd sub && pytest tests -q", "1 passed in 0.10s\n3 passed in 0.10s")]),
@@ -466,6 +470,7 @@ test("a run's paths are read from the directory its command moved to", () => {
   // A move this reader does not follow, and a run outside the checkout.
   for (const elsewhere of [
     "pushd sub && pytest tests -q",
+    "(cd sub && make build); pytest tests -q",
     "cd a && cd sub && pytest tests -q",
     "docker exec app pytest tests -q",
     "kubectl exec pod -- pytest tests -q",
@@ -515,6 +520,13 @@ test("a run that failed, ran a subset or ran another file answers nothing", () =
     answered([edit(), bash("echo ran python -m pytest tests/test_a.py", "ran python -m pytest tests/test_a.py")]),
     false,
   );
+  // A flag's value is not a path that ran.
+  const colocated = { ...RUN_GATE, tests: [{ test_path: "src/pkg/test_mod.py", run: "pytest src/pkg/test_mod.py" }] };
+  for (const flagged of ["pytest tests -q --cov src", "pytest --rootdir src tests -q", "pytest -c src/pkg tests"]) {
+    assert.equal(answered([edit(), bash(flagged, "3 passed in 0.10s")], colocated), false, flagged);
+    assert.equal(answered([edit(), bash(flagged, "3 passed in 0.10s")]), true, flagged);
+  }
+  assert.equal(answered([edit(), bash("pytest -xq --cov=tests src", "3 passed in 0.10s")], colocated), true);
   // -qq prints no summary: one clean line cannot speak for two runs.
   assert.equal(
     answered([edit(), bash("pytest tests/test_a.py -qq; pytest tests/test_b.py -q", "2 passed in 0.10s")]),
@@ -546,7 +558,8 @@ test("only the person's latest prompt can rule the tests out", () => {
     "don't run tests",
     "Don’t run any tests yet.",
     "Never run the tests",
-    "Fix f, but please don't run the tests - I will.",
+    "Fix f, but please don't run the tests.",
+    "Fix f (do not run the tests).",
     "Fix f and do not run tests.\nThen stop.",
   ]) {
     assert.equal(declinesTests([said(yes)]), true, yes);
@@ -560,6 +573,9 @@ test("only the person's latest prompt can rule the tests out", () => {
     "don't run the test that needs Docker",
     "never run the test in tests/e2e",
     "Don't run the tests that need Docker",
+    "Do not run the tests, except tests/test_a.py.",
+    "Don't run the tests yet; fix lint first, then run them.",
+    "Don't run tests or scripts that hit production.",
     "Flag agents that do not run tests",
   ]) {
     assert.equal(declinesTests([said(no)]), false, no);
@@ -590,7 +606,7 @@ test("a Codex rollout answers nothing", () => {
 test("the hook blocks a change whose tests never ran and lets an answered one stop", async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-hook-")));
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-hook-tmp-")));
-  for (const f of ["src/a.py", "tests/test_a.py"]) {
+  for (const f of ["src/a.py", "src/b.py", "tests/test_a.py"]) {
     fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true });
     fs.writeFileSync(path.join(dir, f), "def f():\n    return 1\n");
   }
@@ -642,15 +658,27 @@ test("the hook blocks a change whose tests never ran and lets an answered one st
     });
   const change = call("Edit", { file_path: path.join(dir, "src/a.py") }, "updated");
   try {
+    const ran = [change, bash(SUITE, PASSED)];
+    const no = [said("Fix f. Do not run the test suite."), change];
     assert.match(await stop("never-ran", [change]), /"decision":"block".*pytest tests\/test_a\.py/);
-    assert.equal(await stop("ran", [change, bash(SUITE, PASSED)]), "");
-    assert.equal(await stop("ruled-out", [said("Fix f. Do not run the test suite."), change]), "");
-    // A file changed after the run, tracked or new, with no transcript row for it.
+    assert.equal(await stop("never-ran", [change]), "");
+    // An untracked file whose name git would quote does not hide the tree's age.
+    fs.writeFileSync(path.join(dir, "naïve.txt"), "x\n");
+    touch("naïve.txt", new Date(1e12 - 1000));
+    assert.equal(await stop("ran", ran), "");
+    // A silent stop leaves the change its one block.
+    assert.equal(await stop("ruled-out", no), "");
+    assert.match(await stop("ruled-out", [...no, said("now run them")]), /"decision":"block"/);
+    // A file changed after the run, with no transcript row for it: new, deleted, rewritten.
     fs.writeFileSync(path.join(dir, "tests/conftest.py"), "x = 1\n");
-    assert.match(await stop("new-file-after-run", [change, bash(SUITE, PASSED)]), /"decision":"block"/);
+    assert.match(await stop("ran", ran), /"decision":"block"/);
     fs.rmSync(path.join(dir, "tests/conftest.py"));
+    fs.rmSync(path.join(dir, "src/b.py"));
+    assert.match(await stop("deleted-after-run", ran), /"decision":"block"/);
+    execFileSync("git", ["checkout", "-q", "--", "src/b.py"], { cwd: dir });
+    touch("src/b.py", new Date(1e12 - 1000));
     touch("src/a.py", new Date());
-    assert.match(await stop("edited-after-run", [change, bash(SUITE, PASSED)]), /"decision":"block"/);
+    assert.match(await stop("edited-after-run", ran), /"decision":"block"/);
   } finally {
     server.closeAllConnections();
     server.close();
