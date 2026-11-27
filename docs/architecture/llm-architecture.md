@@ -4,7 +4,8 @@ Loom uses pluggable embedders and model clients configured through server settin
 The embedder (`server/embedding/`) turns text into vectors. The one-shot synthesis
 client (`server/llm/client.py`) can use a deterministic fake when an API key is missing;
 configured workload-token credentials still apply. Native Bedrock uses deployment AWS
-credentials and propagates credential failures. The native assistant uses a separate
+credentials and Vertex AI uses Google Application Default Credentials. Both propagate
+credential failures. The native assistant uses a separate
 streaming tool contract and refuses missing provider credentials. Operator setup is in
 [deployment](../operations/deployment.md); settings are in the
 [configuration reference](../reference/configuration.md).
@@ -304,6 +305,25 @@ and `aws.bedrock.request.model_id`, including inference-profile IDs as requested
 
 The wire contracts follow [Converse](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
 and [Cohere Embed v4](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-embed-v4.html).
+
+### Vertex AI
+
+The one-shot client uses Google's [generateContent API](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/models/inference)
+for Gemini publisher models. Set `LOOM_LLM_PROVIDER=vertex` with an explicit model,
+project, and location, or use a `vertex:<model>` per-job override. The location
+selects the global or regional Google endpoint. The deployment sets these values.
+
+The Google Auth library discovers and refreshes Application Default Credentials
+off the event loop. Workload Identity Federation supplies short-lived credentials
+on GKE. Loom sends the inference request through its shared HTTP client, without
+redirects. A missing credential fails the model call. A deployment that requires
+an inference gateway refuses the native Vertex route before credential lookup.
+
+The client records prompt, cache, and output usage from the provider response,
+including reasoning tokens when reported. The cost table uses standard regional
+text rates for its listed Vertex models. A model outside that table has unknown cost.
+See [Vertex setup](../getting-started/models-and-keys.md#vertex-ai) for deployment and
+rollout.
 
 ### Protocol
 

@@ -420,6 +420,14 @@ settings:
   # credentials use the SDK's role, profile or environment credential chain. [restart]
   # bedrock_region: ""
 
+  # Google Cloud project that owns the Vertex AI requests, required with the Vertex
+  # provider. [restart]
+  # vertex_project: ""
+
+  # Vertex AI location, either a region or "global". Required with the Vertex provider.
+  # [restart]
+  # vertex_location: ""
+
   # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
   # <host>:11434/v1, llama.cpp's server <host>:8080/v1). [restart]
   # local_llm_base_url: "http://localhost:11434/v1"
@@ -565,12 +573,10 @@ settings:
   # (loom.embedder_calibration), so every replica serves the same gates. [restart]
   # calibration_refresh_seconds: 60.0
 
-  # "openai" | "anthropic" | "bedrock" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) |
-  # "fake"; "" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai,
-  # claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
-  # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
-  # overridden. Bedrock requires llm_model and the SDK credential chain. Run `make
-  # bench-quick` before making anthropic a default. [restart]
+  # "openai" | "anthropic" | "bedrock" | "vertex" | "local" | "fake"; "" = infer from
+  # LOOM_LLM_MODEL's name or provider prefix, then from the API keys present, then fake.
+  # An explicit value wins. Bedrock and Vertex require a model and deployment
+  # credentials. Run `make bench-quick` before making anthropic a default. [restart]
   # llm_provider: ""
 
   # A fake or key-less provider is a `warn` in /v1/health `problems`; true (production)

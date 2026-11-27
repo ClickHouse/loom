@@ -4786,6 +4786,10 @@ class ProviderSettings(ModelSettings):
     # Region for native Bedrock model requests; empty uses the AWS SDK's region chain.
     # AWS credentials use the SDK's role, profile or environment credential chain.
     bedrock_region: str = ""
+    # Google Cloud project that owns the Vertex AI requests, required with the Vertex provider.
+    vertex_project: str = ""
+    # Vertex AI location, either a region or "global". Required with the Vertex provider.
+    vertex_location: str = ""
     # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
     # <host>:11434/v1, llama.cpp's server <host>:8080/v1).
     local_llm_base_url: str = "http://localhost:11434/v1"
@@ -4903,11 +4907,9 @@ class ProviderSettings(ModelSettings):
     # (loom.embedder_calibration), so every replica serves the same gates.
     calibration_refresh_seconds: float = 60.0
 
-    # "openai" | "anthropic" | "bedrock" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
-    # infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* →
-    # anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
-    # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
-    # overridden. Bedrock requires llm_model and the SDK credential chain.
+    # "openai" | "anthropic" | "bedrock" | "vertex" | "local" | "fake"; "" = infer from
+    # LOOM_LLM_MODEL's name or provider prefix, then from the API keys present, then fake.
+    # An explicit value wins. Bedrock and Vertex require a model and deployment credentials.
     # Run `make bench-quick` before making anthropic a default.
     llm_provider: str = ""
     # A fake or key-less provider is a `warn` in /v1/health `problems`; true
@@ -5108,7 +5110,11 @@ class ProviderSettings(ModelSettings):
         """Resolve an unset LLM provider / model once, at load,
         so `settings.llm_provider` is concrete everywhere (client factory,
         /v1/health, `loom doctor`) and the three never disagree."""
-        from server.core.llm_provider import DEFAULT_MODEL_BY_PROVIDER, resolve_llm_provider
+        from server.core.llm_provider import (
+            DEFAULT_MODEL_BY_PROVIDER,
+            resolve_llm_provider,
+            vertex_route,
+        )
 
         # An explicit provider is never overridden, so a typo (`openia`) would
         # load as itself with no model and only fail at the first LLM call.
@@ -5125,6 +5131,14 @@ class ProviderSettings(ModelSettings):
         resolved = resolve_llm_provider(self.llm_provider, self.llm_model)
         if resolved.provider == "bedrock" and not resolved.model:
             raise ValueError("LOOM_LLM_PROVIDER=bedrock requires LOOM_LLM_MODEL")
+        if resolved.provider == "vertex":
+            if not resolved.model:
+                raise ValueError("LOOM_LLM_PROVIDER=vertex requires LOOM_LLM_MODEL")
+            if not self.vertex_project.strip() or not self.vertex_location.strip():
+                raise ValueError(
+                    "The Vertex provider requires LOOM_VERTEX_PROJECT and LOOM_VERTEX_LOCATION"
+                )
+            vertex_route(resolved.model, self.vertex_project, self.vertex_location)
         self.llm_provider = resolved.provider
         self.llm_model = resolved.model
         self._llm_provider_source = resolved.source
@@ -5220,6 +5234,8 @@ class ProviderSettings(ModelSettings):
         v = self.model_dump(include=set(_GATEWAY_CHECKED)) | saved
         if v["llm_provider"] == "bedrock":
             return f"{why} refuses native Bedrock: use the inference gateway"
+        if v["llm_provider"] == "vertex":
+            return f"{why} refuses native Vertex AI: use the inference gateway"
         # Both hosted API roots count, a provider unused included: a model named per
         # request may be either provider's. The local root is called only while it is
         # the provider, since no model name reaches it otherwise.

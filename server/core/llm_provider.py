@@ -7,6 +7,7 @@ factory, `/v1/health` and `loom doctor` read the same tables.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -16,14 +17,18 @@ KEY_ENV_BY_PROVIDER = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_K
 # The model each provider runs when LOOM_LLM_MODEL is unset.
 # Explicit deployment and per-job model selections keep their configured values.
 DEFAULT_MODEL_BY_PROVIDER = {
-    # Bedrock model access and inference profiles belong to the deployment.
+    # Cloud model access belongs to the deployment.
     "bedrock": "",
+    "vertex": "",
     "openai": "gpt-6-luna",
     "anthropic": "claude-sonnet-5-5",
     # A server the operator runs (`local`): a 3B model Ollama pulls in about 2 GB.
     "local": "qwen2.5:3b",
     "fake": "fake-echo-1",
 }
+_VERTEX_PROJECT = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,20}")
+_VERTEX_LOCATION = re.compile(r"[a-z][a-z0-9-]{1,61}[a-z0-9]")
+_VERTEX_MODEL = re.compile(r"gemini-[a-z0-9][a-z0-9.-]{0,127}")
 
 
 @dataclass(frozen=True)
@@ -89,11 +94,14 @@ def provider_for_model(model: str, default: str) -> str:
     """Infer the provider from a model-override name so a stage can run on a
     DIFFERENT provider than the global LOOM_LLM_PROVIDER (e.g. opus synthesis
     while extraction stays on gpt-6-luna). `claude*` -> anthropic;
-    `gpt*`/`o1..o4*`/`chatgpt*` -> openai; otherwise keep the default provider.
+    `gpt*`/`o1..o4*`/`chatgpt*` -> openai; `vertex:` -> Vertex AI.
+    Otherwise keep the default provider.
     """
     m = (model or "").lower()
     if m.startswith("bedrock:"):
         return "bedrock"
+    if m.startswith("vertex:"):
+        return "vertex"
     if m.startswith("claude"):
         return "anthropic"
     if m.startswith(("gpt", "o1", "o3", "o4", "chatgpt")):
@@ -101,3 +109,22 @@ def provider_for_model(model: str, default: str) -> str:
     if m.startswith("fake"):
         return "fake"
     return default
+
+
+def vertex_route(model: str, project: str, location: str) -> tuple[str, str]:
+    """Validate the Google resource identifiers and return the model label and endpoint."""
+    model_id, project, location = model.strip(), project.strip(), location.strip()
+    if model_id.lower().startswith("vertex:"):
+        model_id = model_id[len("vertex:") :]
+    if not _VERTEX_MODEL.fullmatch(model_id):
+        raise ValueError("Vertex AI needs a Gemini model ID, such as gemini-3.5-flash-lite")
+    if not _VERTEX_PROJECT.fullmatch(project):
+        raise ValueError("LOOM_VERTEX_PROJECT must name a Google Cloud project ID or number")
+    if not _VERTEX_LOCATION.fullmatch(location):
+        raise ValueError("LOOM_VERTEX_LOCATION must be global or a Google Cloud region")
+    prefix = "" if location == "global" else f"{location}-"
+    url = (
+        f"https://{prefix}aiplatform.googleapis.com/v1/projects/{project}/locations/{location}"
+        f"/publishers/google/models/{model_id}:generateContent"
+    )
+    return f"vertex:{model_id}", url

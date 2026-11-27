@@ -3789,7 +3789,7 @@
         "llm_provider": {
           "default": "",
           "type": "string",
-          "description": "\"openai\" | \"anthropic\" | \"bedrock\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Bedrock requires llm_model and the SDK credential chain. Run `make bench-quick` before making anthropic a default."
+          "description": "\"openai\" | \"anthropic\" | \"bedrock\" | \"vertex\" | \"local\" | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name or provider prefix, then from the API keys present, then fake. An explicit value wins. Bedrock and Vertex require a model and deployment credentials. Run `make bench-quick` before making anthropic a default."
         },
         "llm_request_timeout_s": {
           "default": 300.0,
@@ -7416,6 +7416,16 @@
           "default": 3.0,
           "type": "number",
           "description": "Over-fetch for the codes-first read: stage 1 keeps LIMIT × this by code distance, stage 2 rescores. Only read when the codes setting is sent."
+        },
+        "vertex_location": {
+          "default": "",
+          "type": "string",
+          "description": "Vertex AI location, either a region or \"global\". Required with the Vertex provider."
+        },
+        "vertex_project": {
+          "default": "",
+          "type": "string",
+          "description": "Google Cloud project that owns the Vertex AI requests, required with the Vertex provider."
         },
         "web_workers": {
           "default": 1,

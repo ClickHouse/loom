@@ -56,6 +56,9 @@ _COMPLETION_PRICE_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
     "claude-opus-4-6": (0.005, 0.025),
     "claude-sonnet-5": (0.002, 0.010),
     "claude-sonnet-5-5": (0.002, 0.010),
+    # Vertex standard regional text rates. Global rates may be lower.
+    "vertex:gemini-3.5-flash": (0.00165, 0.0099),
+    "vertex:gemini-3.5-flash-lite": (0.00033, 0.00275),
     "fake-echo-1": (0.0, 0.0),
 }
 

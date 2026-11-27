@@ -49,6 +49,7 @@ keyless providers a degraded-health condition.
 | Anthropic plus an approved embedding provider  | An available Claude model                      | OpenAI, Gemini or a compatible endpoint, with its key.           |
 | Anthropic API access only                      | An available Claude model                      | Add an embedding provider and its API key.                       |
 | AWS role with Bedrock model access             | A permitted Bedrock model or inference profile | Cohere Embed v4 through Bedrock, or another configured embedder. |
+| Google Cloud identity with Vertex AI access    | A permitted Gemini publisher model             | A separately configured embedder.                                |
 | No provider key; a model server on the machine | A local model (`local`)                        | The `local` embedder the image carries.                          |
 
 **One OpenAI API key is enough for both roles; an Anthropic key is not required.**
@@ -65,7 +66,8 @@ Anthropic does not provide its own embedding model; Voyage is not a built-in Loo
 [Anthropic's embedding guidance](https://platform.claude.com/docs/en/build-with-claude/embeddings)
 
 Loom's internal model jobs can authenticate with provider API keys, gateway workload
-tokens or deployment AWS credentials. Local models can run without provider credentials.
+tokens, deployment AWS credentials, or Google Application Default Credentials. Local
+models can run without provider credentials.
 Coding-agent CLI logins and subscriptions do not configure Loom's internal providers;
 your external agent's choice of provider is independent.
 
@@ -208,6 +210,37 @@ AWS credentials fail rather than selecting a fake provider. Native Bedrock canno
 used when an inference gateway is required. See [native Bedrock](../architecture/llm-architecture.md#native-bedrock)
 for IAM resources, regional availability, supported dimensions and request limits, and
 [per-job settings](#keep-every-llm-job-on-your-chosen-provider) for model overrides.
+
+### Vertex AI
+
+Use Vertex AI for Loom's text model calls, including memory extraction and synthesis.
+Enable the Vertex AI API, then give the deployment identity
+`aiplatform.endpoints.predict` on the target project. On GKE, use
+[Workload Identity Federation](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity).
+On Cloud Run, assign the service account to the service. For a local source install,
+`gcloud auth application-default login` supplies development credentials. The Loom
+process must be able to discover those credentials through
+[Application Default Credentials](https://docs.cloud.google.com/docs/authentication/provide-credentials-adc).
+
+```dotenv
+LOOM_LLM_PROVIDER=vertex
+LOOM_LLM_MODEL=gemini-3.5-flash-lite
+LOOM_VERTEX_PROJECT=<google-cloud-project-id>
+LOOM_VERTEX_LOCATION=global
+```
+
+Select a location where the model is available. Use a regional endpoint when your
+data residency policy requires it. Activate Vertex AI after all server and worker
+replicas support the provider. If Models & keys has saved settings, use **Use
+environment configuration** to restore the deployment settings. If the reset changes
+the embedder, Loom rebuilds the vectors.
+
+Vertex AI uses deployment credentials and requires no provider API key. Run
+`loom doctor` to check the configuration, then try a Loom operation that makes a
+model call to verify the identity can invoke the model. A per-job override can use
+`vertex:gemini-3.5-flash-lite`. Embeddings and the native assistant use their own
+provider settings. See [Vertex AI architecture](../architecture/llm-architecture.md#vertex-ai)
+and [GKE setup](../operations/kubernetes.md#vertex-ai-on-gke).
 
 ### Keep every LLM job on your chosen provider
 
