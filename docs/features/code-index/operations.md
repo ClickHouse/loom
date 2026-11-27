@@ -165,12 +165,13 @@ and document-section fallback. The Python index keeps decorators in their
 owning function's source chunk, so a hit inside a decorator can return the
 complete definition. No token budget is imposed on these grep bodies.
 
-`code.grep(context_lines=3)` adds up to three retained lines on either side of
+`code.grep(context_lines=3)` adds up to three source lines on either side of
 each match in `contexts`. Each window gives its path, inclusive source line
-range and exact text at the match's retained revision. Overlapping lines in the
-served page appear once. Conflicting lines and context with uncertain revision
-are left out and set `contexts_partial=true`. Windows stop at the edges of
-available source chunks. The option is available in matches mode.
+range and exact text at the match's indexed revision. Overlapping lines in the
+served page appear once. Around exact matches, Loom fills gaps in retained
+source from the verified Git blob for that revision when available. Lines
+within the requested window that cannot be verified set
+`contexts_partial=true`. The option is available in matches mode.
 
 The default returns matching lines. Bodies are read only for the served page
 and must contain the matching line at its retained revision. Page reruns remove
@@ -247,6 +248,11 @@ For `code.search` and `code.grep` in matches mode, pass the returned `next_curso
 `cursor` with the original search arguments to get the next page. Omit `cursor`
 when starting a new search with a different query, pattern or filters.
 
+When a cursor has no recorded filter scope, Loom restarts at the first page and
+includes a note. Clear any accumulated results before consuming that page. The
+HTTP `as_of.page_fallback` is `search_scope_unrecorded` for `code.search` and
+`path_scope_unrecorded` for `code.grep`.
+
 `code.grep` includes linked lessons when available. Set `include_lessons: false`
 for a follow-up lookup when the relevant notes are already in context.
 
@@ -260,6 +266,28 @@ Small finite budgets prioritize result heads over optional risk annotations.
 
 For a Compose installation, put the variable in the `.env` file beside `compose.yaml`
 and recreate the server container after changing it.
+
+### Read caller lessons before editing a dependency
+
+Suppose an indexed Python test calls `App.mount`, a short method that forwards
+to `Receiver.register` in a different file. A lesson attached to `App.mount`
+says that mounts can repeat. Read the lesson before editing `Receiver.register`
+so the change preserves that behavior.
+
+1. In the repository's code namespace, call `code.edit_context` with the indexed
+   name or `path:line` of `Receiver.register` as `name` and set
+   `include_lessons: true`. Caller lessons require namespace-wide read access.
+   If the lesson is in another readable namespace, name it in `lesson_namespaces`.
+2. In the definition's `examples`, look for `evidence: "indirect_call"` and
+   the indexed name for `App.mount` in `via.symbol`. When Loom returns the
+   caller's verified source, `via.context` carries the excerpt and indexed commit.
+3. In the same definition's `lessons`, look for `code_state: "fresh"` and the
+   returned `via.symbol` in `linked_symbols`. Read the caller excerpt before
+   applying the lesson.
+
+Caller lessons must match the returned indexed revision and fit the time and
+token limits. Use `code.symbol` to inspect the caller directly when edit
+context omits its lessons.
 
 ## Follow a specification to code and back
 
@@ -370,7 +398,8 @@ on the answer ([overview.md](overview.md#reading-an-answer)).
 On the Python parser tier, `edge_kinds: ["reads"]` can follow member access
 through a top-level function's typed parameter or an imported value with a
 declared type.
-The graph records those accesses separately from function calls.
+The graph records those accesses separately from function calls. It prefers
+parser definitions for the same qualified name and can follow compiler-only definitions.
 
 **Example: impact of a diff.**
 

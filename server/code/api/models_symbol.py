@@ -36,6 +36,7 @@ from server.code.domain.units import CodeUnit
 from server.operations.base import MCP_HIDDEN
 
 EDIT_TEST_CONTEXT_LINES = 10
+# not a setting: the request schema and exact clue batching share this maximum.
 EDIT_CONTEXT_MAX_NAMES = 8
 _EditName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1024)]
 
@@ -290,7 +291,7 @@ class CodeSymbolOutput(BaseModel):
     summary: dict[str, list[str]] = Field(default_factory=dict)
     # Per-requested-name resolution for batched edit context only. Definitions are shared.
     edit_targets: list[CodeEditContextTarget] = Field(default_factory=list)
-    # Batched edit context only. Cross-file member reads grouped by retained definition.
+    # Edit context only. Cross-file member reads grouped by retained definition.
     read_sources: list[CodeEditReadSource] | None = None
 
 

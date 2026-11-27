@@ -1,8 +1,8 @@
 # Examples
 
 Run these examples from a Loom checkout with Cargo against a running Loom server.
-They use the source SDK's generated methods and request builders, which are absent
-from the published 0.1.0 crate.
+They use the generated methods and request builders included in the crates.io
+package. Cargo includes these examples in the distributable crate.
 The three basic examples below write, read and delete their own memory keys and knowledge URIs. Installation
 and client configuration are covered in the [SDK README](../README.md#install).
 

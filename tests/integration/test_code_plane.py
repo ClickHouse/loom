@@ -95,10 +95,13 @@ async def test_ingest_lifecycle(code_env) -> None:
 async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
     from server.code.api.models_read import CodeReadInput
     from server.code.app import read
+    from server.core.ch import get_client
     from server.settings import settings
+    from tests.integration._eventually import eventually
 
     repo, org, ns = code_env
     monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_trace_log_enabled", True)
     await _ingest(repo, org, ns)
 
     async def mirror(_cfg):
@@ -146,6 +149,20 @@ async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
         )
     )
     assert mixed.results == response.results[:3]
+    assert response.trace_run_id
+
+    async def trace_rows():
+        return (
+            await get_client().client.query(
+                "SELECT op, route, result_count, top_k, returned_paths FROM loom.code_search_trace "
+                "WHERE org = {org:String} AND namespace = {ns:String} AND trace_run_id = {id:String}",
+                parameters={"org": org, "ns": ns, "id": response.trace_run_id},
+            )
+        ).result_rows
+
+    assert await eventually(trace_rows, description="the indexed read trace") == [
+        ("code.read", "verified_blob_ranges", 2, 4, ["src/S.cpp", "src/S.cpp"])
+    ]
 
 
 async def test_read_verifies_mirror_blob_after_incremental_ingest(code_env, monkeypatch) -> None:
@@ -623,6 +640,13 @@ async def test_edit_context_batch_returns_shared_member_source_at_its_revision(
     assert source.body.strip() == 'def label(self):\n        return "one"'
     assert [(site.path, site.line) for site in source.sites] == [(caller_path, 4), (caller_path, 7)]
 
+    single = request.model_copy(update={"name": names[0], "names": []})
+    single_result = await handle_code_edit_context(single)
+    one_name = await handle_code_edit_context(request.model_copy(update={"names": names[:1]}))
+    assert single_result.read_sources == one_name.read_sources
+    assert single_result.read_sources == [source.model_copy(update={"sites": source.sites[:1]})]
+    assert "edit_targets" not in single_result.model_dump()
+
     explicit = await handle_code_edit_context(
         request.model_copy(update={"names": [*names, f"{member_path}:Options.label"]})
     )
@@ -635,6 +659,7 @@ async def test_edit_context_batch_returns_shared_member_source_at_its_revision(
     stale = await handle_code_edit_context(request)
     assert len(stale.definitions) == 2
     assert "read_sources" not in stale.model_dump()
+    assert "read_sources" not in (await handle_code_edit_context(single)).model_dump()
 
 
 @pytest.mark.parametrize(

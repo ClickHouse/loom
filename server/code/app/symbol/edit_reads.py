@@ -1,4 +1,4 @@
-"""Retained member definitions read by the source in an edit-context batch."""
+"""Verified source for member reads in edit context."""
 
 from __future__ import annotations
 
@@ -30,13 +30,22 @@ async def batch_read_sources(
     definitions: list[CodeUnit],
     targets: list[CodeEditContextTarget],
 ) -> list[CodeEditReadSource]:
-    """Bound the optional read sources to definitions resolved by the batch."""
+    """Only resolved targets in a batch can supply member-read anchors."""
     resolved = {
         index
         for target in targets
         if target.status == "resolved"
         for index in target.definition_indices
     }
+    return await read_sources_for_definitions(org, ns, definitions, resolved)
+
+
+async def read_sources_for_definitions(
+    org: str,
+    ns: str,
+    definitions: list[CodeUnit],
+    resolved: set[int],
+) -> list[CodeEditReadSource]:
     with code_span("edit_context.read_sources") as span:
         sources = await bounded(edit_read_sources(CodeRepo(), org, ns, definitions, resolved), [])
         span_attrs(span, results=len(sources))

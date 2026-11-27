@@ -356,16 +356,24 @@ def test_unchecked_analyst_sql_refuses_before_any_connection_or_secret_draw(monk
     assert len(out.err.strip().splitlines()) == 1
 
 
-def test_a_column_grant_in_another_database_is_outside_the_allowlist(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("database", "option", "allowed"),
+    [("other", "", False), ("loom", "", True), ("loom", " WITH GRANT OPTION", True)],
+)
+def test_own_grants_recognizes_columns_in_the_loom_database(
+    monkeypatch: pytest.MonkeyPatch, database: str, option: str, allowed: bool
 ) -> None:
     class _Ch:
         async def query_columns(self, sql: str) -> Any:
-            return ["g"], ["String"], [("GRANT SELECT(org) ON other.memory TO loom_analyst",)]
+            return (
+                ["g"],
+                ["String"],
+                [(f"GRANT SELECT(org) ON {database}.memory TO loom_analyst{option}",)],
+            )
 
     monkeypatch.setattr(app.store, "database", lambda: "loom")
     held = asyncio.run(app.store.own_grants(password="pw", extra={}, ch=_Ch()))
-    assert ("memory", "org") not in held
+    assert (("memory", "org") in held) == allowed
 
 
 def test_analyst_statements_send_no_time_cap_of_their_own() -> None:
@@ -428,18 +436,14 @@ def test_guarded_apply_refusal_is_actionable_without_stdout(monkeypatch, capsys)
     from server.cli import ch_setup
 
     def refuse():
-        raise app.SetupRefused(
-            "ordinary event storage is not confirmed private-free on every writer"
-        )
+        raise app.SetupRefused("row policies Loom did not write are on the analysis tables")
 
     monkeypatch.setattr(ch_setup, "_apply_analyst", refuse)
     args = argparse.Namespace(print_analyst_sql=False, apply_analyst_sql=True, print_sql=False)
     assert ch_setup._cmd_ch_setup(args) == 2
     out = capsys.readouterr()
     assert not out.out
-    assert (
-        out.err.strip() == "✗ ordinary event storage is not confirmed private-free on every writer"
-    )
+    assert out.err.strip() == "✗ row policies Loom did not write are on the analysis tables"
 
 
 def test_rewrite_before_the_first_boot_says_to_run_again(
@@ -568,7 +572,7 @@ def test_an_unrefused_probe_is_named_by_the_column_not_the_sql(
 ) -> None:
     # /v1/health shows this text: no SQL, and no database name.
     async def run(sql: str, **_: Any) -> Any:
-        if ".agent_events_private" in sql:
+        if re.search(r"\.agent_events(?:_private)?(?:\s|$)", sql):
             raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
         if sql.startswith("SELECT count()") and "system." not in sql:
             return [], [], [(1,)] if boundary.CANARY_TABLE in sql else [(0,)]

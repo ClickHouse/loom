@@ -65,6 +65,44 @@ class _Result:
         }
 
 
+def test_get_ledger_distinguishes_a_version_read_from_an_unchanged_poll(emitter: _Emitter) -> None:
+    from server.memory.api.models_crud import MemoryGetOutput
+
+    version = 2**53 + 1
+    first = MemoryGetOutput(found=True, memory_id="m", version=version, value="first body")
+    second = MemoryGetOutput(found=True, memory_id="m", version=version + 1, value="second body")
+    poll = MemoryGetOutput(found=True, unchanged=True, memory_id="m", version=version + 1)
+    metadata = MemoryGetOutput(found=True, memory_id="m", version=version + 1)
+    metadata._projection = frozenset({"found", "unchanged", "memory_id", "version"})
+    identity = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
+    for request, answer in enumerate((first, second, poll, metadata, MemoryGetOutput(found=False))):
+        ledger.emit_agent_event(
+            op_name="memory.get",
+            identity=identity,
+            request_id=f"req-{request}",
+            latency_ms=1,
+            success=True,
+            error_code="",
+            raw_args={"run_id": "r", "memory_key": "rule"},
+            result=answer,
+        )
+
+    first_row, second_row, polled, metadata_row, missing = emitter.events
+    assert (first_row.run_id, first_row.request_id, first_row.args["out_memory_id"]) == (
+        "r",
+        "req-0",
+        "m",
+    )
+    assert first_row.args["out_version"] == str(version)
+    assert second_row.args["out_version"] == str(version + 1)
+    assert first_row.args["out_unchanged"] == second_row.args["out_unchanged"] == "false"
+    assert polled.args["out_version"] == second_row.args["out_version"]
+    assert polled.args["out_unchanged"] == "true"
+    assert metadata_row.args["out_unchanged"] == "false"
+    assert missing.args["out_found"] == "false"
+    assert "first body" not in first_row.args.values()
+
+
 def test_http_row_names_model_and_scope(emitter: _Emitter) -> None:
     _paid_ask()
     ledger.emit_agent_event(

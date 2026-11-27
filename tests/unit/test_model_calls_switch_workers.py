@@ -13,6 +13,7 @@ import pytest
 
 from server.llm import customer
 from server.settings import settings
+from tests.unit.code_fixtures import repo_config
 from tests.unit.switch_state import switch_off, switch_stale
 
 
@@ -223,12 +224,12 @@ def test_code_summaries_and_ingest_skip_a_switched_off_orgs_repositories(monkeyp
 
     summarized: list[str] = []
 
-    async def summarize(org: str, ns: str, result: Any, *, cap: int) -> None:
+    async def summarize(org: str, ns: str, result: Any, *, cap: int, **_: Any) -> None:
         summarized.append(org)
 
     repos = [
-        SimpleNamespace(org="acme", namespace="code-a"),
-        SimpleNamespace(org="beta", namespace="code-b"),
+        repo_config(org="acme", namespace="code-a"),
+        repo_config(org="beta", namespace="code-b"),
     ]
     monkeypatch.setattr("server.code.domain.index.repos.configured_repos", lambda: repos)
     monkeypatch.setattr(w, "_summarize_repo", summarize)
@@ -661,6 +662,7 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
         limit=0,
         paths_file="",
         concurrency=1,
+        workers=1,
     )
     assert asyncio.run(code_backfill._backfill(args)) == 1
     assert sent == []  # nothing of the switched-off org's code went out
@@ -745,7 +747,7 @@ def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> No
     monkeypatch.setattr(ip, "selected_repos", lambda org, ns: repos)
     monkeypatch.setattr(ip, "_without_unsandboxed", lambda repos, result: repos)
     monkeypatch.setattr(ip, "prefetch_mirrors", nothing)
-    monkeypatch.setattr(ip, "ingest_oldest_first", nothing)
+    monkeypatch.setattr(ip, "ingest_round_robin", nothing)
     monkeypatch.setattr(ip, "_run_repo", run_repo)
     switch_off("acme")
     result = ip.CodeIngestResult()

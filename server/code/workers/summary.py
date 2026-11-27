@@ -7,7 +7,8 @@ bounded per pass. One card per file: rows a previous embedder left under
 its own model name are tombstoned once the active model has the file, and
 their card text is carried over first when it still matches the file.
 Cards are embedded inline; failures leave a dim=0 stub the
-code_embed_recovery worker fills.
+code_embed_recovery worker fills. A file the entry's `embed_exclude` globs name
+gets no card; one written before its glob is tombstoned once the file changes.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -78,6 +80,7 @@ async def run_pass() -> CodeSummaryResult:
 
 async def _run(result: CodeSummaryResult) -> None:
 
+    from server.code.app.index.denylist import denylist_for
     from server.code.domain.index.repos import configured_repos
 
     repos = list(configured_repos())
@@ -96,7 +99,11 @@ async def _run(result: CodeSummaryResult) -> None:
         try:
             with customer.for_org(cfg.org, namespace=cfg.namespace):
                 await _summarize_repo(
-                    cfg.org, cfg.namespace, result, cap=result.cards_written + share
+                    cfg.org,
+                    cfg.namespace,
+                    result,
+                    excluded=denylist_for(cfg).embed_excluded,
+                    cap=result.cards_written + share,
                 )
         except customer.HOLDS:
             continue  # a held call is no failure: its cards wait until the org is back
@@ -167,11 +174,13 @@ async def _dedupe_models(
     summaries: dict[str, dict[str, Any]],
     file_hashes: dict[str, str],
     result: CodeSummaryResult,
+    excluded: Callable[[str], bool],
 ) -> None:
     """Tombstone live rows under other models once the active model has the
     file. A twin whose card text still matches the file's content hash is
     carried into the active row first (embed only — no LLM), bounded by the
-    pass cap; twins past the cap keep their text for the next pass."""
+    pass cap, unless the file is embed-excluded; twins past the cap keep their
+    text for the next pass."""
     others = await repo.live_summary_rows_other_models(org, ns, model, with_embedding=False)
     twins = twin_rows(list(summaries.values()) + list(others), active_model=model)
     if not twins:
@@ -186,6 +195,7 @@ async def _dedupe_models(
         content_hash = file_hashes.get(path, "")
         reusable = (
             live is not None
+            and not excluded(path)
             and str(twin.get("summary") or "")
             and content_hash
             and _hash_str(twin.get("inputs_hash")) == content_hash
@@ -245,10 +255,16 @@ async def _card_row(
 
 
 async def _summarize_repo(
-    org: str, ns: str, result: CodeSummaryResult, *, cap: int | None = None
+    org: str,
+    ns: str,
+    result: CodeSummaryResult,
+    *,
+    excluded: Callable[[str], bool],
+    cap: int | None = None,
 ) -> None:
     """One repository's cards, until the pass has written `cap` in total
-    (None → the whole per-pass cap)."""
+    (None → the whole per-pass cap). An `excluded` file gets none, and loses
+    the one it had once its content changes."""
     from server.code.store.index import CodeRepo, build_row
     from server.embedding.embedder import get_embedder
     from server.llm.client import get_llm_client_for_model
@@ -272,9 +288,23 @@ async def _summarize_repo(
         for r in await repo.live_summary_rows(org, ns, model, with_embedding=False)
         if str(r["scope_type"]) == "file"
     }
-    await _dedupe_models(repo, embedder, org, ns, model, summaries, file_hashes, result)
+    await _dedupe_models(repo, embedder, org, ns, model, summaries, file_hashes, result, excluded)
+    # An excluded file's card stays while it describes the file, and goes once the file changes.
+    stale = [
+        CodeRepo.tombstone_of("code_summaries", live)
+        for path, live in summaries.items()
+        if excluded(path)
+        and live.get("summary")
+        and _hash_str(live.get("inputs_hash")) != file_hashes.get(path, "")
+    ]
+    for start in range(0, len(stale), _BATCH):
+        await repo.insert_rows("code_summaries", stale[start : start + _BATCH])
 
-    candidates = await _candidate_order(repo, org, ns, summaries, file_hashes)
+    candidates = [
+        path
+        for path in await _candidate_order(repo, org, ns, summaries, file_hashes)
+        if not excluded(path)
+    ]
     if cap is None:
         cap = int(settings.code_summary_max_scopes_per_pass)
     # Cards are written `concurrency` at a time (default 1 = a sequential

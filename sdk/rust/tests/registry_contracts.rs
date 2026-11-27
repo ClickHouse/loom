@@ -10472,6 +10472,11 @@ fn code_read() {
         serde_json::from_str::<serde_json::Value>("0").unwrap(),
         "code.read:lessons_left_out"
     );
+    assert_eq!(
+        encoded["trace_run_id"],
+        serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
+        "code.read:trace_run_id"
+    );
 }
 #[test]
 fn code_tests_for() {

@@ -59,7 +59,7 @@ function isReport(report, now) {
     return false;
   }
   if (
-    report.schema_version !== 1 ||
+    ![1, 2].includes(report.schema_version) ||
     !matches(installationPattern, report.installation_id) ||
     !matches(versionPattern, report.loom_version) ||
     !matches(versionPattern, report.clickhouse_version) ||
@@ -169,3 +169,9 @@ export async function handleAdoption(request, { env = process.env, fetcher = fet
   }
   return reply({ error: "store_unavailable" }, 503);
 }
+
+export default {
+  fetch(request) {
+    return handleAdoption(request);
+  },
+};

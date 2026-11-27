@@ -61,11 +61,6 @@ settings:
   # [restart]
   # ch_secure: null
 
-  # Extra trusted HTTP origins if the service endpoint cannot reach every writer.
-  # Analyst setup discovers checked replica sessions with the service credentials.
-  # [restart]
-  # ch_analysis_observer_urls: []
-
   # Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment`
   # ("<op> <request_id>"), so query_log rows group by shape. A statement that carries a
   # secret, or one run as the analyst, gets its shape alone. Off by default: readers
@@ -1245,6 +1240,12 @@ settings:
   # Max PR heads fetched per shared mirror per ingest pass. [restart]
   # code_git_pr_head_batch: 200
 
+  # PEM bundle git verifies https remotes with, in place of its default roots (a server
+  # under a private authority); under /etc/ssl, which the job sandbox mounts.
+  # code_git_proxy_ca_file takes its place through the proxy. Empty = default roots.
+  # [restart]
+  # code_git_ca_file: ""
+
   # --- git through a forward proxy ---
   # The code index's network git (clone, fetch, ls-remote, submodule update) through an
   # operator's forward proxy (code/app/index/git_proxy.py). With the proxy set, such a
@@ -1715,8 +1716,8 @@ settings:
   # code_embed_recovery_batch: 100
 
   # Share of embeddable chunks that must carry a vector before a repo is `ready`; below
-  # it code.search says "lexical only". Poisoned rows count against it; fixtures
-  # unembedded by design do not. [restart]
+  # it code.search says "lexical only". Poisoned rows count against it; rows unembedded
+  # by design (reference fixtures, `code_embed_exclude`) do not. [restart]
   # code_ready_embed_coverage: 0.95
 
   # --- ingest limits and denylist ---
@@ -1733,6 +1734,11 @@ settings:
 
   # CSV of path globs never indexed (the scalar entry's `exclude`). [restart]
   # code_ingest_exclude: ""
+
+  # CSV of path globs indexed but never described or embedded (the scalar entry's
+  # `embed_exclude`; not self-service entries); chunks already written keep their state.
+  # [restart]
+  # code_embed_exclude: ""
 
   # Name of the repo-local ignore file whose patterns are never indexed. [restart]
   # code_ingest_ignore_file: ".loomignore"
@@ -2313,6 +2319,14 @@ settings:
 
   # Seconds one enrichment of a code result may take before it is left empty. [live]
   # code_enrich_timeout_s: 0.5
+
+  # Incoming call sites read before ranking usage examples. The coverage lookup accepts
+  # up to 50 paths. [restart]
+  # code_enrich_example_candidate_limit: 50
+
+  # Indirect test callers ranked as backups. The edge query reads up to twice this many
+  # call sites, within its 60-site work limit. [restart]
+  # code_enrich_indirect_test_caller_limit: 30
 
   # A full pass waits this long for a delta on its entry (past any delta's harness
   # timeout). [live]
@@ -4977,8 +4991,9 @@ settings:
   # Self-hosted adoption reports. Set false to stop all adoption reporting. [restart]
   # adoption_telemetry_enabled: true
 
-  # Share verified email domain counts in adoption reports. Off by default. [restart]
-  # adoption_telemetry_share_domains: false
+  # Share namespace contact domains and counts in adoption reports. Set false to omit
+  # them. [restart]
+  # adoption_telemetry_share_domains: true
 
   # Seconds between adoption checks and retries. A report covers 12 hours. [restart]
   # adoption_telemetry_interval_seconds: 3600

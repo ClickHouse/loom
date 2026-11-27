@@ -8,8 +8,10 @@ import asyncio
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from server.code.api.models_navigation import CodeExamplesInput
+from server.code.app import enrich
 from server.code.app.enrich import (
     _example_context,
     bounded,
@@ -22,6 +24,7 @@ from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.core.errors import NotFoundError, PreconditionFailedError
 from server.settings import settings
+from server.settings.catalog import CodeSettings
 
 SEED = {"symbol_id": "s-parse", "qualified_name": "DB::parseQuery", "tier": "scip"}
 
@@ -82,7 +85,7 @@ class _Repo:
         assert not with_revision
         assert tests_only == self.tests_only
         self.edge_reads.append(list(ids))
-        return self.edges
+        return self.edges[:limit]
 
     async def test_map_for(self, org: str, ns: str, paths: list[str]) -> list[dict[str, Any]]:
         return [{"src_path": p} for p in paths if p in self.tested]
@@ -147,6 +150,27 @@ def test_top_k_bounds_the_sites(
     repo = _Repo(seeds=[SEED], edges=[_edge(f"src/f{i}.cpp", i + 1) for i in range(6)])
     out = _run(monkeypatch, repo, name="DB::parseQuery", top_k=2)
     assert [e["path"] for e in out.examples] == ["src/f0.cpp", "src/f1.cpp"]
+
+
+def test_the_candidate_limit_bounds_usage_example_reads(
+    monkeypatch: pytest.MonkeyPatch, traces: list[dict[str, Any]]
+) -> None:
+    monkeypatch.setattr(settings, "code_enrich_example_candidate_limit", 1)
+    repo = _Repo(seeds=[SEED], edges=[_edge("src/a.cpp", 10), _edge("src/b.cpp", 20)])
+    out = _run(monkeypatch, repo, name="DB::parseQuery", top_k=2)
+    assert [example["path"] for example in out.examples] == ["src/a.cpp"]
+
+
+@pytest.mark.parametrize(
+    ("field", "maximum"),
+    [("code_enrich_example_candidate_limit", 50), ("code_enrich_indirect_test_caller_limit", 30)],
+)
+def test_candidate_settings_keep_enrichment_within_its_work_limits(
+    field: str, maximum: int
+) -> None:
+    CodeSettings.model_validate({field: maximum})
+    with pytest.raises(ValidationError, match=field):
+        CodeSettings.model_validate({field: maximum + 1})
 
 
 def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None:
@@ -322,7 +346,60 @@ async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("promoted", ["present", "missing", "timeout"])
+@pytest.mark.parametrize(
+    ("tier", "path", "line", "reference_expected"),
+    [
+        ("scip", "web/app.py", 9, True),
+        ("scip", "web/other.py", 9, False),
+        ("scip", "web/app.py", 10, False),
+        ("treesitter", "web/app.py", 9, False),
+    ],
+)
+async def test_indirect_test_reference_counts_distinct_call_sites(
+    monkeypatch, tier, path, line, reference_expected
+) -> None:
+    revision = "a" * 40
+    target = {
+        "path": "web/blueprints.py",
+        "kind": "method",
+        "qualified_name": "Blueprint::register",
+    }
+    caller = "web.app::App::register_blueprint"
+    edge = {
+        **_edge("web/app.py", 9, caller),
+        "tier": "treesitter",
+        "from_symbol_id": "tree",
+        "to_qualified_name": target["qualified_name"],
+        "indexed_commit": revision,
+    }
+    alias = {**edge, "tier": tier, "path": path, "line": line, "from_symbol_id": "alias"}
+    reference = {
+        "path": "tests/test_routes.py",
+        "caller": "test_routes",
+        "evidence": "name_reference",
+    }
+
+    class Repo:
+        async def edges_for_symbols(self, *_args, **_options):
+            return [edge, alias]
+
+    async def verified(_repo, _org, _ns, bridges, *_args, **_options):
+        assert set(bridges) == {"tree", "alias"}
+        return []
+
+    async def repeated(*_args):
+        return reference
+
+    monkeypatch.setattr(settings, "embedding_model", "fake-ngram-3072")
+    monkeypatch.setattr(enrich, "_verified_indirect_examples", verified)
+    monkeypatch.setattr(enrich, "_repeated_test_reference", repeated)
+    repo: Any = Repo()
+    examples = await indirect_test_examples(repo, "org", "code", ["register"], target, revision, 2)
+    assert examples == ([reference] if reference_expected else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("promoted", ["present", "batch", "missing", "timeout"])
 async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, promoted) -> None:
     revision = "a" * 40
     bridge_path = "web/app.py"
@@ -356,7 +433,8 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
                 ]
             assert ids == ["wrapper"] and options["tests_only"]
             assert options["caller_revision"] == revision and options["sites_per_caller"] == 2
-            if promoted != "present":
+            assert options["limit"] == 10
+            if promoted in ("missing", "timeout"):
                 return [
                     incoming(
                         test_path, line, f"test_other_{line}", str(line), "wrapper", bridge_name
@@ -418,10 +496,22 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
             ]
 
     monkeypatch.setattr(settings, "embedding_model", "fake-ngram-3072")
+    monkeypatch.setattr(settings, "code_enrich_indirect_test_caller_limit", 5)
     repo: Any = Repo()
     ready: list[dict[str, Any]] = []
+    related_names = ("Blueprint.register", "Blueprint.add_app_hook") if promoted == "batch" else ()
     examples = await bounded(
-        indirect_test_examples(repo, "org", "code", ["register"], target, revision, 2, ready=ready),
+        indirect_test_examples(
+            repo,
+            "org",
+            "code",
+            ["register"],
+            target,
+            revision,
+            2,
+            ready=ready,
+            related_names=related_names,
+        ),
         ready,
         seconds=0.15,
     )
@@ -431,7 +521,9 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
         ("test_blueprint_hook", 10),
         ("test_async", 5),
     ]
-    if promoted != "present":
+    if promoted == "batch":
+        expected[0], expected[1] = expected[1], expected[0]
+    elif promoted in ("missing", "timeout"):
         expected = [("test_other_10", 10), ("test_other_40", 40), ("test_other_70", 70)]
     assert [(e["caller"], e["line"]) for e in examples] == expected
     assert all(
@@ -456,9 +548,10 @@ async def test_edit_context_keeps_optional_caller_source_when_aliases_share_defi
         "text": "def run():\n    value()",
     }
 
-    async def read(request):
+    async def read(_request, target, *, in_batch):
+        assert in_batch
         via = {"symbol": "src.action::run", "path": "src/action.py", "line": 2}
-        if request.name == names[source_position]:
+        if target.name == names[source_position]:
             via["context"] = context
         unit = CodeUnit(
             path="src/value.py",
@@ -468,7 +561,7 @@ async def test_edit_context_keeps_optional_caller_source_when_aliases_share_defi
         )
         return CodeSymbolOutput(definitions=[unit])
 
-    monkeypatch.setattr(symbol, "_single_edit_context", read)
+    monkeypatch.setattr(symbol, "_edit_context_for_target", read)
     monkeypatch.setattr(symbol, "_symbol_trace", lambda *args, **kwargs: "")
     answer = await symbol._batched_edit_context(
         CodeEditContextInput(org="test-org", namespace="test-ns", names=names)

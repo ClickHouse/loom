@@ -1,8 +1,8 @@
 ---
 title: Agent run history, duplicate checks and regression candidates
-description: Record scoped agent runs and conversations, check tracker-backed bug drafts for duplicates and inspect candidate pull requests without claiming a proven cause.
+description: Trace AI agent runs to the memories they read and wrote, investigate slow Loom requests, and distinguish reported coding-agent costs from server model spend.
 seo:
-  title: Agent run history and PR investigation
+  title: AI agent observability and run history
 ---
 
 # Agent runs, traces and PR history
@@ -23,6 +23,25 @@ Duplicate checks need a registered tracker source and a namespace the caller may
 The [bug draft to candidate PRs](../features/tracker/overview.md#from-a-bug-draft-to-candidate-prs)
 walkthrough covers tracker access and PR-history setup for both operations. Candidate ranking neither runs a bisect nor proves
 which change caused the bug.
+
+## Observe an AI agent run
+
+Start with the record that answers the question you are investigating.
+
+| Question                                   | Where to look                                                                                                                                                                                                                                   |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What did the agent rely on or write?       | Read the run by `run_id`. The [run ledger](../features/runs.md#what-a-run-records) distinguishes keys the agent reported using, keys retrieved during the run, and memories written with that run ID.                                           |
+| Where did one Loom request spend its time? | Capture `X-Request-Id`, then [join the request](../guides/debugging.md#2-join-the-request-across-systems) to the operation ledger, traces and ClickHouse query log. Trace detail depends on the configured exporter and sampling.               |
+| What model cost is recorded for this run?  | Read `run.get` for reported model turns in the run's session and time window. An unpriced model can have token counts without a cost estimate. Check [Loom provider spend](../features/observability/cost-and-usage.md#costsummary) separately. |
+
+Runs that overlap within a session can count the same turns. Review the
+[run cost attribution rules](../features/runs.md#budgets) before adding costs across runs.
+
+Run the [SDK ledger example](https://github.com/ClickHouse/loom/blob/main/examples/ledger_run.py)
+in a disposable namespace. It records the fact the task reports using and attaches the
+decision it saves to the run. Use [run details](../features/runs.md#operations) to check
+those fields against the task output. For a real incident, keep the task's run ID and the
+request ID for any slow operation so you can inspect both records.
 
 ## What you get
 

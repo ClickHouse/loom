@@ -87,6 +87,13 @@ The `usage_fold` worker folds the events into the reinforcement term that
 [memory search](memory/search-and-ask.md) ranks by. A `harm` event takes back earned boost, floored at the row's
 write-time base, so one bad run never pushes a row below its relevance and never deletes it.
 
+On a `memory.get` request ledger row, `out_memory_id` and `out_version` in `args`,
+when present, identify the revision the server answered with. An `if_version` poll
+can report that same revision without reading out the value. It records
+`out_unchanged = 'true'`. A regular get records `'false'`. An older row without the
+flag leaves the poll outcome unknown. A get can request only metadata, and an MCP
+client can receive a trimmed response. These fields do not establish use by the agent.
+
 A procedure key named in `memories_used` also gets a row in the procedure ledger (path
 empty, `ok` from the outcome); an agent that calls `procedure.record_run` itself should
 leave that key out of `memories_used` so the run is not counted twice. See

@@ -179,6 +179,7 @@ test("preserves repository source links, images and examples", () => {
   const github = "https://github.com/ClickHouse/loom/blob/main/";
   const original = [
     `[README](${github}README.md)`,
+    "[External docs](https://example.com/ClickHouse/loom/blob/main/docs/index.md)",
     `[Missing page](${github}docs/missing.md)`,
     `[Source lines](${github}docs/index.md#L3-L7)`,
     `[Plain source](${github}docs/index.md?plain=1)`,

@@ -259,7 +259,7 @@ async def _reuse_from_trunk(ctx: _AskCtx) -> _Lookup | None:
     memory_ns = str(row.get("memory_namespace") or "")
     memory_keys = [str(k) for k in row.get("memory_keys") or []]
     # a copy stored as an erasure or a redact passes would outlive it: synthesize instead
-    if memory_keys and await _memory_may_be_gone(ctx, memory_ns, memory_keys):
+    if await _answer_may_be_gone(ctx, memory_ns, memory_keys):
         return None
     copy = _entry_row(
         ctx,
@@ -334,21 +334,17 @@ async def _remember(ctx: _AskCtx, res: AskResult, llm: Any) -> None:
         return
     try:
         if res.abstain:
-            if int(settings.code_ask_negative_cache_ttl_s) and ctx.index_head:
-                await _store(
-                    ctx,
-                    _entry_row(
-                        ctx,
-                        kind="negative",
-                        abstain_reason=res.abstain_reason[:2000],
-                    ),
-                )
+            if (
+                int(settings.code_ask_negative_cache_ttl_s)
+                and ctx.index_head
+                and not await _answer_may_be_gone(ctx, "", [])
+            ):
+                row = _entry_row(ctx, kind="negative", abstain_reason=res.abstain_reason[:2000])
+                await shielded(_store_then_check(ctx, row), name="code-ask-answer-store")
             return
         if res.source != "synthesized" or not res.memoize or not res.answer:
             return
-        if res.memory_keys and await _memory_may_be_gone(
-            ctx, res.memory_namespace, res.memory_keys
-        ):
+        if await _answer_may_be_gone(ctx, res.memory_namespace, res.memory_keys):
             return
         cited = sorted({str(c["path"]) for c in res.citations})
         shown = [p for p in res.shown_paths if p not in cited][:_MAX_RETRIEVAL_PATHS]
@@ -375,8 +371,8 @@ async def _erasure_may_have_passed(ctx: _AskCtx) -> bool:
     """Whether an erasure of the ask's org had not completed when the ask began, or
     completed since (`ledger_reads.unfinished_since`; a failed one counts until it
     completes): its `code_answers.delete` step may already have passed, so an answer
-    quoting memory stored now could hold erased text after the census. An unreadable
-    ledger counts as one."""
+    stored now, quoting memory or the code alone, could hold erased text after the
+    census. An unreadable ledger counts as one."""
     from server.erasure.app import ledger_reads
 
     since_s = int(time.time() - (time.monotonic() - ctx.started))
@@ -387,22 +383,24 @@ async def _erasure_may_have_passed(ctx: _AskCtx) -> bool:
         return True
 
 
-async def _memory_may_be_gone(ctx: _AskCtx, memory_namespace: str, memory_keys: list[str]) -> bool:
-    """Whether an answer quoting `memory_keys` must not be cached: an erasure may have
-    passed it, or one of the keys has a redacted version."""
+async def _answer_may_be_gone(ctx: _AskCtx, memory_namespace: str, memory_keys: list[str]) -> bool:
+    """Whether an answer must not be cached: an erasure may have passed it, or one of the
+    `memory_keys` it quoted has a redacted version."""
+    if await _erasure_may_have_passed(ctx):
+        return True
+    if not memory_keys:
+        return False
     from server.memory.app.curation import quotes_a_redacted_key
 
-    return await _erasure_may_have_passed(ctx) or await quotes_a_redacted_key(
-        ctx.org, memory_namespace, memory_keys
-    )
+    return await quotes_a_redacted_key(ctx.org, memory_namespace, memory_keys)
 
 
 async def _store_then_check(ctx: _AskCtx, row: dict[str, Any]) -> None:
-    """Store `row` and, for an answer that quoted memory, read the check before the store
-    again: an erasure registered, or a redact stamped, between the two may have deleted
-    the cached answers before this one landed. Both write their mark before they delete,
-    so either their delete sees this answer or this read sees the mark; then the row is
-    tombstoned, so no read serves it, and the answers quoting the keys are deleted. A
+    """Store `row` and read the check before the store again: an erasure registered, or a
+    redact stamped, between the two may have deleted the cached answers before this one
+    landed. Both write their mark before they delete, so either their delete sees this
+    answer or this read sees the mark; then the row is tombstoned, so no read serves it,
+    and it is deleted, with the answers quoting its keys. A
     store that raised is checked too, since its insert may still have landed. Run
     `shielded`: a request the shutdown cancels still checks what it stored."""
     try:
@@ -413,20 +411,23 @@ async def _store_then_check(ctx: _AskCtx, row: dict[str, Any]) -> None:
 
 async def _check_stored(ctx: _AskCtx, row: dict[str, Any]) -> None:
     memory_ns, memory_keys = str(row["memory_namespace"]), list(row["memory_keys"])
-    if not memory_keys or not await _memory_may_be_gone(ctx, memory_ns, memory_keys):
+    if not await _answer_may_be_gone(ctx, memory_ns, memory_keys):
         return
     from server.memory.app.curation import delete_code_answers_quoting
 
     tombstoned = await _tombstone_entry(ctx.repo, row)
     try:
-        await delete_code_answers_quoting(ctx.org, memory_keys)
+        if memory_keys:
+            await delete_code_answers_quoting(ctx.org, memory_keys)
+        else:
+            await ctx.repo.delete_answer_entry(
+                str(row["org"]), str(row["namespace"]), str(row["question_id"])
+            )
     except Exception as e:  # noqa: BLE001 — the answer is served either way
         # a tombstone hides the row; its text stays in the part until a merge
         logger.error(
-            "code.ask could not delete a cached answer quoting %d keys of %s after an "
-            "erasure or a redact, %s (org %s, namespace %s, question_id %s): %s",
-            len(memory_keys),
-            memory_ns,
+            "code.ask could not delete a cached answer after an erasure or a redact, "
+            "%s (org %s, namespace %s, question_id %s): %s",
             "tombstoned it" if tombstoned else "nor tombstone it: it is still served",
             row.get("org"),
             row.get("namespace"),

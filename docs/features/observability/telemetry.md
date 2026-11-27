@@ -1,3 +1,9 @@
+---
+description: Trace Loom requests and workers with OpenTelemetry, configure OTLP exports, and correlate request spans with ClickHouse queries by request ID.
+seo:
+  title: OpenTelemetry for self-hosted AI agents
+---
+
 # Telemetry
 
 Loom reports on itself in three layers:
@@ -20,7 +26,7 @@ and sends one event per completed 12-hour UTC window.
 ### Where telemetry is sent
 
 The background worker posts to
-`https://telemetry.loom.clickhouse.com/api/v1/adoption`. The collector validates
+`https://loom.clickhouse.com/api/v1/adoption`. The endpoint validates
 the report and acknowledges the installation UUID and window after writing to
 the analytics ClickHouse service. The warehouse deduplicates retries and expires
 reports 400 days after receipt.
@@ -36,24 +42,24 @@ the application.
 
 ### What is sent
 
-| Columns                                                                                                                | Meaning                                                                                                                                                                                                                   |
-| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema_version`, `installation_id`, `day`                                                                             | Report format version, installation UUID and UTC usage date                                                                                                                                                               |
-| `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                                                             |
-| `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                                                              |
-| `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                                                    |
-| `user_domains`                                                                                                         | Empty by default. With domain sharing enabled, up to 30 verified email domains with distinct address counts and successful requests in their verified namespaces. Restricted namespaces and private mirrors are excluded. |
-| `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                                                               |
-| `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace.                                   |
-| `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                                                   |
-| `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                                                          |
-| `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                                                  |
+| Columns                                                                                                                | Meaning                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`, `installation_id`, `day`                                                                             | Report format version, installation UUID and UTC usage date                                                                                                                             |
+| `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                           |
+| `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                            |
+| `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                  |
+| `user_domains`                                                                                                         | Up to 30 namespace contact domains with distinct contact counts and successful requests. Domain sharing is enabled by default. Restricted namespaces and private mirrors are excluded.  |
+| `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                             |
+| `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace. |
+| `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                 |
+| `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                        |
+| `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                |
 
 The report excludes private mirror events, benchmark traffic, background traffic, and
 unclassified routes. It contains no full email addresses, names, operation strings,
-actor identifiers, customer content, or credentials. Email domains come from active
-accounts provisioned through verified OIDC or explicitly linked through SSO. Per-domain requests come from standard namespaces with verified contacts. A
-domain can help identify a company for follow-up. A reporting installation with zero
+actor identifiers, customer content, or credentials. Email domains come from contact
+addresses on active standard namespaces, including self-reported addresses from password
+signup. Verified companies enroll separately. A reporting installation with zero
 successful requests is idle for that window. A missing report leaves its activity unknown.
 
 ### Can I disable telemetry?
@@ -62,14 +68,18 @@ Set `LOOM_ADOPTION_TELEMETRY_ENABLED=false` on every server and worker replica.
 With a settings file, set `adoption_telemetry_enabled: false`. In the Helm chart, put
 that setting under `settingsFile`.
 
-Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=true` to share domain activity with the
-aggregate report. Domain sharing is off by default.
+Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false` on every server and worker replica
+to omit domains while sending aggregate usage. In a settings file, set
+`adoption_telemetry_share_domains: false`.
 
 ### Adoption dashboard
 
 The [collector deployment guide](../../../deploy/telemetry/README.md) covers the
 warehouse and dashboard setup. The public [adoption page](https://loom.clickhouse.com/adoption)
-shows aggregate self-hosted usage and open-source distribution metrics.
+shows aggregate self-hosted usage and open-source distribution metrics. It also
+lists self-reported contact domain names with successful requests in the last
+90 complete UTC days. Only version 2 reports contribute names to the public
+list. Use the domain-sharing setting above to omit domains from your reports.
 `loom_adoption_windows` contains one report per
 `(installation_id, window_start)`. The daily rollup adds request counts and
 uses the peak half-day distinct count for each installation.
@@ -104,7 +114,7 @@ contain aggregate values.
 
 The restricted `loom_adoption_top_domains_30d` view ranks the top 50 domains by
 attributed successful requests and includes the number of active installations
-and the sum of latest account counts across installations. An address reported
+and the sum of latest account counts across installations. A contact reported
 by several installations can contribute more than once. Company records, domain
 rankings, and pilot stages stay in the access-controlled warehouse.
 

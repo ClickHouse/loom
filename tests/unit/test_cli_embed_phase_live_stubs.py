@@ -28,6 +28,7 @@ class _CH:
                 "path": "src/a.cpp",
                 "chunk_id": "00000000-0000-0000-0000-000000000001",
                 "embedding_dim": 0,
+                "created_at": 0,
             }
         ]
 
@@ -62,3 +63,48 @@ def test_include_poisoned_lifts_only_the_attempt_filters() -> None:
     assert (
         "NOT startsWith(argMax(embed_last_error, version), {unembedded:String})" in p1
     )  # by-design rows never
+
+
+class _ManyKeysCH:
+    """Phase 1 returns more candidate keys than one form field carries; phase 2
+    answers each slice with its keys' oldest rows, as `ORDER BY created_at LIMIT`
+    does. A later key is an older row, so the oldest page sits in the last slices."""
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+        self.calls: list[dict[str, Any]] = []
+
+    async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        self.calls.append(params)
+        if len(self.calls) == 1:
+            return [
+                {
+                    "path": f"src/{'deep/' * 12}file_{i}.py",
+                    "chunk_id": f"00000000-0000-0000-0000-{i:012d}",
+                }
+                for i in range(self.n)
+            ]
+        rows = [
+            {"path": p, "chunk_id": c, "embedding_dim": 0, "created_at": self.n - int(c[-12:])}
+            for p, c in params["keys"]
+        ]
+        return sorted(rows, key=lambda r: r["created_at"])[: params["limit"]]
+
+
+def test_phase_two_binds_the_candidate_keys_a_slice_at_a_time() -> None:
+    """A page of 500 asks phase 1 for 2,000 candidates; bound whole, their
+    (path, chunk_id) list outgrows ClickHouse's 128 KiB form field and the
+    server refuses the statement ("Field value too long"). The page is still the
+    500 oldest rows of all the slices, oldest first."""
+    from clickhouse_connect.driver.binding import format_bind_value
+
+    from server.core.ch_params import FIELD_BYTES
+
+    ch = _ManyKeysCH(2000)
+    rows = asyncio.run(CodeRepo(ch).pending_embed_chunks("o", "n", "m", 3, 500))  # type: ignore[arg-type]
+    slices = [c["keys"] for c in ch.calls[1:]]
+    assert len(slices) > 1
+    assert sum(len(s) for s in slices) == 2000
+    for part in slices:
+        assert len(format_bind_value(part, top_level=False).encode()) <= FIELD_BYTES + 2
+    assert [r["created_at"] for r in rows] == list(range(1, 501))

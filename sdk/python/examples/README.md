@@ -263,6 +263,67 @@ after erasure: customer-erase-22e75585 → 0 hit(s), customer-keep-22e75585 → 
 all checks passed
 ```
 
+## audience_scoped_retrieval.py
+
+One person asks the same question in a private conversation and in a shared one, and the shared reply gets only the knowledge its readers may see. The script plays the agent host; the [audience guide](../../../docs/guides/audience-scoped-retrieval.md) explains the pattern and its limits.
+
+```bash
+pip install 'clickhouse-loom[machine]'
+LOOM_BASE_URL=https://loom.example LOOM_ORG=acme LOOM_END_USER_ISSUER=chat-app \
+  LOOM_END_USER_KID=chat-1 LOOM_END_USER_KEY_FILE=chat-1.pem python audience_scoped_retrieval.py
+```
+
+The host signs a short-lived token for the person each request comes from, so the server must trust its key as an end-user issuer for the org ([Act for a service's end users](../../../docs/guides/tokens-and-grants.md#act-for-a-services-end-users)). For a local server, make a key and set the issuer before it starts:
+
+```bash
+openssl genrsa -out chat-1.pem 2048
+openssl rsa -in chat-1.pem -pubout -out chat-1.pub.pem
+export LOOM_JWT_END_USER_ISSUERS_JSON="$(jq -Rsc '{"chat-app": {orgs: ["acme"], keys: {"chat-1": .}}}' chat-1.pub.pem)"
+```
+
+The script needs no `LOOM_API_KEY`: every call runs as one of its two end users, `ana-*` and `lead-*`, new on every run.
+
+1. `collection.create`, `grants.create`, `knowledge.add` ×2 as the lead: two shared collections, each granted to the person and holding one document.
+2. `knowledge.add` in `@me` as the person: their own note.
+3. A private request: `collection.list` as the person, then `knowledge.search` naming the personal collection and both shared ones.
+4. A shared request for `channel:support`: the same two ops, with the search naming the support collection alone.
+5. Six tool calls that try to widen the shared request, and a private reply sent to the shared conversation: the host refuses each without a request.
+6. A destination the host cannot resolve and one the person is not known to be in: no search.
+7. `knowledge.get` through a citation of the shared conversation, then `grants.revoke` as the lead: the shared request gets nothing, the citation no longer opens, and a reply drafted before the revoke is not delivered.
+8. `knowledge.delete` and `collection.delete` ×2 in a `finally`, also when a step fails: the note is tombstoned and both collections are erased. The person's personal collection stays, without a live document, until that user is erased. Each delete is tried on its own, and one that fails or leaves its target behind fails the run.
+
+The script exits 1 when a check fails.
+
+A run against a local Loom server from source (ClickHouse 26.10, auth on, the `fake-ngram-1024` embedder). Each scope holds at most three documents and the search asks for ten passages, so the checks do not depend on the embedder. The user ids and citation handles change from run to run:
+
+```text
+private reply to ana-521646 may draw on:
+  My note: the customer hinted that they may not renew.
+  The finance sheet says the renewal discount ceiling is 12 percent.
+  The support runbook says renewal reminders go out 30 days before the term ends.
+
+shared reply in channel:support may draw on:
+  The support runbook says renewal reminders go out 30 days before the term ends.
+
+scope expansion attempts in channel:support:
+  refused: search(namespaces, query) is not a tool call
+  refused: search(namespace_scope, query) is not a tool call
+  refused: search(query, user_id) is not a tool call
+  refused: c-cc952f60 is not a citation of this conversation
+  refused: open_citation(handle, namespace, source_uri) is not a tool call
+  refused: knowledge.get(namespace, source_uri) is not a tool call
+  refused: a reply built for dm:ana-521646 cannot go to channel:support
+
+channel:unknown: 0 passage(s)
+
+channel:leads: 0 passage(s)
+
+after the revoke, channel:support: 0 passage(s)
+  refused: c-b434b06d is not a citation of this conversation
+  refused: the context this reply was drafted from was discarded
+all checks passed
+```
+
 ## multi_agent_handoff.py
 
 A planner posts a task, a worker claims it with a lease fence and writes the result,

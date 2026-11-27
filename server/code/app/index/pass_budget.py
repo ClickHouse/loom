@@ -98,10 +98,12 @@ class CodeIngestResult:
 
     def cut(self, where: str, *, cfg: RepoConfig) -> None:
         """The budget stopped the pass before `where` started on entry `cfg`. `where`
-        is `<namespace>:<leg>[@detail]`; the first cut per phase is kept and `resume`
+        is `<namespace>:<leg>[@detail]`, kept as `<org>/<namespace>:<leg>[@detail]`
+        (two orgs may share a namespace); the first cut per phase is kept and `resume`
         lists them, first cut first."""
         self.partial = True
         self.unserved.add((cfg.org, cfg.namespace))
+        where = f"{cfg.org}/{where}"
         phase = cut_phase(where)
         if phase and phase not in self.cuts:
             self.cuts[phase] = where
@@ -122,7 +124,7 @@ class CodeIngestResult:
 
 
 # The legs each phase of the pass runs — a cut point
-# `<namespace>:<leg>` names the phase to start at that entry next pass.
+# `<org>/<namespace>:<leg>` names the phase to start at that entry next pass.
 _PHASE_OF_LEG = {
     "commits": "commits",
     "bootstrap": "bootstrap",
@@ -134,34 +136,40 @@ _PHASE_OF_LEG = {
 
 def cut_phase(where: str) -> str:
     """The phase a cut point belongs to ('' for a shape this pass never
-    writes): `code-a:commits@abc+3` → `commits`, `code-a:rechunk@700/22136`
+    writes): `o/code-a:commits@abc+3` → `commits`, `o/code-a:rechunk@700/22136`
     → `walk`."""
-    _ns, _sep, rest = where.partition(":")
+    _ns, _sep, rest = where.rpartition(":")
     return _PHASE_OF_LEG.get(rest.split("@", 1)[0].strip(), "") if _sep else ""
 
 
 def cut_points(cursor: str) -> dict[str, str]:
-    """{phase: namespace} from the cursor the previous pass
+    """{phase: cut_key} from the cursor the previous pass
     left (`resume`, one cut per phase joined by `; `). Empty for no cursor,
-    and for anything the parser does not recognise."""
+    and for anything the parser does not recognise. A cut an older build wrote
+    names no org (`code-a`): it matches no entry, so `rotate_to` leaves the order."""
     out: dict[str, str] = {}
     for seg in str(cursor or "").split(";"):
         seg = seg.strip()
         phase = cut_phase(seg)
-        ns = seg.partition(":")[0].strip()
-        if phase and ns and phase not in out:
-            out[phase] = ns
+        key = seg.rpartition(":")[0].strip()
+        if phase and key and phase not in out:
+            out[phase] = key
     return out
 
 
-def rotate_to(entries: list[Any], namespace: str, key: Any = None) -> list[Any]:
-    """`entries` starting at the one named `namespace`, the
+def cut_key(cfg: Any) -> str:
+    """How a cut names an entry: two orgs may use one namespace."""
+    return f"{cfg.org}/{cfg.namespace}"
+
+
+def rotate_to(entries: list[Any], name: str, key: Any = None) -> list[Any]:
+    """`entries` starting at the one `name` names, the
     ones before it moved to the end; unchanged when nothing is named or the
-    name is not there (a retired entry). `key` reads an entry's namespace
-    (default: `.namespace`)."""
+    name is not there (a retired entry). `key` reads an entry's name
+    (default: `.namespace`; the ingest pass uses `cut_key`)."""
     read = key or (lambda e: e.namespace)
     for i, e in enumerate(entries):
-        if read(e) == namespace:
+        if read(e) == name:
             return entries[i:] + entries[:i]
     return list(entries)
 

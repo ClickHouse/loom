@@ -14,7 +14,9 @@ import asyncio
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from itertools import pairwise
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -32,8 +34,66 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_EXAMPLE_CANDIDATE_LIMIT = 50
-_INDIRECT_TEST_CALLER_LIMIT = 30
+type _ExampleWindow = tuple[int, int, str]
+type _ExampleWindowKey = tuple[str, str, str, str, str, int, int, int]
+
+
+class _EditExampleReads:
+    def __init__(self, group: asyncio.TaskGroup) -> None:
+        self.group = group
+        self.windows: dict[_ExampleWindowKey, asyncio.Task[_ExampleWindow | None]] = {}
+        self.closed = False
+
+    async def read(
+        self,
+        key: _ExampleWindowKey,
+        load: Callable[[], Awaitable[_ExampleWindow | None]],
+    ) -> _ExampleWindow | None:
+        while not self.closed:
+            task = self.windows.get(key)
+            if task is None or (task.done() and (task.cancelled() or task.result() is None)):
+                return await asyncio.shield(self._start(key, load))
+            # The batch owns the read. A shared miss leaves this target's attempt available.
+            window = await asyncio.shield(task)
+            if window is not None:
+                return window
+        return None
+
+    def _start(
+        self, key: _ExampleWindowKey, load: Callable[[], Awaitable[_ExampleWindow | None]]
+    ) -> asyncio.Task[_ExampleWindow | None]:
+        task = self.group.create_task(self._load(load))
+        self.windows[key] = task
+        return task
+
+    @staticmethod
+    async def _load(load: Callable[[], Awaitable[_ExampleWindow | None]]) -> _ExampleWindow | None:
+        return await bounded(load(), None)
+
+    def close(self) -> None:
+        self.closed = True
+        for task in self.windows.values():
+            if not task.done():
+                task.cancel()
+        self.windows.clear()
+
+
+_EDIT_EXAMPLE_READS: ContextVar[_EditExampleReads | None] = ContextVar(
+    "_EDIT_EXAMPLE_READS", default=None
+)
+
+
+@asynccontextmanager
+async def share_edit_example_reads() -> AsyncIterator[None]:
+    """Own verified test-source reads for one edit batch."""
+    async with asyncio.TaskGroup() as group:
+        reads = _EditExampleReads(group)
+        token = _EDIT_EXAMPLE_READS.set(reads)
+        try:
+            yield
+        finally:
+            _EDIT_EXAMPLE_READS.reset(token)
+            reads.close()
 
 
 async def bounded[T](coro: Awaitable[T], fallback: T, seconds: float | None = None) -> T:
@@ -85,7 +145,7 @@ async def usage_examples(
             ns,
             symbol_ids,
             direction="callers",
-            limit=_EXAMPLE_CANDIDATE_LIMIT,
+            limit=settings.code_enrich_example_candidate_limit,
             with_revision=with_context,
             tests_only=tests_only,
         ),
@@ -219,6 +279,7 @@ async def indirect_test_examples(
     context_lines: int,
     *,
     ready: list[dict[str, Any]] | None = None,
+    related_names: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Same-revision test source for a verified non-test caller."""
     if not (revision and context_lines and settings.embedding_model):
@@ -248,11 +309,25 @@ async def indirect_test_examples(
     if not bridges:
         return []
     verified = _verified_indirect_examples(
-        repo, org, ns, bridges, str(definition["path"]), revision, context_lines, ready
+        repo,
+        org,
+        ns,
+        bridges,
+        str(definition["path"]),
+        revision,
+        context_lines,
+        ready,
+        related_names=related_names,
     )
-    if len(bridges) != 1:
+    aliases = list(bridges.values())
+    bridge = aliases[0]
+    # Keep every ID for incoming test edges. Both tiers can index one call site.
+    if len(aliases) > 1 and (
+        len(aliases) != 2
+        or {edge["tier"] for edge in aliases} != {"treesitter", "scip"}
+        or _via_caller(bridge) != _via_caller(aliases[1])
+    ):
         return await verified
-    bridge = next(iter(bridges.values()))
     if lang_for_path(str(bridge["path"])) != "python":
         return await verified
     reference_lookup = bounded(
@@ -381,13 +456,16 @@ async def _verified_indirect_examples(
     revision: str,
     context_lines: int,
     ready: list[dict[str, Any]] | None,
+    *,
+    related_names: tuple[str, ...],
 ) -> list[dict[str, Any]]:
+    caller_limit = settings.code_enrich_indirect_test_caller_limit
     tests = await repo.edges_for_symbols(
         org,
         ns,
         list(bridges),
         direction="callers",
-        limit=2 * _INDIRECT_TEST_CALLER_LIMIT,
+        limit=2 * caller_limit,
         min_confidence=0.8,
         with_revision=True,
         tests_only=True,
@@ -402,12 +480,13 @@ async def _verified_indirect_examples(
     if files.get(path, {}).get("indexed_commit") != revision:
         return []
     sites = _verified_indirect_sites(tests, bridges, files, revision)
-    candidates = _prefer_distinct_test_windows(_rank_test_sites(sites), context_lines)[:6]
+    ranked = _rank_test_sites(sites, related_names=related_names)
+    candidates = _prefer_distinct_test_windows(ranked, context_lines)[:6]
     by_caller: dict[str, dict[str, Any]] = {}
     for edge in tests:
         by_caller.setdefault(str(edge["from_symbol_id"]), edge)
     original = _verified_indirect_sites(
-        list(by_caller.values())[:_INDIRECT_TEST_CALLER_LIMIT], bridges, files, revision
+        list(by_caller.values())[:caller_limit], bridges, files, revision
     )
     backups = _prefer_distinct_test_windows(original, context_lines)[:6]
     model = served_model_label(settings.embedding_model)
@@ -626,16 +705,20 @@ async def _example_context(
     if line <= 0 or not revision:
         return site
     start, end = max(1, line - radius), line + radius
-    with code_span("enrich.example_context"):
-        rows = await bounded(
-            repo.source_chunks_for_span(
-                org, ns, site["path"], start, end, model, with_revision=True
-            ),
-            [],
+    path = site["path"]
+
+    async def load() -> _ExampleWindow | None:
+        rows = await repo.source_chunks_for_span(
+            org, ns, path, start, end, model, with_revision=True
         )
-    if len(rows) > 400:
-        return site
-    window = retained_source_window(rows, start, end, anchor=line, revision=revision)
+        if len(rows) > 400:
+            return None
+        return retained_source_window(rows, start, end, anchor=line, revision=revision)
+
+    reads = _EDIT_EXAMPLE_READS.get()
+    key = (org, ns, path, model, revision, start, end, line)
+    with code_span("enrich.example_context"):
+        window = await bounded(reads.read(key, load) if reads is not None else load(), None)
     if window is None:
         return site
     start, end, text = window
@@ -653,6 +736,8 @@ async def lessons_for_symbol(
     paths: list[str],
     extra_namespaces: list[str],
     limit: int = 3,
+    fresh_at_commit: str = "",
+    seconds: float | None = None,
 ) -> list[dict[str, Any]] | None:
     """The memories linked to the symbol, from the caller's lesson scope: the readable
     `extra_namespaces` the call names (over MCP its memory home) and the repository's
@@ -671,6 +756,7 @@ async def lessons_for_symbol(
             paths=paths,
             namespaces=nss,
             limit=limit,
+            fresh_at_commit=fresh_at_commit,
         )
 
-    return await bounded(read(), None)
+    return await bounded(read(), None, seconds)

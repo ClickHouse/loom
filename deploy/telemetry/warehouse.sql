@@ -123,7 +123,7 @@ WHERE installation_id NOT IN (
 )
 GROUP BY installation_id, day, domain;
 
--- Domain attribution is available only to analysts with warehouse access.
+-- Attributed request and account counts stay in the restricted domain view.
 CREATE VIEW IF NOT EXISTS loom_product_analytics.loom_adoption_top_domains_30d
 SQL SECURITY DEFINER AS
 SELECT domain, sum(instance_requests) AS successful_requests, countIf(instance_requests > 0) AS installations,
@@ -139,6 +139,20 @@ GROUP BY domain
 HAVING successful_requests > 0
 ORDER BY successful_requests DESC, domain
 LIMIT 50;
+
+-- Only reports covered by the public domain-sharing notice supply names.
+CREATE OR REPLACE VIEW loom_product_analytics.public_adoption_domains
+SQL SECURITY DEFINER AS
+WITH toDate(now('UTC')) AS today_utc
+SELECT DISTINCT counts.domain AS domain
+FROM loom_product_analytics.loom_adoption_windows
+ARRAY JOIN user_domains AS counts
+WHERE schema_version = 2
+    AND day >= today_utc - 90 AND day < today_utc
+    AND counts.successful_requests > 0
+    AND installation_id NOT IN (
+        SELECT installation_id FROM loom_product_analytics.loom_adoption_enrollments WHERE is_internal = 1
+    );
 
 -- The public website reads these aggregate views with a separate read-only user.
 CREATE OR REPLACE VIEW loom_product_analytics.public_adoption_totals

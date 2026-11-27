@@ -44,6 +44,7 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
+| 1.3.1 | `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `False` | `True` | Include namespace contact domains and aggregate counts in adoption reports. Deployments can disable domain sharing while continuing to send usage totals. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | `'auto'` | Keep source lookups upfront on the coding toolset. General search and the dispatcher are available through discovery. Other toolsets retain their entrypoints. Explicit lists and empty values retain their meaning. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,loom_op'` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | Make literal code search callable without a preliminary tool lookup. An explicit list still replaces the defaults; an empty value leaves loading to the host. |
 | 1.3.1 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `250` | `0` | Return selected review rationale without an implicit token cap. |
@@ -163,7 +164,6 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TELEMETRY_DATABASE` | `str` | `'loom_telemetry'` |  | The database the telemetry Loom derives from its own tables lives in (`sli_minute`), outside the schema so a reader can be granted it alone. A schema outside `loom` names its own: two schemas never share one. |
 | `LOOM_CH_CLUSTER` | `str` | `'default'` |  | The cluster `clusterAllReplicas` reads to find a stopped Loom process's queries on every node (`default` on ClickHouse Cloud). A server without it answers for itself; '' reads only the connected server. |
 | `LOOM_CH_SECURE` | `bool \| None` | `None` |  | Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off). |
-| `LOOM_CH_ANALYSIS_OBSERVER_URLS` | `list[str]` | `[]` |  | Extra trusted HTTP origins if the service endpoint cannot reach every writer. Analyst setup discovers checked replica sessions with the service credentials. |
 | `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` | `bool` | `False` |  | Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` ("<op> <request_id>"), so query_log rows group by shape. A statement that carries a secret, or one run as the analyst, gets its shape alone. Off by default: readers that split log_comment on spaces gain tokens. |
 | `LOOM_CH_CAPTURE_STATEMENTS` | `str` | `''` |  | A file path: append one JSON line (`digest`, `sql`) per executed statement, to collect the shapes an acceptance run executes for the analyzer corpus. '' = off; never set it in production. |
 | `LOOM_CH_POOL_MAXSIZE` | `int` | `64` |  | HTTP connection pool size: request concurrency plus 3 x the batched-insert bound (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts). |
@@ -351,6 +351,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_GIT_LEDGER_MERGE_BATCH` | `int` | `40` |  | Missing ledger merge shas fetched per entry per pass (40 take about 8.5 s). |
 | `LOOM_CODE_GIT_FETCH_PR_HEADS` | `bool` | `True` |  | The mirror carries `refs/pull/N/head` for every PR the ledger holds OPEN (refetched when the tip moves, never pruned), so pre-merge reads diff the PR's own head. Only open heads: fetching every PR head is too costly. Per-entry `git_fetch_pr_heads` overrides. Off = the overlay reports `head_not_in_mirror`. |
 | `LOOM_CODE_GIT_PR_HEAD_BATCH` | `int` | `200` |  | Max PR heads fetched per shared mirror per ingest pass. |
+| `LOOM_CODE_GIT_CA_FILE` | `str` | `''` |  | PEM bundle git verifies https remotes with, in place of its default roots (a server under a private authority); under /etc/ssl, which the job sandbox mounts. code_git_proxy_ca_file takes its place through the proxy. Empty = default roots. |
 
 ### Git through a forward proxy
 
@@ -552,7 +553,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_EMBED_RECOVERY_FULL_SCAN_SECONDS` | `int` | `1800` |  | The pending scan reads above a version watermark; once per this many seconds it scans from version 0 to catch late rows. 0 = always from 0. |
 | `LOOM_CODE_EMBED_MAX_ATTEMPTS` | `int` | `8` |  | Embed attempts per stub before it is poisoned (`embed_failed_at` set) and skipped. |
 | `LOOM_CODE_EMBED_RECOVERY_BATCH` | `int` | `100` |  | Stub keys the recovery scan takes per repo per pass (also texts per embed call); raise it to onboard large repositories faster. |
-| `LOOM_CODE_READY_EMBED_COVERAGE` | `float` | `0.95` |  | Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says "lexical only". Poisoned rows count against it; fixtures unembedded by design do not. |
+| `LOOM_CODE_READY_EMBED_COVERAGE` | `float` | `0.95` |  | Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says "lexical only". Poisoned rows count against it; rows unembedded by design (reference fixtures, `code_embed_exclude`) do not. |
 
 ### Ingest limits and denylist
 
@@ -561,6 +562,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_INGEST_MAX_FILE_BYTES` | `int` | `1000000` |  | Files above this size are recorded (index_error) and not chunked. 0 = no cap. |
 | `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | `bool` | `False` |  | True applies the built-in generated, minified and vendored ingest rules (code/app/index/denylist.py), which match 0.19% of rows. The `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore file are always honoured. |
 | `LOOM_CODE_INGEST_EXCLUDE` | `str` | `''` |  | CSV of path globs never indexed (the scalar entry's `exclude`). |
+| `LOOM_CODE_EMBED_EXCLUDE` | `str` | `''` |  | CSV of path globs indexed but never described or embedded (the scalar entry's `embed_exclude`; not self-service entries); chunks already written keep their state. |
 | `LOOM_CODE_INGEST_IGNORE_FILE` | `str` | `'.loomignore'` |  | Name of the repo-local ignore file whose patterns are never indexed. |
 
 ### Reconciliation and re-chunking
@@ -753,6 +755,8 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_CONVENTIONS_DIFF_TIMEOUT_S` | `float` | `25.0` | live | Seconds the git diff behind code.conventions may run. |
 | `LOOM_CODE_EGRESS_CONNECT_TIMEOUT_S` | `float` | `15.0` | live | Seconds a repository job's egress tunnel waits to connect to its upstream host. |
 | `LOOM_CODE_ENRICH_TIMEOUT_S` | `float` | `0.5` | live | Seconds one enrichment of a code result may take before it is left empty. |
+| `LOOM_CODE_ENRICH_EXAMPLE_CANDIDATE_LIMIT` | `int` | `50` |  | Incoming call sites read before ranking usage examples. The coverage lookup accepts up to 50 paths. |
+| `LOOM_CODE_ENRICH_INDIRECT_TEST_CALLER_LIMIT` | `int` | `30` |  | Indirect test callers ranked as backups. The edge query reads up to twice this many call sites, within its 60-site work limit. |
 | `LOOM_CODE_ENTRY_LOCK_WAIT_S` | `float` | `14400.0` | live | A full pass waits this long for a delta on its entry (past any delta's harness timeout). |
 | `LOOM_CODE_FORK_UPSTREAM_MISS_TTL_S` | `float` | `600.0` | live | Seconds a failed fork-upstream lookup is remembered as "not a known fork". |
 | `LOOM_CODE_MERGE_SHAS_LOG_TIMEOUT_S` | `float` | `8.0` | live | Seconds the mirror's git log may run when it searches for merge commits. |
@@ -1703,7 +1707,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_LATENCY_BUDGET_OVERRIDES_BY_CONSUMER` | `str` | `''` |  | JSON map {consumer: {op \| "*": ms \| "<n>x"}}: an integer is a budget in ms, "3x" multiplies the op's declared budget. Checked after runtime `admin/budget.set` overrides, before per-op ones; malformed = logged once and ignored. '' = none. |
 | `LOOM_WORKER_LEDGER_ROWS` | `bool` | `True` |  | One agent_events row per worker pass that spent something or failed (operation worker.<name>.pass, kind='worker'); loom.worker_status records every pass. |
 | `LOOM_ADOPTION_TELEMETRY_ENABLED` | `bool` | `True` |  | Self-hosted adoption reports. Set false to stop all adoption reporting. |
-| `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `bool` | `False` |  | Share verified email domain counts in adoption reports. Off by default. |
+| `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `bool` | `True` |  | Share namespace contact domains and counts in adoption reports. Set false to omit them. |
 | `LOOM_ADOPTION_TELEMETRY_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between adoption checks and retries. A report covers 12 hours. |
 | `LOOM_OTEL_ENABLED` | `bool` | `True` |  | Master switch for OTel emission. `init_otel()` also refuses under pytest regardless: server/main.py calls it at import, and a test run must never ship rows into production observability tables. |
 | `LOOM_LANGFUSE_URL` | `str` | `''` |  | Langfuse: with both set, OTel spans are forwarded to Langfuse's OTLP endpoint as a second span processor beside the ClickHouse exporter, retrieval scores are posted, and the erasure saga makes real HTTP DELETE calls (empty = log intent only). The token is `pk-lf-…:sk-lf-…`. |

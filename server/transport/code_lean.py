@@ -27,7 +27,11 @@ from typing import Any, NamedTuple
 from pydantic import ValidationError
 
 from server.code.api.models_common import _safe_path
-from server.code.api.models_read import CODE_READ_MAX_RANGES, CodeReadRangeInput
+from server.code.api.models_read import (
+    CODE_READ_MAX_RANGES,
+    CODE_READ_RANGE_TEXT_MAX_CHARS,
+    CodeReadRangeInput,
+)
 from server.code.api.models_symbol import EDIT_CONTEXT_MAX_NAMES, CodeEditContextInput
 from server.code.app.symbol.resolve import _parse_file_symbol, _parse_location
 from server.code.domain.extract.py_notebooks import is_notebook_path
@@ -232,6 +236,7 @@ def _lean_grep(out: dict[str, Any]) -> None:
         mod = _module_of_path(path)
         if mod and scope.startswith(mod + "::"):
             m["scope"] = scope[len(mod) + 2 :]
+    _share_grep_match_text(out)
     definitions = [row for row in out.get("definitions") or [] if isinstance(row, dict)]
     for definition in definitions:
         _lean_grep_definition(definition)
@@ -239,6 +244,49 @@ def _lean_grep(out: dict[str, Any]) -> None:
     related = out.get("related")
     if isinstance(related, dict):
         out["related"] = lean_code("code.grep", related)
+
+
+def _share_grep_match_text(out: dict[str, Any]) -> None:
+    """Use the excerpt for exact match text at the same path and line."""
+    matches, contexts = out.get("matches"), out.get("contexts")
+    if not (isinstance(matches, list) and matches and isinstance(contexts, list) and contexts):
+        return
+    source: dict[tuple[str, int], str | None] = {}
+    for context in contexts:
+        if not isinstance(context, dict):
+            continue
+        path, start, end, text = (
+            context.get(k) for k in ("path", "start_line", "end_line", "text")
+        )
+        if not (
+            isinstance(path, str)
+            and path
+            and isinstance(start, int)
+            and isinstance(end, int)
+            and 0 < start <= end
+            and isinstance(text, str)
+        ):
+            continue
+        lines = list(StringIO(text, newline="\n"))
+        if len(lines) != end - start + 1:
+            continue
+        for line_number, source_line in enumerate(lines, start):
+            key = (path, line_number)
+            if source.setdefault(key, source_line) != source_line:
+                source[key] = None
+
+    shared = []
+    for match in matches:
+        if isinstance(match, dict):
+            path, line, text = (match.get(k) for k in ("path", "line", "text"))
+            if isinstance(path, str) and isinstance(line, int) and isinstance(text, str) and text:
+                raw = source.get((path, line))
+                if raw is not None and raw.strip() == text:
+                    match = {key: value for key, value in match.items() if key != "text"}
+        shared.append(match)
+    compact = {"matches": shared, "match_text_in_context": True}
+    if shared != matches and _structured_chars(compact) < _structured_chars({"matches": matches}):
+        out.update(compact)
 
 
 _PYTHON_DECLARATION = re.compile(r"^(?:async\s+)?def\s+([^\W\d]\w*)\s*[\[(]")
@@ -294,23 +342,36 @@ def _grep_edit_names(items: list[_GrepFollowup]) -> list[str]:
         return []
 
 
+def _grep_read_range(span: CodeReadRangeInput) -> str | dict[str, Any]:
+    last = span.end_line if span.end_line is not None else span.start_line
+    location = f"{span.path}:{span.start_line}-{last}"
+    # The object form can hold a path whose suffix would exceed the string field's limit.
+    return location if len(location) <= CODE_READ_RANGE_TEXT_MAX_CHARS else span.model_dump()
+
+
 def _grep_continuation(
     out: dict[str, Any],
     arguments: dict[str, Any],
     followups: frozenset[str],
 ) -> None:
     """Give excerpt callers the source spans covering their matches."""
-    contexts = out.get("contexts") or []
     if (
         arguments.get("include_body") is not False
         or "loom_code_read" not in followups
         or out.get("definitions")
     ):
         return
+    evidence = [out]
+    related = out.get("related")
+    if isinstance(related, dict) and related.get("matches") and not related.get("definitions"):
+        evidence.append(related)
+    contexts = [window for item in evidence for window in item.get("contexts") or []]
     selections: dict[tuple[str, int, int], _GrepFollowup] = {}
-    hits = [hit for hit in out.get("matches") or [] if isinstance(hit, dict)]
-    # Keep declaration matches ahead of body hits when the read batch fills.
-    hits.sort(key=lambda hit: hit.get("line") != hit.get("scope_start_line"))
+    hits: list[dict[str, Any]] = []
+    # Exact hits come first, with declaration matches first within each group.
+    for item in evidence:
+        matches = [hit for hit in item.get("matches") or [] if isinstance(hit, dict)]
+        hits.extend(sorted(matches, key=lambda hit: hit.get("line") != hit.get("scope_start_line")))
     for hit in hits:
         path, line, start, end = (
             hit.get(key) for key in ("path", "line", "scope_start_line", "scope_end_line")
@@ -352,7 +413,7 @@ def _grep_continuation(
     selected = list(selections.values())
     names: list[str] = []
     has_edit_context = "loom_code_edit_context" in followups
-    exact_read = bool(contexts) or (has_edit_context and len(selected) == 1)
+    exact_read = bool(contexts) or len(evidence) > 1 or (has_edit_context and len(selected) == 1)
     if has_edit_context:
         names = _grep_edit_names(selected)
         if not names:
@@ -367,8 +428,10 @@ def _grep_continuation(
         }
     elif not exact_read:
         return
-    params = {"ranges": [item.span.model_dump() for item in selected], **options}
-    out["next"] = "For the full source, call loom_code_read with " + json.dumps(params)
+    params = {"ranges": [_grep_read_range(item.span) for item in selected], **options}
+    out["next"] = "For the full source, call loom_code_read with " + json.dumps(
+        params, separators=(",", ":")
+    )
 
 
 class _GrepBody(NamedTuple):
@@ -707,7 +770,11 @@ def lean_code(
                 d["symbol_id"] = src["unit_id"]
     _lean_prs(out.get("definitions"))
     if op_name == "code.grep" and arguments is not None and followups:
-        _grep_continuation(out, arguments, followups)
+        evidence = out
+        if not out.get("matches") and isinstance(related := out.get("related"), dict):
+            evidence = dict(related)
+            out["related"] = evidence
+        _grep_continuation(evidence, arguments, followups)
     fn = _PER_OP.get(op_name)
     if fn is not None:
         fn(out)

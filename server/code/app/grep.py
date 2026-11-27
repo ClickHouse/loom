@@ -4,6 +4,7 @@ cursor), the file-name mode and the commit-message mode."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -31,11 +32,14 @@ from server.code.app.grep_bodies import definitions_for, definitions_tokens
 from server.code.app.grep_dependencies import add_dependencies, forwarded_dependency
 from server.code.app.grep_source import (
     GREP_MATCH_TEXT_CHARS,
+    CompleteContexts,
     ContextSource,
     collect_contexts,
     match_revisions,
     page_contexts,
+    recover_page_context,
     recover_source_chunks,
+    verify_complete_contexts,
 )
 from server.code.app.search.shared import (
     _not_covered_output,
@@ -157,10 +161,14 @@ async def _code_grep(
     # A continuation is a point read of the lines the first call extracted; a missing pool row
     # re-runs the grep and says so.
     if input.cursor:
-        page, fallback, offset = await _serve_grep_page(input, org, ns, repo, route, started)
+        page, fallback, offset = await _serve_grep_page(
+            input, org, ns, repo, route, started, scope=scope
+        )
         if page is not None:
             return page
-        return await _grep_page_by_rerun(input, offset=offset, reason=fallback, started=started)
+        return await _grep_page_by_rerun(
+            input, offset=offset, reason=fallback, started=started, exact_path=exact_path
+        )
     return await _grep_lines(
         repo,
         org,
@@ -451,6 +459,58 @@ async def _scan_grep_lines(
     )
 
 
+async def _grep_page_context(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    input: CodeGrepInput,
+    scan: _GrepLineScan,
+    matches: list[dict[str, Any]],
+    budget: code_deadline.Budget | None,
+) -> tuple[dict[str, Any], ContextSource, int, CompleteContexts]:
+    context_lines = input.context_lines
+    if (
+        scan.related_pattern
+        and matches
+        and not input.include_body
+        and "context_lines" not in input.model_fields_set
+    ):
+        context_lines = RELATED_GREP_CONTEXT_LINES
+    if not context_lines:
+        return {}, {}, 0, frozenset()
+    complete_contexts: CompleteContexts = frozenset()
+    if input.prefer_complete_context and not input.include_body:
+        with code_span("grep.declaration_extents") as span:
+            complete_contexts = await verify_complete_contexts(
+                repo, org, ns, scan.chunks, scan.matches, scan.match_commits, context_lines, budget
+            )
+            span_attrs(span, verified=len(complete_contexts))
+    source = await asyncio.to_thread(
+        collect_contexts,
+        scan.chunks,
+        scan.matches,
+        context_lines,
+        _LINE_SCAN_MAX_CHARS,
+        match_commits=scan.match_commits,
+        complete_contexts=complete_contexts,
+    )
+    if input.context_lines:
+        await recover_page_context(
+            repo,
+            org,
+            ns,
+            source,
+            matches,
+            context_lines,
+            match_revisions(scan.matches, scan.match_commits),
+            complete_contexts=complete_contexts,
+            max_source_bytes=_LINE_SCAN_MAX_CHARS,
+            budget=budget,
+        )
+    page = page_contexts(source, matches, context_lines, complete_contexts=complete_contexts)
+    return page, source, context_lines, complete_contexts
+
+
 async def _grep_lines(
     repo: CodeRepo,
     org: str,
@@ -459,7 +519,7 @@ async def _grep_lines(
     *,
     route: str,
     started: float,
-    scope: Any,
+    scope: SearchScope,
     line_re: Any,
     budget: code_deadline.Budget | None = None,
     offset: int = 0,
@@ -485,34 +545,24 @@ async def _grep_lines(
     route, related_pattern, note = scan.route, scan.related_pattern, scan.note
     trace_run_id = new_trace_run_id()
     matches = scan.matches[offset : offset + served_limit]
-    context: dict[str, Any] = {}
-    context_source: ContextSource = {}
-    context_lines = input.context_lines
-    if (
-        related_pattern
-        and matches
-        and not input.include_body
-        and "context_lines" not in input.model_fields_set
-    ):
-        context_lines = RELATED_GREP_CONTEXT_LINES
-    if context_lines:
-        context_source = await asyncio.to_thread(
-            collect_contexts,
-            scan.chunks,
-            scan.matches,
-            context_lines,
-            _LINE_SCAN_MAX_CHARS,
-            match_commits=scan.match_commits,
-        )
-        context = page_contexts(context_source, matches, context_lines)
-    bodies = await definitions_for(input, matches, budget, match_commits=scan.match_commits)
+    # Keep the scan's coverage for the cursor and record enrichment cuts for this page.
+    page_budget = replace(budget, cut=[]) if budget is not None else None
+    context, context_source, context_lines, complete_contexts = await _grep_page_context(
+        repo, org, ns, input, scan, matches, page_budget
+    )
+    bodies = await definitions_for(input, matches, page_budget, match_commits=scan.match_commits)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
-        repo, org, ns, input, matches, route, budget=budget
+        repo, org, ns, input, matches, route, budget=page_budget
     )
     exact_coverage = await asyncio.to_thread(
         _line_coverage_fields, scan.chunks, budget, additional_reason=scan.batch_partial_reason
     )
     coverage = dict(exact_coverage)
+    if page_budget is not None and page_budget.partial:
+        coverage.update(
+            partial=True,
+            partial_reason=_notes(coverage.get("partial_reason", ""), page_budget.reason()),
+        )
     extra_related = None
     if not (related_pattern or offset or coverage.get("partial")):
         extra_related, extra_coverage = await _extra_related_source(
@@ -525,7 +575,7 @@ async def _grep_lines(
             scan=scan,
             exact_definitions=bodies.get("definitions", []),
             limit=served_limit,
-            budget=budget,
+            budget=page_budget,
         )
         coverage.update(extra_coverage)
         if extra_related is not None:
@@ -546,7 +596,7 @@ async def _grep_lines(
         scan,
         matches,
         related,
-        budget=budget,
+        budget=page_budget,
         incomplete=bool(coverage.get("partial")),
         whole_page=not offset and len(matches) == len(scan.matches),
         definitions=bodies.get("definitions", []) if not offset else [],
@@ -569,7 +619,9 @@ async def _grep_lines(
             partial=bool(exact_coverage.get("partial")),
             partial_reason=str(exact_coverage.get("partial_reason") or ""),
             context_source=context_source,
+            complete_contexts=complete_contexts,
             match_commits=scan.match_commits,
+            scope=scope,
         )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
     # so the outcome fold skips this op; the paths still feed opened_file)
@@ -1269,14 +1321,13 @@ def _grep_trace_args(input: CodeGrepInput, *, context_lines: int | None = None) 
         "related_on_prefix",
         "include_dependencies",
         "context_lines",
+        "prefer_complete_context",
         context_lines=context_lines,
         paged=bool(input.cursor) or None,
     )
 
 
 def _grep_params_hash(input: CodeGrepInput) -> str:
-    import hashlib
-
     parts: dict[str, Any] = {
         "pattern": input.pattern,
         "regex": input.regex,
@@ -1288,6 +1339,17 @@ def _grep_params_hash(input: CodeGrepInput) -> str:
         parts["context_lines"] = input.context_lines
     # Ordering is stored in the pool so either server version can read a live page.
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _grep_path_scope(scope: SearchScope) -> str:
+    """Fingerprint the effective path filters for the signed grep pool id."""
+    parts = (
+        scope.exact_path,
+        sorted(set(scope.path_globs_re)),
+        sorted(set(scope.exclude_globs_re)),
+        sorted(set(scope.extensions)),
+    )
+    return hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode()).hexdigest()
 
 
 def _issue_grep_cursor(
@@ -1303,7 +1365,9 @@ def _issue_grep_cursor(
     partial: bool = False,
     partial_reason: str = "",
     context_source: ContextSource | None = None,
+    complete_contexts: CompleteContexts = frozenset(),
     match_commits: dict[tuple[str, int], str],
+    scope: SearchScope,
 ) -> str:
     """Store every extracted line (served ones included, so offsets are
     pool positions) and return the cursor for the page after `served`;
@@ -1313,10 +1377,12 @@ def _issue_grep_cursor(
     if not paging.enabled() or len(matches) <= served:
         return ""
     ph = _grep_params_hash(input)
+    # Older replicas pass this opaque identifier through when issuing the next page.
+    pool_id = f"{run_id}.{_grep_path_scope(scope)}"
     paging.put_pool(
         org,
         ns,
-        paging.pool_key("g", run_id),
+        paging.pool_key("g", pool_id),
         {
             "v": paging.CURSOR_VERSION,
             "kind": "g",
@@ -1329,15 +1395,23 @@ def _issue_grep_cursor(
             "partial": partial,
             "partial_reason": partial_reason,
             **({"context_source": context_source} if context_source else {}),
+            **({"complete_contexts": sorted(complete_contexts)} if complete_contexts else {}),
         },
         indexed_commit="",
         route="grep",
     )
-    return paging.encode(kind="g", run_id=run_id, offset=served, params=ph, indexed_commit="")
+    return paging.encode(kind="g", run_id=pool_id, offset=served, params=ph, indexed_commit="")
 
 
 async def _serve_grep_page(
-    input: CodeGrepInput, org: str, ns: str, repo: CodeRepo, route: str, started: float
+    input: CodeGrepInput,
+    org: str,
+    ns: str,
+    repo: CodeRepo,
+    route: str,
+    started: float,
+    *,
+    scope: SearchScope,
 ) -> tuple[CodeGrepOutput | None, str, int]:
     from server.code.app import search_cursor as paging
 
@@ -1346,11 +1420,17 @@ async def _serve_grep_page(
         fields = paging.decode(input.cursor, kind="g", params=ph)
     except paging.CursorError as e:
         raise ValidationError(f"invalid cursor: {e}") from e
+    pool_id = str(fields["r"])
+    saved_scope = pool_id.partition(".")[2]
+    if not saved_scope:
+        return None, "path_scope_unrecorded", 0
+    if saved_scope != _grep_path_scope(scope):
+        raise ValidationError("invalid cursor: it was issued with different path filters")
     offset = int(fields["o"])
     if paging.expired(fields):
         return None, "expired", offset
     with code_span("grep.page_read", route=route):
-        row = await _read_pool_settling(org, ns, paging.pool_key("g", str(fields["r"])), fields)
+        row = await _read_pool_settling(org, ns, paging.pool_key("g", pool_id), fields)
     if row is None:
         return None, "pool_not_found", offset
     payload = row["payload"]
@@ -1375,7 +1455,7 @@ async def _serve_grep_page(
     next_cursor = (
         paging.encode(
             kind="g",
-            run_id=str(fields["r"]),
+            run_id=pool_id,
             offset=i,
             params=ph,
             indexed_commit="",
@@ -1386,14 +1466,42 @@ async def _serve_grep_page(
     )
     files = list(dict.fromkeys(m["path"] for m in page))
     context: dict[str, Any] = {}
+    budget = code_deadline.start(input.deadline_ms, started=started)
     if input.context_lines:
-        context = page_contexts(payload.get("context_source") or {}, page, input.context_lines)
+        complete_contexts = (
+            frozenset(
+                (str(path), int(line)) for path, line in (payload.get("complete_contexts") or ())
+            )
+            if input.prefer_complete_context and not input.include_body
+            else frozenset()
+        )
+        source = payload.get("context_source") or {}
+        revisions = match_revisions(
+            pool,
+            dict(zip(((hit["path"], hit["line"]) for hit in pool), pool_commits, strict=False)),
+        )
+        await recover_page_context(
+            repo,
+            org,
+            ns,
+            source,
+            page,
+            input.context_lines,
+            revisions,
+            complete_contexts=complete_contexts,
+            max_source_bytes=_LINE_SCAN_MAX_CHARS,
+            budget=budget,
+        )
+        context = page_contexts(
+            source, page, input.context_lines, complete_contexts=complete_contexts
+        )
+    context_budget = _partial_fields(budget)
     trace_run_id = new_trace_run_id()
     route = route + "+page"
     bodies = await definitions_for(
         input,
         page,
-        code_deadline.start(input.deadline_ms, started=started),
+        budget,
         match_commits=match_commits,
     )
     schedule_code_trace(
@@ -1441,8 +1549,11 @@ async def _serve_grep_page(
                 await index_as_of(repo, org, ns), page_commit="", offset=offset, fallback=""
             ),
             trace_run_id=trace_run_id,
-            partial=bool(payload.get("partial")),
-            partial_reason=str(payload.get("partial_reason") or ""),
+            partial=bool(payload.get("partial") or context_budget.get("partial")),
+            partial_reason=_notes(
+                str(payload.get("partial_reason") or ""),
+                str(context_budget.get("partial_reason") or ""),
+            ),
             **bodies,
             **context,
         ),
@@ -1452,22 +1563,31 @@ async def _serve_grep_page(
 
 
 async def _grep_page_by_rerun(
-    input: CodeGrepInput, *, offset: int, reason: str, started: float
+    input: CodeGrepInput, *, offset: int, reason: str, started: float, exact_path: str = ""
 ) -> CodeGrepOutput:
     """The pool row is gone: run the grep again deep enough to reach the
     offset, serve the slice past it, disclose why."""
     from server.code.app import search_cursor as paging
 
-    if input.prioritize_patterns and isinstance(input.pattern, list) and len(input.pattern) > 1:
+    if (
+        offset
+        and input.prioritize_patterns
+        and isinstance(input.pattern, list)
+        and len(input.pattern) > 1
+    ):
         raise ValidationError(f"grep cursor unavailable ({reason}); start a new search")
     limit = input.effective_limit
     fresh = input.model_copy(update={"cursor": "", "limit": min(200, offset + limit)})
-    out = await _code_grep(fresh, started=started, offset=offset, page_limit=limit)
+    out = await _code_grep(
+        fresh, started=started, offset=offset, page_limit=limit, exact_path=exact_path
+    )
     out.as_of = paging.disclose(out.as_of, page_commit="", offset=offset, fallback=reason)
     if reason == "source_line_mapping_changed":
         out.partial = True
         out.partial_reason = _notes(out.partial_reason, "cursor offset used another source mapping")
         out.note = _notes(out.note, "restart pagination for complete results")
+    elif reason == "path_scope_unrecorded":
+        out.note = _notes(out.note, "pagination restarted because the cursor's scope was not saved")
     set_code_span_attributes(page_offset=offset, page_fallback=reason)
     return out
 
@@ -1616,7 +1736,7 @@ async def _grep_message(
     *,
     route: str,
     started: float,
-    scope: Any = None,
+    scope: SearchScope,
     budget: code_deadline.Budget | None = None,
 ) -> CodeGrepOutput:
     """mode=message: the rendered text's literal spans
@@ -1844,7 +1964,7 @@ async def _message_literal_fallback(
     *,
     route: str,
     started: float,
-    scope: Any,
+    scope: SearchScope,
     budget: code_deadline.Budget | None,
 ) -> CodeGrepOutput | None:
     """The message pattern as a plain literal matches grep, marked `fallback: literal`; None

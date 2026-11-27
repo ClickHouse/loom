@@ -9,7 +9,8 @@ seo:
 Loom stores memory, documents and code indexes in ClickHouse, with
 [Postgres](architecture/storage-authority.md#why-two-stores) as an option for live
 memory and knowledge state. Connect through a coding-agent plugin, MCP, HTTP,
-the Python and TypeScript SDKs or the dashboard.
+the SDKs or the dashboard. Browse the [guides](guides/index.md) by task or
+follow the reading order below.
 
 <a href="https://loom.clickhouse.com/docs/es/use-cases" lang="es" hreflang="es">Casos de uso en español</a>
 
@@ -17,7 +18,7 @@ the Python and TypeScript SDKs or the dashboard.
 
 | Step                     | Read                                                                                                                                                                                      |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Decide                | [Overview](getting-started/overview.md) → [Evaluate Loom](getting-started/evaluate.md)                                                                                                    |
+| 1. Decide                | [Overview](getting-started/overview.md) · [Compare memory tools for coding agents](guides/compare-coding-agent-memory.md) · [Evaluate Loom](getting-started/evaluate.md)                  |
 | 2. Install               | [Quickstart](getting-started/quickstart.md) → [Deployment](operations/deployment.md)                                                                                                      |
 | 3. Connect agents        | [Connect a coding agent](getting-started/connect-a-coding-agent.md) → [Integrations](features/integrations/index.md)                                                                      |
 | 4. SDK and API           | [Your first agent](getting-started/first-agent.md) → [Python SDK](reference/python-sdk.md) / [HTTP API](reference/http-api.md)                                                            |
@@ -103,7 +104,8 @@ One page per need, each saying what Loom does for it and where to start:
 
 [Reference index](reference/index.md) · [HTTP API](reference/http-api.md) ·
 [MCP](reference/mcp.md) · [Python SDK](reference/python-sdk.md) ·
-[TypeScript SDK](reference/typescript-sdk.md) · [Go SDK](reference/go-sdk.md) · [Environment](reference/environment.md) ·
+[TypeScript SDK](reference/typescript-sdk.md) · [Go SDK](reference/go-sdk.md) ·
+[Rust SDK](reference/rust-sdk.md) · [Environment](reference/environment.md) ·
 [Operations](reference/operations.md) · [Configuration](reference/configuration.md) ·
 [Workers](reference/workers.md) · [CLI](reference/cli.md) · [Errors](reference/errors.md) ·
 [Status](reference/status.md) · [Schema](reference/schema.md) ·
