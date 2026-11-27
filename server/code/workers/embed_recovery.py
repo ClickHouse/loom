@@ -188,18 +188,16 @@ async def _republish(
     result: CodeEmbedRecoveryResult,
 ) -> None:
     """The counts and coverage rows of each drained namespace, as the ingest pass
-    publishes them after a commit. An idle pass has drained every namespace; on a
-    busy one, a namespace this pass wrote no vectors to is drained when it has no
-    stub left, whatever other namespaces still have to embed. A namespace whose
-    republish failed stays unpublished, so the next pass retries it. One this pass
-    did not scan (removed, or its org switched off) waits, so a removed one is
-    never written after its purge."""
+    publishes them after a commit. A namespace this pass wrote no vectors to is
+    drained when it has no stub left, whatever other namespaces still have to
+    embed. An idle pass checks too: a failed insert can leave a live stub below
+    the watermark. A namespace whose republish failed stays unpublished, so the
+    next pass retries it. One this pass did not scan (removed, or its org
+    switched off) waits, so a removed one is never written after its purge."""
     for org, ns in sorted((_unpublished & repos) - result.chunks_landed):
         try:
             with sequential_reads():  # a lagging replica must not replace a row with older figures
-                if not result.idle and await repo.pending_embed_chunks(
-                    org, ns, embedder.model_name, max_attempts, 1
-                ):
+                if await repo.pending_embed_chunks(org, ns, embedder.model_name, max_attempts, 1):
                     continue  # its own stubs remain
                 await repo.refresh_coverage(org, ns, must_land=True)
                 await repo.refresh_table_counts(org, ns, must_land=True)

@@ -274,6 +274,43 @@ async def test_a_drained_namespace_is_republished_while_another_has_summary_work
     assert republished == [(ORG, NS)]
 
 
+async def test_an_idle_pass_does_not_publish_over_a_stub_below_the_watermark(
+    configured: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.workers import embed_recovery as w
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_embed_recovery_batch", 1)
+    table = _Table(chunks=2, embedded=0)
+    repo = await _namespace(monkeypatch, table)
+    monkeypatch.setattr(w, "_full_scan_at", time.monotonic())  # no full scan until asked
+    insert = repo.insert_rows
+    inserts = 0
+
+    async def second_times_out(t: str, rows: list[dict[str, Any]]) -> None:
+        nonlocal inserts
+        inserts += 1
+        if inserts == 2:
+            raise TimeoutError("insert timed out")
+        await insert(t, rows)
+
+    monkeypatch.setattr(repo, "insert_rows", second_times_out)
+
+    assert (await _pass()).chunks_embedded == 1
+    with pytest.raises(TimeoutError):
+        await _pass()  # the watermark is already past the second stub
+    idle = await _pass()
+    assert idle.idle and idle.errors == []
+    counts, coverage_embedded = await _published(repo)
+    assert counts["code_chunks_embedded"] == coverage_embedded == 0
+
+    monkeypatch.setattr(w, "_full_scan_at", 0.0)  # the full scan finds the second stub
+    assert (await _pass()).chunks_embedded == 1
+    assert (await _pass()).idle
+    counts, coverage_embedded = await _published(repo)
+    assert counts["code_chunks_embedded"] == coverage_embedded == 2
+
+
 @pytest.mark.parametrize("failing", ["coverage", "table_counts", "aggregate"])
 async def test_a_failed_republish_is_retried_on_the_next_idle_pass(
     failing: str, configured: list[Any], monkeypatch: pytest.MonkeyPatch
