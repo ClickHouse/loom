@@ -1,0 +1,127 @@
+---
+import SiteFrame from "../../components/SiteFrame.astro";
+import { repositoryUrl } from "../../lib/site-identity.mjs";
+import recording from "../../lib/source-change-recording.json";
+
+const steps = [
+  {
+    id: "before",
+    label: "Before the edit",
+    branch: "main",
+    observation: recording.before,
+    explanation: "The saved lesson matches the code. The function retries on HTTP 503.",
+  },
+  {
+    id: "after",
+    label: "After the edit",
+    branch: "main",
+    observation: recording.after,
+    explanation:
+      "The function now retries on HTTP 429. Loom flags the lesson and identifies the commit that changed the code.",
+  },
+  {
+    id: "release",
+    label: "Release branch",
+    branch: "release",
+    observation: recording.release,
+    explanation: "The release branch still retries on HTTP 503. Loom returns the same lesson as fresh on this branch.",
+  },
+];
+const savedValue = recording.saved_value.split(/(`[^`]+`)/);
+---
+
+<SiteFrame
+  title="What happens to agent memory when code changes? | Loom"
+  description="Replay a Loom evaluation and see how one coding-agent memory is flagged after a source edit while remaining fresh on an unchanged Git branch."
+  path="/playground/source-change"
+>
+  <h1>What happens to agent memory when code changes?</h1>
+  <p class="lead">The test starts with a saved rule for retrying HTTP 503. Then the code changes. Step through a recorded Loom run to see what the next agent would read.</p>
+
+  <section class="replay" aria-labelledby="replay-heading">
+    <h2 id="replay-heading">Follow the retry rule</h2>
+    <fieldset>
+      <legend>Choose a source revision</legend>
+      {steps.map(({ id, label }, index) => (
+        <label class="step">
+          <input type="radio" name="revision" value={id} checked={index === 0} />
+          <span>{label}</span>
+        </label>
+      ))}
+    </fieldset>
+
+    {steps.map(({ id, label, branch, observation, explanation }) => (
+      <div class="result" data-revision={id}>
+        <div class="result-grid">
+          <section class="site-panel source" aria-label={`Indexed source — ${label}`}>
+            <h3>Indexed source</h3>
+            <div class="file-bar">
+              <code>{recording.path}</code>
+              <span>{branch} branch</span>
+            </div>
+            <pre><code>{observation.code}</code></pre>
+            <p class="revision">Indexed commit <code title={observation.indexed_commit}>{observation.indexed_commit.slice(0, 12)}</code></p>
+          </section>
+          <section class="site-panel lesson" aria-label={`Loom response — ${label}`}>
+            <div class="lesson-heading">
+              <h3>Loom response</h3>
+              <span class:list={["state", observation.code_state]}>{observation.code_state}</span>
+            </div>
+            <p class="memory-key"><code>{recording.memory_key}</code></p>
+            <blockquote>{savedValue.map((part) => part.startsWith("`") ? <code>{part.slice(1, -1)}</code> : part)}</blockquote>
+            {observation.changed_since && (
+              <p class="revision">Changed at <code title={observation.changed_since}>{observation.changed_since.slice(0, 12)}</code></p>
+            )}
+          </section>
+        </div>
+        <p class="explanation">{explanation}</p>
+      </div>
+    ))}
+  </section>
+
+  <section class="site-section run" aria-labelledby="run-heading">
+    <div>
+      <h2 id="run-heading">Run it yourself</h2>
+      <p>Fork Loom and open <strong>Actions</strong> in your fork. Enable workflows if prompted, then select <strong>Coding-agent memory evaluation</strong> and choose <strong>Run workflow</strong>. GitHub starts a disposable ClickHouse container on its runner and publishes the results on the run page. It needs no service credentials or model keys.</p>
+      <div class="site-actions">
+        <a class="primary" href={`${repositoryUrl}/fork`}>Fork Loom on GitHub</a>
+        <a class="text-link" href="/docs/guides/compare-coding-agent-memory#reproduce-the-comparison">Run locally</a>
+      </div>
+    </div>
+    <p class="recording">This replay uses sample data and runs entirely in the browser. <a class="text-link" href={`${repositoryUrl}/commit/${recording.loom_revision}`}>View the Loom revision used for the recording</a>.</p>
+  </section>
+</SiteFrame>
+
+<style>
+  h1 { max-width: 24ch; font-size: clamp(2.25rem, 5.4vw, 5rem); text-wrap: balance; }
+  .replay { margin-top: clamp(2rem, 5vw, 3.5rem); }
+  fieldset { display: flex; flex-wrap: wrap; gap: 0.45rem; min-width: 0; margin: 0.65rem 0 1rem; padding: 0; border: 0; }
+  legend { padding: 0; margin-bottom: 0.45rem; color: var(--muted); font-size: 0.9rem; }
+  .step { position: relative; cursor: pointer; }
+  .step input { position: absolute; width: 1px; height: 1px; margin: 0; clip-path: inset(50%); }
+  .step span { display: flex; align-items: center; min-height: 2.75rem; padding: 0.45rem 0.9rem; border: 1px solid var(--line); border-radius: 0.35rem; font-weight: 600; }
+  .step:hover span { border-color: var(--accent); }
+  .step input:checked + span { color: #171500; background: var(--accent); border-color: var(--accent); }
+  .step input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .replay:has(input[value="before"]:checked) .result:not([data-revision="before"]),
+  .replay:has(input[value="after"]:checked) .result:not([data-revision="after"]),
+  .replay:has(input[value="release"]:checked) .result:not([data-revision="release"]) { display: none; }
+  .result-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+  .file-bar, .lesson-heading { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 0.4rem 0.75rem; }
+  .file-bar { margin: 0.9rem 0 0.45rem; color: var(--muted); font-size: 0.9rem; }
+  pre { margin: 0; padding: 0.85rem; border-block: 1px solid var(--line); background: #151513; white-space: pre-wrap; overflow-wrap: anywhere; }
+  code { font-family: ui-monospace, monospace; }
+  .lesson-heading h3 { margin: 0; }
+  .state { padding: 0.2rem 0.65rem; border: 1px solid currentColor; border-radius: 0.3rem; font: 600 0.85rem ui-monospace, monospace; }
+  .fresh { color: #a1deb4; }
+  .changed { color: #f9bc72; }
+  .revision, .memory-key { color: var(--muted); font-size: 0.9rem; }
+  .revision code { color: #f5f3ed; }
+  blockquote { margin: 0 0 0.8rem; padding-inline-start: 0.8rem; border-inline-start: 2px solid var(--line); overflow-wrap: anywhere; }
+  .site-panel .revision:last-child { margin-bottom: 0; }
+  .explanation { margin: 0.75rem 0 0; max-width: 72ch; }
+  .run { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: start; gap: 1rem 3rem; }
+  .run p { max-width: 62ch; }
+  .recording { color: var(--muted); }
+  @media (max-width: 47rem) { .result-grid, .run { grid-template-columns: minmax(0, 1fr); } }
+</style>

@@ -25,7 +25,7 @@ Astro.response.headers.set("Vercel-CDN-Cache-Control", "public, s-maxage=3600, s
 
 const filters = adoptionFilters(Astro.url.searchParams);
 const { today, refreshedAt, selfHosted, openSource } = await loadPublishedAdoption();
-const { totals: summaries, retention, versions, activity, lifecycle } = selfHosted;
+const { totals: summaries, retention, versions, activity, lifecycle, domains } = selfHosted;
 const totals = summaries?.find(({ range_days, comparison }) => range_days === filters.days && comparison === "current");
 const previous = summaries?.find(
   ({ range_days, comparison }) => range_days === filters.days && comparison === "previous",
@@ -200,6 +200,20 @@ const overview = [
     {Array.isArray(summaries) && !totals && <p class="notice">No installations reported in this period.</p>}
     {totals && <p class="notice">Latest reporting date <time datetime={totals.last_reported}>{totals.last_reported}</time> UTC. Period changes appear when both windows have a report on every date.</p>}
 
+    <article class="card activity" id="reported-contact-domains">
+      <h3>Reported contact domains</h3>
+      <p>Self-reported domains with at least one successful request in the last 90 complete UTC days.</p>
+      {domains === null ? (
+        <p class="notice">The domain list is unavailable.</p>
+      ) : domains.length ? (
+        <ul class="contact-domains">
+          {domains.map((domain) => <li>{domain}</li>)}
+        </ul>
+      ) : (
+        <p class="notice">No domains reported activity in this period.</p>
+      )}
+    </article>
+
     <article class="card activity" id="installation-activity">
       <div class="card-title">
         <h3>Active installations and request volume</h3>
@@ -345,7 +359,7 @@ const overview = [
       </div>
       <div>
         <dt>Company and domain coverage</dt>
-        <dd>Verified companies enroll separately. Domain activity counts reported namespace contact domains. The public page shows aggregates.</dd>
+        <dd>Verified companies enroll separately. Domain activity comes from self-reported namespace contact domains.</dd>
       </div>
       <div>
         <dt>Open-source distribution</dt>
@@ -440,6 +454,12 @@ const overview = [
     margin-block: 0.25rem;
   }
   .notice, .activity { margin-top: 0.9rem; }
+  .contact-domains {
+    columns: 12rem;
+    margin: 0.7rem 0 0;
+    padding-inline-start: 1.2rem;
+  }
+  .contact-domains li { break-inside: avoid; padding-block: 0.15rem; }
   details { margin-top: 0.9rem; color: var(--muted); }
   summary { cursor: pointer; font-size: 0.85rem; }
   table { width: 100%; margin-top: 0.65rem; border-collapse: collapse; font-size: 0.85rem; }

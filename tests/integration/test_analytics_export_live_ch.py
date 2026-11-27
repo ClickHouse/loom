@@ -278,7 +278,7 @@ async def test_adoption_report_contains_deployment_totals_and_contact_domains(ch
     version = await ch.query_one("SELECT version() AS version")
     assert version is not None
     assert report == {
-        "schema_version": 1,
+        "schema_version": 2,
         "installation_id": str(installation_id),
         "day": day.isoformat(),
         "window_start": start.isoformat(),
