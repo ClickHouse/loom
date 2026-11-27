@@ -216,11 +216,22 @@ test("applyPluginOptions saves the token of the file LOOM_API_KEY_FILE names whe
   assert.equal(JSON.stringify(saved).includes("key.tok"), false, "the plan holds no token");
   assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), { token: "key.tok", url: "https://loom.test" });
   assertMode(configPath, 0o600);
-  // a config token outranks the named file for the hooks too: both send it
-  fs.writeFileSync(configPath, JSON.stringify({ token: "cfg.tok" }));
-  const config = applyPluginOptions(env, paths, { envHidden: true });
-  assert.equal(config.reason, "config has a token");
-  assert.equal(config.helperFinds, "");
+  // the saved copy outranks the named file for the hooks too: once the file changes, the primer says both send it
+  fs.writeFileSync(named, "new.tok\n");
+  const rotated = applyPluginOptions(env, paths, { envHidden: true });
+  assert.equal(rotated.reason, "config has a token");
+  assert.equal(rotated.helperFinds, "another");
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).token, "key.tok");
+  const stale = installTokenNotice(rotated, { ...env, LOOM_CONFIG_FILE: configPath });
+  assert.ok(stale.includes(`the hooks and the loom MCP tools send the token saved in ${configPath}, not`), stale);
+  assert.ok(stale.includes("to use the file's token, save it as `token` in"), stale);
+  assert.equal(/key\.tok|new\.tok/.test(stale), false);
+  // the option outranks both for the hooks: the named file is not compared
+  const optioned = { ...env, CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok" };
+  assert.equal(applyPluginOptions(optioned, paths, { envHidden: true }).helperFinds, "");
+  // the same token in both: nothing to say
+  fs.writeFileSync(named, "key.tok\n");
+  assert.equal(applyPluginOptions(env, paths, { envHidden: true }).helperFinds, "");
   // an unreadable or empty named file holds no token
   assert.equal(
     applyPluginOptions({ LOOM_API_KEY_FILE: path.join(dir, "absent") }, {}, { envHidden: true }).reason,

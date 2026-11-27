@@ -60,8 +60,8 @@ async function main() {
   // MCP header helper of Claude Code's plugin; write it once to
   // ~/.loom/config.json, where the helper (and the CLI, the SDK) read it.
   // Before the token check below, so this very session's hooks use it too.
-  // Elsewhere (`helperEnvHidden`) the two variables are not saved, and no
-  // notice says what the plugin's MCP entry sends.
+  // Where `helperEnvHidden` is false (a hand-wired client, Codex, an agent)
+  // the two variables are not saved and no notice is printed.
   const envHidden = helperEnvHidden();
   const optionPlan = applyPluginOptions(process.env, {}, { envHidden });
   const optionNotice = envHidden ? installTokenNotice(optionPlan) : "";

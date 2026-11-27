@@ -11,8 +11,8 @@
 // were given — LOOM_API_KEY, else the option, else the file LOOM_API_KEY_FILE
 // names — and the URL beside it into ~/.loom/config.json when no token is
 // saved, and the helper waits for it (bin/loom-mcp-headers.mjs). A saved
-// token is never replaced: the primer says when the helper sends another
-// one. Idempotent, 0600, never throws.
+// token is never replaced (`installTokenNotice` is what the primer says
+// then). Idempotent, 0600, never throws.
 
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -140,11 +140,11 @@ export function helperToken(configToken, fileToken = readTokenFile(loomTokenPath
   return String(configToken || "").trim() || fileToken;
 }
 
-/** The primer line when Claude Code's MCP header helper will not send what
- *  the hooks send. With the hooks' token in LOOM_API_KEY, or in the file
- *  LOOM_API_KEY_FILE names, and not saved (`plan.helperFinds`), the helper
- *  sends another saved token or none, and the fix is to save that token.
- *  Otherwise, when the config's token was saved for another server
+/** The primer line when Claude Code's MCP header helper will not send the
+ *  token the session was given. With that token in LOOM_API_KEY, or in the
+ *  file LOOM_API_KEY_FILE names, and not saved (`plan.helperFinds`), the
+ *  helper sends another saved token or none, and the fix is to save that
+ *  token. Otherwise, when the config's token was saved for another server
  *  than the MCP entry calls, which refuses it: no notice when this hook has
  *  just written the config's token itself, or when the config names no
  *  server. That remedy depends on whether anything named the entry's server:
@@ -152,12 +152,21 @@ export function helperToken(configToken, fileToken = readTokenFile(loomTokenPath
  *  the config's server. Pure; never holds a token. */
 export function installTokenNotice(plan, env = process.env) {
   if (plan.helperFinds) {
+    const config = loomConfigPath(env);
     const name = String(env.LOOM_API_KEY || "").trim() ? "LOOM_API_KEY" : "LOOM_API_KEY_FILE";
+    // A config token outranks the named file in the hooks' lookup too.
+    if (name === "LOOM_API_KEY_FILE" && plan.configHasToken) {
+      return (
+        `Loom: the hooks and the loom MCP tools send the token saved in ${config}, not the other one in ` +
+        `the file LOOM_API_KEY_FILE names. Tell the user once: to use the file's token, save it as ` +
+        `\`token\` in ${config} and restart Claude Code.`
+      );
+    }
     const found = plan.helperFinds === "another" ? "send another token saved there" : "find no token there";
     return (
       `Loom: the hooks use ${name}, which Claude Code does not pass to the loom MCP tools. The tools ` +
-      `read ${loomConfigPath(env)}, then ${loomTokenPath({})}, and ${found}. Tell the user once: save the ` +
-      `${name} token as \`token\` in ${loomConfigPath(env)} and restart Claude Code.`
+      `read ${config}, then ${loomTokenPath({})}, and ${found}. Tell the user once: save the ` +
+      `${name} token as \`token\` in ${config} and restart Claude Code.`
     );
   }
   if (plan.write || !plan.configHasToken) return "";
@@ -192,13 +201,12 @@ export function applyPluginOptions(env = process.env, paths = {}, { envHidden = 
   });
   plan.configUrl = normalizeUrl(existing.url);
   plan.configHasToken = Boolean(String(existing.token || "").trim());
-  // For the notice, when the hooks' token is one the helper is not given and
-  // stays out of the config: LOOM_API_KEY, else the named file's, which the
-  // hooks read after the option and the config. "another" token is what the
-  // helper sends in its place, or "no" token.
+  // For the notice, the token the helper is not given: LOOM_API_KEY, else the
+  // named file's unless the option outranks it for the hooks. "another" token
+  // is what the helper sends in its place, or "no" token.
   const key = String(env.LOOM_API_KEY || "").trim();
-  const readsKeyFile = !String(env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim() && !plan.configHasToken;
-  const hidden = envHidden ? key || (readsKeyFile ? keyFileToken : "") : "";
+  const option = String(env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
+  const hidden = envHidden ? key || (option ? "" : keyFileToken) : "";
   const sends = helperToken(existing.token, fileToken);
   let finds = "";
   if (hidden && sends !== hidden) finds = sends ? "another" : "no";

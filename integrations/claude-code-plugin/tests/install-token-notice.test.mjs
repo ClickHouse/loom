@@ -171,6 +171,13 @@ test("LOOM_API_KEY is saved for the helper of Claude Code's plugin, never over a
     const keyFile = await session(null, { LOOM_API_KEY: "", LOOM_API_KEY_FILE: named });
     assert.deepEqual(JSON.parse(fs.readFileSync(config(keyFile.dir), "utf8")), { token: "key.tok", url });
     assert.equal(keyFile.out.includes("key.tok"), false);
+    // the saved copy outranks the named file for the hooks too: once the file changes, the primer says so
+    fs.writeFileSync(named, "new.tok\n");
+    const rotated = await run(keyFile.dir, { LOOM_BASE_URL: url, LOOM_API_KEY_FILE: named });
+    assert.equal(JSON.parse(fs.readFileSync(config(keyFile.dir), "utf8")).token, "key.tok");
+    const saved = `send the token saved in ${config(keyFile.dir)}, not the other one in the file LOOM_API_KEY_FILE names.`;
+    assert.ok(rotated.includes(saved), rotated);
+    assert.equal(/key\.tok|new\.tok/.test(rotated), false);
     // Codex, a hand-wired client and an agent keep the variable to themselves
     const codex = await session(null, {}, CODEX);
     assert.ok(codex.out.length > 0, "the Codex primer still renders");

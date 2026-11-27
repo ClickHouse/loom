@@ -4,7 +4,8 @@
 // workload token) its exchanged token and nothing else; otherwise
 // ~/.loom/config.json, then ~/.loom/token. Claude Code gives a plugin's helper
 // neither the install option nor LOOM_API_KEY or LOOM_API_KEY_FILE, so there
-// the token comes from the two files, where the SessionStart hook saves it.
+// the token comes from the two files; the SessionStart hook saves it in the
+// first.
 //
 // It also names the code namespace of the session's checkout. Claude Code
 // starts a plugin's helper in the plugin root, so the plugin's entry carries
@@ -22,7 +23,7 @@
 // which Claude Code runs while it connects the MCP entry and which holds the
 // session's token and server, to save that token or the first-session
 // credential; only then does it sign up itself, through the same locked
-// path, so one account results and never one beside a token already given.
+// path, so one account results.
 // Sign-up off, refused or unreachable → `{}`: the server then answers 401
 // and Claude Code shows the connection as failed, which is the honest state.
 // Stdout is exactly one JSON object; nothing else is written.
@@ -91,7 +92,7 @@ export async function signedUpToken(opts = {}) {
   return r.status === "created" ? r.token : "";
 }
 
-/** Bound for waiting on the SessionStart hook's first-session credential
+/** Bound for waiting on the token the SessionStart hook saves
  *  (LOOM_MCP_HOOK_WAIT_MS overrides). */
 export const HOOK_TOKEN_WAIT_MS = 5000;
 

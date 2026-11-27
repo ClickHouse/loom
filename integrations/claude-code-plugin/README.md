@@ -266,13 +266,16 @@ Claude Code gives a plugin's header helper neither the install option nor
 first hook of a session saves the token the hooks were given (`LOOM_API_KEY`,
 else the option, else the file `LOOM_API_KEY_FILE` names) to
 `~/.loom/config.json` (0600), with the server URL beside it, when no token is
-saved there or in `~/.loom/token`; the helper waits for that file before it
-connects, and the `loom` CLI and the SDK read it too. A saved token is never
-replaced: when the hooks use another one, from `LOOM_API_KEY` or the named
-file, the Loom tools send the saved one and the SessionStart primer says to
-save the hooks' token in `~/.loom/config.json`. The hook saves a token only
-where Claude Code runs it for the plugin (`CLAUDE_PLUGIN_ROOT` set): not for
-a hand-wired client, Codex or an agent.
+saved there or in `~/.loom/token`; a helper with no token waits up to 5 s for
+that save, and the `loom` CLI and the SDK read the file too. A saved token is
+never replaced: when the hooks use another one, from `LOOM_API_KEY` or the
+named file, the Loom tools send the saved one and the SessionStart primer says
+to save the hooks' token in `~/.loom/config.json`. A token saved in
+`~/.loom/config.json` also outranks the named file for the hooks: when they
+send it and that file holds another token, as after the file is rotated, the
+primer says so. The hook saves `LOOM_API_KEY` or the named file's token, and
+the primer says either line, only where Claude Code runs it for the plugin
+(`CLAUDE_PLUGIN_ROOT` set): not for a hand-wired client, Codex or an agent.
 
 ### Hosted / remote Loom — one config file
 

@@ -106,8 +106,11 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   LOOM_API_KEY, or the token in the file LOOM_API_KEY_FILE names, where
   Claude Code runs the hook for its plugin (CLAUDE_PLUGIN_ROOT set, not an
   agent): it keeps both variables from the plugin's helper. None replaces a
-  saved token: when the helper will send another token than that one, or
-  none, the primer says to save it in the file. There too,
+  saved token: when the hooks use another token than the helper will send,
+  from LOOM_API_KEY or the named file, or the helper will find none, the
+  primer says to save the hooks' token in the config. A config token outranks
+  the named file for the hooks too: when they send it and that file holds
+  another token, the primer says so. There too,
   when that helper will send the config's token and the config names another
   server than the MCP entry's, the primer says so. The `server_url` option
   and whether the hook ran for the plugin are saved to a tmp state file
