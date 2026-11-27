@@ -81,7 +81,7 @@ Deleting data is covered in [retention and erasure](../memory/retention-and-eras
 Users whose grants allow them to read a stored row, and the server's operator, can read
 it. [Namespaces and sharing](../namespaces-and-sharing.md) describes access control.
 
-The plugin keeps the token it saves (a copy of `LOOM_API_KEY` or the install token, or a
+The plugin keeps the token it saves (a copy of the one the hooks were given, or a
 self-signup token, in `~/.loom/config.json`; in agent mode the exchanged one in
 `~/.loom/agent-token-<hash of LOOM_CLIENT_ID>.json`) and its other state in `~/.loom/`,
 mode 0600, until you remove it.
@@ -163,11 +163,12 @@ Every option is optional; Claude Code asks once, and an empty answer falls back 
 
 - **Install token and `LOOM_API_KEY`.** Claude Code gives the plugin's MCP header helper
   neither the install options nor `LOOM_API_KEY` or `LOOM_API_KEY_FILE`, so the first hook
-  of a session copies the token the hooks were given (`LOOM_API_KEY`, else the option) and
-  the URL into `~/.loom/config.json` (0600). It does so only when no token is saved
-  (`config.json`, `~/.loom/token`), and never replaces one: when the saved token differs
-  from `LOOM_API_KEY`, the Loom tools send the saved one and the primer says to save the
-  `LOOM_API_KEY` token in `config.json`.
+  of a session copies the token the hooks were given (`LOOM_API_KEY`, else the option,
+  else the file `LOOM_API_KEY_FILE` names) and the URL into `~/.loom/config.json` (0600).
+  It does so only when no token is saved (`config.json`, `~/.loom/token`), and never
+  replaces one: when the hooks use another token, from `LOOM_API_KEY` or the named file,
+  the Loom tools send the saved one and the primer says to save the hooks' token in
+  `config.json`.
 - **No credential at all.** On a server with `LOOM_SELF_SIGNUP=open`, the first session
   signs the machine up: token to `~/.loom/config.json`, a claim code to
   `~/.loom/claim-<namespace>.txt`, and the primer says how to claim the namespace (once,

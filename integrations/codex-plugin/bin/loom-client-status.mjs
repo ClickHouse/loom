@@ -15,7 +15,14 @@ import {
   resolveServerUrl,
   tokenLookup,
 } from "../lib/loom-client.mjs";
-import { entryIsFixed, helperToken, sameServer, statusServerUrl } from "../lib/plugin-options.mjs";
+import {
+  entryIsFixed,
+  helperEnvHidden,
+  helperToken,
+  ranAsPlugin,
+  sameServer,
+  statusServerUrl,
+} from "../lib/plugin-options.mjs";
 import { serverVersionMessage } from "../lib/server-version.mjs";
 
 const FLUSH_RE = /^loom-flush-\d{13}-\d+\.json$/;
@@ -47,9 +54,9 @@ export async function clientStatus({
   token,
   scope,
   tokenKind = "",
-  // Claude Code outside agent mode: the token its MCP header helper sends
-  // (`helperToken`) and the `url` saved beside a config token. Unset where
-  // the `source` line compares nothing.
+  // Where the MCP header helper is not given LOOM_API_KEY (`helperEnvHidden`):
+  // the token it sends (`helperToken`) and the `url` saved beside a config
+  // token. Unset where the `source` line compares nothing.
   mcpToken,
   configUrl = "",
   // The server an agent's exchange went to: the hooks' server, which may
@@ -153,18 +160,19 @@ export async function clientStatus({
 if (process.env.LOOM_HOOK_NO_MAIN !== "1") {
   const { token, kind } = tokenLookup();
   // Under Codex the MCP entry's URL is unknown here: the check runs against
-  // the hooks' server and compares the config with nothing. Nor for an
-  // agent, whose tools send its own token.
+  // the hooks' server. The source line compares the saved token where the
+  // helper lacks LOOM_API_KEY, which the SessionStart hook recorded: this
+  // shell has no CLAUDE_PLUGIN_ROOT.
   const fixed = entryIsFixed();
-  const compared = !fixed && !agentMode();
+  const envHidden = helperEnvHidden(process.env, ranAsPlugin());
   const config = loomConfig();
   const result = await clientStatus({
     serverUrl: fixed ? resolveServerUrl() : statusServerUrl(),
     token,
     scope: resolveScope(process.cwd()),
     tokenKind: kind,
-    mcpToken: compared ? helperToken(config.token) : undefined,
-    configUrl: compared && String(config.token || "").trim() ? config.url : "",
+    mcpToken: envHidden ? helperToken(config.token) : undefined,
+    configUrl: envHidden && String(config.token || "").trim() ? config.url : "",
     exchangeUrl: resolveServerUrl(),
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

@@ -167,13 +167,16 @@ test("the source line warns when the MCP header helper sends another token than 
 });
 
 /** The status script of `plugin` run as a process in a scratch home that
- *  holds `config`. */
-async function statusProcess(plugin, config, env) {
+ *  holds `config`. `hookEnv`: what the SessionStart hook of the Claude Code
+ *  copy saw and saved there. */
+async function statusProcess(plugin, config, env, hookEnv = {}) {
   const { spawn } = await import("node:child_process");
+  const { saveInstall } = await import("../lib/plugin-options.mjs");
   const script = fileURLToPath(new URL(`../../${plugin}/bin/loom-client-status.mjs`, import.meta.url));
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-status-proc-")));
   fs.mkdirSync(path.join(home, ".loom"));
   fs.writeFileSync(path.join(home, ".loom", "config.json"), JSON.stringify(config));
+  saveInstall(hookEnv, { tmp: home });
   try {
     return await new Promise((resolve) => {
       const child = spawn(process.execPath, [script], {
@@ -188,24 +191,24 @@ async function statusProcess(plugin, config, env) {
   }
 }
 
-test("in Claude Code the script compares LOOM_API_KEY with the saved token the helper sends, not for an agent", async () => {
+test("for Claude Code's plugin the script compares LOOM_API_KEY with the saved token the helper sends", async () => {
   // Two tokens the spawned process's own clock reads as live.
   const live = (extra) => token(Math.floor(Date.now() / 1000) + 3600 + extra);
   const config = { url: "https://elsewhere.test", token: live(0) };
   const source = (out) => JSON.parse(out).checks.find((c) => c.name === "source");
-  const out = await statusProcess("claude-code-plugin", config, { LOOM_API_KEY: live(60) });
+  const plugin = { CLAUDE_PLUGIN_ROOT: "/plugin" };
+  const out = await statusProcess("claude-code-plugin", config, { LOOM_API_KEY: live(60) }, plugin);
   assert.equal(source(out).grade, "WARN");
   assert.ok(source(out).detail.endsWith("and send another token"), source(out).detail);
   assert.equal(out.includes(config.token) || out.includes(live(60)), false);
   // the same token saved: the server it was saved for is what differs
-  const same = source(await statusProcess("claude-code-plugin", config, { LOOM_API_KEY: config.token }));
+  const same = source(await statusProcess("claude-code-plugin", config, { LOOM_API_KEY: config.token }, plugin));
   assert.match(same.detail, /config\.json names https:\/\/elsewhere\.test; this check uses http:\/\/127\.0\.0\.1:9$/);
-  const agent = await statusProcess("claude-code-plugin", config, {
-    LOOM_API_KEY: live(60),
-    LOOM_CLIENT_ID: "ci",
-    LOOM_WORKLOAD_TOKEN: "proof",
-  });
-  assert.deepEqual(source(agent), { name: "source", grade: "PASS", detail: "token from LOOM_API_KEY" });
+  // an agent's tools send its own token, and a hand-wired client's helper reads the variable
+  const named = { name: "source", grade: "PASS", detail: "token from LOOM_API_KEY" };
+  const agent = { LOOM_API_KEY: live(60), LOOM_CLIENT_ID: "ci", LOOM_WORKLOAD_TOKEN: "proof" };
+  assert.deepEqual(source(await statusProcess("claude-code-plugin", config, agent, plugin)), named);
+  assert.deepEqual(source(await statusProcess("claude-code-plugin", config, { LOOM_API_KEY: live(60) })), named);
 });
 
 test("the agent-mode line names the server the exchange went to, not the one checked", async () => {

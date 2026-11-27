@@ -96,8 +96,8 @@ interpreter of the checkout's virtualenv, the active one (`VIRTUAL_ENV`) or a
 `python3` or `python` on `PATH`, checking that the interpreter's file exists
 without running it.
 
-The plugin keeps the token it saves (a copy of `LOOM_API_KEY` or the install
-token, or a self-signup token, in `~/.loom/config.json`; in agent mode the exchanged one in
+The plugin keeps the token it saves (a copy of the one the hooks were given, or
+a self-signup token, in `~/.loom/config.json`; in agent mode the exchanged one in
 `~/.loom/agent-token-<hash of LOOM_CLIENT_ID>.json`) and its other state in
 `~/.loom/`, mode 0600, until you remove it.
 
@@ -264,13 +264,15 @@ loom mint-token --subject you --org <your-org> --namespaces coding --roles write
 Claude Code gives a plugin's header helper neither the install option nor
 `LOOM_API_KEY` or `LOOM_API_KEY_FILE` (measured on Claude Code 2.1.332). So the
 first hook of a session saves the token the hooks were given (`LOOM_API_KEY`,
-else the option) to `~/.loom/config.json` (0600), with the server URL beside
-it, when no token is saved there or in the token file; the helper waits for
-that file before it connects, and the `loom` CLI and the SDK read it too. A
-saved token is never replaced: when it differs from `LOOM_API_KEY`, the Loom
-tools send the saved one and the SessionStart primer says to save the
-`LOOM_API_KEY` token in `~/.loom/config.json`. A token file that only
-`LOOM_API_KEY_FILE` names is not copied, so the tools do not send it.
+else the option, else the file `LOOM_API_KEY_FILE` names) to
+`~/.loom/config.json` (0600), with the server URL beside it, when no token is
+saved there or in `~/.loom/token`; the helper waits for that file before it
+connects, and the `loom` CLI and the SDK read it too. A saved token is never
+replaced: when the hooks use another one, from `LOOM_API_KEY` or the named
+file, the Loom tools send the saved one and the SessionStart primer says to
+save the hooks' token in `~/.loom/config.json`. The hook saves a token only
+where Claude Code runs it for the plugin (`CLAUDE_PLUGIN_ROOT` set): not for
+a hand-wired client, Codex or an agent.
 
 ### Hosted / remote Loom — one config file
 

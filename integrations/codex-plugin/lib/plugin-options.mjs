@@ -8,15 +8,17 @@
 // (measured on 2.1.273) and removes LOOM_API_KEY and LOOM_API_KEY_FILE from
 // its environment (2.1.332), so there it reads ~/.loom/config.json, then
 // ~/.loom/token. So the first hook of a session writes the token the hooks
-// were given — LOOM_API_KEY, else the option — and the URL beside it into
-// ~/.loom/config.json when no token is saved, and the helper waits for it
-// (bin/loom-mcp-headers.mjs). A saved token is never replaced: the primer
-// says when the helper sends another one. Idempotent, 0600, never throws.
+// were given — LOOM_API_KEY, else the option, else the file LOOM_API_KEY_FILE
+// names — and the URL beside it into ~/.loom/config.json when no token is
+// saved, and the helper waits for it (bin/loom-mcp-headers.mjs). A saved
+// token is never replaced: the primer says when the helper sends another
+// one. Idempotent, 0600, never throws.
 
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
+  agentMode,
   loomConfigPath,
   loomTokenPath,
   normalizeUrl,
@@ -45,6 +47,16 @@ export function entryIsFixed() {
   return Boolean(pluginDefaults().server_url);
 }
 
+/** Whether the MCP header helper is given neither LOOM_API_KEY nor
+ *  LOOM_API_KEY_FILE. Measured only for the entry of Claude Code's plugin,
+ *  whose hooks run with CLAUDE_PLUGIN_ROOT; the status script's shell lacks
+ *  it and passes what the hook saved as `plugin`. False for a hand-wired
+ *  client, whose user-scope entry's helper keeps them, for Codex, which was
+ *  not measured, and for an agent, whose tools send its own token. */
+export function helperEnvHidden(env = process.env, plugin = Boolean(env.CLAUDE_PLUGIN_ROOT)) {
+  return plugin && !entryIsFixed() && !agentMode(env);
+}
+
 /** Whether two base URLs name one server: origins compared, with the
  *  loopback spellings folded. Unparsable values compare as strings. */
 export function sameServer(a, b) {
@@ -65,13 +77,18 @@ export function sameServer(a, b) {
 const PLUGIN_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const installStatePath = (tmp) => tmpStatePath("install", PLUGIN_ROOT, { tmp });
 
-/** The SessionStart hook saves the install option's URL for the status
- *  script, which the agent runs from a shell that carries no option; an
- *  install without the option removes a stale one. */
-export function saveInstallServerUrl(env = process.env, { tmp } = {}) {
-  const url = normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL);
-  if (url) writeJsonFile(installStatePath(tmp), { url });
+/** The SessionStart hook saves, for the status script, what the agent's
+ *  shell does not carry: the install option's URL, and whether Claude Code
+ *  ran the hook as its plugin's. A session with neither removes a stale file. */
+export function saveInstall(env = process.env, { tmp } = {}) {
+  const state = { url: normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL), plugin: Boolean(env.CLAUDE_PLUGIN_ROOT) };
+  if (state.url || state.plugin) writeJsonFile(installStatePath(tmp), state);
   else removeFile(installStatePath(tmp));
+}
+
+/** Whether Claude Code ran the last SessionStart hook as its plugin's. */
+export function ranAsPlugin({ tmp } = {}) {
+  return readJsonFile(installStatePath(tmp), {}).plugin === true;
 }
 
 /** The saved install URL, "" when no session saved one. */
@@ -88,18 +105,19 @@ export function statusServerUrl({ tmp } = {}) {
 }
 
 /** The token the hooks were given and the helper may not see: LOOM_API_KEY,
- *  else the install option. */
-function givenToken(env) {
-  return String(env.LOOM_API_KEY || "").trim() || String(env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
+ *  else the install option, else `keyFileToken`. */
+function givenToken(env, keyFileToken = "") {
+  return String(env.LOOM_API_KEY || "").trim() || String(env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim() || keyFileToken;
 }
 
 /** What a run would do, without doing it: {write, url, reason}. `url` is
  *  the server the token is for, "" when nothing names one. `fileToken` is
- *  the token file's content. `envHidden`: the helper is not given
- *  LOOM_API_KEY, so that token is saved like the option; where the helper
- *  reads it itself, it rules the option out. Pure. */
-export function planMaterialize(env, { configExists, configToken, fileToken, envHidden = false }) {
-  if (!givenToken(env)) return { write: false, reason: "no token to save" };
+ *  the content of the token file the helper reads. `envHidden`
+ *  (`helperEnvHidden`): LOOM_API_KEY and `keyFileToken`, the content of the
+ *  file LOOM_API_KEY_FILE names, are saved like the option; where the helper
+ *  reads LOOM_API_KEY itself, it rules the option out. Pure. */
+export function planMaterialize(env, { configExists, configToken, fileToken, keyFileToken = "", envHidden = false }) {
+  if (!givenToken(env, keyFileToken)) return { write: false, reason: "no token to save" };
   if (!envHidden && String(env.LOOM_API_KEY || "").trim()) return { write: false, reason: "LOOM_API_KEY set" };
   if (String(configToken || "").trim()) return { write: false, reason: "config has a token" };
   if (String(fileToken || "").trim()) return { write: false, reason: "token file has a token" };
@@ -123,9 +141,10 @@ export function helperToken(configToken, fileToken = readTokenFile(loomTokenPath
 }
 
 /** The primer line when Claude Code's MCP header helper will not send what
- *  the hooks send. With LOOM_API_KEY set and not saved (`plan.helperFinds`),
- *  the helper sends another saved token or none, and the fix is to save that
- *  token. Otherwise, when the config's token was saved for another server
+ *  the hooks send. With the hooks' token in LOOM_API_KEY, or in the file
+ *  LOOM_API_KEY_FILE names, and not saved (`plan.helperFinds`), the helper
+ *  sends another saved token or none, and the fix is to save that token.
+ *  Otherwise, when the config's token was saved for another server
  *  than the MCP entry calls, which refuses it: no notice when this hook has
  *  just written the config's token itself, or when the config names no
  *  server. That remedy depends on whether anything named the entry's server:
@@ -133,11 +152,12 @@ export function helperToken(configToken, fileToken = readTokenFile(loomTokenPath
  *  the config's server. Pure; never holds a token. */
 export function installTokenNotice(plan, env = process.env) {
   if (plan.helperFinds) {
+    const name = String(env.LOOM_API_KEY || "").trim() ? "LOOM_API_KEY" : "LOOM_API_KEY_FILE";
     const found = plan.helperFinds === "another" ? "send another token saved there" : "find no token there";
     return (
-      `Loom: the hooks use LOOM_API_KEY, which Claude Code does not pass to the loom MCP tools. The tools ` +
+      `Loom: the hooks use ${name}, which Claude Code does not pass to the loom MCP tools. The tools ` +
       `read ${loomConfigPath(env)}, then ${loomTokenPath({})}, and ${found}. Tell the user once: save the ` +
-      `LOOM_API_KEY token as \`token\` in ${loomConfigPath(env)} and restart Claude Code.`
+      `${name} token as \`token\` in ${loomConfigPath(env)} and restart Claude Code.`
     );
   }
   if (plan.write || !plan.configHasToken) return "";
@@ -155,34 +175,39 @@ export function installTokenNotice(plan, env = process.env) {
 }
 
 /** Save the session's token for the helper when the plan says so. `envHidden`
- *  is `planMaterialize`'s; the caller sets it for Claude Code outside agent
- *  mode, where the token file is the one the helper reads, not the one
- *  LOOM_API_KEY_FILE names. */
+ *  is `helperEnvHidden`'s answer: with it the token file is the one the
+ *  helper reads, and the one LOOM_API_KEY_FILE names holds a token to save. */
 export function applyPluginOptions(env = process.env, paths = {}, { envHidden = false } = {}) {
   const configPath = paths.configPath || loomConfigPath(env);
   const fileToken = readTokenFile(paths.tokenPath || loomTokenPath(envHidden ? {} : env));
+  const keyFileToken = envHidden && env.LOOM_API_KEY_FILE ? readTokenFile(env.LOOM_API_KEY_FILE) : "";
   const configExists = existsSync(configPath);
   const existing = readConfigFile(configPath);
   const plan = planMaterialize(env, {
     configExists,
     configToken: existing.token,
     fileToken,
+    keyFileToken,
     envHidden,
   });
   plan.configUrl = normalizeUrl(existing.url);
   plan.configHasToken = Boolean(String(existing.token || "").trim());
-  // For the notice, when LOOM_API_KEY stays out of the config: "another"
-  // token is what the helper sends in its place, or "no" token.
-  const envToken = envHidden ? String(env.LOOM_API_KEY || "").trim() : "";
+  // For the notice, when the hooks' token is one the helper is not given and
+  // stays out of the config: LOOM_API_KEY, else the named file's, which the
+  // hooks read after the option and the config. "another" token is what the
+  // helper sends in its place, or "no" token.
+  const key = String(env.LOOM_API_KEY || "").trim();
+  const readsKeyFile = !String(env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim() && !plan.configHasToken;
+  const hidden = envHidden ? key || (readsKeyFile ? keyFileToken : "") : "";
   const sends = helperToken(existing.token, fileToken);
   let finds = "";
-  if (envToken && sends !== envToken) finds = sends ? "another" : "no";
+  if (hidden && sends !== hidden) finds = sends ? "another" : "no";
   if (!plan.write) return { ...plan, helperFinds: finds };
   try {
     // The token goes in beside the server named for it, over a url another
     // install left: the notice and the status check read them as a pair. A
     // url the file already holds stays when nothing names a server.
-    const patch = { token: givenToken(env) };
+    const patch = { token: givenToken(env, keyFileToken) };
     if (plan.url) patch.url = plan.url;
     writeConfigMerged(configPath, patch);
     return { ...plan, path: configPath };

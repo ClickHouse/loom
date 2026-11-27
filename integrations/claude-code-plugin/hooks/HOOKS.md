@@ -103,14 +103,16 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   machine without a credential and the primer says how to get a token by
   hand. A token given as the `token` install option is first copied into
   ~/.loom/config.json, where the headers helper can read it. So is
-  LOOM_API_KEY in Claude Code, which keeps it from a plugin's helper (not for
-  an agent). Neither replaces a saved token: when the helper will send another
-  token than LOOM_API_KEY, or none, the primer says to save that token in the
-  file. In Claude Code,
+  LOOM_API_KEY, or the token in the file LOOM_API_KEY_FILE names, where
+  Claude Code runs the hook for its plugin (CLAUDE_PLUGIN_ROOT set, not an
+  agent): it keeps both variables from the plugin's helper. None replaces a
+  saved token: when the helper will send another token than that one, or
+  none, the primer says to save it in the file. There too,
   when that helper will send the config's token and the config names another
   server than the MCP entry's, the primer says so. The `server_url` option
-  is saved to a tmp state file (`loom-install-<hash>.json`, one per plugin
-  install) for the status script, whose shell carries no option.
+  and whether the hook ran for the plugin are saved to a tmp state file
+  (`loom-install-<hash>.json`, one per plugin install) for the status script,
+  whose shell carries neither.
 - **loom-session-start, primer.** One `context.pack` (mode startup, the
   project's working-memory block first, the recent-runs shortlist only with
   `LOOM_CONTEXT_RUNS=true`), plus: the repository tag line; in an indexed

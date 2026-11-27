@@ -13,7 +13,6 @@
 // rest. LOOM_INJECT_CONTEXT=false turns the primer off.
 
 import {
-  agentMode,
   envNumber,
   envSwitch,
   gitToplevel,
@@ -49,24 +48,24 @@ import {
 import { checkoutRemotes, lookupIndexedRepo } from "../lib/repo-scope.mjs";
 import { readRecording, recordingFromNamespace, recordingPrimerLine, writeRecording } from "../lib/recording.mjs";
 import { teamRulesLine } from "../lib/file-context.mjs";
-import { applyPluginOptions, installTokenNotice, saveInstallServerUrl } from "../lib/plugin-options.mjs";
+import { applyPluginOptions, helperEnvHidden, installTokenNotice, saveInstall } from "../lib/plugin-options.mjs";
 import { cacheIsFresh, countsBody, renderTaskLine, summarizeCounts } from "../lib/task-inbox.mjs";
 import { listBody, renderCollectionsLine, toolsetAllows } from "../lib/collections-line.mjs";
 import { briefPrimerEnabled, primerLine } from "../lib/session-brief.mjs";
 import { readJsonFile, sweepStaleStateFiles, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
 async function main() {
-  // A token in LOOM_API_KEY or given at `claude plugin install --config
-  // token=…` reaches the hooks but never Claude Code's MCP header helper;
-  // write it once to ~/.loom/config.json, where the helper (and the CLI, the
-  // SDK) read it. Before the token check below, so this very session's hooks
-  // use it too. Only Claude Code is measured to keep LOOM_API_KEY from the
-  // helper, and an agent signs in as itself: neither Codex nor an agent
-  // saves it, or gets the notice about what Claude Code's MCP entry sends.
-  const helperBlind = hookClient() === "claude-code" && !agentMode();
-  const optionPlan = applyPluginOptions(process.env, {}, { envHidden: helperBlind });
-  const optionNotice = helperBlind ? installTokenNotice(optionPlan) : "";
-  saveInstallServerUrl();
+  // A token in LOOM_API_KEY, in the file LOOM_API_KEY_FILE names or given at
+  // `claude plugin install --config token=…` reaches the hooks but never the
+  // MCP header helper of Claude Code's plugin; write it once to
+  // ~/.loom/config.json, where the helper (and the CLI, the SDK) read it.
+  // Before the token check below, so this very session's hooks use it too.
+  // Elsewhere (`helperEnvHidden`) the two variables are not saved, and no
+  // notice says what the plugin's MCP entry sends.
+  const envHidden = helperEnvHidden();
+  const optionPlan = applyPluginOptions(process.env, {}, { envHidden });
+  const optionNotice = envHidden ? installTokenNotice(optionPlan) : "";
+  saveInstall();
   sweepStaleStateFiles();
   // Default ON; opt out with LOOM_INJECT_CONTEXT=false (see header).
   if (!envSwitch("LOOM_INJECT_CONTEXT", true)) {
