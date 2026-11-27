@@ -24,8 +24,8 @@ import SiteFrame from "../components/SiteFrame.astro";
       <Text color="muted">
         Every completed 12-hour window can produce one report with an installation identifier,
         software versions, and counts of requests, feature usage, namespaces, agents, and sessions.
-        The second report of the day includes counts of active accounts and serving processes.
-        An active account is an authenticated identity, including a service account, that made
+        The second report of the day includes counts of active users and serving processes.
+        An active user is an authenticated identity, including a service identity, that made
         a successful request. Serving processes are the server processes that handled successful requests.
         Reports contain no customer content, account identifiers, full email addresses, or credentials.
       </Text>
@@ -49,7 +49,7 @@ import SiteFrame from "../components/SiteFrame.astro";
       <Text color="muted">Reports include namespace contact domains and aggregate counts by default. Use this setting to omit domains.</Text>
       <pre><code>LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false</code></pre>
       <Title type="h3" size="md">Share activity by domain</Title>
-      <Text color="muted">Enable this setting alongside domain sharing to contribute public domain activity. The page can show successful requests, active installations, active accounts, serving processes, the latest reported Loom version, and first retained and latest activity dates. This setting is off by default.</Text>
+      <Text color="muted">Enable this setting alongside domain sharing to contribute public domain activity. The page can show successful requests, active installations, active users, serving processes, the latest reported Loom version, and first retained and latest activity dates. This setting is off by default.</Text>
       <pre><code>LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY=true</code></pre>
     </Panel>
   </div>
