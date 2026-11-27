@@ -20,6 +20,7 @@ def _definitions(path: str, source: bytes) -> list[dict[str, Any]]:
             "name": symbol.name,
             "kind": symbol.kind,
             "path": path,
+            "start_line": symbol.start_line,
             "tier": "treesitter",
         }
         for symbol in parse_python(path, source).symbols
@@ -114,9 +115,18 @@ async def test_incomplete_candidate_pool_never_claims_a_unique_alias() -> None:
         "duplicate_root",
         "incomplete_source",
         "shadow",
+        "rebound_function",
+        "rebound_class",
+        "rebound_member",
+        "dynamic_destination",
+        "unknown_destination",
+        "imported_dynamic_destination",
+        "missing_destination",
+        "oversized_destination",
+        "wrong_definition_line",
     ],
 )
-async def test_public_class_member_reexport_requires_current_unambiguous_source(
+async def test_public_reexport_requires_current_unambiguous_source(
     monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
     from server.code.app.index import gitrepo, python_reexports
@@ -125,13 +135,30 @@ async def test_public_class_member_reexport_requires_current_unambiguous_source(
     rev = "a" * 40
     source = b"from .api import Client as Client\n__version__ = '1'\n"
     target_text = b"class Client:\n    def run(self):\n        pass\n"
+    name, leaf = "pkg.Client.run", "run"
     if case == "nested_function":
         target_text = b"def Client():\n    def run():\n        pass\n"
+    if case == "rebound_function":
+        source = b"from .api import encode\n"
+        target_text = b"def encode():\n    return 'old'\ndef alternate():\n    return 'new'\nencode = alternate\n"
+        name, leaf = "pkg.encode", "encode"
+    elif case == "rebound_class":
+        target_text += b"class Alternate:\n    pass\nClient = Alternate\n"
+    elif case == "rebound_member":
+        target_text += b"    def alternate(self):\n        pass\n    run = alternate\n"
+    elif case == "dynamic_destination":
+        target_text += b"globals()['Client'] = object()\n"
+    elif case == "unknown_destination":
+        target_text += b"def change():\n    globals()['Client'] = object()\nchanged = change()\n"
+    elif case == "imported_dynamic_destination":
+        target_text = b"from .rewrite import change\n" + target_text + b"changed = change()\n"
     rows = _definitions(target, target_text)
     for row in rows:
         row["indexed_commit"] = rev.encode().ljust(64, b"\0")
         if case == "stale_member" and row["name"] == "run":
             row["indexed_commit"] = "b" * 40
+        if case == "wrong_definition_line" and row["name"] == "run":
+            row["start_line"] += 1
     metadata = {
         path: {
             "indexed_commit": rev,
@@ -159,8 +186,14 @@ async def test_public_class_member_reexport_requires_current_unambiguous_source(
         return "mirror"
 
     async def blob(mirror, commit, path, *, max_bytes):
-        assert (mirror, commit, path, max_bytes) == ("mirror", rev, init, 16_384)
-        return source.splitlines(keepends=True)[0] if case == "incomplete_source" else source
+        assert (mirror, commit) == ("mirror", rev)
+        if path == init:
+            assert max_bytes == 16_384
+            return source.splitlines(keepends=True)[0] if case == "incomplete_source" else source
+        assert (path, max_bytes) == (target, 262_144)
+        if case == "oversized_destination":
+            raise gitrepo.BlobTooLarge(target, max_bytes + 1, "", max_bytes, b"# preview")
+        return None if case == "missing_destination" else target_text
 
     async def paths(mirror, commit, wanted):
         assert (mirror, commit) == ("mirror", rev)
@@ -172,8 +205,6 @@ async def test_public_class_member_reexport_requires_current_unambiguous_source(
     monkeypatch.setattr(python_reexports, "present_dir", present)
     monkeypatch.setattr(gitrepo, "show_file", blob)
     monkeypatch.setattr(gitrepo, "blob_paths_at", paths)
-    result = await _resolve_symbols(
-        ReexportRepo(rows), "org", "repo", symbol_id="", name="pkg.Client.run"
-    )
-    expected = [{**row, "resolved_by": "python_module"} for row in rows if row["name"] == "run"]
+    result = await _resolve_symbols(ReexportRepo(rows), "org", "repo", symbol_id="", name=name)
+    expected = [{**row, "resolved_by": "python_module"} for row in rows if row["name"] == leaf]
     assert result == (expected if case == "verified" else [])

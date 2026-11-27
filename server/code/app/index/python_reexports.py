@@ -14,25 +14,15 @@ from server.code.app.index.mirrors import present_dir
 from server.code.app.read import _verified_blob
 from server.code.domain.extract.lang_python import module_scope
 from server.code.domain.index.repos import repo_for_namespace
+from server.code.domain.python_bindings import is_literal, verified_definition_line
 from server.code.store.index.sql import _hex
 
 if TYPE_CHECKING:
     from server.code.store.index import CodeRepo
 
 _MAX_INITIALIZER_BYTES = 16_384
+_MAX_DESTINATION_BYTES = 262_144
 _MAX_DESTINATION_PATHS = 8
-
-
-def _literal(node: ast.AST) -> bool:
-    if isinstance(node, ast.Constant):
-        return True
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return all(_literal(item) for item in node.elts)
-    if isinstance(node, ast.Dict):
-        return all(key is not None and _literal(key) for key in node.keys) and all(
-            _literal(value) for value in node.values
-        )
-    return False
 
 
 def _facade_module(source: bytes, export: str) -> str:
@@ -58,7 +48,7 @@ def _facade_module(source: bytes, export: str) -> str:
                     ):
                         return ""
                     module = statement.module
-        elif isinstance(statement, ast.Assign) and _literal(statement.value):
+        elif isinstance(statement, ast.Assign) and is_literal(statement.value):
             if any(
                 not isinstance(target, ast.Name) or target.id == export
                 for target in statement.targets
@@ -97,7 +87,7 @@ def _export_site(written: list[str], row: dict[str, Any]) -> tuple[str, str, str
 async def resolve(
     repo: CodeRepo, org: str, ns: str, name: str, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Read at most one verified initializer, and keep the destination's stored identity."""
+    """Verify one initializer and one destination, retaining the stored symbol identity."""
     written = name.split(".")
     if len(written) < 2 or not all(part.isidentifier() for part in written):
         return []
@@ -164,7 +154,19 @@ async def resolve(
         repo, org, ns, path, qualified_name.rsplit("::", 1)[0], commit
     ):
         return []
-    return matched
+    raw, _ = await _verified_blob(
+        git_dir, path, commit, target["blob_sha"], max_bytes=_MAX_DESTINATION_BYTES
+    )
+    return await asyncio.to_thread(_verified_rows, raw, matched) if raw is not None else []
+
+
+def _verified_rows(raw: bytes, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    first = rows[0]
+    names = first["qualified_name"].split("::")[1:]
+    line = verified_definition_line(raw, names, first["kind"])
+    if not line or any(int(row.get("start_line") or 0) != line for row in rows):
+        return []
+    return rows
 
 
 async def _has_class_owner(
