@@ -1751,7 +1751,7 @@ Embedding and LLM providers.
 | `LOOM_ANTHROPIC_BASE_URL` | `str` | `'https://api.anthropic.com'` |  | Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway in front of Anthropic. Off the default, the key also goes as a bearer, the scheme gateways take. |
 | `LOOM_BEDROCK_REGION` | `str` | `''` |  | Region for native Bedrock model requests; empty uses the AWS SDK's region chain. AWS credentials use the SDK's role, profile or environment credential chain. |
 | `LOOM_VERTEX_PROJECT` | `str` | `''` |  | Google Cloud project that owns the Vertex AI requests, required with the Vertex provider. |
-| `LOOM_VERTEX_LOCATION` | `str` | `''` |  | Vertex AI location, either a region or "global". Required with the Vertex provider. |
+| `LOOM_VERTEX_LOCATION` | `str` | `''` |  | Vertex AI location: a region, a multi-region ("eu", "us"), or "global". Required with the Vertex provider. |
 | `LOOM_LOCAL_LLM_BASE_URL` | `str` | `'http://localhost:11434/v1'` |  | LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's <host>:11434/v1, llama.cpp's server <host>:8080/v1). |
 | `LOOM_INFERENCE_TOKEN_URL` | `str` | `''` |  | Model calls with no provider key: exchange an identity token (RFC 8693) at this token endpoint of the gateway, and send the answer as the bearer (server/llm/gateway.py). The gateway must trust the token's issuer. "" = the provider keys. |
 | `LOOM_INFERENCE_WORKLOAD_TOKEN_FILE` | `str` | `''` |  | The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience. |

@@ -311,7 +311,8 @@ and [Cohere Embed v4](https://docs.aws.amazon.com/bedrock/latest/userguide/model
 The one-shot client uses Google's [generateContent API](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/models/inference)
 for Gemini publisher models. Set `LOOM_LLM_PROVIDER=vertex` with an explicit model,
 project, and location, or use a `vertex:<model>` per-job override. The location
-selects the global or regional Google endpoint. The deployment sets these values.
+selects a global, regional, or multi-region Google endpoint. The deployment sets
+these values.
 
 The Google Auth library discovers and refreshes Application Default Credentials
 off the event loop. Workload Identity Federation supplies short-lived credentials
