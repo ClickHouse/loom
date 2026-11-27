@@ -20,6 +20,11 @@
 //                           (not on Windows: the stand-in nvm node is a sh script)
 //     [--no-node]           Claude Code only: no node at all; every hook fails
 //                           without blocking, and the turn's command still runs
+//     [--token-env]         Claude Code only: the token is in LOOM_API_KEY and the
+//                           server in LOOM_BASE_URL, with nothing saved under
+//                           ~/.loom; Claude Code keeps the variable from the
+//                           plugin's header helper, which must still send it
+//                           on every MCP request, with no sign-up tried
 //
 // Exit 0 when the helper sent the token, each event's own Loom call arrived
 // with it, and (Claude Code, which reports them) every hook exited 0 with
@@ -38,22 +43,32 @@ const TOKEN = "loom-e2e-token";
 const MODEL_KEY = "e2e-model-key";
 
 function parseArgs(argv) {
-  const out = { agent: argv[0], bin: "", port: 7777, nodeOffPath: false, noNode: false, expectTool: "" };
+  const out = {
+    agent: argv[0],
+    bin: "",
+    port: 7777,
+    nodeOffPath: false,
+    noNode: false,
+    tokenEnv: false,
+    expectTool: "",
+  };
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === "--bin") out.bin = argv[++i];
     else if (argv[i] === "--port") out.port = Number(argv[++i]);
     else if (argv[i] === "--node-off-path") out.nodeOffPath = true;
     else if (argv[i] === "--no-node") out.noNode = true;
+    else if (argv[i] === "--token-env") out.tokenEnv = true;
     else if (argv[i] === "--expect-tool") out.expectTool = argv[++i];
     else throw new Error(`unknown argument ${argv[i]}`);
   }
   if (
     !["claude", "codex"].includes(out.agent) ||
     !out.bin ||
-    (out.noNode && (out.agent !== "claude" || out.nodeOffPath))
+    (out.noNode && (out.agent !== "claude" || out.nodeOffPath)) ||
+    (out.tokenEnv && (out.agent !== "claude" || out.noNode))
   ) {
     throw new Error(
-      "usage: agent-session.mjs claude|codex --bin <path> [--port n] [--node-off-path] [--no-node] [--expect-tool <name>]",
+      "usage: agent-session.mjs claude|codex --bin <path> [--port n] [--node-off-path] [--no-node] [--token-env] [--expect-tool <name>]",
     );
   }
   return out;
@@ -203,9 +218,9 @@ function run(cmd, args, { env, cwd, timeoutMs = 180000, input = "" }) {
   });
 }
 
-/** A scratch home holding only the Loom token, with HOME and USERPROFILE
- *  both pointing at it. */
-function scratch() {
+/** A scratch home holding only the Loom token (nothing when the session's
+ *  environment carries it), with HOME and USERPROFILE both pointing at it. */
+function scratch({ tokenFile = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-e2e-"));
   const home = path.join(dir, "home");
   const work = path.join(dir, "work");
@@ -227,7 +242,7 @@ function scratch() {
     if (e.code !== "ENOENT") throw e;
     checkout = false; // no git here: outside a checkout the hooks still run
   }
-  fs.writeFileSync(path.join(home, ".loom", "token"), TOKEN, { mode: 0o600 });
+  if (tokenFile) fs.writeFileSync(path.join(home, ".loom", "token"), TOKEN, { mode: 0o600 });
   return { dir, home, work, checkout };
 }
 
@@ -321,6 +336,7 @@ async function claudeSession(opts, box, url) {
     fs.writeFileSync(settings, JSON.stringify(current));
   }
   if (opts.noNode) stripNode(env);
+  if (opts.tokenEnv) Object.assign(env, { LOOM_API_KEY: TOKEN, LOOM_BASE_URL: url });
   const r = await run(
     opts.bin,
     [
@@ -456,7 +472,7 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const fake = await startFake(opts.port);
   const url = `http://localhost:${opts.port}`;
-  const box = scratch();
+  const box = scratch({ tokenFile: !opts.tokenEnv });
   const EXPECTED_CALLS = expectedCalls(opts.agent);
   let result;
   try {
@@ -489,11 +505,21 @@ async function main() {
   if (!opts.noNode && !fake.seen.some((s) => s.path === "/mcp" && s.auth === bearer)) {
     problems.push("the MCP header helper never sent the token");
   }
+  if (opts.tokenEnv) {
+    // The hook saves the token before the helper gives up on it: every
+    // connection carries it, and the helper never signs up beside it.
+    if (fake.seen.some((s) => s.path === "/mcp" && s.auth !== bearer))
+      problems.push("an MCP request came without the token");
+    if (fake.seen.some((s) => s.path === "/v1/auth/agent-signup"))
+      problems.push("a sign-up was tried beside the session's token");
+  }
   for (const [event, call] of Object.entries(EXPECTED_CALLS)) {
     if (!opts.noNode && !fake.seen.some((s) => call(s) && s.auth === bearer))
       problems.push(`${event}: its Loom call never came with the token`);
   }
-  const mode = opts.nodeOffPath ? " (node off PATH)" : opts.noNode ? " (no node)" : "";
+  const mode = [opts.nodeOffPath && " (node off PATH)", opts.noNode && " (no node)", opts.tokenEnv && " (token in env)"]
+    .filter(Boolean)
+    .join("");
   const label = `${opts.agent} on ${process.platform}-${process.arch}${mode}`;
   if (problems.length) {
     console.error(`FAIL ${label}`);

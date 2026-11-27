@@ -23,9 +23,9 @@ interface EmptyStateProps {
  *  a product title (600 16 px), muted copy and one primary action. */
 export function EmptyState({ icon, title, description, action, actions, details, children }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center text-center py-16 px-6">
-      <div className="mb-6 grid place-items-center w-16 h-16 rounded-sm bg-surface-2 text-text-muted">
-        <Icon name={icon} size="xl" aria-hidden="true" />
+    <div className="flex flex-col items-center justify-center px-4 py-10 text-center sm:px-6 sm:py-14">
+      <div className="mb-4 grid size-11 place-items-center rounded-md border border-border bg-surface-2 text-text-muted">
+        <Icon name={icon} size="lg" aria-hidden="true" />
       </div>
       <h2 className="text-text">{title}</h2>
       {description && <p className="mt-2 max-w-md text-sm text-text-muted">{description}</p>}

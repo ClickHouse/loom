@@ -646,6 +646,9 @@ class _MemorySearchHit(BaseModel):
     # `changed` (that code changed since the memory was written: check it), `unresolved`
     # (renamed or removed, and not followed: check it) or `missing`.
     code_state: CodeState | Literal[""] = ""
+    # The commit that put `code_state` at `changed`, `unresolved` or `missing`; '' for any
+    # other state, and when no commit is known.
+    code_changed_since: str = ""
     # bodies="unit": true when the whole value did not fit the budget and
     # content_excerpt is still the clip; `next` is the one call that fetches it.
     body_truncated: bool = False

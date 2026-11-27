@@ -1,0 +1,22 @@
+"""Classify a link after its definition has been found."""
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Sequence
+from typing import Literal
+
+
+def fingerprint(texts: Sequence[str]) -> str:
+    """Hash the definition's texts in order, normalizing line endings."""
+    joined = "\0".join(text.replace("\r\n", "\n") for text in texts)
+    return hashlib.sha256(joined.encode()).hexdigest() if joined.strip("\0") else ""
+
+
+def definition_state(
+    baseline: str, current: str, *, moved: bool = False, carried: bool = False
+) -> Literal["changed", "moved", "fresh"]:
+    """Compare the resolved definition with the baseline saved on the link."""
+    if carried or (baseline and current and baseline != current):
+        return "changed"
+    return "moved" if moved else "fresh"

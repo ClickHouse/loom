@@ -35,7 +35,10 @@ META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
 
 # Cache hints the list results carry (2026-07-28 `CacheableResult`; harmless
 # extra fields to earlier clients, whose result schemas pass unknown keys
-# through). The listings vary by URL (`?toolset=`), never by caller.
+# through). The listings vary by URL (`?toolset=`), never by caller, except on
+# a `coding` connection whose URL asks for the compact profile: its lists follow
+# the request's repository header and are `private`
+# (`mcp_tools.lists_follow_code_scope`).
 LIST_TTL_MS = 300_000
 PRIMER_TTL_MS = 60_000
 

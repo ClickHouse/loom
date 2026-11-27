@@ -1024,6 +1024,10 @@ class CodeSettings(BaseModel):
     # Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without
     # it the gc waits another interval.
     code_mirror_gc_margin_gb: float = 5.0
+    # Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its
+    # working tree, not a second copy. An older build's git jobs could write the shared
+    # packs: turn it on only once no older replica serves, and off before a rollback.
+    code_compiler_share_mirror_packs: bool = False
     # Resource limits (rlimits) for each process of a sandboxed repository job
     # (clone, fetch, dependency install, compiler-tier harness;
     # code/app/index/sandbox.py). They bound each process, not a job's total
@@ -1165,8 +1169,9 @@ class CodeSettings(BaseModel):
     # warning) and the issue mirror is skipped.
     code_github_token: str = ""
     # Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files →
-    # tree-sitter symbols/edges → context pack → advance watermark.
-    code_ingest_enabled: bool = False
+    # tree-sitter symbols/edges → context pack → advance watermark. It polls every
+    # configured repository; False = nothing polls, and `code.refresh` is the only trigger.
+    code_ingest_enabled: bool = True
     # Seconds between fast-tier ingest passes; extra-branch fetches of a shared mirror
     # are spaced by 0.9 of it (at least 30 s).
     code_ingest_interval_seconds: int = 120
@@ -2163,10 +2168,10 @@ class ExtractionSettings(BaseModel):
     # The coverage sweep reads its listed turns and sentences in groups of this
     # many items, one concurrent call each (more recall for more tokens). 0 = one call.
     memory_extract_coverage_sweep_batch_items: Annotated[int, LIVE] = 0
-    # A coding capture keeps the coverage sweep's density / uncovered
+    # A trajectory replay keeps the coverage sweep's density / uncovered
     # auto-gates only with at least this many user turns (on short sessions the
-    # sweep's output is mostly junk). 0 = always keep. An explicit namespace /
-    # per-call switch wins either way.
+    # sweep's output is mostly junk); a plugin's session capture never takes them.
+    # 0 = always keep. An explicit namespace / per-call switch wins either way.
     memory_extract_coding_sweep_min_user_turns: Annotated[int, LIVE] = 4
 
     # --- size segments ---
@@ -2681,13 +2686,15 @@ class McpSettings(BaseModel):
     # Which tools `tools/list` shows when a connection names no `?toolset=` (a request that
     # names one gets that one instead). Rosters are the frozensets in
     # server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on
-    # "assistant"); on every toolset but "assistant" this is visibility only and every op
-    # stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes
-    # read ops only.
+    # "assistant", nor where "coding" lists the code tools alone); on every toolset but
+    # "assistant" this is visibility only and every op stays callable by name over MCP and
+    # /v1/*, except that loom_op on "readonly" routes read ops only.
     #   "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
     #                 mcp_code_tools is on).
     #   "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it
-    #                 per request with `?toolset=coding`.
+    #                 per request with `?toolset=coding`. A connection bound to a
+    #                 repository lists the code tools alone when its URL carries
+    #                 `schema_profile=compact`.
     #   "tracker", "tasks" — the tracker plane and the task inbox rosters.
     #   "atomic"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS),
     #                 policy-shaped descriptions.
@@ -2892,7 +2899,8 @@ class MemorySettings(BaseModel):
     # Supersession pairs one bulk write follows on the triple plane in the request; the
     # rest are recorded for the projection repair to follow. 0 = the repair follows all.
     memory_bulk_follow_max_pairs: Annotated[int, LIVE] = Field(default=1024, ge=0)
-    # Bulk-path conflict checks run at once (at least 1).
+    # Similarity reads one request runs at once (at least 1): a bulk write's conflict
+    # checks, and a coding capture's reads of the stored memories nearest its facts.
     bulk_conflict_check_concurrency: int = Field(default=8, ge=1)
     # Facts per batched candidate lookup (conflict and value-update peers) on
     # the write path; matches the per-fact concurrency so wall time stays flat.
@@ -3228,7 +3236,7 @@ class MemorySettings(BaseModel):
     memory_code_links_interval_seconds: int = 60
     # Seconds a code-links pass may run before the supervisor abandons it.
     memory_code_links_max_pass_seconds: float = Field(default=600.0, gt=0)
-    # Memory writes one pass links (at least 1).
+    # Rows per page of memory writes to link or pending links to recheck (at least 1).
     memory_code_links_batch: int = Field(default=500, ge=1)
     # Seconds the memory code-link pass stays behind the newest queued memory write, so
     # inserts running at the same moment are visible before the cursor passes them (at
@@ -3236,8 +3244,7 @@ class MemorySettings(BaseModel):
     # backfill reads it; a longer wait makes that rarer and links every write that much
     # later.
     memory_code_links_settle_seconds: int = Field(default=60, ge=10)
-    # Days a code-shaped name that names nothing on trunk yet (unmerged code) is
-    # retried before it is dropped.
+    # Days to retry a code-shaped name absent from trunk, measured when each pending scan starts.
     memory_code_links_pending_days: int = Field(default=14, ge=1)
     # Changed claims one pass re-checks with the LLM under the `revise` policy.
     memory_code_links_revise_per_pass: int = Field(default=20, ge=0)
@@ -4125,8 +4132,11 @@ class ModelSettings(BaseModel):
     # Price-table model used for assistant route aliases (for example a Bedrock
     # inference profile). Empty uses assistant_model. The operator verifies its rate.
     assistant_price_model: str = ""
-    # Native streaming provider. Empty disables native model admission.
-    assistant_provider: Literal["", "anthropic", "openai", "bedrock", "local", "fake"] = ""
+    # Native streaming provider. Vertex uses Google Application Default Credentials.
+    # Empty disables native model admission.
+    assistant_provider: Literal["", "anthropic", "openai", "bedrock", "vertex", "local", "fake"] = (
+        ""
+    )
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
     # (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are
@@ -4156,9 +4166,10 @@ class ModelSettings(BaseModel):
     # mid answer escalates to strong once.
     memory_ask_mid_model: str = ""
     # The durability check on a coding capture: one batched call per capture per
-    # listed model (CSV) judges each fact durable or not and folds same-claim
-    # paraphrases and replaced states. A fact is dropped only when every model says
-    # drop; folds come from the first. Fails open. "" turns it off.
+    # listed model (CSV) judges each fact durable or not, folds same-claim
+    # paraphrases and replaced states, and names the facts a stored memory already
+    # states. A fact is dropped as non-durable only when every model says drop; folds
+    # and stored restatements come from the first. Fails open. "" turns it off.
     memory_extract_verify_models: str = "claude-opus-5-5"
     # The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence
     # thresholds were set on this model; a cheaper one is only safe for clears.
@@ -4367,9 +4378,10 @@ class ObservabilitySettings(BaseModel):
     # K=V), "" = auto (otlp when the endpoint is set, else ch).
     otel_exporter: Annotated[Literal["", "ch", "otlp"], CaseFolded] = ""
     # Seconds between refreshes of the per-namespace code-plane COUNT gauges
-    # (one FINAL scan each of code_files, code_chunks, code_symbols and
-    # code_edges, on the lease holder). The counts move once an index run, so
-    # an hour is enough; each refresh reads every live code row. 0 = every export.
+    # (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges
+    # and memory_code_links, on the lease holder). The counts move once an index
+    # run, so an hour is enough; each refresh reads every live code row. 0 = every
+    # export.
     otel_code_counts_cache_s: int = 3600
     # Seconds between recounts of the code.grep wrong-abstain gauge (a
     # `content` scan per namespace with abstains). 0 = gauge off.
@@ -4786,6 +4798,11 @@ class ProviderSettings(ModelSettings):
     # Region for native Bedrock model requests; empty uses the AWS SDK's region chain.
     # AWS credentials use the SDK's role, profile or environment credential chain.
     bedrock_region: str = ""
+    # Google Cloud project that owns the Vertex AI requests, required with the Vertex provider.
+    vertex_project: str = ""
+    # Vertex AI location: a region, a multi-region ("eu", "us"), or "global".
+    # Required with the Vertex provider.
+    vertex_location: str = ""
     # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
     # <host>:11434/v1, llama.cpp's server <host>:8080/v1).
     local_llm_base_url: str = "http://localhost:11434/v1"
@@ -4903,11 +4920,9 @@ class ProviderSettings(ModelSettings):
     # (loom.embedder_calibration), so every replica serves the same gates.
     calibration_refresh_seconds: float = 60.0
 
-    # "openai" | "anthropic" | "bedrock" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
-    # infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* →
-    # anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
-    # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
-    # overridden. Bedrock requires llm_model and the SDK credential chain.
+    # "openai" | "anthropic" | "bedrock" | "vertex" | "local" | "fake"; "" = infer from
+    # LOOM_LLM_MODEL's name or provider prefix, then from the API keys present, then fake.
+    # An explicit value wins. Bedrock and Vertex require a model and deployment credentials.
     # Run `make bench-quick` before making anthropic a default.
     llm_provider: str = ""
     # A fake or key-less provider is a `warn` in /v1/health `problems`; true
@@ -5108,7 +5123,11 @@ class ProviderSettings(ModelSettings):
         """Resolve an unset LLM provider / model once, at load,
         so `settings.llm_provider` is concrete everywhere (client factory,
         /v1/health, `loom doctor`) and the three never disagree."""
-        from server.core.llm_provider import DEFAULT_MODEL_BY_PROVIDER, resolve_llm_provider
+        from server.core.llm_provider import (
+            DEFAULT_MODEL_BY_PROVIDER,
+            resolve_llm_provider,
+            vertex_route,
+        )
 
         # An explicit provider is never overridden, so a typo (`openia`) would
         # load as itself with no model and only fail at the first LLM call.
@@ -5125,6 +5144,21 @@ class ProviderSettings(ModelSettings):
         resolved = resolve_llm_provider(self.llm_provider, self.llm_model)
         if resolved.provider == "bedrock" and not resolved.model:
             raise ValueError("LOOM_LLM_PROVIDER=bedrock requires LOOM_LLM_MODEL")
+        if resolved.provider == "vertex" and not resolved.model:
+            raise ValueError("LOOM_LLM_PROVIDER=vertex requires LOOM_LLM_MODEL")
+        if self.assistant_provider == "vertex" and not self.assistant_model.strip():
+            raise ValueError("LOOM_ASSISTANT_PROVIDER=vertex requires LOOM_ASSISTANT_MODEL")
+        if "vertex" in (resolved.provider, self.assistant_provider):
+            if not self.vertex_project.strip() or not self.vertex_location.strip():
+                raise ValueError(
+                    "The Vertex provider requires LOOM_VERTEX_PROJECT and LOOM_VERTEX_LOCATION"
+                )
+        if resolved.provider == "vertex":
+            vertex_route(resolved.model, self.vertex_project, self.vertex_location)
+        if self.assistant_provider == "vertex":
+            self.assistant_model, _ = vertex_route(
+                self.assistant_model, self.vertex_project, self.vertex_location
+            )
         self.llm_provider = resolved.provider
         self.llm_model = resolved.model
         self._llm_provider_source = resolved.source
@@ -5220,6 +5254,8 @@ class ProviderSettings(ModelSettings):
         v = self.model_dump(include=set(_GATEWAY_CHECKED)) | saved
         if v["llm_provider"] == "bedrock":
             return f"{why} refuses native Bedrock: use the inference gateway"
+        if v["llm_provider"] == "vertex":
+            return f"{why} refuses native Vertex AI: use the inference gateway"
         # Both hosted API roots count, a provider unused included: a model named per
         # request may be either provider's. The local root is called only while it is
         # the provider, since no model name reaches it otherwise.

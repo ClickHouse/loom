@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from server.auth.context import current_caller
+from server.code.app.index import erasing
 from server.code.app.index.pass_budget import (
     CodeIngestResult,
     PassBudget,
@@ -179,6 +180,8 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             # watermark unmoved, until the org's model calls are back on.
             continue
         try:
+            if await erasing.being_erased(cfg.org, cfg.namespace):
+                continue  # no work on it starts: its purge waits for the work already on it
             # Its model calls are the namespace's, and when code.refresh runs the pass,
             # the caller's (its token's subject), as for any request.
             with customer.for_org(cfg.org, namespace=cfg.namespace, subject=current_caller()[0]):

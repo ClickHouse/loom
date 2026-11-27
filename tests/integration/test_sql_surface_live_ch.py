@@ -313,7 +313,7 @@ async def test_a_ledger_read_prunes_to_its_scope_and_window(ch: Any) -> None:
             ).result_rows
             assert got == [(10,)], view
             reads[view] = query_id
-        raw.command("SYSTEM FLUSH LOGS")
+        raw.command("SYSTEM FLUSH LOGS query_log")
 
         def read_rows(query_id: str) -> int:
             rows = raw.query(

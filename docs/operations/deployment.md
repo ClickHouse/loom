@@ -803,7 +803,7 @@ Each is off until configured; `.env.example` has a commented block for each.
 
 | Area                     | Start with                                                                                                         | Read                                                                                                        |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| Code index               | `LOOM_CODE_REPO` or `LOOM_CODE_REPOS_JSON`, `LOOM_CODE_INGEST_ENABLED`, `LOOM_MCP_CODE_TOOLS`                      | [Repositories](../features/code-index/repositories.md), [code-index operations](./code-index-operations.md) |
+| Code index               | `LOOM_CODE_REPO` or `LOOM_CODE_REPOS_JSON`, `LOOM_MCP_CODE_TOOLS`                                                  | [Repositories](../features/code-index/repositories.md), [code-index operations](./code-index-operations.md) |
 | Tracker records          | `LOOM_TRACKER_ORG`, `LOOM_TRACKER_SOURCES_JSON`, `LOOM_TRACKER_CREDENTIALS_JSON`                                   | [Tracker](../features/tracker/overview.md)                                                                  |
 | Telemetry                | `LOOM_OTEL_EXPORTER`: `ch` (the `otel_*` tables), `otlp` (a collector); empty picks `otlp` when an endpoint is set | [Telemetry](../features/observability/telemetry.md)                                                         |
 | Erasure in other systems | `LOOM_LANGFUSE_URL`, `LOOM_CLICKSTACK_DATABASE` and their credentials                                              | [Retention and erasure](../features/memory/retention-and-erasure.md)                                        |
@@ -841,8 +841,9 @@ and what it leaves:
   coverage watches, and `code_coverage_import`). Every other code and tracker worker has its
   own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository and no
   tracker source configured, they find nothing to do: each pass reads a few rows and ends.
-  The git mirror warm-up and host loop do not run, and boot probes the repository-job
-  sandbox only when `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on. Every
+  The git mirror warm-up and host loop do not run, and a process probes the repository-job
+  sandbox only once a repository is configured with `LOOM_CODE_INGEST_ENABLED` on, or
+  with `LOOM_CODE_SANDBOX_REQUIRED` on. Every
   process still re-reads the repository registry while `LOOM_CODE_SELF_SERVICE_ENABLED` is
   on and the tracker sources while `LOOM_TRACKER_SELF_SERVICE_ENABLED` is on: one small read
   per interval (`LOOM_CODE_REPOS_REFRESH_SECONDS`, `LOOM_TRACKER_SOURCES_REFRESH_SECONDS`).

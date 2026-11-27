@@ -7,7 +7,7 @@ description: Search indexed repositories over MCP, inspect definitions and calle
 
 Loom gives coding agents a shared index of your git repositories, served over MCP, so an
 agent asks a structure question and gets the lines that answer it instead of reading whole
-files. Needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`. How the index is
+files. Needs a repository added. How the index is
 built and kept fresh is in [the code index overview](../features/code-index/overview.md);
 what it gives in each language is in [code index by language](code-intelligence-by-language.md).
 

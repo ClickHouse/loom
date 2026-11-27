@@ -1,0 +1,121 @@
+---
+import { GridContainer } from "@clickhouse/click-ui/GridContainer";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
+import SiteFrame from "../components/SiteFrame.astro";
+
+const workflows = [
+  {
+    id: "coding-agents",
+    context: "Coding agents",
+    title: "Carry a decision into the next session",
+    detail:
+      "Save a project decision with its reason. From a fresh agent session, check that the agent can find the same decision before it starts work.",
+    href: "/docs/use-cases/agent-memory",
+    action: "Try shared agent memory",
+  },
+  {
+    id: "document-knowledge",
+    context: "Document search",
+    title: "Find an answer you can cite",
+    detail: "Ask a question about a policy or runbook. Open the cited passage and check that it supports the answer.",
+    href: "/docs/use-cases/document-search",
+    action: "Try cited document search",
+  },
+  {
+    id: "code-intelligence",
+    context: "Code intelligence",
+    title: "Check a decision after the code changes",
+    detail:
+      "Link a saved lesson to its source. Change the behavior in the Playground and see how Loom marks the lesson before an agent relies on it.",
+    href: "/playground/source-change",
+    action: "Try a source change",
+  },
+  {
+    id: "agent-handoffs",
+    context: "Agent workflows",
+    title: "Hand work from one agent to another",
+    detail:
+      "Give a reviewing agent the decision, its evidence, and the next action. Check that the reviewer can recover that context with its own credentials.",
+    href: "/docs/use-cases/multi-agent",
+    action: "Try an agent handoff",
+  },
+];
+---
+
+<SiteFrame
+  title="Loom use cases | ClickHouse Loom"
+  description="See how to carry agent memory across coding sessions, retrieve cited documents, check source changes, and hand work between agents."
+  path="/use-cases"
+>
+  <header class="use-cases-intro">
+    <Title type="h1" size="xl" family="brand">Find a Loom workflow to try</Title>
+    <Text className="lead" color="muted">Choose a task your agents already do and check the result in your own workflow.</Text>
+    <div class="site-actions">
+      <Link className="text-link" href="/docs/use-cases">Browse the technical guides <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+    </div>
+  </header>
+
+  <section class="site-section" aria-label="Workflows">
+    <GridContainer className="site-grid workflow-grid" isResponsive={false}>
+      {workflows.map(({ id, context, title, detail, href, action }) => (
+        <Panel
+          id={id}
+          role="article"
+          aria-labelledby={`${id}-title`}
+          className="site-panel workflow-card"
+          orientation="vertical"
+          alignItems="start"
+          padding="lg"
+          gap="sm"
+          hasBorder
+        >
+          <Text className="workflow-context" size="sm">{context}</Text>
+          <Title id={`${id}-title`} type="h2" size="md">{title}</Title>
+          <Text color="muted">{detail}</Text>
+          <Link href={href}>{action} <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+        </Panel>
+      ))}
+    </GridContainer>
+  </section>
+
+  <section class="site-section" aria-labelledby="use-case-evaluate">
+    <Title id="use-case-evaluate" type="h2" size="lg">Evaluate Loom on your workload</Title>
+    <Text className="section-copy evaluation-copy" color="muted">Compare memory setups for one repository or use the <Link href="/knowledge-factory#pilot-scorecard">knowledge factory scorecard</Link> to plan a pilot with documents, agent lessons, and code.</Text>
+    <div class="site-actions">
+      <Link className="primary" href="/agent-memory-selector">Compare memory setups</Link>
+      <Link className="secondary" href="/enterprise">Review deployment options</Link>
+      <Link className="text-link" href="/adoption">See reported adoption</Link>
+    </div>
+  </section>
+</SiteFrame>
+
+<style>
+  .use-cases-intro { max-inline-size: 64rem; }
+  .workflow-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-block-start: 0;
+  }
+  .workflow-card {
+    min-inline-size: 0;
+    scroll-margin-block-start: 5rem;
+  }
+  .workflow-card .workflow-context {
+    margin-block: 0;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .workflow-card a { margin-block-start: auto; }
+  .evaluation-copy { margin-block-start: 0.65rem; }
+  .evaluation-copy a {
+    color: var(--click-global-color-text-link-default);
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+  @media (max-width: 46rem) {
+    .workflow-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>

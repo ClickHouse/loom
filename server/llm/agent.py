@@ -52,6 +52,7 @@ class Turn:
     stop: str = ""
     sent: bool = False
     usage_complete: bool = False
+    vertex_parts: list[dict[str, Any]] | None = None
 
     def reported_usage(self) -> Usage | None:
         if self.usage_complete and self.usage is not None and self.usage.total_input > 0:
@@ -162,4 +163,8 @@ def model_for(provider: str, model: str) -> AgentModel:
         from server.llm.agent_bedrock import BedrockAgentModel
 
         return BedrockAgentModel(model)
+    if provider == "vertex":
+        from server.llm.agent_vertex import VertexAgentModel
+
+        return VertexAgentModel(model)
     raise ValueError("unsupported assistant provider")

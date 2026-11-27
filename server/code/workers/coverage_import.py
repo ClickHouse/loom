@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from server.code.app.index import erasing
 from server.code.app.index.coverage_import import CoverageImportResult, import_from_settings
 from server.workers import pass_context
 
@@ -34,6 +35,8 @@ async def run_pass() -> CoverageImportPass:
         return out
     for cfg in repos:
         try:
+            if await erasing.being_erased(cfg.org, cfg.namespace):
+                continue
             out.results.append(await import_from_settings(cfg.org, cfg.namespace))
         except Exception as e:  # one namespace's import must not stop the next
             out.errors.append(f"{cfg.namespace}: {type(e).__name__}: {e}")

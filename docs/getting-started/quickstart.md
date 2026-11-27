@@ -1,48 +1,32 @@
+---
+seo:
+  description: Install Loom and verify it by saving and recalling a memory over HTTP, Python, or MCP.
+---
+
 # Quickstart
 
-This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP. It
-needs no API key and no account. A fresh install of the released stack embeds with a small
-local model the image carries, so search returns meaningful hits with no network (an
-upgraded one keeps the embedder its `.env` names). Its fake LLM returns deterministic
-output for development and tests. Configure a real LLM for meaningful extraction and
-grounded `memory.ask` answers. A checkout's `.env` uses fake providers for both.
+Run Loom locally with Docker. The default install listens only on localhost and needs no API key.
 
-**The stock Docker installation is single-user:** no login, localhost-only access and
-a default `dev/local` namespace. One person can connect multiple agents without enabling
-multi-user mode. **Team deployments are also supported in OSS**, with authenticated
-accounts and namespace access controls; [start in multi-user mode](#start-in-multi-user-mode)
-or follow [Deployment → Identity modes](../operations/deployment.md#identity-modes).
-Both modes support the same Loom features; real LLMs and embeddings need provider
-configuration in either mode.
+[Go to the install command](#fast-path-released-image-no-clone) · [Set up a shared instance](#start-in-multi-user-mode)
 
 ## Prerequisites
 
-| Need                           | For                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------ |
-| Docker with the compose plugin | The stack: ClickHouse and the Loom server.                               |
-| Python 3.12 or newer           | Contributor-only `loom` CLI. The SDK supports 3.11+.                     |
-| Node.js 20 or newer            | The TypeScript SDK (optional).                                           |
-| Free port `7777`               | Loom. Checkout development also exposes ClickHouse on `8123` and `9000`. |
-| `jq`                           | Reading the `curl` output in step 4 (optional).                          |
+Use Docker Desktop or Docker Engine with Compose 2.20 or later. Leave port `7777` free
+for Loom. On Windows, run the installer in a WSL 2 terminal where `docker` works.
 
 ## 1. Boot the stack
 
 ### Fast path: released image, no clone
 
-Prerequisite: Docker Desktop or Docker Engine with Compose 2.20 or later. On Windows, run
-the command in a WSL 2 terminal where `docker` works: Docker Desktop with its WSL
-integration turned on for that distribution, or Docker Engine installed in it. The
-installer is a POSIX shell script.
+Run the installer from a directory only you can write to.
 
 ```bash
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
 ```
 
-The command saves the installer in the current directory and then runs that file, so run
-it from your home directory, or another directory only you can write to: in a shared one,
-someone else can replace `loom-install.sh`, or point it at another file, before it runs. A
-failed download stops with curl's error and a non-zero exit; after a failed install, fix
-what it reports and run the whole command again. The installer downloads
+The command saves and runs `loom-install.sh` in your current directory. In a shared
+directory, another user could replace the file before it runs. If the installer fails,
+fix the error it reports and run the command again. The installer downloads
 `loom-stack.tar.gz` from the latest GitHub Release, verifies its SHA-256, installs the
 Compose and ClickHouse configuration under `~/.loom`, pulls the matching
 `ghcr.io/clickhouse/loom:X.Y.Z` and `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the
@@ -52,7 +36,8 @@ server root; no Python or Node installation is needed. Python, TypeScript and Go
 indexers are included and enabled, and so is the C++ one (`scip-clang`) on `amd64`. A
 repository indexed with the TypeScript indexer gets its dependencies installed
 automatically. Both images support Linux `amd64` and `arm64`, including Docker Desktop
-on Apple Silicon.
+on Apple Silicon. Use `jq` if you want to format the example HTTP responses below.
+The Python SDK supports Python 3.11 or newer, and the TypeScript SDK needs Node.js 20 or later.
 
 Once Loom answers, the installer:
 

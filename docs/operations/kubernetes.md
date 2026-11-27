@@ -347,7 +347,10 @@ node's storage, and the kubelet evicts a pod that outgrows it. `cache.volume: ep
 gives each pod its own volume from a StorageClass instead (`cache.ephemeral`). Size it
 for full clones of every indexed repository plus the module cache. `workers.cache` is
 merged over `cache` for the workers pods, which also keep a checkout per compiler tier:
-about 30 GB beside the mirror for a ClickHouse-sized C++ entry with its build tree.
+about 30 GB beside the mirror for a ClickHouse-sized C++ entry with its build tree, or
+about 17 GB with `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS` (less the 13 GB copy of the
+repository, not measured). A checkout shares the mirror's packs by hard link, which
+needs both on the cache volume.
 
 `cache.ephemeral.dataSourceRef` starts each new pod's volume from a snapshot instead of
 empty, e.g. a `VolumeSnapshot` of a warm workers volume (on EKS this needs the CSI
@@ -509,6 +512,21 @@ Each side holds one token, so changing `secrets.extractorToken` restarts the Loo
 Deployments (web, and workers when enabled) and the extractor's, and while they roll, a
 Loom pod and an extractor pod may hold different tokens: extraction answers unavailable
 until every roll finishes.
+
+## Vertex AI on GKE
+
+Use the Loom pods' Kubernetes service account as the workload identity. Configure
+its binding and grant the identity permission to invoke the model in the target
+project. The chart supports an IAM service account binding through
+`serviceAccount.annotations`. Set `llm_provider`, `llm_model`, `vertex_project`
+and `vertex_location` in `settingsFile`.
+
+The web and worker pods need egress to the GKE metadata server and their Vertex AI
+endpoint. See [instance metadata service](#instance-metadata-service) for the chart's
+default restrictions. Scope the identity to model invocation and allow metadata
+egress through the deployment's network policy.
+[GKE Workload Identity configuration](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
+covers identity binding and network requirements.
 
 ## Assistant
 

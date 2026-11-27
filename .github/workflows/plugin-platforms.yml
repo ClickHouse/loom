@@ -91,6 +91,11 @@ jobs:
       - name: Codex session
         if: ${{ !cancelled() }}
         run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs codex --bin "$CODEX_BIN"
+      # Claude Code keeps LOOM_API_KEY from a plugin's header helper: the
+      # SessionStart hook saves the token where the helper reads it.
+      - name: Claude Code session, token in LOOM_API_KEY
+        if: ${{ !cancelled() }}
+        run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin "$CLAUDE_BIN" --expect-tool Bash --token-env
       # Started from the Dock or a desktop launcher, the agent has no node on
       # PATH: Claude Code gets it from PATH in its settings env, Codex's
       # launcher finds it under a version manager.

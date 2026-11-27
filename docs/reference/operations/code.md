@@ -577,7 +577,7 @@ Is this already tested?
 
 ## `code.edit_context`
 
-Read source, tests, and notes.
+Before editing, read source, tests and notes.
 
 `POST /v1/code.edit_context` · MCP `loom_code_edit_context` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -592,7 +592,7 @@ Read source, tests, and notes.
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `name` | `str` | `''` | Name, path:symbol, path:line, or file with clues. |
 | `clues` | `list[str]` | *(computed)* | Text fragments or exact declarations. |
-| `names` | `list[str]` | *(computed)* | Batch of exact names or locations. |
+| `names` | `list[str]` | *(computed)* | Exact names or locations. |
 | `include_related_source` | `bool` | `True` | Set false after reading extra bodies. |
 
 | Output field | Type | Meaning |
@@ -964,8 +964,8 @@ Health of the code index: indexed head commit, compiler-tier commit, row counts,
 | `pr_cursor` | `str` | The PR-history poller's cursor: the newest `updated_at` (ISO-8601) of the merged PRs it fetched; '' before its first pass. |
 | `commit_coverage` | `CodeCommitCoverage \| None` | Set when the request named a `commit`. |
 | `clone_head` | `str` | Freshness. clone_head is the bare clone's branch tip as of the last poller fetch (<= interval old); *_lag = first-parent commits between a watermark and that tip, -1 when a watermark is unset or the clone is unreadable. 0 everywhere ==… |
-| `clone_fetched_at` | `str` | When the ingest pass last fetched this entry's mirror (the `clone_head` row's updated_at, ISO-8601 UTC; '' unknown) and whether that is older than `code_fetch_stale_after_seconds`. |
-| `fetch_overdue` | `bool` | True when `clone_fetched_at` is older than `code_fetch_stale_after_seconds`. |
+| `clone_fetched_at` | `str` | When the ingest pass last fetched this entry's mirror (the `clone_head` row's updated_at, ISO-8601 UTC; '' with no fetch on record). |
+| `fetch_overdue` | `bool` | True when the last fetch, or with none on record the `git_head` write, is older than `code_fetch_stale_after_seconds`. |
 | `fast_tier_lag` | `int` | First-parent commits between `git_head` and `clone_head`; -1 when either is unknown. |
 | `scip_lag` | `int` | First-parent commits between `scip_commit` and `clone_head`; -1 when either is unknown. |
 | `scip_py_lag` | `int` | First-parent commits between `scip_commit_py` and `clone_head`; -1 when either is unknown. |
@@ -1198,8 +1198,8 @@ CI calls this right after a merge lands: run one ingest pass now instead of wait
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `expected_head` | `str` | `''` | The commit CI just merged; advisory, recorded in `last_refresh_detail` and never checked. |
-| `wait` | `bool` | `False` | wait=True blocks until the pass completes (CI wants a sync signal); default fire-and-forget returns immediately. |
-| `wait_timeout_seconds` | `int` | `300` | With `wait`: seconds to wait for the pass (10..900); the call fails when the pass outlasts it. |
+| `wait` | `bool` | `False` | wait=True blocks until the pass completes (CI wants a sync signal), then rechecks the memories linked to the namespace's code unless another pass is checking them or the recheck fails; default fire-and-forget returns immediately. |
+| `wait_timeout_seconds` | `int` | `300` | With `wait`: seconds to wait for the pass (10..900); the call fails when the pass outlasts it, and a link recheck that outlasts it is left to the link worker. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

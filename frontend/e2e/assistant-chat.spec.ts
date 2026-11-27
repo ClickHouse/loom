@@ -256,7 +256,7 @@ for (const width of [360, 400]) {
   test.describe(`phone ${width}, coarse pointer`, () => {
     test.use({ viewport: { width, height: 800 }, hasTouch: true, isMobile: true });
 
-    test("the top bar is one row with Ask AI and no New, the bottom nav three tabs, each a 44 px target", async ({
+    test("the top bar is one row with Ask AI and no New, the bottom nav four tabs, each a 44 px target", async ({
       page,
     }) => {
       await installApi(page);
@@ -292,7 +292,7 @@ for (const width of [360, 400]) {
         ask: true,
         newShown: false,
         small: [],
-        items: ["Memories", "Library", "More"].map((text) => ({ text, big: true })),
+        items: ["Memories", "Library", "Runs", "More"].map((text) => ({ text, big: true })),
       });
     });
 

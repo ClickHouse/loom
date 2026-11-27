@@ -166,8 +166,12 @@ async def _describe_call(llm: Any, prompt: tuple[str, str, int]) -> str:
     """The description call the file would make (`ingest.describe_prompt`)."""
     from server.code.app.index.describe import describe_line
 
+    if getattr(llm, "provider", None) == "fake":
+        return ""
     system, user, max_tokens = prompt
     res = await llm.complete(system, user, max_tokens=max_tokens)
+    if getattr(res, "provider", None) == "fake":
+        return ""
     return describe_line(system, res.text)
 
 

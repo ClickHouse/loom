@@ -69,7 +69,8 @@ async def test_clean_namespace_is_healthy_and_lists_every_check(
     assert out.healthy is True
     assert (out.errors, out.warnings, out.infos) == (0, 0, 0)
     names = [f.check for f in out.findings]
-    assert set(names) == {*nv._CHECKS, "code_links_stale"} and "unresolved_evidence" in names
+    assert set(names) == {*nv._CHECKS, "code_links_stale", *nv._CODE_UNLINKED}
+    assert "unresolved_evidence" in names
     assert all(f.count == 0 and f.samples == [] for f in out.findings)
     assert out.skipped == []
     # the identity join is on the FULL tenancy tuple, never the coarse key
@@ -136,7 +137,8 @@ async def test_one_failing_check_is_skipped_not_raised(monkeypatch: pytest.Monke
     out = await nv.handle_namespace_validate(_inp())
     assert out.skipped == ["orphan_vectors: RuntimeError"]
     assert "orphan_vectors" not in [f.check for f in out.findings]
-    assert len(out.findings) == len(nv._CHECKS)  # every other check, and the code links
+    # every other check, the stale code links and the unlinked memories by cause
+    assert len(out.findings) == len(nv._CHECKS) + len(nv._CODE_UNLINKED)
     assert out.healthy is True
 
 
@@ -302,10 +304,11 @@ async def test_stale_code_links_count_memories_and_sample_the_links_read(
 
 
 def test_every_check_declares_its_kind_version_and_uncertainty() -> None:
-    assert set(nv._CONTRACT) == {*nv._CHECKS, "code_links_stale"}
+    assert set(nv._CONTRACT) == {*nv._CHECKS, "code_links_stale", *nv._CODE_UNLINKED}
     assert {r.kind for r in nv._CONTRACT.values()} == {
         "contract_violation",
         "usage_heuristic",
+        "system_state",  # a memory waiting for the link pass or the index
     }
     assert all(r.version >= 1 for r in nv._CONTRACT.values())
     # Every heuristic says why a hit may still be a legitimate design.
@@ -414,5 +417,74 @@ async def test_stale_code_links_are_named_skipped_while_the_code_registry_is_unr
     monkeypatch.setattr(code_link_reads, "stale_links", _STALE_LINKS)
     monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
     out = await nv.handle_namespace_validate(_inp())
-    assert out.skipped == ["code_links_stale: RegistryUnread"]
+    # every check that reads which repositories are configured
+    assert out.skipped == [
+        f"{check}: RegistryUnread" for check in ("code_links_stale", *nv._CODE_UNLINKED)
+    ]
     assert out.coverage.complete is False
+
+
+@pytest.mark.asyncio
+async def test_unlinked_code_memories_are_counted_by_cause_from_one_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A memory that names code and holds no link reads exactly as one whose code is
+    current; the report counts them by why, as information: `info` never blocks a stop
+    nor makes a namespace unhealthy, even under `strict`."""
+    from server.memory.app import code_unlinked
+
+    asked: list[Any] = []
+
+    def memory(n: int, **more: str) -> dict[str, str]:
+        return {"memory_key": f"k{n}", "memory_id": f"00000000-0000-0000-0000-{n:012d}", **more}
+
+    async def unlinked(org: str, namespace: str, keys: Any = None) -> dict[str, list[Any]]:
+        asked.append((org, namespace, keys))
+        return {
+            code_unlinked.NO_REPOSITORY: [memory(1), memory(2), memory(3)],
+            code_unlinked.FILE_NOT_INDEXED: [memory(4)],
+            code_unlinked.NAME_UNRESOLVED: [],
+            code_unlinked.PENDING: [memory(5, waits_for="link_pass")],
+        }
+
+    monkeypatch.setattr(code_unlinked, "unlinked", unlinked)
+    monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
+    out = await nv.handle_namespace_validate(_inp(keys=["k1"], sample_limit=2, strict=True))
+    by_check = {f.check: f for f in out.findings}
+    assert {name: by_check[name].count for name in nv._CODE_UNLINKED} == {
+        "code_unlinked_no_repository": 3,
+        "code_unlinked_file_not_indexed": 1,
+        "code_unlinked_name_unresolved": 0,
+        "code_unlinked_pending": 1,
+    }
+    no_repository = by_check["code_unlinked_no_repository"]
+    assert [s["memory_key"] for s in no_repository.samples] == ["k1", "k2"]
+    assert no_repository.samples_complete is False and "total" not in no_repository.samples[0]
+    assert by_check["code_unlinked_pending"].samples == [memory(5, waits_for="link_pass")]
+    assert by_check["code_unlinked_pending"].kind == "system_state"
+    assert all(by_check[name].severity == "info" for name in nv._CODE_UNLINKED)
+    assert (out.infos, out.warnings, out.errors, out.healthy) == (5, 0, 0, True)
+    # one read answers the four causes, scoped to the keys asked for
+    assert asked == [("o", "ns", ["k1"])]
+    await nv.handle_namespace_validate(_inp())
+    assert asked[-1] == ("o", "ns", None)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_unlinked_read_skips_its_four_checks_and_no_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import code_unlinked
+
+    reads = 0
+
+    async def unlinked(org: str, namespace: str, keys: Any = None) -> dict[str, list[Any]]:
+        nonlocal reads
+        reads += 1
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(code_unlinked, "unlinked", unlinked)
+    monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
+    out = await nv.handle_namespace_validate(_inp())
+    assert out.skipped == [f"{check}: TimeoutError" for check in nv._CODE_UNLINKED]
+    assert reads == 1 and {f.check for f in out.findings} == {*nv._CHECKS, "code_links_stale"}

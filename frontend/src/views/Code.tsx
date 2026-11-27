@@ -25,12 +25,13 @@ import { PageContainer } from "../layout/PageContainer";
 import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { restrictedReason } from "../lib/namespaceUpdate";
 import { useGrantRows } from "../lib/useGrantRows";
-import { useStore, useIdentity } from "../lib/state";
+import { setViewParam, urlParam, useStore, useIdentity } from "../lib/state";
 import { hasPlatformAdminClaim, holdsAdminGrant } from "../lib/role";
 import { fmtInt, relativeTime, listTime, parseChTime, refreshDetail } from "../lib/format";
 import { humanizeError, errorLine } from "../lib/errorWords";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { EmptyState } from "../components/EmptyState";
+import { ScopeBadge } from "../components/ScopeBadge";
 import { IconButton } from "../components/IconButton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -138,18 +139,6 @@ function Mono({ children, className = "" }: { children: React.ReactNode; classNa
   return <span className={`font-mono text-xs ${className}`}>{children}</span>;
 }
 
-function readRepoParam(): string | null {
-  if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get("repo");
-}
-
-function writeRepoParam(ns: string | null) {
-  const url = new URL(window.location.href);
-  if (ns) url.searchParams.set("repo", ns);
-  else url.searchParams.delete("repo");
-  window.history.replaceState(null, "", url.toString());
-}
-
 // ---------------------------------------------------------------------------
 // Repos list
 // ---------------------------------------------------------------------------
@@ -158,7 +147,7 @@ export function CodeView() {
   const identity = useIdentity();
   const [repos, setRepos] = useState<CodeRepoSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(readRepoParam);
+  const [selected, setSelected] = useState(() => urlParam("repo"));
 
   // The page announces a first index that became searchable or failed between two polls
   // (the approvals bell has no generic feed yet).
@@ -195,7 +184,7 @@ export function CodeView() {
 
   const select = (ns: string | null) => {
     setSelected(ns);
-    writeRepoParam(ns);
+    setViewParam("repo", ns);
   };
 
   const current = useMemo(
@@ -615,6 +604,19 @@ function RepositoriesHome({
     <PageContainer>
       <PageHeader
         title="Repositories"
+        description={
+          !empty && (
+            <div className="flex items-center gap-1">
+              Browse indexed Git branches and the trackers linked to them.
+              <IconButton
+                icon="info-in-circle"
+                size="xs"
+                label="About repositories"
+                tooltip="You can search and ask about a branch's code; the tracker is read live. An open repository joins in one click; a restricted one is requested and a maintainer approves."
+              />
+            </div>
+          )
+        }
         actions={
           org && (
             <>
@@ -641,22 +643,9 @@ function RepositoriesHome({
             </>
           )
         }
-      />
-      {!empty && (
-        <p className="text-sm text-text-muted mb-3 max-w-[72ch]">
-          Indexed code branches and their trackers of issues and PRs, read-only.{" "}
-          {/* As tall as the text: a 44 px touch target overflows it instead of stretching the line. */}
-          <span className="inline-flex h-5 items-center align-middle">
-            <IconButton
-              icon="info-in-circle"
-              size="xs"
-              label="About repositories"
-              tooltip="You can search and ask about a branch's code; the tracker is read live. An open repository joins in one click; a restricted one is requested and a maintainer approves."
-            />
-          </span>
-        </p>
-      )}
-
+      >
+        {org && <ScopeBadge kind="org" value={org} />}
+      </PageHeader>
       {pendingRows.length > 0 && (
         <Alert
           className="mb-3"

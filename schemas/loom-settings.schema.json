@@ -161,11 +161,12 @@
             "anthropic",
             "openai",
             "bedrock",
+            "vertex",
             "local",
             "fake"
           ],
           "type": "string",
-          "description": "Native streaming provider. Empty disables native model admission."
+          "description": "Native streaming provider. Vertex uses Google Application Default Credentials. Empty disables native model admission."
         },
         "audit_checkpoint_grace_seconds": {
           "default": 600,
@@ -297,7 +298,7 @@
           "default": 8,
           "minimum": 1,
           "type": "integer",
-          "description": "Bulk-path conflict checks run at once (at least 1)."
+          "description": "Similarity reads one request runs at once (at least 1): a bulk write's conflict checks, and a coding capture's reads of the stored memories nearest its facts."
         },
         "bulk_conflict_check_max_entries": {
           "default": 200,
@@ -867,6 +868,11 @@
           "type": "number",
           "description": "Seconds a code-table compaction waits for its OPTIMIZE to finish."
         },
+        "code_compiler_share_mirror_packs": {
+          "default": false,
+          "type": "boolean",
+          "description": "Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its working tree, not a second copy. An older build's git jobs could write the shared packs: turn it on only once no older replica serves, and off before a rollback."
+        },
         "code_context_description_enabled": {
           "default": true,
           "type": "boolean",
@@ -1324,9 +1330,9 @@
           "description": "Size cap of the dependents re-extraction overflow queue; paths past it are dropped and counted."
         },
         "code_ingest_enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean",
-          "description": "Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark."
+          "description": "Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. It polls every configured repository; False = nothing polls, and `code.refresh` is the only trigger."
         },
         "code_ingest_exclude": {
           "default": "",
@@ -3789,7 +3795,7 @@
         "llm_provider": {
           "default": "",
           "type": "string",
-          "description": "\"openai\" | \"anthropic\" | \"bedrock\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Bedrock requires llm_model and the SDK credential chain. Run `make bench-quick` before making anthropic a default."
+          "description": "\"openai\" | \"anthropic\" | \"bedrock\" | \"vertex\" | \"local\" | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name or provider prefix, then from the API keys present, then fake. An explicit value wins. Bedrock and Vertex require a model and deployment credentials. Run `make bench-quick` before making anthropic a default."
         },
         "llm_request_timeout_s": {
           "default": 300.0,
@@ -3962,7 +3968,7 @@
         "mcp_toolset": {
           "default": "core",
           "type": "string",
-          "description": "Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on \"assistant\"); on every toolset but \"assistant\" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on \"readonly\" routes read ops only. \"core\"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). \"coding\"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. \"tracker\", \"tasks\" — the tracker plane and the task inbox rosters. \"atomic\"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. \"readonly\"  — the \"all\" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. \"assistant\" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. \"all\"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops under mcp_code_upload_tools aside. An unknown value is \"core\"."
+          "description": "Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on \"assistant\", nor where \"coding\" lists the code tools alone); on every toolset but \"assistant\" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on \"readonly\" routes read ops only. \"core\"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). \"coding\"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. A connection bound to a repository lists the code tools alone when its URL carries `schema_profile=compact`. \"tracker\", \"tasks\" — the tracker plane and the task inbox rosters. \"atomic\"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. \"readonly\"  — the \"all\" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. \"assistant\" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. \"all\"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops under mcp_code_upload_tools aside. An unknown value is \"core\"."
         },
         "memory_ask_aggregational_window": {
           "default": 40,
@@ -4489,7 +4495,7 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Memory writes one pass links (at least 1)."
+          "description": "Rows per page of memory writes to link or pending links to recheck (at least 1)."
         },
         "memory_code_links_enabled": {
           "default": true,
@@ -4524,7 +4530,7 @@
           "default": 14,
           "minimum": 1,
           "type": "integer",
-          "description": "Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped."
+          "description": "Days to retry a code-shaped name absent from trunk, measured when each pending scan starts."
         },
         "memory_code_links_revise_per_pass": {
           "default": 20,
@@ -4760,7 +4766,7 @@
         "memory_extract_coding_sweep_min_user_turns": {
           "default": 4,
           "type": "integer",
-          "description": "A coding capture keeps the coverage sweep's density / uncovered auto-gates only with at least this many user turns (on short sessions the sweep's output is mostly junk). 0 = always keep. An explicit namespace / per-call switch wins either way."
+          "description": "A trajectory replay keeps the coverage sweep's density / uncovered auto-gates only with at least this many user turns (on short sessions the sweep's output is mostly junk); a plugin's session capture never takes them. 0 = always keep. An explicit namespace / per-call switch wins either way."
         },
         "memory_extract_compact_prompt_max_chars": {
           "default": 1200,
@@ -4850,7 +4856,7 @@
         "memory_extract_verify_models": {
           "default": "claude-opus-5-5",
           "type": "string",
-          "description": "The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not and folds same-claim paraphrases and replaced states. A fact is dropped only when every model says drop; folds come from the first. Fails open. \"\" turns it off."
+          "description": "The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not, folds same-claim paraphrases and replaced states, and names the facts a stored memory already states. A fact is dropped as non-durable only when every model says drop; folds and stored restatements come from the first. Fails open. \"\" turns it off."
         },
         "memory_extract_verify_timeout_s": {
           "default": 45.0,
@@ -5975,7 +5981,7 @@
         "otel_code_counts_cache_s": {
           "default": 3600,
           "type": "integer",
-          "description": "Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols and code_edges, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export."
+          "description": "Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges and memory_code_links, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export."
         },
         "otel_code_grep_replay_cache_s": {
           "default": 3600,
@@ -7416,6 +7422,16 @@
           "default": 3.0,
           "type": "number",
           "description": "Over-fetch for the codes-first read: stage 1 keeps LIMIT × this by code distance, stage 2 rescores. Only read when the codes setting is sent."
+        },
+        "vertex_location": {
+          "default": "",
+          "type": "string",
+          "description": "Vertex AI location: a region, a multi-region (\"eu\", \"us\"), or \"global\". Required with the Vertex provider."
+        },
+        "vertex_project": {
+          "default": "",
+          "type": "string",
+          "description": "Google Cloud project that owns the Vertex AI requests, required with the Vertex provider."
         },
         "web_workers": {
           "default": 1,
