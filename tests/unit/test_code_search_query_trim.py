@@ -56,6 +56,11 @@ def test_identifier_forms_keep_camel_snake_and_qualified_names() -> None:
     assert "x" not in keep
     # a fiddle / commit hash splits like an identifier but is not one
     assert qt.identifier_forms("see 98b4bdfa-7c05008562fe") == frozenset()
+    # nor does a group of an id or a colour; a word and a number is a name
+    assert qt.identifier_forms("span 7c05 of e89b-12d3 in #ff00aa") == frozenset()
+    assert qt.identifier_forms("F401 on c8 in e2e with ed25519") == {
+        *("f401", "c8", "e2e", "ed25519"),
+    }
 
 
 def test_a_hash_is_long_hex_that_mixes_digits_and_a_code_or_a_numbered_name_is_a_name() -> None:
@@ -66,7 +71,15 @@ def test_a_hash_is_long_hex_that_mixes_digits_and_a_code_or_a_numbered_name_is_a
         assert not qt.is_hash(name)
     # a word and a number, in either order, however long
     for name in ("ed25519", "fade20481024", "1024bad"):
-        assert not qt.is_hash(name)
+        assert not qt.is_hash(name) and not qt.is_id_piece(name)
+    # letters and digits that alternate are a piece of an id at any length
+    for piece in ("7c05", "e89b", "12d3", "ff00aa", "1a2b3c", "2eed554"):
+        assert qt.is_id_piece(piece)
+    for name in ("f401", "e164", "c8", "abc123", "a456", "deadbeef", "1290012", "x86"):
+        assert not qt.is_id_piece(name)
+    # under the shortest group of a UUID it is a name
+    for name in ("e2e", "b2b", "a1b"):
+        assert not qt.is_id_piece(name)
     # the name stays in the question, whole and as an identifier
     key = "the ssh-ed25519 key is rejected"
     assert qt.strip_non_terms(key) == key and "ed25519" in qt.identifier_forms(key)
@@ -88,6 +101,12 @@ def test_strip_non_terms_drops_urls_and_whole_hashes_and_keeps_codes() -> None:
     ]
     codes = "F401 on e164 and d3d9 in face2face returns 404 or 1064"
     assert qt.strip_non_terms(codes) == codes
+    # a UUID goes whole, in either case: none of its groups is left to read as a name
+    ids = "request 123e4567-e89b-12d3-a456-426614174000 and 9F8E7D6C-0A1B-4C2D-8E3F-123456789ABC"
+    assert code_tokens(qt.strip_non_terms(ids)) == ["request", "and"]
+    # five groups of another length are not one
+    longer = "abcdefab-cdef-abcd-efab-cdefabcdefabc"
+    assert qt.strip_non_terms(longer) == longer
     q = "where SETTINGS secret values are masked"
     assert qt.strip_non_terms(q) == q
 
@@ -95,7 +114,30 @@ def test_strip_non_terms_drops_urls_and_whole_hashes_and_keeps_codes() -> None:
 def test_term_counts_count_the_words_that_hold_a_lexeme() -> None:
     said = qt.term_counts("Jaccard index of arrayJaccardIndex, ArrayJaccardIndex::executeImpl")
     assert said["jaccard"] == said["index"] == 3 and said["arrayjaccardindex"] == 2
-    assert said["array"] == 2 and said["executeimpl"] == said["of"] == 1
+    assert said["array"] == 2 and said["executeimpl"] == 1
+    # a function word in prose is not said, however often: it is there at 0
+    assert said["of"] == 0
+
+
+def test_a_function_word_counts_only_where_it_is_written_as_code() -> None:
+    def said(text: str) -> dict[str, int]:
+        return {t: n for t, n in qt.term_counts(text).items() if t in qt._FUNCTION_WORDS}
+
+    # called, read off an object, alone in backticks, capitalised inside a sentence
+    assert said("only() and qs.only and f().only and a[0].only") == {"only": 4, "and": 0}
+    assert said("the `only` method, not the `one and only`") == {
+        **{"the": 0, "only": 1, "not": 0, "and": 0},
+    }
+    assert said("it returns None, the WHERE clause is gone") == {
+        **{"it": 0, "none": 1, "the": 0, "where": 1, "is": 0},
+    }
+    # prose: lower case, a sentence's first word, a line's first word, after an ellipsis
+    prose = "None of them. Only one is left\nAll the others over there...then some"
+    assert set(said(prose).values()) == {0} and "only" in said(prose)
+    # inside an identifier it is the identifier that is said
+    assert said("order_by and run_from_argv") == {"by": 0, "and": 0, "from": 0}
+    # the stated limit: a capitalised one after a heading that lost its line break
+    assert said("Description When I save") == {"when": 1}
 
 
 _N = 100_000
@@ -122,13 +164,24 @@ def test_select_terms_keeps_identifiers_and_repeated_words_before_the_others() -
         "newname": 0,
     }
     keep = frozenset({"parsequotakey", "newname"})
-    said = {"paginator": 3, "pages": 2, "the": 9, "model": 4, "or": 5}
-    # first-seen order. Never a function word (`the`, `or`), however often it is said;
-    # a word many chunks hold (`model`), a number and a name the corpus lacks only where
-    # room is left
-    assert _select(tokens, df, keep=keep, said=said) == [
+    said = dict.fromkeys(tokens, 1) | {"paginator": 3, "pages": 2, "the": 0, "model": 4, "or": 0}
+    # first-seen order, and room for every word
+    assert _select(tokens, df, keep=keep, said=said) == tokens
+    # only where room is left, and in this order: a word many chunks hold (`model`),
+    # a function word the question never writes as code (`the`, `or`), a number and a
+    # name the corpus lacks
+    assert _select(tokens, df, 24, keep=keep, said=said) == tokens
+    assert _select(tokens, df, 20, keep=keep, said=said) == [
+        *("hi", "team", "looking", "the", "paginator", "reports", "pages", "model"),
+        *("culprit", "parsequotakey", "newname", "or"),
+    ]
+    assert _select(tokens, df, 16, keep=keep, said=said) == [
         *("hi", "team", "looking", "paginator", "reports", "pages", "model"),
-        *("culprit", "1064", "unknownword", "parsequotakey", "newname"),
+        *("culprit", "parsequotakey", "newname"),
+    ]
+    assert _select(tokens, df, 14, keep=keep, said=said) == [
+        *("hi", "team", "looking", "paginator", "reports", "pages", "culprit"),
+        *("parsequotakey", "newname"),
     ]
     # the words take half the list: the repeated ones first, wherever they stand, then
     # the others in reading order, a common one after them however often it is said;
@@ -140,16 +193,39 @@ def test_select_terms_keeps_identifiers_and_repeated_words_before_the_others() -
         *("paginator", "pages", "parsequotakey", "newname"),
     ]
     assert _select(tokens, df, 2, keep=keep, said=said) == ["paginator", "parsequotakey"]
-    # past the cap the words go before the identifiers, the rarest first
-    many = ["open", "call_command", "max_length", "check_filterable"]
-    dfs = {"open": 50, "call_command": 530, "max_length": 2700, "check_filterable": 5}
-    ids = frozenset(many[1:])
-    assert _select(many, dfs, 3, keep=ids) == ["open", "call_command", "check_filterable"]
     # the cap is never exceeded
     assert len(_select(tokens, df, 1, keep=keep, said=said)) == 1
 
 
-def test_a_callers_terms_are_asked_for_after_the_identifiers_and_move_no_word() -> None:
+def test_past_the_cap_a_word_said_once_goes_after_the_identifiers() -> None:
+    many = ["open", "call_command", "max_length", "check_filterable"]
+    dfs = {"open": 50, "call_command": 530, "max_length": 2700, "check_filterable": 5}
+    ids = frozenset(many[1:])
+    # a word the question says once is as often prose as subject: the identifiers stay
+    assert _select(many, dfs, 3, keep=ids, said={"open": 1}) == many[1:]
+    # a word it repeats goes before them, and they are cut to the rarest
+    assert _select(many, dfs, 3, keep=ids, said={"open": 2}) == [
+        *("open", "call_command", "check_filterable"),
+    ]
+    # a pasted traceback: forty names and sixteen words said once
+    names = [f"frame_{i}_call" for i in range(40)]
+    words = ["hi", "team", "looking", *(f"word{i}" for i in range(13))]
+    tokens = [*words, *names]
+    df = dict.fromkeys(words, 40) | {n: 100 + i for i, n in enumerate(names)}
+    kept = _select(tokens, df, keep=frozenset(names), said=dict.fromkeys(tokens, 1))
+    assert kept == names[:32]
+    # the words it repeats keep their slots, the rarest names take the others
+    said = dict.fromkeys(tokens, 1) | {"word0": 2, "word1": 3}
+    assert _select(tokens, df, keep=frozenset(names), said=said) == [
+        *("word0", "word1", *names[:30]),
+    ]
+    # fewer names than the slots left: the words said once fill them, in reading order
+    assert _select(tokens[:36], df, keep=frozenset(names), said=said) == [
+        *("hi", "team", "looking", *(f"word{i}" for i in range(9)), *names[:20]),
+    ]
+
+
+def test_a_callers_terms_take_the_slots_the_question_leaves() -> None:
     question = ["hi", "team", "paginator", "reports", "pages", "parsequotakey"]
     terms = ["pagecount", "page", "count", "orderedset", "ordered", "set", "of", "paginator"]
     tokens = [*question, *terms[:-1]]
@@ -163,21 +239,36 @@ def test_a_callers_terms_are_asked_for_after_the_identifiers_and_move_no_word() 
 
     # no word to filter: a common piece and a function word are asked for while there is room
     assert select(32, own=own, named=named) == tokens
-    # past the cap: the words, the identifiers of both, then the rarest pieces
+    # past the cap: the question's terms, the caller's identifiers, then the rarest pieces
     assert select(8, own=own, named=named) == [
         *("hi", "team", "paginator", "pages", "parsequotakey", "pagecount", "page", "orderedset"),
     ]
-    # a word the question says is its word still when a term holds it: `paginator` is in
-    # more chunks than the pieces that are kept, and keeps the slot repetition gives it
-    for k in (2, 4, 8, 32):
-        alone = [t for t in select(k) if t not in keep]
+    # the question is asked with the same known terms, in the same order, with and
+    # without them: `paginator` is its word still when a term holds it, and keeps the
+    # slot repetition gives it though it is in more chunks than the pieces that are kept
+    for k in (2, 4, 5, 8, 32):
+        alone = select(k)
         assert [t for t in select(k, own=own, named=named) if t in alone] == alone
+    # a name of its own that the corpus lacks scores nothing: a known piece goes first
+    lacking = df | {"parsequotakey": 0}
+    assert "parsequotakey" in _select(tokens, lacking, 5, keep=keep, said=said)
+    assert "parsequotakey" not in _select(
+        tokens, lacking, 5, keep=keep, said=said, own=own, named=named
+    )
     assert select(2, own=own, named=named) == ["paginator", "parsequotakey"]
     # a lexeme only the terms hold is no word of the question, however rare
     assert "page" not in select(4, own=own, named=named)
+    # a question that fills the list alone keeps its identifiers, however common
+    names = [f"frame_{i}_call" for i in range(32)]
+    full = [*names, "raresymbol"]
+    dfs = dict.fromkeys(names, 9_000) | {"raresymbol": 1}
+    kw: dict[str, Any] = dict(keep=frozenset(names), said=dict.fromkeys(names, 1))
+    rare = frozenset({"raresymbol"})
+    assert _select(full, dfs, 32, own=rare, named=rare, **kw) == names
+    assert _select(full[8:], dfs, 32, own=rare, named=rare, **kw) == full[8:]
 
 
-def test_a_function_word_is_no_word_to_keep_whatever_its_class() -> None:
+def test_a_function_word_in_prose_waits_for_every_other_word_whatever_its_class() -> None:
     q = (
         "It doesn't work: the form doesn't save and the view doesn't redirect, and I've also "
         "seen that we'll only get all of the rows through the admin after each save, while "
@@ -187,14 +278,93 @@ def test_a_function_word_is_no_word_to_keep_whatever_its_class() -> None:
         "or after the transaction is rolled back by another request."
     )
     p = qt.plan(q, None, 48, {})
-    assert p.active and p.said["doesn"] == 3 and p.said["also"] == 3 and p.said["only"] == 2
-    kept = _select(p.all_tokens, dict.fromkeys(p.all_tokens, 40), p.cap, keep=p.keep, said=p.said)
     # repeated or not: a contraction's half, a quantifier, a preposition, a particle
     function = {"doesn", "ve", "ll", "don", "isn", "also", "only", "all", "through", "each"}
     function |= {"both", "any", "some", "after", "while", "until", "before", "just", "another"}
-    assert function <= set(p.all_tokens) and function.isdisjoint(kept)
+    assert p.active and function <= set(p.all_tokens)
+    assert {p.said[t] for t in function} == {0}
+    kept = _select(p.all_tokens, dict.fromkeys(p.all_tokens, 40), p.cap, keep=p.keep, said=p.said)
+    assert function.isdisjoint(kept)
     # the content words are kept, and a function word inside an identifier is asked for there
     assert {"form", "rows", "admin", "transaction", "select_for_update"} <= set(kept)
+
+
+def test_a_function_word_written_as_code_is_a_word_of_the_question() -> None:
+    filler = (
+        "We have looked at this for a while and it is not clear to us what is going on or "
+        "where it comes from, so here is what we see on our side after the upgrade of the "
+        "project. "
+    )
+    assert len(code_tokens(filler)) > 16
+    cases = {
+        "only": (
+            "The docs say that only() defers every other column. With a proxy model the "
+            "query built by only() still selects the whole row, and only() after "
+            "select_related crashes."
+        ),
+        "none": (
+            "The bulk update of the rows returns None, unlike a plain update, which returns "
+            "the count of matched rows. The caller cannot tell whether a single row was "
+            "matched or skipped when the bulk update returns None."
+        ),
+    }
+    for word, subject in cases.items():
+        p = qt.plan(filler + subject, None, 48, {})
+        assert p.active and p.said[word] >= 2 and word not in p.keep
+        df = dict.fromkeys(p.all_tokens, 40)
+        assert word in _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said)
+        # the same subject in prose: the word is English there, and waits
+        prose = qt.plan(filler + subject.replace("()", "").replace("None", "none"), None, 48, {})
+        assert prose.active and prose.said[word] == 0
+        df = dict.fromkeys(prose.all_tokens, 40)
+        assert word not in _select(
+            prose.all_tokens, df, prose.cap, keep=prose.keep, said=prose.said
+        )
+
+
+def test_a_question_of_function_words_alone_still_has_terms() -> None:
+    words = sorted(w for w in qt._FUNCTION_WORDS if len(w) > 1)[:60]
+    p = qt.plan(" ".join(words), None, 48, {})
+    assert p.active and p.keep == frozenset() and set(p.said.values()) == {0}
+    df = dict.fromkeys(p.all_tokens, 40)
+    # nothing better is left: the leg is asked with the first of them, not with nothing
+    assert _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said) == words[:16]
+
+
+_TRACEBACK = """Saving the changelist form raises an error since the upgrade.
+Traceback (most recent call last):
+  File "/usr/lib/python3.11/site-packages/django/core/handlers/exception.py", line 55, in inner
+    response = get_response(request)
+  File "/usr/lib/python3.11/site-packages/django/core/handlers/base.py", line 197, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "/usr/lib/python3.11/site-packages/django/contrib/admin/options.py", line 688, in wrapper
+    return self.admin_site.admin_view(view)(*args, **kwargs)
+  File "/usr/lib/python3.11/site-packages/django/contrib/admin/options.py", line 1889, in changelist_view
+    if formset.is_valid():
+  File "/usr/lib/python3.11/site-packages/django/forms/formsets.py", line 384, in is_valid
+    self.errors
+  File "/usr/lib/python3.11/site-packages/django/forms/formsets.py", line 366, in errors
+    self.full_clean()
+  File "/usr/lib/python3.11/site-packages/django/forms/formsets.py", line 429, in full_clean
+    raise ValidationError("ManagementForm data is missing or has been tampered with")
+"""
+
+
+def test_a_traceback_keeps_the_names_its_frames_call_and_repeats_its_format() -> None:
+    p = qt.plan(_TRACEBACK, None, 48, {})
+    assert p.active
+    df = dict.fromkeys(p.all_tokens, 40) | {"django": 60_000, "py": 90_000}
+    kept = _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said)
+    # every function a frame names is asked for, whole
+    frames = {"get_response", "_get_response", "wrapped_callback", "changelist_view"}
+    assert frames | {"is_valid", "full_clean", "validationerror", "managementform"} <= set(kept)
+    # the stated limit: each frame repeats the words of its format and the directories
+    # of its path, and they take 7 of the 16 word slots, before the words the question
+    # says once and the ones the later frames repeat
+    assert {"file", "line", "usr", "lib", "python", "site", "packages"} <= set(kept)
+    assert {"saving", "raises", "upgrade"}.isdisjoint(kept)
+    assert {"admin", "forms", "formsets", "options"}.isdisjoint(kept)
+    assert len(kept) == 16 + len(p.keep)
 
 
 _GREETING = "Hi team, I have been looking at this for a while now and am not sure what is going on."

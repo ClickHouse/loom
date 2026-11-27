@@ -14,25 +14,35 @@ This module is the plan for such a question, pure and unit-testable:
   arrive flattened into one line, so the match is a case-insensitive phrase,
   not a line — and counts what it removed.
 * `strip_non_terms` removes what names no subject before the tokenizer splits it:
-  URLs and hashes.
+  URLs, UUIDs and hashes.
+* `term_counts` counts how often the question says each lexeme. An English function
+  word counts only where the question writes it as code (`only()`, `qs.only`,
+  `returns None`): prose repeats it by grammar.
 * `select_terms` keeps, for at most `WORD_SHARE` of the list, the words: those the
   question says more than once first, then the others, each in reading order. The
-  whole forms of the identifiers (camel / snake / `a::b`) take the rest, then the
-  other lexemes of the terms a caller added, the rarest when there are more than
-  fit. A caller's terms add to the list and move no word of the question: its words
-  are chosen as they are without them. An English function word is not a word to
-  keep. A word that more than `COMMON_SHARE` of the chunks hold, a bare number, and a
-  lexeme the corpus does not contain (df 0 admits no row and scores nothing) fill a
-  slot only when nothing better is left.
+  whole forms of the identifiers (camel / snake / `a::b`) take the rest. When more
+  are left than fit, the words it repeats stay, then its identifiers, the rarest
+  first, then the words it says once. A caller's terms take the slots the question
+  leaves, the whole forms of their identifiers before their other lexemes, the
+  rarest first: the question is asked with the same known terms with and without
+  them. A word that more than `COMMON_SHARE` of the chunks hold, a function word the
+  question never writes as code, a bare number, and a lexeme the corpus does not
+  contain (df 0 admits no row and scores nothing) fill a slot, in that order, only
+  when nothing better is left.
 * the vector leg embeds the first `EMBED_MAX_WORDS` words of the cleaned
   text instead of the raw body.
 
 Known limits: a subject the question states once, as a plain word, after its word
 share is already taken is not asked for, nor is one that more than `COMMON_SHARE` of
 the chunks hold when other words fill the share. The function words are English, and
-one that is also a name in code (`only`, `over`) is asked for only inside an
-identifier. A hash spelled as one run of letters and one of digits, about one
-seven-character hash in eight, reads as such a name and stays a term.
+one that is also a name in code is asked for as a word only where it is written as
+code: `over` in `an aggregate over a window` is not. A capitalised one after a
+heading that lost its line break, or in a title in title case, reads as code.
+Repetition marks a format as well as a subject: each frame of a traceback repeats
+`File`, `line` and the directories of its path, and these take word slots before the
+prose; the functions the frames name are identifiers and are kept. A question that
+fills the list alone is asked without a caller's terms. A short id that reads as a
+word and a number (`ff0000`, `a456`) is kept as an identifier, as a code (`f401`) is.
 
 Nothing here runs for a question whose tokenizer output fits the cap: the
 plan's `lexical_query`, `embed_text` and `tokens` are then the raw inputs,
@@ -79,9 +89,10 @@ COMMON_SHARE = 1 / 8
 # The vector leg embeds at most this many whitespace words of the cleaned text (~2,000
 # characters of prose: the request cap for `query`).
 EMBED_MAX_WORDS = 512
-# English function words, by class: a question repeats them more than its subject, and
-# they name none. The tokenizer splits a contraction at its apostrophe and drops the
-# one-letter half, so the other half is listed with them.
+# English function words, by class. A question repeats them more than its subject, so
+# one counts as said only where the question writes it as code (`written_as_code`).
+# The tokenizer splits a contraction at its apostrophe and drops the one-letter half,
+# so the other half is listed with them.
 _FUNCTION_WORDS = frozenset(
     (
         # determiners
@@ -122,11 +133,22 @@ _BOILERPLATE_RE = re.compile(
 _QUALIFIED_RE = re.compile(
     r"(?<![A-Za-z0-9_])[0-9]*+([A-Za-z_][A-Za-z0-9_]*+(?:::[A-Za-z_][A-Za-z0-9_]*+)+)"
 )
-# A commit or fiddle hash: seven or more hex characters, the shortest form git prints.
-_HEX_RE = re.compile(r"[0-9a-f]{7,}")
-# An address, not a subject: its host, route words, hash and line anchor.
-_URL_RE = re.compile(r"https?://\S+")
+# A piece of an id is four or more hex characters, the shortest group of a UUID: a
+# shorter word (`e2e`, `b2b`) is a name.
+_HEX_RE = re.compile(r"[0-9a-f]{4,}")
+# A commit or fiddle hash is seven or more of them, the shortest form git prints.
+HASH_MIN_CHARS = 7
+# An address or an id, not a subject: a URL with its host, route words, hash and line
+# anchor, and a UUID with its five groups.
+_ADDRESS_RE = re.compile(
+    r"https?://\S+|(?<![0-9A-Za-z])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?![0-9A-Za-z])",
+    re.IGNORECASE,
+)
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
+# What stands before a word read off an object (`qs.only`, `f().only`, `a[0].only`), and
+# before a word inside a sentence.
+_ATTRIBUTE_RE = re.compile(r"[A-Za-z0-9_)\]]\.")
+_MID_SENTENCE_RE = re.compile(r"[a-z0-9,] ")
 
 
 @dataclass(frozen=True)
@@ -159,9 +181,10 @@ def strip_boilerplate(text: str) -> tuple[str, int]:
 def identifier_forms(text: str) -> frozenset[str]:
     """Lowercased whole forms of the identifiers in `text` that a trim must
     keep: camel / snake compounds (tokenize.compound_identifiers) and every
-    side of a `a::b` qualified name. A hash splits at its letter-digit edges
-    like an identifier but is not one."""
-    keep = {t for t in compound_identifiers(text) if not is_hash(t)}
+    side of a `a::b` qualified name. A piece of an id (`7c05`, `ff00aa`, a hash) splits
+    at its letter-digit edges like an identifier but is not one: it is a word of the
+    question, kept as a word is."""
+    keep = {t for t in compound_identifiers(text) if not is_id_piece(t)}
     for m in _QUALIFIED_RE.finditer(text):
         for part in m.group(1).split("::"):
             if len(part) >= 2:
@@ -169,33 +192,59 @@ def identifier_forms(text: str) -> frozenset[str]:
     return frozenset(keep)
 
 
-def is_hash(word: str) -> bool:
-    """A lowercased word of seven or more hex characters with two or more digits, where
-    letters and digits meet at two or more places: a commit or fiddle hash. A short code
-    (`f401`, `e164`), a word and a number (`ed25519`) and a word around one digit
-    (`face2face`) are names; a number stays a number."""
+def is_id_piece(word: str) -> bool:
+    """A lowercased word of four or more hex characters where letters and digits meet at
+    two or more places (`7c05`, `ff00aa`, `2eed554`): a group of an id, a colour or a
+    hash. A word and a number (`f401`, `e164`, `ed25519`) meet at one and are a name."""
     return (
         bool(_HEX_RE.fullmatch(word))
-        and sum(c.isdigit() for c in word) >= 2
         and sum(a.isdigit() != b.isdigit() for a, b in zip(word, word[1:], strict=False)) >= 2
     )
 
 
+def is_hash(word: str) -> bool:
+    """A piece of an id of `HASH_MIN_CHARS` or more characters with two or more digits:
+    a commit or fiddle hash. A shorter piece and a word around one digit (`face2face`)
+    stay words of the question; a number stays a number."""
+    return len(word) >= HASH_MIN_CHARS and sum(c.isdigit() for c in word) >= 2 and is_id_piece(word)
+
+
 def strip_non_terms(text: str) -> str:
-    """The text without what names no subject: URLs and hashes. A hash goes whole,
-    before the tokenizer splits it at its letter-digit edges into letter-only pieces
-    that read as rare words."""
+    """The text without what names no subject: URLs, UUIDs and hashes. A hash or a UUID
+    goes whole, before the tokenizer splits it at its hyphens and letter-digit edges
+    into pieces that read as rare words."""
     return _WORD_RE.sub(
         lambda m: " " if is_hash(m.group(0).lower()) else m.group(0),
-        _URL_RE.sub(" ", text),
+        _ADDRESS_RE.sub(" ", text),
+    )
+
+
+def written_as_code(text: str, start: int, end: int) -> bool:
+    """Whether the word `text[start:end]` is written as code and not as prose: called
+    (`only(`), read off an object (`qs.only`), alone in backticks, or capitalised where
+    no sentence starts (`returns None`, `the WHERE clause`)."""
+    before, after = text[max(start - 2, 0) : start], text[end : end + 1]
+    return (
+        after == "("
+        or bool(_ATTRIBUTE_RE.fullmatch(before))
+        or (before.endswith("`") and after == "`")
+        or (text[start].isupper() and bool(_MID_SENTENCE_RE.fullmatch(before)))
     )
 
 
 def term_counts(text: str) -> dict[str, int]:
-    """How many words of `text` hold each lexeme, whole or as a subtoken."""
+    """How many words of `text` hold each lexeme, whole or as a subtoken. A function
+    word counts only where it stands alone and is written as code: prose repeats it by
+    grammar, and so do the identifiers that hold it (`order_by`, `run_from_argv`). One
+    the question never says that way is in the result at 0."""
     counts: Counter[str] = Counter()
     for m in _WORD_RE.finditer(text):
-        counts.update(code_tokens(m.group(0)))
+        whole = m.group(0).lower()
+        for t in code_tokens(m.group(0)):
+            if t not in _FUNCTION_WORDS:
+                counts[t] += 1
+            else:
+                counts[t] += t == whole and written_as_code(text, *m.span())
     return dict(counts)
 
 
@@ -211,16 +260,18 @@ def select_terms(
     named: frozenset[str] = frozenset(),
 ) -> list[str]:
     """At most `k` tokens for the lexical gate, in their first-seen order: the whole
-    forms of the question's identifiers (`keep`), the lexemes of a caller's terms (`own`,
-    the whole forms of their identifiers in `named`) and, for `WORD_SHARE` of `k`, the
-    words: those `said` more than once first, then the others, each in reading order;
-    never a function word. `said` counts the question alone, and a lexeme it says is a
-    word of the question whether or not a caller's term holds it too, so the words kept
-    are the same with and without a caller's terms. Past `k` the words go first, then the
-    identifiers of both, then the lexemes only a caller's terms hold, the rarest by
-    document frequency first. A word more than `COMMON_SHARE` of `n_chunks` chunks hold
-    ranks after the other words; a bare number and an unknown token (df 0) rank after
-    everything the corpus knows."""
+    forms of the question's identifiers (`keep`) and, for `WORD_SHARE` of `k`, its words:
+    those `said` more than once first, then the others, each in reading order. A word
+    more than `COMMON_SHARE` of `n_chunks` chunks hold ranks after the other words,
+    and one `said` counts at 0 (a function word the question never writes as code)
+    after those; a bare number and an unknown token (df 0) rank after everything the
+    corpus knows. Past `k` the words it repeats go first, then its identifiers, the
+    rarest by document frequency first, then the words it says once. The lexemes only
+    a caller's terms hold (`own`, the whole forms of their identifiers in `named`)
+    take the slots that are left, the identifiers first, the rarest first. `said`
+    counts the question alone, and a lexeme it says is its word whether or not a
+    caller's term holds it too, so the terms of the question that the corpus knows
+    are the same with and without a caller's."""
     k = max(int(k), 1)
     position = {t: i for i, t in enumerate(tokens)}
 
@@ -230,16 +281,23 @@ def select_terms(
     def common(t: str) -> bool:
         return df.get(t, 0) > n_chunks * COMMON_SHARE
 
+    def repeated(t: str) -> bool:
+        return said.get(t, 0) >= 2 and not common(t)
+
+    def order(t: str) -> tuple[bool, bool, bool, bool, int]:
+        return (unknown(t), said.get(t) == 0, common(t), said.get(t, 0) < 2, position[t])
+
     theirs = own - said.keys()
-    words = [t for t in tokens if t not in keep and t not in theirs and t not in _FUNCTION_WORDS]
-    words.sort(key=lambda t: (unknown(t), common(t), said.get(t, 0) < 2, position[t]))
-    kept_words = set(words[: max(int(k * WORD_SHARE), 1)])
-    names = keep | named
+    words = sorted((t for t in tokens if t not in keep and t not in theirs), key=order)
+    kept_words = {t: i for i, t in enumerate(words[: max(int(k * WORD_SHARE), 1)])}
 
-    def rank(t: str) -> tuple[bool, bool, bool, int, int]:
-        return (unknown(t), t not in kept_words, t not in names, df.get(t, 0), position[t])
+    def rank(t: str) -> tuple[bool, int, int, int]:
+        if t in kept_words:
+            return (unknown(t), 0 if repeated(t) else 2, kept_words[t], 0)
+        tier = 1 if t in keep else 3 if t in named else 4
+        return (unknown(t), tier, df.get(t, 0), position[t])
 
-    eligible = [t for t in tokens if t in kept_words or t in names or t in own]
+    eligible = [t for t in tokens if t in kept_words or t in keep or t in own]
     chosen = set(sorted(eligible, key=rank)[:k])
     return [t for t in tokens if t in chosen]
 
@@ -260,9 +318,9 @@ def plan(
     gate will take at most `min(max_tokens, LEXICAL_TOKEN_CAP)` tokens once the
     corpus statistics arrive (select_terms): its identifiers and its words, those
     it repeats first. `extra_terms` are a caller's own choice of terms, not words of
-    the question: none is stripped or filtered or counted as said, and what is not an
-    identifier's whole form among them is asked for after the identifiers. `work`
-    receives the disclosure counters only when the trim is active."""
+    the question: none is stripped or filtered or counted as said, and they are asked
+    for in the slots the question leaves. `work` receives the disclosure counters only
+    when the trim is active."""
     lexical_query = query if not extra_terms else query + " " + " ".join(extra_terms)
     raw_tokens = code_tokens(lexical_query)
     cap = int(max_tokens)
