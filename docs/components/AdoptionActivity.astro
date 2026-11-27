@@ -22,6 +22,7 @@ const { rows, grain } = Astro.props;
 const number = new Intl.NumberFormat("en-US");
 const hasActivity = rows.some(({ active, operations }) => active > 0 || operations > 0);
 const hasEstimate = rows.some(({ estimate, operations }) => estimate !== null && estimate > operations);
+const hasCurrentPeriod = rows.some(({ current }) => current);
 const columns = [
   "Period start (UTC)",
   "Reporting installations",
@@ -32,16 +33,23 @@ const columns = [
 ];
 ---
 
-{hasActivity ? <div class="charts">
+{hasActivity ? <>
+<Text className="activity-guide" size="sm" color="muted">
+  Counts use completed UTC days.{grain !== "day" && " Charts show periods that begin within the selected window."}
+  {" Gaps indicate periods without a report."}
+  {hasCurrentPeriod && " Hollow markers show activity to date in the current period."}
+</Text>
+<div class="charts">
   <Panel className="chart" orientation="vertical" alignItems="start" padding="lg" gap="none" hasBorder fillWidth>
     <Title type="h3" size="sm">Active installations</Title>
-    <Text size="sm" color="muted">Installations with a successful request in each period.</Text>
+    <Text size="sm" color="muted">Distinct installations with a successful request.</Text>
     <AdoptionTrend
       rows={rows.map(({ period, active, current }) => ({ day: period, value: active, current }))}
       label="Active installations"
       grain={grain}
       mode="line"
       color="info"
+      showNotes={false}
       showTable={false}
     />
   </Panel>
@@ -49,13 +57,15 @@ const columns = [
     <Title type="h3" size="sm">Successful requests</Title>
     <Text size="sm" color="muted">Successful requests across reporting installations.</Text>
     <AdoptionTrend
-      rows={rows.map(({ period, operations, estimate, current }) => ({ day: period, value: operations, estimate, current }))}
+      rows={rows.map(({ period, operations, current }) => ({ day: period, value: operations, current }))}
       label="Successful requests"
       grain={grain}
+      mode="line"
+      showNotes={false}
       showTable={false}
     />
   </Panel>
-</div> : (
+</div></> : (
   <Text size="sm" color="muted">The reporting installations recorded no successful requests in these periods.</Text>
 )}
 
@@ -84,6 +94,8 @@ const columns = [
   .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem; }
   .chart { min-inline-size: 0; }
   .chart p { margin-block-start: 0.3rem; }
+  @media (min-width: 46.01rem) and (max-width: 58rem) { .chart p { min-block-size: 2lh; } }
+  :global(.activity-guide) { margin-block-end: 0.7rem; }
   .data { margin-block-start: 0.75rem; }
   summary { cursor: pointer; padding-block: 0.55rem; color: var(--click-global-color-text-link-default); font-size: 0.86rem; }
   @media (max-width: 46rem) { .charts { grid-template-columns: minmax(0, 1fr); } }

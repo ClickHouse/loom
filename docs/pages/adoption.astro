@@ -1,23 +1,26 @@
 ---
-import { Badge } from "@clickhouse/click-ui/Badge";
 import { BigStat } from "@clickhouse/click-ui/BigStat";
 import { Icon } from "@clickhouse/click-ui/Icon";
-import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
 import { Link } from "@clickhouse/click-ui/Link";
 import { Panel } from "@clickhouse/click-ui/Panel";
+import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
 import { Table } from "@clickhouse/click-ui/Table";
 import { Text } from "@clickhouse/click-ui/Text";
 import { Title } from "@clickhouse/click-ui/Title";
 import AdoptionActivity from "../components/AdoptionActivity.astro";
+import AdoptionDomainDirectory from "../components/AdoptionDomainDirectory.astro";
 import AdoptionFilterForm from "../components/AdoptionFilterForm.astro";
+import AdoptionGrowth from "../components/AdoptionGrowth.astro";
 import AdoptionLifecycle from "../components/AdoptionLifecycle.astro";
 import AdoptionTrend from "../components/AdoptionTrend.astro";
+import AdoptionUsageTrends from "../components/AdoptionUsageTrends.astro";
 import SiteFrame from "../components/SiteFrame.astro";
 import { loadPublishedAdoption } from "../lib/adoption-data.mjs";
 import {
   activityForRange,
   adoptionCsv,
   adoptionFilters,
+  adoptionGrowthForRange,
   adoptionUrl,
   csvBody,
   daysBefore,
@@ -27,15 +30,15 @@ import {
   summarizeOss,
   thresholds,
 } from "../lib/adoption-view.mjs";
+import { repositoryUrl } from "../lib/site-identity.mjs";
 
 export const prerender = false;
 
 const filters = adoptionFilters(Astro.url.searchParams);
 const dataset = Astro.url.searchParams.get("csv");
 const tab = dataset ? (dataset === "downloads" || dataset === "stars" ? "oss" : "self-hosted") : filters.tab;
-const { today, archivedStars, selfHosted, openSource } = await loadPublishedAdoption(tab);
-const { totals: summaries, retention, versions, activity, lifecycle, domains } = selfHosted;
-const warehouseAvailable = Array.isArray(summaries) && domains !== null;
+const { today, selfHosted, openSource, warehouseAvailable } = await loadPublishedAdoption(tab);
+const { totals: summaries, retention, versions, activity, lifecycle } = selfHosted;
 if (warehouseAvailable) {
   Astro.response.headers.set("Cache-Control", "public, max-age=0, must-revalidate");
   Astro.response.headers.set(
@@ -66,6 +69,10 @@ const signedPercent = new Intl.NumberFormat("en-US", {
   signDisplay: "exceptZero",
 });
 const series = activityForRange(activity, filters, today);
+const growthSeries = adoptionGrowthForRange(selfHosted.growth, filters, today);
+const latestGrowth = selfHosted.growth?.findLast(({ grain }) => grain === "day");
+const growthCoverage = selfHosted.growthCoverage;
+const directoryDays = Math.min(filters.days, 90);
 const lifecycleGroups = [
   { entity: "deployment", threshold: filters.installation, title: "Installation lifecycle" },
   { entity: "domain", threshold: filters.domain, title: "Domain lifecycle" },
@@ -81,10 +88,6 @@ const lifecycleGroups = [
 }));
 const oss = summarizeOss(openSource, filters.days, today);
 const stars = oss.find(({ id }) => id === "stars");
-const packageUrls = {
-  PyPI: "https://pypi.org/project/clickhouse-loom/",
-  npm: "https://www.npmjs.com/package/@clickhouse/loom",
-};
 if (dataset) {
   const rows = adoptionCsv(dataset, series, lifecycleGroups, oss);
   if (!rows) return new Response("Unknown dataset", { status: 404 });
@@ -141,6 +144,7 @@ const metricGroups = [
 ];
 const overview = [
   ["Active installations", "active", "Ran at least one successful request"],
+  ["Reporting installations", "reporting", "Sent telemetry in the selected window"],
   ["Successful requests", "operations", "Across reporting installations"],
   ["Verified companies", "verified_companies", "Enrolled companies with an active installation"],
 ];
@@ -153,11 +157,12 @@ const thresholdsLabel = (threshold: number) =>
   threshold ? thresholds[threshold] + " successful requests" : thresholds[threshold];
 const labeledOptions = (labels: Record<string, string>) =>
   Object.entries(labels).map(([value, label]) => ({ value, label }));
+const thresholdChoices = labeledOptions({ 0: "Any success", 50000: "Over 50k", 1000000: "Over 1M" });
 const choiceFields = [
-  { name: "grain", label: "Activity resolution", value: filters.grain, options: labeledOptions(grains) },
+  { name: "grain", label: "Activity interval", value: filters.grain, options: labeledOptions(grains) },
   {
     name: "cohort",
-    label: "Lifecycle resolution",
+    label: "Lifecycle interval",
     value: filters.cohort,
     options: labeledOptions({ week: "Weekly", month: "Monthly" }),
   },
@@ -165,12 +170,10 @@ const choiceFields = [
     name: "installation",
     label: "Installation threshold",
     value: filters.installation,
-    options: labeledOptions(thresholds),
+    options: thresholdChoices,
   },
-  { name: "domain", label: "Domain threshold", value: filters.domain, options: labeledOptions(thresholds) },
+  { name: "domain", label: "Domain threshold", value: filters.domain, options: thresholdChoices },
 ];
-const defaultFilters = adoptionFilters(new URLSearchParams());
-const advanced = choiceFields.some(({ name, value }) => value !== defaultFilters[name]);
 const hasLifecycle = lifecycleGroups.some(({ rows }) => rows.length > 0);
 const metricValue = (value: number | null | undefined) => (value == null ? "—" : number.format(value));
 const featureRequests = metricGroups[0].entries
@@ -178,8 +181,54 @@ const featureRequests = metricGroups[0].entries
   .filter(({ value }) => Number.isFinite(value))
   .sort((left, right) => right.value - left.value);
 const featureMax = featureRequests.at(0)?.value ?? 0;
-const ossHighlights = ["stars", "pypi", "npm"].flatMap((id) => oss.filter((metric) => metric.id === id));
-const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history.length);
+const hasFeatureTrends = series.some((row) => metricGroups[0].entries.some(([, key]) => Number.isFinite(row[key])));
+const ossGrain = filters.days === 30 ? "day" : "month";
+const ossInterval = (day: string) => (ossGrain === "day" ? day : day.slice(0, 7) + "-01");
+const daysInMonth = (day: string) =>
+  new Date(Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)), 0)).getUTCDate();
+const sdkDownloads = oss
+  .filter(({ sdkName, isDownload }) => sdkName && isDownload)
+  .map((metric) => ({
+    ...metric,
+    rows:
+      ossGrain === "day"
+        ? metric.history
+        : metric.monthly.map((row) => ({ ...row, partial: row.days < daysInMonth(row.day) })),
+  }));
+const sdkMaximum = Math.max(1, ...sdkDownloads.flatMap(({ rows }) => rows.map(({ value }) => value)));
+const hasDownloads = sdkDownloads.some(({ rows }) => rows.length > 0);
+const counterMetrics = oss
+  .filter(({ isDownload }) => !isDownload)
+  .map((metric) => ({
+    ...metric,
+    rows:
+      ossGrain === "day"
+        ? metric.history
+        : Array.from(new Map(metric.history.map(({ day, value }) => [ossInterval(day), value])), ([day, value]) => ({
+            day,
+            value,
+          })),
+  }));
+const moreSdks = [
+  ["Go SDK", "/docs/reference/go-sdk"],
+  ["Ruby source", `${repositoryUrl}/tree/main/sdk/ruby`],
+  [".NET source", `${repositoryUrl}/tree/main/sdk/dotnet`],
+  ["Java source", `${repositoryUrl}/tree/main/sdk/java`],
+];
+const ossCounterGroups = [
+  {
+    id: "github-stars",
+    title: "Repository interest",
+    description: "Stars and forks from cumulative GitHub snapshots.",
+    metrics: counterMetrics.filter(({ id }) => id === "stars" || id === "forks"),
+  },
+  {
+    id: "release-distribution",
+    title: "Release and container distribution",
+    description: "Cumulative downloads of release assets and pulls from the GitHub Container Registry.",
+    metrics: counterMetrics.filter(({ id }) => id === "releases" || id === "pulls"),
+  },
+];
 ---
 
 <SiteFrame
@@ -191,7 +240,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
     <header class="intro">
       <div>
         <Title type="h1" size="xl" family="brand">Loom adoption</Title>
-        <Text className="intro-copy" size="lg" color="muted">See how teams run Loom and how developers use its open-source packages.</Text>
+        <Text className="intro-copy" size="lg" color="muted">{filters.tab === "self-hosted" ? "Follow self-hosted installation growth and how teams use Loom." : "Track SDK distribution and interest in the Loom repository."}</Text>
       </div>
       <Link href="#methodology">How we measure adoption</Link>
     </header>
@@ -216,115 +265,81 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
     {filters.tab === "self-hosted" && <section id="self-hosted" aria-labelledby="self-hosted-title">
       <div class="section-heading">
         <div>
-          <Title type="h2" size="lg" id="self-hosted-title">Self-hosted usage</Title>
-          <Text size="sm" color="muted">{selfHostedWindowLabel}</Text>
+          <Title type="h2" size="lg" id="self-hosted-title">Self-hosted adoption</Title>
+          <Text size="sm" color="muted">Growth and usage from self-hosted installations that report adoption telemetry.</Text>
         </div>
         <Link size="sm" href="#reported-contact-domains">Reported contact domains</Link>
       </div>
-      {totals ? <>
-        {totals.operations > 0 && <div class="metrics">
-          {overview.map(([label, key, description]) => {
-            const change = compare ? relativeChange(currentComplete[key], previousComplete[key]) : null;
-            return <Panel className="metric" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
-              <BigStat className="statistic" height="auto" label={label} title={metricValue(totals[key])} order="titleBottom" size="lg" />
-              <Text color="muted" size="sm">{description}</Text>
-              {change !== null && <Text className="change" size="sm">Complete days {signedPercent.format(change)} vs. previous {filters.days} days</Text>}
-            </Panel>;
-          })}
-        </div>}
-        <div class="coverage">
-          <div>
-            <Text className="coverage-title" size="sm" weight="semibold">{totals.days_reported} of {filters.days} complete days reported</Text>
-            <Text size="sm" color="muted">{number.format(totals.reporting)} installations sent telemetry. Latest reporting date <time datetime={totals.last_reported}>{shortDate(totals.last_reported)}</time> UTC.</Text>
-            {totals.operations === 0 && <Text size="sm" color="muted">No successful requests were reported in this window.</Text>}
-          </div>
-          <ProgressBar className="coverage-meter" type="small" progress={(totals.days_reported / filters.days) * 100} aria-hidden="true" />
+      {latestGrowth ? (
+        <div class="growth-overview">
+          <Panel className="growth-stat" orientation="vertical" alignItems="start" padding="lg" gap="sm" hasBorder fillWidth>
+            <BigStat className="statistic" height="auto" label="Observed self-hosted installations" title={number.format(latestGrowth.cumulative_active)} order="titleBottom" size="lg" />
+            <Text size="sm" color="muted">{growthCoverage
+              ? "Retained telemetry from " + date.formatRange(new Date(growthCoverage.first_day), new Date(growthCoverage.last_day)) + " UTC"
+              : "Across retained self-hosted telemetry"}</Text>
+          </Panel>
+          {growthSeries.length > 0 ? (
+            <AdoptionGrowth rows={growthSeries} grain={filters.grain} rangeStart={cutoff} />
+          ) : <Text className="growth-message" size="sm" color="muted">No growth periods are available in the selected window.</Text>}
         </div>
-      </> : (
-        <Panel className="coverage empty" padding="lg" hasBorder fillWidth>
-          <Text size="sm" color="muted">{Array.isArray(summaries) ? "No installations reported in this window." : "Self-hosted telemetry is unavailable."}</Text>
-        </Panel>
-      )}
-
-      <div class:list={["proof", { split: archivedStars }]}>
-        <Panel className="proof-card" id="reported-contact-domains" orientation="vertical" alignItems="start" gap="xs" padding="lg" hasBorder fillWidth>
-          <Title type="h3" size="md">Reported contact domains</Title>
-          <Text size="sm" color="muted">Shared contact domains with a successful request in a completed reporting window today or in the previous 90 UTC days.</Text>
-          {domains === null ? (
-            <Text className="empty-state" size="sm">The domain list is unavailable.</Text>
-          ) : domains.length > 0 ? (
-            <ul class="contact-domains">
-              {domains.map((domain) => <li><Badge text={domain} size="md" state="neutral" /></li>)}
-            </ul>
-          ) : (
-            <Text className="empty-state" size="sm">No domains met the reporting criteria.</Text>
-          )}
-        </Panel>
-        {archivedStars && <Panel className="proof-card repository" orientation="vertical" alignItems="start" gap="xs" padding="lg" hasBorder fillWidth>
-          <BigStat className="statistic" height="auto" label="GitHub stars" title={number.format(archivedStars.value)} order="titleBottom" size="lg" />
-          <Text size="sm" color="muted">Snapshot from <time datetime={archivedStars.day}>{shortDate(archivedStars.day)}</time></Text>
-          <Link className="text-link" size="sm" href={adoptionUrl(filters, { tab: "oss" })}>Explore open-source activity</Link>
-        </Panel>}
+      ) : summaries && <Text size="sm" color="muted">
+        {selfHosted.growth === null ? "Cumulative installation history is unavailable." : "No installation growth data for a complete UTC day yet."}
+      </Text>}
+      <div class="chart-settings" id="installation-activity">
+        <AdoptionFilterForm fields={choiceFields} days={filters.days} />
       </div>
-      {!archivedStars && <Link className="open-source-link" size="sm" href={adoptionUrl(filters, { tab: "oss" })}>Explore open-source activity</Link>}
 
-      <section class="data-section" id="installation-activity" aria-labelledby="activity-title">
+      <section class="data-section" aria-labelledby="activity-title">
         <div class="section-heading">
           <div>
-            <Title type="h2" size="lg" id="activity-title">Usage over time</Title>
-            <Text size="sm" color="muted">Observed activity in reporting installations for the selected window.</Text>
+            <Title type="h2" size="lg" id="activity-title">Installation activity</Title>
+            <Text size="sm" color="muted">{selfHostedWindowLabel}</Text>
           </div>
           {series.length > 0 && <Link className="download-link" size="sm" href={adoptionUrl(filters, { csv: "activity" })}><Icon aria-hidden="true" name="download" size="sm" />Download activity CSV</Link>}
         </div>
-        <AdoptionFilterForm fields={choiceFields} days={filters.days} active={advanced} />
-        {series.length > 0 ? (
-          <AdoptionActivity rows={series} grain={filters.grain} />
-        ) : <Text size="sm" color="muted">No activity periods are available for this selection.</Text>}
-      </section>
-
-      <section class="data-section" id="lifecycle" aria-labelledby="lifecycle-title">
-        <div class="section-heading">
-          <div>
-            <Title type="h2" size="lg" id="lifecycle-title">New and returning activity</Title>
-            <Text size="sm" color="muted">Compare first-time, retained, and reactivated activity across completed periods.</Text>
+        {totals ? <>
+          <div class="metrics">
+            {overview.map(([label, key, description]) => {
+              const change = compare ? relativeChange(currentComplete[key], previousComplete[key]) : null;
+              return <Panel className="metric" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
+                <BigStat className="statistic" height="auto" label={label} title={metricValue(totals[key])} order="titleBottom" size="sm" />
+                <Text color="muted" size="sm">{description}</Text>
+                {change !== null && <Text className="change" size="sm">Complete days {signedPercent.format(change)} vs. previous {filters.days} days</Text>}
+              </Panel>;
+            })}
           </div>
-          {hasLifecycle && <Link className="download-link" size="sm" href={adoptionUrl(filters, { csv: "lifecycle" })}><Icon aria-hidden="true" name="download" size="sm" />Download lifecycle CSV</Link>}
-        </div>
-        {hasLifecycle ? <div class="two-column">
-          {lifecycleGroups.map(({ title, threshold, rows }) => (
-            <Panel className="chart-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
-              <Title type="h3" size="sm">{title}</Title>
-              <Text size="sm" color="muted">{thresholdsLabel(threshold)} per {filters.cohort}</Text>
-              <AdoptionLifecycle title={title} grain={filters.cohort} rows={rows} />
-            </Panel>
-          ))}
-        </div> : <Text size="sm" color="muted">No completed periods with qualifying activity.</Text>}
-
-        {retention?.length > 0 && <details class="detail">
-          <summary>View weekly installation retention</summary>
-          <Text size="sm" color="muted">Return activity after the first observed active week, across the last 13 complete UTC cohorts.</Text>
-          <Table
-            size="sm"
-            aria-label="Weekly installation retention"
-            mobileLayout="scroll"
-            headers={[{ label: "Week" }, { label: "Active / eligible" }, { label: "Retained" }]}
-            rows={retention.map(({ age, active, eligible }) => ({
-              id: age,
-              items: [{ label: age }, { label: number.format(active) + " / " + number.format(eligible) }, { label: eligible > 0 ? percent.format(active / eligible) : "—" }],
-            }))}
-          />
-        </details>}
+          <div class="coverage">
+            <div>
+              <Text className="coverage-title" size="sm" weight="semibold">{totals.days_reported} of {filters.days} complete days reported</Text>
+              <Text size="sm" color="muted">Latest reporting date <time datetime={totals.last_reported}>{shortDate(totals.last_reported)}</time> UTC.</Text>
+              {totals.last_reported === today && <Text size="sm" color="muted">Totals include completed reporting windows today.</Text>}
+            </div>
+            <ProgressBar className="coverage-meter" type="small" progress={(totals.days_reported / filters.days) * 100} aria-hidden="true" />
+          </div>
+        </> : (
+          <Panel className="coverage empty" padding="lg" hasBorder fillWidth>
+            <Text size="sm" color="muted">{Array.isArray(summaries) ? "No installations reported in this window." : "Self-hosted telemetry is unavailable."}</Text>
+          </Panel>
+        )}
+        {series.length > 0 ? (
+          <div class="activity-charts">
+            <AdoptionActivity rows={series} grain={filters.grain} />
+          </div>
+        ) : (
+          totals && <Text className="activity-charts" size="sm" color="muted">No activity periods are available for this selection.</Text>
+        )}
       </section>
 
-      {(totals?.reporting > 0 || versions?.length > 0) && <section class="data-section" aria-labelledby="breakdown-title">
+      {(series.length > 0 || totals?.reporting > 0 || versions?.length > 0) && <section class="data-section" aria-labelledby="breakdown-title">
         <div class="section-heading">
           <div>
             <Title type="h2" size="lg" id="breakdown-title">What installations use</Title>
-            <Text size="sm" color="muted">Successful requests across Loom features and transports.</Text>
+            <Text size="sm" color="muted">Feature, transport, and model usage across reporting installations.</Text>
           </div>
         </div>
-        {featureMax > 0 && <Panel className="chart-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
-          <Title type="h3" size="sm">Successful requests by feature</Title>
+        {series.length > 0 && <AdoptionUsageTrends rows={series} grain={filters.grain} csvHref={adoptionUrl(filters, { csv: "usage" })} />}
+        {!hasFeatureTrends && featureMax > 0 && <Panel className="chart-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
+          <Title type="h3" size="sm">Feature requests in the selected window</Title>
           <ul class="feature-bars">
             {featureRequests.map(({ label, value }) => (
               <li>
@@ -334,7 +349,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
           </ul>
         </Panel>}
         {totals?.reporting > 0 && <details class="detail">
-          <summary>View request and model metrics</summary>
+          <summary>View totals for the selected window</summary>
           <div class="two-column">
             {[
               ...metricGroups,
@@ -371,114 +386,156 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
           />
         </details>}
       </section>}
-    </section>}
 
-    {filters.tab === "oss" && <section id="oss" aria-labelledby="oss-title">
-      <div class="section-heading">
-        <div>
-          <Title type="h2" size="lg" id="oss-title">Open-source activity</Title>
-          <Text size="sm" color="muted">SDK downloads for {windowLabel}. GitHub stars reflect the latest available total.</Text>
-        </div>
-      </div>
-      <div class="metrics">
-        {ossHighlights.map(({ label, source, value, day, days, change, isDownload }) => (
-          <Panel className="metric" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
-            <BigStat className="statistic" height="auto" label={label} title={metricValue(value)} order="titleBottom" size="lg" />
-            <Text size="sm" color="muted">
-              {source} · {isDownload && days ? days + " of " + filters.days + " days reported" : day ? <time datetime={day}>{shortDate(day)}</time> : "Data unavailable"}
-            </Text>
-            {change !== null && <Text className="change" size="sm">{isDownload ? signedPercent.format(change) + " vs. previous " + filters.days + " days" : signed.format(change) + " since " + shortDate(cutoff)}</Text>}
-          </Panel>
-        ))}
-      </div>
-
-      <section class="data-section" id="downloads" aria-labelledby="downloads-title">
+      <section class="data-section" id="lifecycle" aria-labelledby="lifecycle-title">
         <div class="section-heading">
           <div>
-            <Title type="h2" size="lg" id="downloads-title">SDK downloads</Title>
-            <Text size="sm" color="muted">Compare daily or monthly downloads from reporting package registries.</Text>
+            <Title type="h2" size="lg" id="lifecycle-title">New and returning activity</Title>
+            <Text size="sm" color="muted">Compare first-time, retained, and reactivated activity across completed periods.</Text>
+          </div>
+          {hasLifecycle && <Link className="download-link" size="sm" href={adoptionUrl(filters, { csv: "lifecycle" })}><Icon aria-hidden="true" name="download" size="sm" />Download lifecycle CSV</Link>}
+        </div>
+        {hasLifecycle ? <div class="two-column">
+          {lifecycleGroups.map(({ title, threshold, rows }) => (
+            <Panel className="chart-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
+              <Title type="h3" size="sm">{title}</Title>
+              <Text size="sm" color="muted">{thresholdsLabel(threshold)} per {filters.cohort}</Text>
+              <AdoptionLifecycle title={title} grain={filters.cohort} rows={rows} />
+            </Panel>
+          ))}
+        </div> : <Text size="sm" color="muted">No completed periods with qualifying activity.</Text>}
+
+        {retention?.length > 0 && <details class="detail">
+          <summary>View weekly installation retention</summary>
+          <Text size="sm" color="muted">Return activity after the first observed active week, across the last 13 complete UTC cohorts.</Text>
+          <Table
+            size="sm"
+            aria-label="Weekly installation retention"
+            mobileLayout="scroll"
+            headers={[{ label: "Week" }, { label: "Active / eligible" }, { label: "Retained" }]}
+            rows={retention.map(({ age, active, eligible }) => ({
+              id: age,
+              items: [{ label: age }, { label: number.format(active) + " / " + number.format(eligible) }, { label: eligible > 0 ? percent.format(active / eligible) : "—" }],
+            }))}
+          />
+        </details>}
+      </section>
+
+      <AdoptionDomainDirectory
+        domains={selfHosted.domains}
+        rankedDomains={selfHosted.domainDirectories?.[directoryDays] ?? null}
+        days={directoryDays}
+        filterHref={adoptionUrl(filters, { tab: "self-hosted" })}
+      />
+    </section>}
+
+    {filters.tab === "oss" && <div id="oss">
+      <section id="downloads" aria-labelledby="downloads-title">
+        <div class="section-heading">
+          <div>
+            <Title type="h2" size="lg" id="downloads-title">SDK distribution</Title>
+            <Text size="sm" color="muted">{windowLabel} · {ossGrain === "day" ? "Daily downloads" : "Monthly downloads within the selected window"}</Text>
           </div>
           {hasDownloads && <Link className="download-link" size="sm" href={adoptionUrl(filters, { csv: "downloads" })}><Icon aria-hidden="true" name="download" size="sm" />Download SDK CSV</Link>}
         </div>
-        <div class="two-column">
-          {oss.filter(({ isDownload }) => isDownload).map(({ label, source, monthly, history }) => {
-            const useDaily = monthly.length < 3 && history.length >= 3;
-            return <Panel className="chart-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
-              <Title type="h3" size="sm">{label}</Title>
-              <Link href={packageUrls[source]} size="sm">View package on {source}</Link>
-              {monthly.length > 0 ? <>
-                <Text size="sm" color="muted">{useDaily ? "Reported downloads by day" : "Reported downloads by month"}</Text>
-                <AdoptionTrend label={label} grain={useDaily ? "day" : "month"} rows={useDaily ? history : monthly} />
-                <details class="detail download-detail">
-                  <summary>{useDaily ? "View monthly totals" : "View daily download history"}</summary>
-                  {useDaily ? <Table
-                    size="sm"
-                    aria-label={label + " by month"}
-                    mobileLayout="scroll"
-                    headers={[{ label: "UTC month" }, { label: "Downloads" }, { label: "Days reported" }]}
-                    rows={monthly.map(({ day, value, days }) => ({
-                      id: day,
-                      items: [{ label: day.slice(0, 7) }, { label: number.format(value) }, { label: days }],
-                    }))}
-                  /> : <AdoptionTrend label={label} rows={history} />}
-                </details>
-              </> : <Text size="sm" color="muted">Data unavailable.</Text>}
-            </Panel>;
-          })}
+        <div class="sdk-downloads">
+          {sdkDownloads.map(({ label, sdkName, packageUrl, source, rows, value, days, change }) => (
+            <Panel className="chart-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
+              <div class="card-heading">
+                <Title type="h3" size="sm">{sdkName}</Title>
+                <Link href={packageUrl} size="sm">View on {source}</Link>
+              </div>
+              {rows.length > 0 ? <>
+                <BigStat className="statistic" height="auto" label="Downloads in this window" title={metricValue(value)} order="titleBottom" size="lg" />
+                <Text size="sm" color="muted">{days} of {filters.days} days reported</Text>
+                <AdoptionTrend
+                  label={label}
+                  grain={ossGrain}
+                  rows={rows}
+                  axisMaximum={sdkMaximum}
+                  axisStart={ossInterval(cutoff)}
+                  axisEnd={ossInterval(lastCompleteDate)}
+                />
+                {change !== null && <Text className="change" size="sm">{signedPercent.format(change)} vs. previous {filters.days} days</Text>}
+              </> : <Text size="sm" color="muted">No download history is available for this window.</Text>}
+            </Panel>
+          ))}
+        </div>
+        <div class="more-sdks">
+          <Text size="sm" weight="semibold">More SDKs</Text>
+          <ul role="list">
+            {moreSdks.map(([label, href]) => <li><Link href={href} size="sm">{label}</Link></li>)}
+          </ul>
         </div>
       </section>
 
-      <section class="data-section" id="github-stars" aria-labelledby="github-stars-title">
-        <div class="section-heading">
-          <div>
-            <Title type="h2" size="lg" id="github-stars-title">Repository interest</Title>
-            <Text size="sm" color="muted">Cumulative GitHub stars from daily snapshots.</Text>
+      {ossCounterGroups.map(({ id, title, description, metrics }) => (
+        <section class="data-section" id={id} aria-labelledby={id + "-title"}>
+          <div class="section-heading">
+            <div>
+              <Title type="h2" size="lg" id={id + "-title"}>{title}</Title>
+              <Text size="sm" color="muted">{description} {ossGrain === "month" && "Charts use the last available snapshot in each month."}</Text>
+            </div>
+            {id === "github-stars" && stars?.history.length > 0 && <Link className="download-link" size="sm" href={adoptionUrl(filters, { csv: "stars" })}><Icon aria-hidden="true" name="download" size="sm" />Download stars CSV</Link>}
           </div>
-          {stars?.history.length > 0 && <Link className="download-link" size="sm" href={adoptionUrl(filters, { csv: "stars" })}><Icon aria-hidden="true" name="download" size="sm" />Download stars CSV</Link>}
-        </div>
-        <div class="two-column">
-          <Panel className="chart-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
-            <Title type="h3" size="sm">GitHub stars over time</Title>
-            {stars?.history.length > 0 ? <AdoptionTrend label="GitHub stars" rows={stars.history} mode="line" /> : <Text size="sm" color="muted">Daily snapshots appear as they are collected.</Text>}
-          </Panel>
-          <Panel className="table-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
-            <Title type="h3" size="sm">Project and distribution totals</Title>
-            <Table
-              size="sm"
-              aria-label="Project and distribution totals"
-              mobileLayout="scroll"
-              headers={[{ label: "Metric" }, { label: "Total" }, { label: "Snapshot (UTC)" }]}
-              rows={oss.filter(({ isDownload }) => !isDownload).map(({ id, label, value, day }) => ({
-                id,
-                items: [{ label }, { label: metricValue(value) }, { label: day ? shortDate(day) : "—" }],
-              }))}
-            />
-          </Panel>
-        </div>
-      </section>
-    </section>}
+          <div class="two-column">
+            {metrics.map(({ label, value, day, change, rows }) => (
+              <Panel className="chart-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
+                <Title type="h3" size="sm">{label}</Title>
+                {value === null ? <Text size="sm" color="muted">No snapshot is available.</Text> : <>
+                  <BigStat className="statistic" height="auto" label="Latest total" title={metricValue(value)} order="titleBottom" size="lg" />
+                  {day && <Text size="sm" color="muted">Snapshot <time datetime={day}>{shortDate(day)}</time> UTC</Text>}
+                  {change !== null && <Text className="change" size="sm">{signed.format(change)} since {shortDate(cutoff)}</Text>}
+                  {rows.length > 1 ? (
+                    <AdoptionTrend
+                      label={label}
+                      rows={rows}
+                      grain={ossGrain}
+                      mode="line"
+                      axisStart={ossInterval(cutoff)}
+                      axisEnd={ossInterval(today)}
+                    />
+                  ) : <Text size="sm" color="muted">A trend requires multiple snapshots in this window.</Text>}
+                </>}
+              </Panel>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>}
 
     <section id="methodology" class="data-section" aria-labelledby="methodology-title">
       <div class="section-heading"><Title type="h2" size="lg" id="methodology-title">How we measure adoption</Title></div>
       <dl class="methodology">
-        <div>
-          <dt>Self-hosted usage</dt>
-          <dd>Coverage depends on which installations report. An installation counts once per period. An active installation recorded a successful request.</dd>
-        </div>
-        <div>
-          <dt>Reported organizations</dt>
-          <dd>Verified companies enroll separately. A namespace contact domain is self-reported.</dd>
-        </div>
-        <div>
-          <dt>Open-source activity</dt>
-          <dd>GitHub counters reflect cumulative repository activity. Package downloads can include automated builds and retries.</dd>
-        </div>
-        <div>
-          <dt>Comparison and projection</dt>
-          <dd>Relative changes use two fully reported windows. A request projection uses the daily average when each elapsed day in the period has data.</dd>
-        </div>
+        {filters.tab === "self-hosted" ? <>
+          <div>
+            <dt>Observed growth</dt>
+            <dd>Each installation enters the cumulative count once, after its first successful request in retained self-hosted telemetry.</dd>
+          </div>
+          <div>
+            <dt>Installation activity</dt>
+            <dd>An installation counts once per period. An active installation recorded a successful request. Coverage depends on which installations report.</dd>
+          </div>
+          <div>
+            <dt>Reported organizations</dt>
+            <dd>Verified companies enroll separately. The public directory uses domains shared through optional namespace contact reporting.</dd>
+          </div>
+          <div>
+            <dt>Comparison and projection</dt>
+            <dd>Relative changes compare complete days in two fully reported windows. The activity table and CSV project requests from the daily average when each elapsed day has data.</dd>
+          </div>
+        </> : <>
+          <div>
+            <dt>SDK downloads</dt>
+            <dd>Package registries report download events, which can include automated builds and retries. Relative changes use two fully reported windows.</dd>
+          </div>
+          <div>
+            <dt>Repository and distribution snapshots</dt>
+            <dd>Stars, forks, release asset downloads, and container pulls come from cumulative source snapshots.</dd>
+          </div>
+        </>}
       </dl>
-      <Link href="/telemetry" size="sm">Telemetry settings and privacy</Link>
+      {filters.tab === "self-hosted" && <Link href="/telemetry" size="sm">Telemetry settings and privacy</Link>}
     </section>
     <Panel className="next-step" padding="lg" gap="sm" hasBorder fillWidth>
       <div>
@@ -493,7 +550,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
 <style>
   :global(#content):has(> .adoption) { padding-block-start: clamp(1.75rem, 4vw, 3.5rem); }
   .adoption [id] { scroll-margin-block-start: 4.5rem; }
-  .intro, .section-heading, .controls, .coverage, .next-step {
+  .intro, .section-heading, .card-heading, .controls, .coverage, .next-step {
     display: flex;
     align-items: end;
     justify-content: space-between;
@@ -535,10 +592,27 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
   .section-heading { margin-block-end: 0.9rem; }
   .section-heading h2 { font-size: clamp(1.5rem, 2.5vw, 2.15rem); }
   .section-heading p { margin-block-start: 0.3rem; }
-  .metrics, .proof, .two-column { display: grid; gap: 0.85rem; }
-  .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .card-heading { align-items: center; inline-size: 100%; margin-block-end: 0.35rem; }
+  .metrics, .two-column, .growth-overview, .sdk-downloads { display: grid; gap: 0.85rem; }
+  .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .two-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metric, .proof-card, .chart-card, .table-card { min-inline-size: 0; overflow-wrap: anywhere; }
+  .sdk-downloads { grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); }
+  .more-sdks, .more-sdks ul {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0 1rem;
+  }
+  .more-sdks { margin-block-start: 0.8rem; }
+  .more-sdks ul { list-style: none; padding: 0; margin: 0; }
+  .more-sdks a { display: inline-flex; align-items: center; min-block-size: 2.75rem; }
+  .growth-overview { grid-template-columns: minmax(13.5rem, 1fr) minmax(0, 2.7fr); }
+  .growth-stat {
+    border-inline-start: 3px solid var(--accent);
+    justify-content: center;
+  }
+  .metric, .chart-card, .table-card, .growth-stat { min-inline-size: 0; overflow-wrap: anywhere; }
+  .growth-message { align-self: center; padding-inline: 0.85rem; }
   .statistic { padding: 0; border: 0; background: transparent; font-variant-numeric: tabular-nums; }
   .change { color: var(--click-alert-color-text-info); font-variant-numeric: tabular-nums; }
   .coverage { align-items: center; margin-block-start: 0.85rem; padding: 0.6rem 0; }
@@ -549,20 +623,8 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
     inline-size: min(100%, 15rem);
     min-block-size: 0.4rem;
   }
-  .proof { margin-block-start: 0.9rem; }
-  .proof.split { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
-  .repository { background: var(--surface-raised); }
-  .empty-state { margin-block-start: 0.35rem; }
-  .contact-domains {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    margin: 0.55rem 0 0;
-    padding: 0;
-    list-style: none;
-  }
-  .contact-domains li { max-inline-size: 100%; }
-  .open-source-link { display: inline-flex; align-items: center; min-block-size: 2.75rem; margin-block-start: 0.35rem; }
+  .chart-settings { margin-block-start: 1rem; }
+  .activity-charts { margin-block-start: 1rem; }
   .download-link { display: inline-flex; align-items: center; gap: 0.4rem; }
   .data-section {
     margin-block-start: clamp(1.7rem, 4vw, 3.1rem);
@@ -577,7 +639,6 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
     font-size: 0.86rem;
   }
   .detail[open] > :is(p, div) { margin-block-start: 0.55rem; }
-  .download-detail { border-block-start: 1px solid var(--line); }
   .feature-bars {
     display: grid;
     gap: 0.7rem;
@@ -608,10 +669,11 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
   .next-step { align-items: center; margin-block-start: clamp(1.55rem, 3vw, 2.8rem); }
   .next-step p { margin-block-start: 0.25rem; }
   @media (max-width: 46rem) {
-    .proof.split, .two-column { grid-template-columns: minmax(0, 1fr); }
+    .two-column, .growth-overview { grid-template-columns: minmax(0, 1fr); }
+    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 37rem) {
-    .metrics, .methodology { grid-template-columns: minmax(0, 1fr); }
+    .methodology { grid-template-columns: minmax(0, 1fr); }
     .metric { padding: 0.85rem 1rem; }
     .controls { align-items: start; gap: 0.45rem; }
     .ranges a { padding-inline: 0.6rem; }

@@ -333,6 +333,10 @@ namespace no entry configures, so the pusher never decides what gets indexed. It
 with the poller disabled (`LOOM_CODE_INGEST_ENABLED=false`); a repository of such a
 deployment that no CI job has refreshed is the `code_repos_untriggered` health error
 ([trigger-only deployments](../features/code-index/freshness.md#trigger-only-deployments)).
+After the pass it rechecks the memories linked to the namespace's code under the link
+worker's per-repository lease, with no model call, so link state does not wait for the
+`memory_code_links` interval; a busy lease or a failed recheck is logged and left to
+that worker.
 
 Open pull requests are not indexed; the working tree stays the client's own.
 

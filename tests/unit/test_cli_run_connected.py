@@ -4,12 +4,18 @@ an unclosed client at loop close leaks its HTTP session."""
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from server.cli import _ch, maintenance, reports
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class _CH:
@@ -256,3 +262,82 @@ def test_run_connected_binds_required_account_retirement_before_command(
 
     assert _ch.run_connected(command, org_free=_ch.reads("a lifecycle composition test")) == 0
     assert ch.events == ["connect", "disconnect"]
+
+
+def _interrupt_outside_the_selector(runner: str) -> None:
+    """A child process: run a connected command that waits for nothing but Ctrl-C, and
+    deliver SIGINT on a thread other than the one in the loop's selector. That leaves
+    what a signal arriving just before the selector's system call leaves: the signal
+    flagged, and the wait not interrupted. Exits 1 when the command stays there."""
+    import asyncio
+    import signal
+    import threading
+    from collections.abc import AsyncIterator
+    from contextlib import asynccontextmanager
+
+    from server.core import pg_profile
+    from server.insights.app import provider_command
+
+    waiting = threading.Event()
+    cancelled = threading.Event()
+
+    def interrupt() -> None:
+        waiting.wait()
+        signal.pthread_kill(threading.get_ident(), signal.SIGINT)
+        if not cancelled.wait(30):
+            os._exit(1)
+
+    async def command(_: object) -> None:
+        loop = asyncio.get_running_loop()
+        # The loop's last callback before it sleeps: the other thread gets the
+        # interpreter, and sends the signal, once this one is in its selector.
+        loop.call_soon(waiting.set)
+        try:
+            await loop.create_future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    @asynccontextmanager
+    async def admitted() -> AsyncIterator[None]:
+        yield
+
+    async def paired(_: object) -> None:
+        return None
+
+    fake = _CH()
+    # `asyncio.run` replaces only the default handler, and a launcher can leave another.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    threading.Thread(target=interrupt, daemon=True).start()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("server.core.ch.get_client", lambda: fake)
+        patch.setattr(provider_command, "model_command", admitted)
+        patch.setattr(pg_profile, "check_configured", paired)
+        try:
+            getattr(_ch, runner)(command, org_free=_ch.reads("a test command"))
+        except KeyboardInterrupt:
+            return
+    raise SystemExit(2)
+
+
+@pytest.mark.parametrize("runner", ["run_connected", "run_control_connected"])
+def test_ctrl_c_ends_a_command_whose_selector_it_did_not_interrupt(runner: str) -> None:
+    """Python runs the Ctrl-C handler of `asyncio.run` once the main thread is back in
+    bytecode. A signal that arrives as the loop goes to sleep interrupts nothing: the
+    signal has to wake the selector itself, or the command waits for another event."""
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            "from tests.unit.test_cli_run_connected import _interrupt_outside_the_selector"
+            " as run; import sys; run(sys.argv[1])",
+            runner,
+        ],
+        cwd=ROOT,
+        env={**os.environ, "OTEL_SDK_DISABLED": "true"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert child.returncode == 0, child.stdout + child.stderr

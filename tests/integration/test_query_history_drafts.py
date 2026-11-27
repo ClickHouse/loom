@@ -69,7 +69,7 @@ def query_log_source(ch_client: Any) -> Any:
                 client.close()
         ch_client.command(f"CREATE USER {reader} IDENTIFIED BY '{password}' SETTINGS readonly = 2")
         ch_client.command(f"GRANT SELECT ON system.query_log TO {reader}")
-        ch_client.command("SYSTEM FLUSH LOGS")
+        ch_client.command("SYSTEM FLUSH LOGS query_log")
         target = ch_target()
         yield {
             "name": "metrics",

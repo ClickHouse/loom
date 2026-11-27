@@ -727,6 +727,101 @@ async def test_a_rename_alone_moves_the_link(env) -> None:
     assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "moved")
 
 
+async def test_a_file_link_follows_its_cited_lines_and_the_definition_its_memory_names(
+    env,
+) -> None:
+    repo = env
+    path = "src/widgets/dates.py"
+    src = "from http import http_date\n\n\ndef dump(o):\n    return http_date(o)\n"
+    c1 = repo.commit({path: src})
+    await _index(TRUNK, repo, c1, [path])
+    claim = "dates go through `http_date`"
+    cited = await _remember(MEM, "dates", claim, files=[path])
+    named = await _remember(MEM, "delta", "`dump_delta` returns seconds", files=[path])
+    # a qualified name waits as pending beside the file link
+    waited = await _remember(MEM, "millis", "`dates.dump_delta` is in seconds", files=[path])
+    rule = await _remember(MEM, "tiny", "keep this module tiny", files=[path])
+    await _pass()
+    # the file holds no definition any of them names
+    for mid in (cited, named, waited, rule):
+        assert [(link["symbol"], link["state"]) for link in await _links(mid)] == [("", "fresh")]
+
+    # c2: the function a memory names merges; the lines another one cites stay
+    merged = src + "\n\ndef dump_delta(o):\n    return o.total_seconds()\n"
+    c2 = repo.commit({path: merged})
+    await _index(TRUNK, repo, c2, [path])
+    await _pass()
+    for mid in (named, waited):  # the definition's link alone: no file link beside it
+        (link,) = await _links(mid)
+        assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("dump_delta", "fresh")
+    for mid in (cited, rule):
+        assert [(link["symbol"], link["state"]) for link in await _links(mid)] == [("", "fresh")]
+
+    # c3: a cited line and the merged function are edited; the rule cites neither
+    edited = merged.replace("return http_date(o)", "return http_date(o).lower()")
+    c3 = repo.commit({path: edited.replace("o.total_seconds()", "o.total_seconds() * 1000")})
+    await _index(TRUNK, repo, c3, [path])
+    await _pass()
+    for mid in (cited, named, waited):
+        assert [(link["state"], link["changed_since"]) for link in await _links(mid)] == [
+            ("changed", c3)
+        ]
+    assert [link["state"] for link in await _links(rule)] == ["fresh"]
+    assert (await _search(MEM, claim)).get("dates") == "changed"
+
+    # c4: the cited line is back
+    c4 = repo.commit({path: merged.replace("o.total_seconds()", "o.total_seconds() * 1000")})
+    await _index(TRUNK, repo, c4, [path])
+    await _pass()
+    assert [link["state"] for link in await _links(cited)] == ["fresh"]
+
+
+async def test_a_refresh_follows_the_links_to_the_head_it_indexed(env, monkeypatch) -> None:
+    """`code.refresh` with `wait`: the links read the pushed commit when it returns, with no
+    link pass in between and nothing judged; while another pass checks the repository the
+    refresh still answers, and the links wait."""
+    import server.code.app.index.ingest_pass as ingest_pass
+    from server.code.api.models_ingest import CodeRefreshInput
+    from server.code.app.index.pass_budget import CodeIngestResult
+    from server.code.app.ingest import handle_code_refresh
+    from server.memory.app import code_link_judge, code_link_pass, code_link_recheck
+    from server.settings import settings
+
+    repo = env
+    src = "def fetch_rows(conn, n):\n    rows = conn.read(n)\n    return [r for r in rows if r]\n"
+    c1 = repo.commit({"src/widgets/io.py": src})
+    await _index(TRUNK, repo, c1, ["src/widgets/io.py"])
+    await _set_policy(MEM, "revise")
+    mid = await _remember(MEM, "fetch-rows", "`fetch_rows` drops empty rows")
+    await _pass()
+    assert [link["state"] for link in await _links(mid)] == ["fresh"]
+    c2 = repo.commit({"src/widgets/io.py": src.replace("if r]", "if r is not None]")})
+    judged: list[str] = []
+
+    async def ingest(org: str = "", namespace: str = "") -> CodeIngestResult:
+        # the refresh's ingest pass, as `_index` stands in for it everywhere in this file
+        await _index(namespace, repo, c2, ["src/widgets/io.py"])
+        return CodeIngestResult(commits=1, head=c2)
+
+    async def judge(claim: str, before: str, after: str) -> tuple[str, str]:
+        judged.append(claim)
+        return "holds", ""
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(ingest_pass, "run_pass", ingest)
+    monkeypatch.setattr(code_link_judge, "judge_claim", judge)
+    refresh = CodeRefreshInput(org=ORG, namespace=TRUNK, wait=True)
+    async with code_link_pass.repository_locks.lease(code_link_recheck._lock_name(ORG, TRUNK)):
+        out = await handle_code_refresh(refresh)
+    assert (out.triggered, out.head_after) == (True, c2)
+    assert [link["state"] for link in await _links(mid)] == ["fresh"]
+    out = await handle_code_refresh(refresh)
+    assert (out.triggered, out.head_after) == (True, c2)
+    (link,) = await _links(mid)
+    assert (link["state"], link["changed_since"]) == ("changed", c2)
+    assert judged == []  # a `revise` claim waits for the link worker's budget
+
+
 async def test_a_file_named_by_its_basename_resolves_to_its_one_live_path(env) -> None:
     from server.code.app.memory_links import live_paths
 

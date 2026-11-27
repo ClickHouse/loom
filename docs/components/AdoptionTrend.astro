@@ -3,20 +3,39 @@ import { Table } from "@clickhouse/click-ui/Table";
 import { periodOffset } from "../lib/adoption-view.mjs";
 
 interface Props {
-  rows: { day: string; value: number; days?: number; estimate?: number | null; current?: boolean }[];
+  rows: { day: string; value: number; days?: number; current?: boolean; partial?: boolean }[];
   label: string;
   grain?: "month" | "week" | "day";
   mode?: "line" | "bars";
   color?: "accent" | "info";
   showTable?: boolean;
+  axisMaximum?: number;
+  axisStart?: string;
+  axisEnd?: string;
+  compact?: boolean;
+  showNotes?: boolean;
 }
 
-const { rows, label, grain = "day", mode = "bars", color = "accent", showTable = true } = Astro.props;
-const first = rows[0].day;
-const last = rows[rows.length - 1].day;
+const {
+  rows,
+  label,
+  grain = "day",
+  mode = "bars",
+  color = "accent",
+  showTable = true,
+  axisMaximum = 0,
+  axisStart,
+  axisEnd,
+  compact = false,
+  showNotes = true,
+} = Astro.props;
+const firstDay = rows[0].day;
+const lastDay = rows[rows.length - 1].day;
+const first = axisStart && axisStart < firstDay ? axisStart : firstDay;
+const last = axisEnd && axisEnd > lastDay ? axisEnd : lastDay;
 const offset = (day: string) => periodOffset(first, day, grain);
 const intervals = offset(last);
-const rawMaximum = Math.max(1, ...rows.map(({ value, estimate }) => Math.max(value, estimate ?? value)));
+const rawMaximum = Math.max(1, axisMaximum, ...rows.map(({ value }) => value));
 const tick = 10 ** Math.floor(Math.log10(Math.max(1, rawMaximum / 2)));
 const maximum = Math.ceil(rawMaximum / (2 * tick)) * 2 * tick;
 const yPosition = (value: number) => 100 - (value * 100) / maximum;
@@ -30,46 +49,67 @@ const date = new Intl.DateTimeFormat("en", {
 });
 const formatDay = (day: string) => date.format(Date.parse(day));
 const number = new Intl.NumberFormat("en-US");
-const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const tickFormat = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 const coverage = rows.some(({ days }) => days !== undefined);
-const forecast = rows.some(({ value, estimate }) => estimate != null && estimate > value);
 const pending = rows.some(({ current }) => current);
+const partialCoverage = rows.some(({ partial }) => partial);
 const missing = rows.length < intervals + 1;
+const points =
+  mode === "line"
+    ? rows.map((row) => ({
+        ...row,
+        bucket: offset(row.day),
+        x: xPosition(row.day).toFixed(3),
+        y: yPosition(row.value).toFixed(3),
+      }))
+    : [];
+const runs: { points: typeof points; partial?: boolean }[] = [];
+for (const point of points) {
+  const run = runs.at(-1);
+  const previous = run?.points.at(-1);
+  if (!run || !previous || point.bucket !== previous.bucket + 1) {
+    runs.push({ points: [point], partial: point.current });
+  } else if (point.current && !run.partial) {
+    runs.push({ points: [previous, point], partial: true });
+  } else {
+    run.points.push(point);
+  }
+}
+const edge = ({ x, y }: (typeof points)[number], shift: string) => `${x}% calc(${y}% ${shift} 1px)`;
+const segments = runs
+  .filter(({ points }) => points.length > 1)
+  .map(({ points, partial }) => ({
+    partial,
+    clip: `polygon(${[...points.map((point) => edge(point, "-")), ...points.toReversed().map((point) => edge(point, "+"))].join(",")})`,
+  }));
+const markers = points.filter(
+  ({ bucket, current }, index) =>
+    points.length <= 31 ||
+    current ||
+    points[index - 1]?.bucket !== bucket - 1 ||
+    points[index + 1]?.bucket !== bucket + 1,
+);
 ---
 
-<figure class:list={["trend", color, mode]} aria-label={label + " by " + grain}>
+<figure class:list={["trend", color, mode, { compact }]} aria-label={label + " by " + grain}>
   <div class="plot" aria-hidden="true">
     <div class="scale">
-      <span>{compact.format(maximum)}</span>
-      <span>{compact.format(maximum / 2)}</span>
+      <span>{tickFormat.format(maximum)}</span>
+      <span>{tickFormat.format(maximum / 2)}</span>
       <span>0</span>
     </div>
     {mode === "line" ? (
       <div class="marks">
-        {rows.map(({ day, value, current }, index) => {
-          const next = rows[index + 1];
-          const left = xPosition(day);
-          const top = yPosition(value);
-          const right = next && xPosition(next.day);
-          const bottom = next && yPosition(next.value);
-          const edge = (x: number, y: number, shift: string) => x + "% calc(" + y + "% " + shift + " 1px)";
-          return <>
-            {next && offset(next.day) === offset(day) + 1 && (
-              <span
-                class:list={["segment", { partial: next.current }]}
-                style={"clip-path:polygon(" + [edge(left, top, "-"), edge(right, bottom, "-"), edge(right, bottom, "+"), edge(left, top, "+")].join(",") + ")"}
-              />
-            )}
-            <span class:list={["point", { current }]} title={formatDay(day) + " · " + number.format(value)} style={"left:" + left + "%;top:" + top + "%"} />
-          </>;
-        })}
+        {segments.map(({ clip, partial }) => <span class:list={["segment", { partial }]} style={"clip-path:" + clip} />)}
+        {markers.map(({ day, value, current, x, y }) => (
+          <span class:list={["point", { current }]} title={formatDay(day) + " · " + number.format(value)} style={"left:" + x + "%;top:" + y + "%"} />
+        ))}
       </div>
     ) : (
       <div class="marks columns" style={"--intervals:" + (intervals + 1)}>
-        {rows.map(({ day, value, current, estimate }) => (
+        {rows.map(({ day, value, current, partial }) => (
           <div class="column" title={formatDay(day) + " · " + number.format(value)} style={"grid-column:" + (offset(day) + 1)}>
-            <span class:list={["bar", { current }]} style={"--height:" + (100 - yPosition(value)) + "%"} />
-            {estimate != null && estimate > value && <span class="bar projection" style={"--height:" + (100 - yPosition(estimate - value)) + "%"} />}
+            <span class:list={["bar", { current, "partial-coverage": partial }]} style={"--height:" + (100 - yPosition(value)) + "%"} />
           </div>
         ))}
       </div>
@@ -80,9 +120,9 @@ const missing = rows.length < intervals + 1;
       <time datetime={first}>{formatDay(first)}</time>
       {last !== first && <time datetime={last}>{formatDay(last)}</time>}
     </div>
-    {(pending || forecast || missing) && <div class="plot-note">
+    {showNotes && (pending || missing || partialCoverage) && <div class="plot-note">
       {pending && <span><i class="partial-key"></i>Period in progress</span>}
-      {forecast && <span><i class="forecast-key"></i>Projected remainder</span>}
+      {partialCoverage && <span><i class="coverage-key"></i>Partial month coverage</span>}
       {missing && <span>Gaps show periods with no report.</span>}
     </div>}
   </figcaption>
@@ -128,6 +168,7 @@ const missing = rows.length < intervals + 1;
       linear-gradient(var(--line), var(--line)) center / 100% 1px no-repeat,
       linear-gradient(var(--line), var(--line)) bottom / 100% 1px no-repeat;
   }
+  .compact .marks { block-size: clamp(5.5rem, 8vw, 8rem); }
   .segment { position: absolute; inset: 0; background: var(--plot-color); pointer-events: none; }
   .segment.partial { opacity: 0.45; }
   .point {
@@ -147,7 +188,7 @@ const missing = rows.length < intervals + 1;
   .column { grid-row: 1; display: flex; flex-direction: column-reverse; min-inline-size: 0; }
   .bar { inline-size: 100%; max-inline-size: 2.5rem; block-size: var(--height); margin-inline: auto; background: var(--plot-color); }
   .bar.current { background: color-mix(in srgb, var(--plot-color) 48%, var(--surface)); }
-  .bar.projection, .forecast-key {
+  .bar.partial-coverage, .coverage-key {
     background: repeating-linear-gradient(135deg, var(--plot-color) 0 1px, var(--surface) 1px 4px);
   }
   .dates { display: flex; justify-content: space-between; gap: 0.45rem; padding-inline-start: 2rem; margin-block-start: 0.45rem; }

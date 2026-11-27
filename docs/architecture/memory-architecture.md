@@ -500,7 +500,7 @@ the later of two statements of one attribute in a batch retires the earlier.
 | `loom.drop_session_echoes`        | Drops facts that restate what the session's own Loom calls wrote or read.               |
 | `loom.drop_activity_narration`    | Drops narration of tool activity with no durable outcome.                               |
 | `loom.drop_non_durable`           | Coding sessions: drops status snapshots, housekeeping and plans.                        |
-| `loom.verify_durable`             | Coding sessions: a verifier pass over the rest. Fails open.                             |
+| `loom.verify_durable`             | Coding sessions: a model pass drops non-durable and already stored facts. Fails open.   |
 | `loom.hash_dedup`                 | Drops facts whose canonical hash is already stored.                                     |
 | `loom.bulk_write`                 | Files bot rules to the learnings queue, then writes the rest through `memory.bulk_set`. |
 
