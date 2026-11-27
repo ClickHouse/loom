@@ -170,7 +170,6 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "knowledge.bulk_add",
             "memory.append_batch",
             "memory.bulk_set",
-            "memory.delete_version",
             "memory.export_evidence",
             "memory.import_evidence",
             "memory.keys",
