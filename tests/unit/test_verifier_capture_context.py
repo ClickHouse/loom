@@ -53,7 +53,7 @@ def test_prompt_without_context_is_the_old_shape_plus_keys() -> None:
 def test_rubric_names_lookup_restatements_and_pins_the_version() -> None:
     assert "the tracker and the code index already hold them" in DURABILITY_VERIFIER_SYSTEM_PROMPT
     assert "Assistant stated" in DURABILITY_VERIFIER_SYSTEM_PROMPT
-    assert DURABILITY_VERIFIER_PROMPT_VERSION == "durability-verifier-v1"
+    assert DURABILITY_VERIFIER_PROMPT_VERSION == "durability-verifier-v2"
 
 
 class _Client:

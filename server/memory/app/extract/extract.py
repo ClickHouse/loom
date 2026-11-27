@@ -168,13 +168,16 @@ def _extraction_system_prompt(
     namespace_categories: list[dict[str, str]] | None,
     custom_instructions: str,
     agent_learnings: bool = False,
+    coding_session: bool = False,
 ) -> str:
     """The extractor's system prompt: the base prompt under the strict-examples
     preamble, the fence note, the namespace's categories and the caller's
     instructions. Each call appends the operator's policy after it
     (`with_policy`)."""
     system_prompt = with_strict_examples_preamble(
-        _extraction_base_prompt(compact, agent_learnings=agent_learnings)
+        _extraction_base_prompt(
+            compact, agent_learnings=agent_learnings, coding_session=coding_session
+        )
     )
     if existing_memories:
         from server.memory.domain.prompt_fence import FENCE_NOTE
@@ -461,6 +464,18 @@ def _split_agent_rules(
     return [f for f in facts if f.about != "agent"], [f for f in facts if f.about == "agent"]
 
 
+def _no_messages_result() -> ExtractionResult:
+    """The result for empty input, which makes no LLM call."""
+    client = get_llm_client()
+    return ExtractionResult(
+        facts=[],
+        llm_result=LLMResult(
+            text="", tokens_in=0, tokens_out=0, provider=client.provider, model=client.model
+        ),
+        prompt_version=EXTRACTION_PROMPT_VERSION,
+    )
+
+
 @staged("extract")
 async def extract_from_messages(
     messages: list[dict[str, object]],
@@ -481,6 +496,7 @@ async def extract_from_messages(
     llm_cache: bool | None = None,
     compact_prompt: bool | None = None,  # None = judge `messages`
     agent_learnings: bool = False,
+    coding_session: bool = False,
 ) -> ExtractionResult:
     """Run one LLM completion to extract memorable facts from messages.
 
@@ -515,17 +531,12 @@ async def extract_from_messages(
 
     `agent_learnings` asks the same call for the assistant's standing rules about
     itself, returned as facts with `about="agent"` (`_split_agent_rules`).
+
+    `coding_session` marks a coding plugin's session capture: the prompt ends with
+    the coding-session rules, under which zero facts is an answer, not a misfire.
     """
     if not messages:
-        client = get_llm_client()
-        # Avoid an LLM call on empty input.
-        return ExtractionResult(
-            facts=[],
-            llm_result=LLMResult(
-                text="", tokens_in=0, tokens_out=0, provider=client.provider, model=client.model
-            ),
-            prompt_version=EXTRACTION_PROMPT_VERSION,
-        )
+        return _no_messages_result()
     client = _extractor_client(org=org, namespace=namespace, llm_cache=llm_cache)
     user_prompt = _build_extraction_user_prompt(
         messages,
@@ -542,6 +553,7 @@ async def extract_from_messages(
         namespace_categories=namespace_categories,
         custom_instructions=custom_instructions,
         agent_learnings=agent_learnings,
+        coding_session=coding_session,
     )
     system_prompt = with_policy(base_prompt, operator_policy)
     # JSON mode constrains the model to valid JSON; the try/except below
@@ -565,8 +577,10 @@ async def extract_from_messages(
         operator_policy=operator_policy,
     )
 
-    # Validation gate: retry once on non-trivial-input + zero-facts.
-    if not facts and _is_nontrivial(messages):
+    # Validation gate: retry once on non-trivial-input + zero-facts. A coding
+    # session that established nothing reusable has none, and the retry's
+    # addendum asks for every concrete value its rules leave out.
+    if not facts and not coding_session and _is_nontrivial(messages):
         facts, accumulated = await _zero_fact_retry(
             client,
             system=with_policy(base_prompt + _RETRY_PROMPT_ADDENDUM, operator_policy),

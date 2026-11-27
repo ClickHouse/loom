@@ -249,8 +249,11 @@ _SESSION_ACTION = [
         r"^\W*(the )?user (outlined|grepped|searched|scanned) [`'\"]?[\w.-]*/",
         r"^\W*(the )?assistant (explained|deleted|ran|created|updated|read|listed|showed|"
         r"described|summari[sz]ed|removed|called|fetched|checked|noted that it)\b",
-        r"\b(is|are|lives|live|sits) (in|at) `?(server|src|lib|tests?|integrations|frontend|sdk)/"
-        r"[\w./-]+\.(py|ts|tsx|js|mjs|go|rs|cpp|h|hpp)\b",
+        # one clause that ends at the path: a claim relating several definitions
+        # may say where one of them is and is the verifier's to judge
+        r"^(?:(?![.;!?]\s)[^,]){0,120}?\b(is|are|lives|live|sits) (in|at) "
+        r"`?(server|src|lib|tests?|integrations|frontend|sdk)/"
+        r"[\w./-]+\.(py|ts|tsx|js|mjs|go|rs|cpp|h|hpp)`?[.!]?$",
     )
 ]
 

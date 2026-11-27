@@ -265,6 +265,7 @@ async def _step_llm_extract(
             # segment of a long transcript keeps the full prompt.
             compact_prompt=_use_compact_prompt(state.messages),
             agent_learnings=_agent_learnings_on(state),
+            coding_session=_is_session_capture(state),
         )
 
     if len(segments) == 1:
@@ -588,12 +589,18 @@ async def _step_drop_activity_narration(
 _CODING_SOURCES = ("source:claude-code", "source:codex", "source:cursor")
 
 
+def _is_session_capture(state: WorkflowState) -> bool:
+    """A coding plugin's capture of a session's own turns (not a trajectory replay,
+    whose turns are tool actions read under their own instructions)."""
+    return any(str(t).lower().startswith(_CODING_SOURCES) for t in (state.extra_tags or []))
+
+
 def _is_coding_capture(state: WorkflowState) -> bool:
     from server.memory.app.trajectory_notes import TRAJECTORY_EXTRACTION_INSTRUCTIONS
 
     if TRAJECTORY_EXTRACTION_INSTRUCTIONS in (state.extraction_instructions or ""):
         return True
-    return any(str(t).lower().startswith(_CODING_SOURCES) for t in (state.extra_tags or []))
+    return _is_session_capture(state)
 
 
 def _agent_learnings_on(state: WorkflowState) -> bool:

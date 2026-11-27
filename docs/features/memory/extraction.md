@@ -71,6 +71,26 @@ from the observe plane. Only these run `loom.drop_non_durable` and `loom.verify_
 The rules in `server/memory/domain/durable_facts.py` match sentence shape, not topic words: what
 a release changed is kept; whether its CI was green at the time is dropped.
 
+A plugin's session capture (a `source:` tag) is extracted under coding-session rules that
+end the prompt. What the user states is kept as in any conversation. From the work, only
+knowledge about the codebase that a later session in the repository can reuse without
+reading the code again is kept:
+
+- how a behaviour is reached across definitions or files, as one claim for the whole path;
+- a relation between definitions that reading one of them does not show;
+- an invariant, constraint or pitfall with its reason, and which test constrains a
+  definition;
+- the cause of a bug in the code as it was before the session's edits.
+
+Each claim names its definitions in backticks beside their file paths and carries no line
+numbers, so the [code link pass](../../use-cases/memory-linked-to-code.md) links it and
+marks it when that code changes. What the session itself edited or added is left out:
+until it is committed it exists in one working tree, and the commit history records it
+afterwards. The task, test results and anything one lookup answers (where a single name is
+defined, what one function's text says) are left out too. A session that established
+nothing reusable writes no facts, and the extractor is not asked a second time.
+`loom.verify_durable` judges what remains by the same rules.
+
 ## Rules the assistant states about itself
 
 A chat bot's replies carry rules about its own behaviour: "I escalate any refund over
