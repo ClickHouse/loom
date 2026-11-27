@@ -8,7 +8,8 @@ repository's indexed head in the bare mirror; the index only proposes candidates
 rules are `server.code.domain.anchor`.
 
 A memory whose repository cannot be read yet waits behind a `*` marker, and the queue
-moves on.
+moves on. A raw tool observation is the session's record, not a lesson about the code
+its output quotes: it is never linked.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from server.memory.app.code_link_reads import (
     memory_inputs,
 )
 from server.memory.domain.code_link_keys import IDENTITY, QueuePosition
+from server.memory.domain.observation_tags import OBSERVATION_KEY_PREFIX
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
@@ -51,8 +53,9 @@ async def link_queued(
     after: QueuePosition | None, limit: int, result: link_pass.PassResult
 ) -> QueuePosition | None:
     """Link the memories queued after `after`: a new or rewritten memory gets the links
-    its text and files name, a deleted or no longer served one loses them. Returns the
-    cursor: the last position read, or the read's cutoff when nothing was queued."""
+    its text and files name; a deleted or no longer served one, and a raw tool
+    observation, loses them. Returns the cursor: the last position read, or the read's
+    cutoff when nothing was queued."""
     heads, positions, cutoff = await store.queued_memories(
         after, limit, code.code_namespaces(), lag_s=int(settings.memory_code_links_settle_seconds)
     )
@@ -100,7 +103,7 @@ async def _link_org(
     deleted: set[str] = set()
     for r in rows:
         links = existing.get(r["mid"], [])
-        if r.get("tombstoned_at") is not None:
+        if r.get("tombstoned_at") is not None or _is_observation(r):
             if links:
                 deleted.add(r["mid"])  # its links go outright, not as tombstones
             continue
@@ -155,6 +158,11 @@ async def _relink_rewritten(
     newer = [h for h in heads if inputs_now(org, h) != read.get(h["mid"])]
     if newer:
         await _link_org(org, newer, result, rereads=rereads)
+
+
+def _is_observation(memory: dict[str, Any]) -> bool:
+    """Whether `memory` is a raw tool observation: a tool call's record, never linked."""
+    return str(memory["memory_key"]).startswith(OBSERVATION_KEY_PREFIX)
 
 
 def _names_a_repository(memory: dict[str, Any], tags: list[str], links: list[LinkRow]) -> bool:
@@ -343,8 +351,9 @@ def _link_row(
 async def sweep_erased(
     cursor: dict[str, Any], limit: int, result: link_pass.PassResult
 ) -> dict[str, Any]:
-    """Drop the links of gone memories in the next page of the link table, a page a pass,
-    a new cycle `memory_code_links_sweep_interval_s` after the last; the cursor to store."""
+    """Drop the links of gone memories and of raw tool observations in the next page of
+    the link table, a page a pass, a new cycle `memory_code_links_sweep_interval_s` after
+    the last; the cursor to store."""
     if time.time() - float(cursor.get("done_at", 0)) < settings.memory_code_links_sweep_interval_s:
         return cursor
     try:

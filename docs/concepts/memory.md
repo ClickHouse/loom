@@ -417,6 +417,10 @@ against that repository's trunk:
 A qualified name trunk does not define yet waits for `memory_code_links_pending_days`
 (14), so a memory about unmerged code links once it merges.
 
+A raw tool observation (`observe.record`'s row, keyed `obs:<session_id>:<sha8>`) carries
+its session's `repo:` tag and quotes the code a tool read, but it records a tool call,
+not a lesson: it is never linked, so no code read or pre-edit check serves it.
+
 A link records the definition's fingerprint: all its overloads and the conditions that
 select them, as tokens, so whitespace, comments (not a Go `//go:` directive or a Python
 `# type:` comment) and most of what formatters change (trailing commas and other optional

@@ -777,6 +777,74 @@ async def test_new_files_relink_and_a_deleted_memory_drops_its_links(env) -> Non
     assert await _links(mid) == []
 
 
+async def test_a_raw_tool_observation_is_never_linked_and_the_sweep_drops_a_link_it_holds(
+    env, ch_client
+) -> None:
+    from server.code.domain.index.remote import repo_tag
+    from server.core.ch import get_client
+    from server.memory.api.models_for_file import MemoryForFileInput
+    from server.memory.api.models_observe import ObserveRecordInput
+    from server.memory.app.code_link_reads import inputs_now
+    from server.memory.app.for_file import handle_memory_for_file
+    from server.memory.app.observe import handle_observe_record
+    from server.memory.store import code_links as store
+
+    c1 = env.commit({"src/reader.py": _READER})
+    await _index(TRUNK, env, c1, ["src/reader.py"])
+    await _remember(MEM, "reader-rule", "`Reader.read_rows` takes a limit")
+    # a tool call of a plugin session: the session's `repo:` tag, output that names code
+    seen = await handle_observe_record(
+        ObserveRecordInput(
+            org=ORG,
+            namespace=MEM,
+            agent="claude-code",
+            session_id="s1",
+            tool_name="Read",
+            tool_input={"file_path": "src/reader.py"},
+            tool_output="`Reader.read_rows` returns its limit",
+            tags=[repo_tag(REMOTE)],
+        )
+    )
+    await _pass()
+
+    async def served() -> list[str]:
+        out = await handle_memory_for_file(
+            MemoryForFileInput(
+                org=ORG, namespace=MEM, path="src/reader.py", tags=[repo_tag(REMOTE)]
+            )
+        )
+        return sorted(h.memory_key for h in out.hits)
+
+    assert await served() == ["reader-rule"]
+    # a link stored before observations stopped being linked, written past the store's
+    # own drop: it is served until the sweep reaches it
+    ((mid,),) = ch_client.query(
+        "SELECT toString(memory_id) FROM loom.memory FINAL "
+        "WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String}",
+        parameters={"o": ORG, "n": MEM, "k": seen.memory_key},
+    ).result_rows
+    (head,) = await store.memory_heads(ORG, [mid])
+    stored = store.link_row(
+        org=ORG,
+        code_namespace=TRUNK,
+        path="src/reader.py",
+        qualified_name="Reader.read_rows",
+        namespace=MEM,
+        memory_id=mid,
+        memory_key=seen.memory_key,
+        agent="claude-code",
+        session_id="s1",
+        inputs_hash=inputs_now(ORG, head),
+        checked_commit=c1,
+    )
+    await get_client().insert(store.TABLE, [dict(stored)])
+    assert await served() == sorted(["reader-rule", seen.memory_key])
+    after: tuple[str, ...] | None = (ORG, TRUNK, "", "", "", "00000000-0000-0000-0000-000000000000")
+    while after is not None and after[:2] == (ORG, TRUNK):
+        after, _ = await store.sweep_page(after, 1000)
+    assert await served() == ["reader-rule"]
+
+
 async def test_revise_skips_what_it_cannot_judge_and_a_holding_claim_re_anchors(
     env, monkeypatch, ch_client
 ) -> None:

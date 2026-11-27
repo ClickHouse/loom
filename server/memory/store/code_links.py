@@ -14,6 +14,7 @@ from server.core.ch_params import chunks, fitting
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, QueuePosition
+from server.memory.domain.observation_tags import OBSERVATION_KEY_PREFIX
 from server.memory.domain.temporal_sql import served_status_sql
 from server.memory.store.sql import FILE_LISTING_VISIBLE
 from server.settings import settings
@@ -171,9 +172,9 @@ _KEY_TYPES = ("String",) * 5 + ("UUID",)
 async def sweep_page(
     after: tuple[str, ...] | None, limit: int, *, ch: _CHClient | None = None
 ) -> tuple[tuple[str, ...] | None, int]:
-    """Drop gone memories' links and old tombstones among the next `limit` ×
-    `SWEEP_ROWS_PER_WRITE` link rows after `after`; returns the next page's start (None
-    at the table's end) and the memories."""
+    """Drop the links of memories that hold none (`_drop_gone`) and old tombstones among
+    the next `limit` × `SWEEP_ROWS_PER_WRITE` link rows after `after`; returns the next
+    page's start (None at the table's end) and the memories."""
     ch = ch or _default_client()
     rows_per_page = int(limit) * SWEEP_ROWS_PER_WRITE
     since = f"WHERE {_past(_KEY_COLUMNS, _KEY_TYPES)}" if after else ""
@@ -234,13 +235,14 @@ async def _purge_tombstones(ch: _CHClient, keys: list[tuple[Any, ...]]) -> None:
 
 
 async def drop_gone(org: str, memory_ids: set[str], *, ch: _CHClient | None = None) -> int:
-    """Delete the links of those of `memory_ids` that are gone or tombstoned."""
+    """Delete the links of those of `memory_ids` that hold none (`_drop_gone`)."""
     return await _drop_gone(ch or _default_client(), {org: memory_ids})
 
 
 async def _drop_gone(ch: _CHClient, by_org: dict[str, set[str]]) -> int:
-    """Delete the links older than this read of the memories in `by_org` that are gone or
-    tombstoned; returns how many memories that was."""
+    """Delete the links older than this read of the memories in `by_org` that hold none:
+    one gone or tombstoned, and a raw tool observation, which is never linked; returns
+    how many memories that was."""
     dropped = 0
     for org, ids in by_org.items():
         before = time.time_ns()
@@ -248,7 +250,7 @@ async def _drop_gone(ch: _CHClient, by_org: dict[str, set[str]]) -> int:
             ch,
             "SELECT DISTINCT toString(memory_id) AS mid FROM loom.memory FINAL "
             "WHERE org = {org:String} AND memory_id IN {ids:Array(UUID)} "
-            "AND tombstoned_at IS NULL",
+            f"AND tombstoned_at IS NULL AND NOT startsWith(memory_key, '{OBSERVATION_KEY_PREFIX}')",
             {"org": org, "ids": sorted(ids)},
             "ids",
         )

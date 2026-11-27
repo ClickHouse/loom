@@ -3577,6 +3577,52 @@ async def test_a_memory_that_links_nothing_is_linked_once(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_raw_tool_observation_is_never_linked_and_loses_the_links_it_holds(
+    monkeypatch,
+) -> None:
+    def observed(mid: str) -> dict[str, Any]:
+        # a tool call's row: its session's `repo:` tag, and output that names code
+        return _row(
+            mid, memory_key=f"obs:s1:{mid}", tags=["repo:r"], value="`Reader.read_rows` leaks"
+        )
+
+    # made before, from the observation as it is now: the links would still hold
+    held = _full(
+        {
+            "memory_id": "held",
+            "code_namespace": "code-r",
+            "inputs_hash": code_link_reads.memory_inputs(observed("held"), "code-r"),
+        }
+    )
+    written: list[dict[str, Any]] = []
+    dropped: list[tuple[str, set[str]]] = []
+
+    async def for_memories(org, ids):
+        return [held]
+
+    async def insert(rows):
+        written.extend(rows)
+
+    async def drop_gone(org, ids):
+        dropped.append((org, set(ids)))
+        return len(ids)
+
+    async def link(org, cns, memories, existing, files):
+        raise AssertionError(f"linked {[m['memory_key'] for m in memories]}")
+
+    monkeypatch.setattr(code_links.store, "for_memories", for_memories)
+    monkeypatch.setattr(code_links.store, "insert", insert)
+    monkeypatch.setattr(code_links.store, "drop_gone", drop_gone)
+    monkeypatch.setattr(code_links, "_link", link)
+    for module in (code_links, code_link_reads):
+        monkeypatch.setattr(module, "code_namespace_for", lambda org, ns, tags: "code-r")
+    result = code_link_pass.PassResult()
+    await code_links._link_org("o", [observed("new"), observed("held")], result)
+    assert (written, dropped) == ([], [("o", {"held"})])
+    assert (result.linked, result.unlinked) == (0, 1)
+
+
+@pytest.mark.asyncio
 async def test_the_policy_drops_the_links_of_a_memory_that_is_gone(world) -> None:
     world.rows["deleted"] = _row("deleted", tombstoned_at="2026-01-01")
     world.states.update(erased=["changed"], deleted=["changed"])  # "erased" has no head

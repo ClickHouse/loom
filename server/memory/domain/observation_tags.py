@@ -18,6 +18,8 @@ from server.settings import settings
 OBSERVATION_TAG = "observation"
 CRYSTALLIZE_READY_TAG = "crystallize:ready"
 CRYSTALLIZE_DONE_TAG = "crystallize:done"
+# The key of a raw tool observation is `obs:<session_id>:<hash prefix>`.
+OBSERVATION_KEY_PREFIX = "obs:"
 # An observation OF the memory plane is not a memory. A tool
 # call that reads or writes loom itself (the MCP memory/knowledge/search
 # tools) carries a memory's value as its input; observing it stores that
