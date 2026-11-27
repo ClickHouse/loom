@@ -17,7 +17,9 @@ _PROCEDURE_BODY = SERVED_VALUE.replace(", value)", ", memory.value)")
 
 
 # Preserve short scalar values for the classifier without transferring arbitrary JSON.
+# not a setting: the classifier reads scalars only, a wider field is substituted
 PROCEDURE_FIELD_MAX_BYTES = 128
+# not a setting: mirrors Python's own int() digit limit
 PROCEDURE_TOTAL_MAX_DIGITS = sys.get_int_max_str_digits()
 
 # Normalize the characters Python accepts in integer strings before checking the

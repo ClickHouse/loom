@@ -1,8 +1,20 @@
 // The API client is split by plane behind the `api.ts` barrel, so a view's client rides
 // in that view's chunk and the shell evaluates only the functions it calls. Importers
 // still import from `api.ts`.
-import { post } from "../api";
-import type { Identity, RequestOpts } from "../api";
+import { getJson, post } from "../api";
+import type {
+  AllowlistRow,
+  BrowseEntry,
+  BudgetStatus,
+  ClaimReleaseResponse,
+  ConnectedAgentRow,
+  GrantRole,
+  GuideRevision,
+  GuideSaveResult,
+  Identity,
+  RequestOpts,
+  SharingSummary,
+} from "../api";
 
 /** One row of the coding agent's own spend (`server/insights/api/models_cost.py`). */
 export interface AgentSpendRow {
@@ -1108,4 +1120,135 @@ export async function adminSettingReset(name: string, expected: unknown): Promis
 export async function adminSettingsHistory(name = "", limit = 50, opts: RequestOpts = {}): Promise<SettingChange[]> {
   const out = await post<{ changes: SettingChange[] }>("/v1/admin/settings.history", { name, limit }, opts.signal);
   return out.changes;
+}
+
+export async function createGrant(
+  id: Pick<Identity, "org" | "namespace">,
+  subject: string,
+  role: GrantRole,
+  /** The server refuses a create below the subject's current role (409
+   *  GRANT_WOULD_DOWNGRADE) unless `replace` is set. Only the explicit "change role"
+   *  control passes it; "add member" never does, so re-adding an existing admin as writer
+   *  cannot demote them. */
+  opts: { replace?: boolean } = {},
+): Promise<unknown> {
+  return post("/v1/grants.create", {
+    org: id.org,
+    namespace: id.namespace,
+    subject,
+    role,
+    granted_by: "dashboard",
+    ...(opts.replace ? { replace: true } : {}),
+  });
+}
+
+export async function revokeGrant(
+  id: Pick<Identity, "org" | "namespace">,
+  subject: string,
+): Promise<{ revoked: boolean }> {
+  return post<{ revoked: boolean }>("/v1/grants.revoke", {
+    org: id.org,
+    namespace: id.namespace,
+    subject,
+  });
+}
+
+export async function browseNamespaces(
+  org: string,
+  opts: { query?: string; limit?: number; kinds?: string[]; includeClosed?: boolean } & RequestOpts = {},
+): Promise<BrowseEntry[]> {
+  const body: Record<string, unknown> = { org };
+  if (opts.query) body["query"] = opts.query;
+  if (opts.limit) body["limit"] = opts.limit;
+  if (opts.kinds && opts.kinds.length) body["kinds"] = opts.kinds;
+  if (opts.includeClosed) body["include_closed"] = true;
+  const r = await post<{ rows: BrowseEntry[] }>("/v1/namespace.browse", body, opts.signal);
+  return r.rows;
+}
+
+export async function removeAllowlist(
+  id: Pick<Identity, "org" | "namespace">,
+  memory_key_a: string,
+  memory_key_b: string,
+  opts: { reason?: string; removed_by?: string } = {},
+): Promise<{ removed: boolean }> {
+  return post("/v1/conflicts.allowlist_remove", {
+    org: id.org,
+    namespace: id.namespace,
+    memory_key_a,
+    memory_key_b,
+    reason: opts.reason ?? "",
+    removed_by: opts.removed_by ?? "",
+  });
+}
+
+export async function listAllowlist(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: { limit?: number } & RequestOpts = {},
+): Promise<{ rows: AllowlistRow[] }> {
+  return post(
+    "/v1/conflicts.allowlist_list",
+    {
+      org: id.org,
+      namespace: id.namespace,
+      limit: opts.limit || 100,
+    },
+    opts.signal,
+  );
+}
+
+/** Per-agent rollup over agent_events. Filters out sentinels server-side
+ *  so the UI only sees real clients. Empty namespace = org-wide. */
+export async function listConnectedAgents(
+  id: Pick<Identity, "org"> & { namespace?: string; window_hours?: number },
+  opts: RequestOpts = {},
+): Promise<{ rows: ConnectedAgentRow[]; window_hours: number }> {
+  const body: Record<string, unknown> = {
+    org: id.org,
+    window_hours: id.window_hours ?? 24,
+  };
+  if (id.namespace) body["namespace"] = id.namespace;
+  return post("/v1/agents.connected", body, opts.signal);
+}
+
+export async function revokeToken(name: string): Promise<void> {
+  await post("/v1/me/service_accounts.revoke", { name });
+}
+
+/** The guide's revisions, newest first, the current one among them. */
+export async function guideHistory(
+  org: string,
+  namespace: string,
+  limit: number,
+  opts: RequestOpts = {},
+): Promise<GuideRevision[]> {
+  const r = await post<{ revisions: GuideRevision[] }>(
+    "/v1/namespace.guide_history",
+    { org, namespace, limit },
+    opts.signal,
+  );
+  return r.revisions;
+}
+
+export async function saveNamespaceGuide(
+  org: string,
+  namespace: string,
+  edit: { content: string; summary?: string; note: string; expected_revision: number },
+): Promise<GuideSaveResult> {
+  return post<GuideSaveResult>("/v1/namespace.guide_set", { org, namespace, ...edit });
+}
+
+export async function claimRelease(org: string, namespace: string, reason: string = ""): Promise<ClaimReleaseResponse> {
+  return post<ClaimReleaseResponse>("/v1/admin/claim_release", { org, namespace, reason });
+}
+
+export async function getMySharingSummary(opts: RequestOpts = {}): Promise<SharingSummary> {
+  return getJson<SharingSummary>("/v1/me/sharing-summary", opts);
+}
+
+/** Org-wide 24h LLM spend rollup (all namespaces in the org). For
+ *  admin visibility into "what's this tenant burning across the
+ *  whole org" without per-namespace summation. */
+export async function getOrgBudgetStatus(id: Pick<Identity, "org">, opts: RequestOpts = {}): Promise<BudgetStatus> {
+  return post("/v1/cost.budget_status", { org: id.org }, opts.signal);
 }

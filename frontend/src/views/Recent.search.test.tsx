@@ -22,8 +22,13 @@ const entry = (memory_key: string): MemoryListEntry => ({
   pinned: false,
   tags: [],
   agent: "claude-desktop",
+  user_id: "user",
+  session_id: "one",
   value: `value of ${memory_key}`,
 });
+
+// A ranked hit as the server names its row: writer in full and the revision it was read at.
+const writer = { agent: "claude-desktop", user_id: "user", session_id: "one", version: 1 };
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -44,6 +49,7 @@ vi.mock("../api", async (importOriginal) => {
     searchMemory: vi.fn(async () => ({
       results: [
         {
+          ...writer,
           memory_key: "coffee_pref",
           memory_type: "semantic",
           content_excerpt: "prefers oat milk in coffee",
@@ -134,6 +140,125 @@ describe("Recent search why-line", () => {
   });
 });
 
+describe("Recent search with one key written by two sessions", () => {
+  const written = (session_id: string, over: Partial<MemoryListEntry> = {}): MemoryListEntry => ({
+    ...entry("deploy_note"),
+    user_id: "user",
+    session_id,
+    value: `note of session ${session_id}`,
+    ...over,
+  });
+  const ranked = (session_id: string, over: Record<string, unknown> = {}) => ({
+    memory_key: "deploy_note",
+    memory_type: "semantic",
+    content_excerpt: `note of session ${session_id}`,
+    distance: 0.3,
+    similarity: 0.7,
+    rank_score: 0.8,
+    confidence: 0.9,
+    agent: "claude-desktop",
+    user_id: "user",
+    session_id,
+    version: 1,
+    use_guidance: { next_step: "validate_lead", reasons: [] },
+    ...over,
+  });
+  const feed = (...entries: MemoryListEntry[]) =>
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) => ({
+      entries: opts?.contains ? [] : entries,
+      total: entries.length,
+      today: entries.length,
+      truncated: false,
+    }));
+  const search = async () => {
+    render(<Recent />);
+    await waitFor(() => expect(listMemories).toHaveBeenCalled());
+    await userEvent.type(screen.getByLabelText("Search memories"), "deploy");
+    await waitFor(() => expect(searchMemory).toHaveBeenCalled(), { timeout: 3000 });
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetNamespaceRoleCache();
+    useStore.setState({
+      authed: true,
+      whoami: admin,
+      myNamespaces: [row("alice", "admin")],
+      identity: { org: "dev", namespace: "alice", agent: "loom-ui" },
+      view: "memories",
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  it("keeps both rows of the key on screen and gives the guidance to the ranked one only", async () => {
+    // Both rows hold the typed word, so both stay; only session one's was ranked.
+    const both = [written("one"), written("two")];
+    vi.mocked(listMemories).mockResolvedValue({ entries: both, total: 2, today: 2, truncated: false });
+    vi.mocked(searchMemory).mockResolvedValue({ results: [ranked("one")], embedding_model: "fake" } as never);
+    await search();
+
+    await screen.findByText("note of session one");
+    expect(screen.getByText("note of session two")).toBeInTheDocument();
+    const why = await screen.findAllByRole("button", { name: "Why this result" });
+    expect(why).toHaveLength(2);
+    const cardOf = (b: HTMLElement) => b.closest("[data-memory-key]") as HTMLElement;
+    // The ranked row says why it was ranked; its namesake only that it holds the word.
+    const ofSession = (text: string) => why.find((b) => cardOf(b).textContent?.includes(text)) as HTMLElement;
+    await userEvent.click(ofSession("note of session two"));
+    expect(await screen.findByTestId("search-why")).toHaveTextContent('Contains "deploy"');
+    expect(screen.getByTestId("search-why")).not.toHaveTextContent("Suggested use");
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(ofSession("note of session one"));
+    expect(await screen.findByTestId("search-why")).toHaveTextContent("Suggested use: validate lead");
+    expect(screen.getAllByTestId("search-score")).toHaveLength(1);
+  });
+
+  it("keeps a ranked row visible but gives it no guidance or score when its revision is not the hit's", async () => {
+    feed(written("one", { version: 2 }));
+    vi.mocked(searchMemory).mockResolvedValue({
+      results: [ranked("one", { version: 1 })],
+      embedding_model: "fake",
+    } as never);
+    await search();
+
+    await screen.findByText("note of session one");
+    expect(screen.queryByRole("button", { name: "Why this result" })).toBeNull();
+    expect(screen.queryByTestId("search-score")).toBeNull();
+  });
+
+  it("does the same for a hit or row that names no revision", async () => {
+    for (const gone of ["hit", "row"] as const) {
+      cleanup();
+      feed(written("one", gone === "row" ? { version: undefined } : {}));
+      vi.mocked(searchMemory).mockResolvedValue({
+        results: [ranked("one", gone === "hit" ? { version: undefined } : {})],
+        embedding_model: "fake",
+      } as never);
+      await search();
+      await screen.findByText("note of session one");
+      expect(screen.queryByTestId("search-score"), gone).toBeNull();
+      expect(screen.queryByRole("button", { name: "Why this result" }), gone).toBeNull();
+    }
+  });
+
+  it("keeps rows of the key a hit without its writer names, and gives none of them its guidance", async () => {
+    feed(written("one"), written("two"));
+    vi.mocked(searchMemory).mockResolvedValue({
+      results: [ranked("one", { user_id: undefined, session_id: undefined })],
+      embedding_model: "fake",
+    } as never);
+    await search();
+
+    await screen.findByText("note of session one");
+    expect(screen.getByText("note of session two")).toBeInTheDocument();
+    expect(screen.queryByTestId("search-score")).toBeNull();
+    expect(screen.queryByText(/Suggested use/)).toBeNull();
+  });
+});
+
 describe("Recent search under a tag filter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -203,6 +328,7 @@ describe("Recent search after a local write", () => {
         : { entries: [entry("milk_note"), entry("oat_pref"), entry("old_pref")], total: 3, today: 0, truncated: false },
     );
     const hit = (memory_key: string) => ({
+      ...writer,
       memory_key,
       memory_type: "semantic",
       content_excerpt: memory_key,
@@ -250,6 +376,7 @@ describe("Recent search after a local write", () => {
       return {
         results: [
           {
+            ...writer,
             memory_key: "far_pref",
             memory_type: "semantic",
             content_excerpt: "far_pref",
@@ -294,6 +421,7 @@ describe("Recent search after a local write", () => {
       return {
         results: [
           {
+            ...writer,
             memory_key: "far_pref",
             memory_type: "semantic",
             content_excerpt: "far_pref",
@@ -396,6 +524,7 @@ describe("Recent search after a local write", () => {
         : { entries: [entry("milk_note"), entry("oat_pref")], total: 2, today: 0, truncated: false },
     );
     const hit = (memory_key: string) => ({
+      ...writer,
       memory_key,
       memory_type: "semantic",
       content_excerpt: memory_key,
@@ -437,6 +566,7 @@ describe("Recent search after a local write", () => {
         : { entries: [entry("milk_note"), entry("oat_pref")], total: 2, today: 0, truncated: false },
     );
     const hit = (memory_key: string) => ({
+      ...writer,
       memory_key,
       memory_type: "semantic",
       content_excerpt: memory_key,
@@ -671,6 +801,7 @@ describe("Recent search finds every row that names the word", () => {
     vi.mocked(searchMemory).mockImplementation(async () => ({
       results: [
         {
+          ...writer,
           memory_key: "coffee_pref",
           memory_type: "semantic",
           content_excerpt: "prefers oat milk in coffee",
@@ -698,8 +829,9 @@ describe("Recent search finds every row that names the word", () => {
         ? { entries: [entry("azure_new"), entry("coffee_pref")], total: 146, today: 1, truncated: false }
         : { entries: [entry("coffee_pref"), entry("tea_pref")], total: 2, today: 2, truncated: false },
     );
-    // tea_pref is ranked and holds no "Azure": the one row that shows a score.
+    // coffee_pref and tea_pref are ranked; azure_new holds the word and is not.
     const ranked = (key: string, similarity: number) => ({
+      ...writer,
       memory_key: key,
       memory_type: "semantic",
       content_excerpt: "",
@@ -723,11 +855,13 @@ describe("Recent search finds every row that names the word", () => {
       "keyword list call",
     );
     expect(kw[2]).toMatchObject({ contains: "Azure" });
-    // A keyword row shows no score, a ranked hit that holds the text (coffee_pref) included;
-    // the ranked-only row does.
+    // A row that holds the text and was not ranked shows no score; the ranked rows do, the
+    // one that holds the text too (coffee_pref) included.
     const scores = await screen.findAllByTestId("search-score", undefined, { timeout: 3000 });
-    expect(scores).toHaveLength(1);
-    expect(scores[0].closest("[data-memory-key]")).toHaveAttribute("data-memory-key", "tea_pref");
+    expect(scores.map((n) => n.closest("[data-memory-key]")?.getAttribute("data-memory-key")).sort()).toEqual([
+      "coffee_pref",
+      "tea_pref",
+    ]);
     expect(screen.getAllByRole("button", { name: "Why this result" })).toHaveLength(3);
     await userEvent.click(screen.getAllByRole("button", { name: "Why this result" })[0]);
     expect(await screen.findByTestId("search-why")).toHaveTextContent('Contains "Azure"');

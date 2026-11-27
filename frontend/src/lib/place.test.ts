@@ -30,6 +30,7 @@ describe("rememberPlace / readPlace", () => {
       inspected: "a",
       inspectedAgent: "bot",
       inspectedOwner: null,
+      inspectedScope: null,
     });
   });
 

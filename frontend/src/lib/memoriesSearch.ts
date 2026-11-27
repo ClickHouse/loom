@@ -3,12 +3,38 @@
 // holds the query (memory.list `contains`, newest first), then the ranked hits they do
 // not already hold.
 
+import { SENTINEL_AGENTS } from "./format";
+
 /** Keyword matches a search shows ahead of the ranked hits (a viewer's list page is 100). */
 export const KEYWORD_PAGE = 100;
 
+/** Whether a row names its writer in full: a server that predates the fields, a shared row
+ *  (`_shared`, `*`) and a chunk without them do not. */
+export function namesWriter(r: { agent?: string; user_id?: string; session_id?: string }): boolean {
+  return Boolean(r.agent && !SENTINEL_AGENTS.has(r.agent) && r.agent !== "_shared" && r.user_id && r.session_id);
+}
+
+/** A row's own id: `(namespace, agent, user, session, key)`, which is what two rows of one
+ *  key differ by; `[key]` alone when the row does not name its writer. The two shapes differ
+ *  in length, so a key cannot make one pass for the other. */
+export function rowIdentity(
+  namespace: string,
+  r: { memory_key: string; agent?: string; user_id?: string; session_id?: string; namespace?: string },
+): string {
+  return JSON.stringify(
+    namesWriter(r) ? [r.namespace || namespace, r.agent, r.user_id, r.session_id, r.memory_key] : [r.memory_key],
+  );
+}
+
+/** Every id a row answers to: its own and its key's. A hit that names no writer is the key
+ *  alone (the old match, which keeps every row of the key); a hit that names one matches
+ *  only the row it names. */
+export function rowIds(namespace: string, r: Parameters<typeof rowIdentity>[1]): string[] {
+  return [rowIdentity(namespace, r), JSON.stringify([r.memory_key])];
+}
+
 export function keywordThenRanked(keywordKeys: string[], rankedKeys: string[]): string[] {
-  const keyword = new Set(keywordKeys);
-  return [...keywordKeys, ...rankedKeys.filter((k) => !keyword.has(k))];
+  return [...new Set([...keywordKeys, ...rankedKeys])];
 }
 
 /** A parsed search: the text the server is asked, and the tag and agent filters. */

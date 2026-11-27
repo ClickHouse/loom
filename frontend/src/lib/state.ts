@@ -4,7 +4,15 @@ import { hasToken, isAuthDisabled, isProxyMode } from "../api";
 import { sameIdentity } from "./boot";
 import { NAMESPACE_NAME, isCollectionName } from "./namespace";
 import { HANDOFF_QUERY_KEYS, readSessionHandoff, type SessionHandoffRef } from "./sessionHandoff";
-import { patchEntry, readPlace, rememberPlace, type InspectedOwner, type InspectedScope, type Place } from "./place";
+import {
+  patchEntry,
+  readInspect,
+  readPlace,
+  rememberPlace,
+  type InspectedOwner,
+  type InspectedScope,
+  type Place,
+} from "./place";
 
 export type View =
   | "memories"
@@ -247,18 +255,6 @@ export function setViewParam(key: string, value: string | null, state: Record<st
   patchEntry(state, `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`);
 }
 
-/** The writer agent a `?memory=` link opens under: the one the entry remembers (a reload
- *  keeps history.state), else every agent ("*", as Runs opens a key it only knows by name). */
-function linkedAgent(key: string): string {
-  const s: unknown = typeof history === "undefined" ? null : history.state;
-  const remembered = s && typeof s === "object" ? (s as Record<string, unknown>).loomInspect : null;
-  if (remembered && typeof remembered === "object") {
-    const r = remembered as Record<string, unknown>;
-    if (r.key === key && typeof r.agent === "string") return r.agent;
-  }
-  return "*";
-}
-
 // The URL keys that name an object of one namespace: a switch drops them.
 const SWITCH_CLEARS = ["memory", "thread", "doc", "task", ...HANDOFF_QUERY_KEYS];
 // A collection is the org's, not a namespace's: an entry made in another namespace keeps it,
@@ -306,9 +302,7 @@ function stampFor(namespace: string | null): Record<string, unknown> {
   return {
     loomNamespace: namespace,
     loomInspect: null,
-    ...(place
-      ? { loomPlace: { ...place, inspected: null, inspectedAgent: "", inspectedOwner: null, inspectedScope: null } }
-      : {}),
+    ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "", inspectedOwner: null } } : {}),
   };
 }
 
@@ -325,9 +319,7 @@ function openedByUrl(v: View): Partial<AppState> {
   const thread = v === "sessions" ? urlParam("thread") : null;
   return {
     inspectedMemoryKey: memory,
-    inspectedAgent: memory ? linkedAgent(memory) : "",
-    inspectedOwner: null,
-    inspectedScope: null,
+    ...(memory ? readInspect(memory) : { inspectedAgent: "", inspectedOwner: null, inspectedScope: null }),
     ...(doc ? { pendingDocSourceUri: doc } : {}),
     ...(thread ? { pendingConversationThread: { threadId: thread } } : {}),
   };
@@ -535,7 +527,6 @@ export const useStore = create<AppState>((set, get) => ({
         deniedNamespace: null,
         linkOpened: null,
         inspectedMemoryKey: null,
-        inspectedScope: null,
         pendingConversationThread: null,
         sessionHandoff: null,
         pendingDocSourceUri: null,
@@ -562,7 +553,6 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({
       view,
       inspectedMemoryKey: null,
-      inspectedScope: null,
       navSeq: s.navSeq + 1,
       sessionHandoff: linkedSessionHandoff(view),
       navNote: opts.note ?? null,
@@ -577,9 +567,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       view,
       sessionHandoff: here ? linkedSessionHandoff(view) : null,
-      ...(here
-        ? openedByUrl(view)
-        : { inspectedMemoryKey: null, inspectedAgent: "", inspectedOwner: null, inspectedScope: null }),
+      ...(here ? openedByUrl(view) : { inspectedMemoryKey: null, inspectedAgent: "", inspectedOwner: null }),
     });
   },
   arriveFromHistory: (view, place) => {
@@ -612,11 +600,11 @@ export const useStore = create<AppState>((set, get) => ({
       opts?.userId || opts?.sessionId ? { user_id: opts.userId || "-", session_id: opts.sessionId || "-" } : null;
     const scope = opts?.namespace || opts?.exact ? { namespace: opts.namespace, exact: !!opts.exact } : null;
     set({ inspectedMemoryKey, inspectedAgent: agent, inspectedOwner: owner, inspectedScope: scope });
-    // On Memories the open memory is the page's URL (`?memory=`), with the agent it was
-    // read as in the entry's state for a reload.
+    // On Memories the open memory is the page's URL (`?memory=`), with the agent, user and
+    // session it was read as and its namespace in the entry's state for a reload.
     if (get().view === "memories") {
       setViewParam("memory", inspectedMemoryKey, {
-        loomInspect: inspectedMemoryKey ? { key: inspectedMemoryKey, agent } : null,
+        loomInspect: inspectedMemoryKey ? { key: inspectedMemoryKey, agent, owner, scope } : null,
       });
     }
   },

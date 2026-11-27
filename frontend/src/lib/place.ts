@@ -75,7 +75,7 @@ export function rememberPlace(
     inspected: inspected.key,
     inspectedAgent: inspected.agent,
     inspectedOwner: inspected.owner ?? null,
-    ...(inspected.scope ? { inspectedScope: inspected.scope } : {}),
+    inspectedScope: inspected.scope ?? null,
   };
   patchEntry({ loomPlace: place });
 }
@@ -86,31 +86,41 @@ export function readPlace(state: unknown): Place | null {
   const p = (state as Record<string, unknown>).loomPlace;
   if (!p || typeof p !== "object") return null;
   const r = p as Record<string, unknown>;
-  const scope = inspectionScope(r.inspectedScope);
   return {
     scrollTop: typeof r.scrollTop === "number" ? r.scrollTop : 0,
-    focusKey: typeof r.focusKey === "string" ? r.focusKey : null,
-    inspected: typeof r.inspected === "string" ? r.inspected : null,
-    inspectedAgent: typeof r.inspectedAgent === "string" ? r.inspectedAgent : "",
+    focusKey: text(r.focusKey) ?? null,
+    inspected: text(r.inspected) ?? null,
+    inspectedAgent: text(r.inspectedAgent) ?? "",
     inspectedOwner: owner(r.inspectedOwner),
-    ...(scope ? { inspectedScope: scope } : {}),
+    inspectedScope: inspectionScope(r.inspectedScope),
   };
 }
 
+const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+
 function inspectionScope(v: unknown): InspectedScope | null {
-  if (!v || typeof v !== "object") return null;
-  const scope = v as Record<string, unknown>;
-  return typeof scope.exact === "boolean"
-    ? { namespace: typeof scope.namespace === "string" ? scope.namespace : undefined, exact: scope.exact }
-    : null;
+  const o = (v ?? {}) as Partial<InspectedScope>;
+  return typeof o.exact === "boolean" ? { namespace: text(o.namespace), exact: o.exact } : null;
 }
 
 function owner(v: unknown): InspectedOwner | null {
-  if (!v || typeof v !== "object") return null;
-  const o = v as Record<string, unknown>;
-  return typeof o.user_id === "string" && typeof o.session_id === "string"
-    ? { user_id: o.user_id, session_id: o.session_id }
-    : null;
+  const o = (v ?? {}) as Partial<InspectedOwner>;
+  const user_id = text(o.user_id);
+  const session_id = text(o.session_id);
+  return user_id !== undefined && session_id !== undefined ? { user_id, session_id } : null;
+}
+
+/** How the entry's `?memory=` link was opened: the writer agent, user and session and the
+ *  namespace it was read in, as `inspect` stamped them. An entry that remembers none of it
+ *  (an older one, or a bare link) opens the key under every agent, as before. */
+export function readInspect(key: string): Pick<Place, "inspectedAgent" | "inspectedOwner" | "inspectedScope"> {
+  const r = (stateRecord().loomInspect ?? {}) as Record<string, unknown>;
+  const mine = r.key === key;
+  return {
+    inspectedAgent: (mine && text(r.agent)) || "*",
+    inspectedOwner: mine ? owner(r.owner) : null,
+    inspectedScope: mine ? inspectionScope(r.scope) : null,
+  };
 }
 
 /** The label of the entry the current one was reached from ("memory api/rate-limit"), set

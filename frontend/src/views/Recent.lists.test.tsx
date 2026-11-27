@@ -18,11 +18,14 @@ const entry = (memory_key: string, over: Partial<MemoryListEntry> = {}): MemoryL
   memory_type: "semantic",
   confidence: 1,
   version: 1,
+  version_text: "1",
   created_at: "2026-09-18T09:00:00Z",
   expires_at: null,
   pinned: false,
   tags: [],
   agent: "claude-desktop",
+  user_id: "alice",
+  session_id: "s1",
   value: `value of ${memory_key}`,
   ...over,
 });
@@ -41,13 +44,14 @@ vi.mock("../api", async (importOriginal) => {
     listMemories: vi.fn(),
     getMemory: vi.fn(),
     pinMemory: vi.fn(async () => ({ version: 2, pinned: true })),
+    deleteMemoryVersion: vi.fn(async () => ({ tombstoned: false })),
     bulkGetMemories: vi.fn(async () => ({ results: {}, missing: [] })),
     conflictKeys: vi.fn(async (): Promise<string[]> => ["c/conflicted"]),
     listMine: vi.fn(async () => []),
     isAuthDisabled: () => false,
   };
 });
-import { conflictKeys, getMemory, listMemories, pinMemory } from "../api";
+import { conflictKeys, deleteMemoryVersion, getMemory, listMemories, pinMemory } from "../api";
 
 const owner: WhoAmI = {
   authenticated: true,
@@ -455,11 +459,14 @@ describe("Memories list chrome", () => {
       memory_type: "semantic",
       confidence: 0.8,
       version: 1,
+      version_text: "1",
       pinned: false,
       created_at: "2026-09-18T09:00:00Z",
       tags: ["infra"],
       source_trace: "conversation:t1",
       agent: "claude-desktop",
+      user_id: "alice",
+      session_id: "s1",
     };
     vi.mocked(getMemory).mockResolvedValue(detail);
     vi.mocked(listMemories).mockResolvedValue({
@@ -480,14 +487,111 @@ describe("Memories list chrome", () => {
       "d/plain",
     ]);
     expect(vi.mocked(pinMemory).mock.calls[0]).toEqual([
-      { org: "dev", namespace: "team", agent: "claude-desktop" },
+      { org: "dev", namespace: "team", agent: "claude-desktop", user_id: "alice", session_id: "s1" },
       "d/plain",
       detail,
     ]);
   });
 
+  describe("two rows of one key", () => {
+    const two = (over: Partial<MemoryListEntry> = {}) => [
+      entry("d/plain", { user_id: "alice", session_id: "s1", ...over }),
+      entry("d/plain", { user_id: "alice", session_id: "s2", ...over }),
+    ];
+    const show = async (entries: MemoryListEntry[]) => {
+      vi.mocked(getMemory).mockResolvedValue({
+        found: true,
+        value: "v",
+        version: 1,
+        version_text: "1",
+        pinned: false,
+        agent: "claude-desktop",
+        user_id: "alice",
+        session_id: "s2",
+      } as MemoryDetail);
+      vi.mocked(listMemories).mockResolvedValue({ entries, total: entries.length, today: 0, truncated: false });
+      render(<Recent />);
+      await screen.findAllByText("d/plain");
+      return screen.getAllByRole("checkbox", { name: "Select d/plain" });
+    };
+
+    it("selects, and pins, only the row that was ticked", async () => {
+      const boxes = await show(two());
+      const user = userEvent.setup();
+      await user.click(boxes[1]!);
+      expect(boxes[0]).toHaveAttribute("aria-checked", "false");
+      expect(boxes[1]).toHaveAttribute("aria-checked", "true");
+      await user.click(within(toolbar()).getByRole("button", { name: "Pin" }));
+      await waitFor(() => expect(pinMemory).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(getMemory).mock.calls[0]![0]).toMatchObject({ user_id: "alice", session_id: "s2" });
+      expect(vi.mocked(pinMemory).mock.calls[0]![0]).toMatchObject({ user_id: "alice", session_id: "s2" });
+    });
+
+    it("refuses to pin a namesake returned after the selected row disappears", async () => {
+      const boxes = await show(two());
+      const user = userEvent.setup();
+      await user.click(boxes[0]!);
+      await user.click(within(toolbar()).getByRole("button", { name: "Pin" }));
+      await waitFor(() => expect(toolbar()).not.toHaveTextContent("1 selected"));
+      expect(getMemory).toHaveBeenCalledWith(expect.objectContaining({ session_id: "s1" }), "d/plain");
+      expect(pinMemory).not.toHaveBeenCalled();
+    });
+
+    it("deletes only the selected writer and exact listed version", async () => {
+      const version = "1795700603642123456";
+      const boxes = await show(two({ version: Number(version), version_text: version }));
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+      try {
+        const user = userEvent.setup();
+        await user.click(boxes[0]!);
+        await user.click(within(toolbar()).getByRole("button", { name: "Delete" }));
+        await waitFor(() => expect(toolbar()).not.toHaveTextContent("1 selected"));
+        expect(deleteMemoryVersion).toHaveBeenCalledExactlyOnceWith(
+          { org: "dev", namespace: "team", agent: "claude-desktop", user_id: "alice", session_id: "s1" },
+          "d/plain",
+          version,
+        );
+        expect(getMemory).not.toHaveBeenCalled();
+      } finally {
+        confirm.mockRestore();
+      }
+    });
+
+    it("does not guess between rows that name no writer: the pin is refused, not sent to either", async () => {
+      const boxes = await show(two({ user_id: undefined, session_id: undefined }));
+      const user = userEvent.setup();
+      await user.click(boxes[0]!);
+      await user.click(within(toolbar()).getByRole("button", { name: "Pin" }));
+      await waitFor(() => expect(toolbar()).not.toHaveTextContent("1 selected"));
+      expect(getMemory).not.toHaveBeenCalled();
+      expect(pinMemory).not.toHaveBeenCalled();
+    });
+
+    it("marks as open only the row the inspector holds", async () => {
+      useStore.setState({
+        inspectedMemoryKey: "d/plain",
+        inspectedAgent: "claude-desktop",
+        inspectedOwner: { user_id: "alice", session_id: "s2" },
+      });
+      const boxes = await show(two());
+      const open = document.querySelectorAll("[data-active]");
+      expect(open).toHaveLength(1);
+      expect(open[0]!.contains(boxes[1]!)).toBe(true);
+      useStore.setState({ inspectedMemoryKey: null, inspectedAgent: "", inspectedOwner: null });
+    });
+  });
+
   it("counts a pin that committed with lists behind as pinned, and says a failure apart", async () => {
-    vi.mocked(getMemory).mockResolvedValue({ found: true, value: "v", version: 1, pinned: false } as MemoryDetail);
+    vi.mocked(getMemory).mockResolvedValue({
+      found: true,
+      value: "v",
+      version: 1,
+      version_text: "1",
+      pinned: false,
+      agent: "claude-desktop",
+      user_id: "alice",
+      session_id: "s1",
+    } as MemoryDetail);
     vi.mocked(listMemories).mockResolvedValue({
       entries: [entry("d/one"), entry("d/two")],
       total: 2,

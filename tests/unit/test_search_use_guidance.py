@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -269,6 +270,85 @@ async def test_parked_hit_rejects_replacement_with_same_version(monkeypatch):
     assert parked is not None
     head.update(content_sha256="b" * 64, verified_sha256="b" * 64)
     assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == []
+
+
+async def test_unchanged_superseded_anchor_hit_survives_a_handle_only_continuation(monkeypatch):
+    """An anchor hit read under `include_superseded` keeps the status its row had, so the
+    continuation (whose request does not repeat the flag) serves it while the row is unchanged."""
+    head = _head(status="superseded")
+
+    async def heads(keys):
+        return {_KEY: head}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    served = MemorySearchInput(org="o", namespace="n", query="deploy", include_superseded=True)
+    hit = _hit()
+    hit.source = "anchor"
+    hit.status = "superseded"
+    await guidance.attach_search_guidance(served, [hit], snapshot_only=True)
+    parked = search_pages.unparked(search_pages._parked(hit))
+    assert parked is not None and parked.status == "superseded"
+    assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == [parked]
+    # A hit parked without its status (the anchor pool did not select it) is dropped.
+    parked.status = ""
+    assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == []
+
+
+@pytest.mark.asyncio
+async def test_key_match_superseded_hit_survives_a_handle_only_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The key-match arm's own hit, as that arm builds it, carries its row's status through
+    the parked page, so an unchanged superseded row stays served."""
+    import server.core.ch as ch_mod
+    from server.memory.app.search.key_match import _run_key_match_pool
+
+    row = {
+        "memory_key": _KEY[-1],
+        "agent": "a",
+        "user_id": "u",
+        "session_id": "s",
+        "version": 42,
+        "status": "superseded",
+        "content_sha256": "a" * 64,
+        "similarity": 0.7,
+        "strength": 0.9,
+    }
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [{"any_key": 1}] if "any_key" in sql else [row]
+
+    async def heads(keys: list[tuple[str, ...]]) -> dict[tuple[str, ...], dict[str, Any]]:
+        return {_KEY: _head(status="superseded")}
+
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    served = MemorySearchInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        query="deploy notes",
+        key_match_mode="always",
+        include_superseded=True,
+    )
+    ctx = SimpleNamespace(
+        input=served,
+        all_hits=[],
+        actual_work={},
+        namespaces=["n"],
+        query_vec=[0.1],
+        embedder=SimpleNamespace(model_name="m"),
+        endpoint=None,
+        query_shape="",
+    )
+    await _run_key_match_pool(ctx)
+    (hit,) = ctx.all_hits
+    assert hit.status == "superseded"
+    await guidance.attach_search_guidance(served, [hit], snapshot_only=True)
+    parked = search_pages.unparked(search_pages._parked(hit))
+    assert parked is not None and parked.status == "superseded"
+    assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == [parked]
 
 
 async def test_previous_build_cursor_cannot_give_folded_passage_parent_approval(monkeypatch):

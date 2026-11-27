@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   bulkGetMemories,
+  getMemory,
   listMemories,
   searchMemory,
   type Identity,
@@ -12,7 +13,7 @@ import { CARD_VALUE_CHARS } from "../components/MemoryCard";
 import { errorRequestId } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
-import { KEYWORD_PAGE, keywordThenRanked } from "../lib/memoriesSearch";
+import { KEYWORD_PAGE, keywordThenRanked, namesWriter, rowIdentity, rowIds } from "../lib/memoriesSearch";
 
 // The fields the page and its cards read. Field names are a quarter of a row, so a field
 // the page does not read costs on every row. `sensitivity`, which marks a high row sent
@@ -33,6 +34,9 @@ const MEMORIES_LIST_FIELDS = [
   "verified_by",
   "verification",
   "status",
+  // The revision a hit's guidance was made for.
+  "version",
+  "version_text",
 ];
 
 /** A tag and agent filter: what a search's keyword half reads with. */
@@ -76,6 +80,7 @@ function detailToEntry(key: string, d: MemoryDetail): MemoryListEntry {
     memory_type: d.memory_type || "semantic",
     confidence: d.confidence ?? 1,
     version: d.version ?? 0,
+    version_text: d.version_text ?? undefined,
     created_at: d.created_at || "",
     updated_at: d.updated_at ?? null,
     expires_at: d.expires_at ?? null,
@@ -103,15 +108,16 @@ export function useMemorySearch(
   entries: MemoryListEntry[] | null,
   memoriesVersion: number,
 ) {
-  // Ordered array (not Set) to preserve the server's relevance ranking.
-  // Null = no active search.
+  // Ordered array (not Set) to preserve the server's relevance ranking. Each entry is a row's
+  // whole identity (`rowIdentity`), not its key: two rows of one key in different sessions
+  // are two rows. Null = no active search.
   const [searchHits, setSearchHits] = useState<string[] | null>(null);
   // Per-hit ranking evidence: the server's `explanation` and `score_components`, keyed by
-  // memory_key, rendered under each card while a search is active so the list says why a
+  // the row's identity, rendered under each card while a search is active so the list says why a
   // row is there.
   const [searchWhy, setSearchWhy] = useState<Map<string, SearchHit>>(new Map());
   // Full rows for search hits that fell outside the preloaded window,
-  // fetched on-demand so they still render (keyed by memory_key).
+  // fetched on-demand so they still render (keyed by the row's identity).
   const [searchExtra, setSearchExtra] = useState<Map<string, MemoryListEntry>>(new Map());
   const [searchAbstain, setSearchAbstain] = useState<string | null>(null);
   // The rows whose value or key holds the typed text (newest first, ahead of the ranked
@@ -175,6 +181,8 @@ export function useMemorySearch(
     }
     let cancelled = false;
     const ac = new AbortController();
+    const idOf = (r: Parameters<typeof rowIdentity>[1]) => rowIdentity(identity.namespace, r);
+    const idsOf = (r: Parameters<typeof rowIdentity>[1]) => rowIds(identity.namespace, r);
     const t = setTimeout(async () => {
       setSearching(true);
       try {
@@ -216,9 +224,13 @@ export function useMemorySearch(
         }).catch(() => null);
         if (cancelled) return;
         const kwEntries = kw?.entries ?? [];
-        const kwKeys = new Set(kwEntries.map((e) => e.memory_key));
-        const have = new Set(entriesRef.current.map((e) => e.memory_key));
-        const kwExtra = kwEntries.filter((e) => !have.has(e.memory_key)).map((e) => [e.memory_key, e] as const);
+        const kwOwn = kwEntries.map(idOf);
+        const kwKeys = new Set(kwOwn);
+        const have = new Set(entriesRef.current.map(idOf));
+        // Every id a row the list holds answers to: a hit that names no writer is matched by
+        // any row of its key, and one that names it by that row alone.
+        const held = new Set([...entriesRef.current, ...kwEntries].flatMap(idsOf));
+        const kwExtra = kwEntries.filter((e) => !have.has(idOf(e))).map((e) => [idOf(e), e] as const);
         setKeywordKeys(kwKeys);
         setKeywordFor(rawQuery.trim());
         setKeywordTotal(kw?.total ?? 0);
@@ -226,11 +238,11 @@ export function useMemorySearch(
         // the list does not shrink to the keyword rows and grow back after a write. Only
         // those the page or the keyword read holds: a copy read before a write is not today's.
         const shownKey = `${identity.org}/${identity.namespace}\n${rawQuery}`;
-        const kept = (rankedShownRef.current?.key === shownKey ? rankedShownRef.current.keys : []).filter(
-          (k) => have.has(k) || kwKeys.has(k),
+        const kept = (rankedShownRef.current?.key === shownKey ? rankedShownRef.current.keys : []).filter((k) =>
+          held.has(k),
         );
         if (kwKeys.size > 0) {
-          setSearchHits(keywordThenRanked([...kwKeys], kept));
+          setSearchHits(keywordThenRanked(kwOwn, kept));
           setSearchExtra(new Map(kwExtra));
           if (kept.length === 0) setSearchWhy(new Map());
           // Rows hold the words: no low-confidence note from an earlier query.
@@ -248,20 +260,19 @@ export function useMemorySearch(
           // list goes back to the keyword rows and the next run keeps none of them.
           rankedShownRef.current = null;
           if (kept.length > 0) {
-            setSearchHits([...kwKeys]);
+            setSearchHits(kwOwn);
             setSearchExtra(new Map(kwExtra));
             setSearchWhy(new Map());
           }
           return;
         }
         const results = r.results || [];
-        const hits = keywordThenRanked(
-          kwEntries.map((e) => e.memory_key),
-          results.map((h) => h.memory_key),
-        );
-        rankedShownRef.current = { key: shownKey, keys: results.map((h) => h.memory_key) };
+        const hits = keywordThenRanked(kwOwn, results.map(idOf));
+        rankedShownRef.current = { key: shownKey, keys: results.map(idOf) };
         setSearchHits(hits);
-        setSearchWhy(new Map(results.map((h) => [h.memory_key, h] as const)));
+        // Only a hit that names its writer in full can be shown on a row: a hit without them
+        // is not told from another session's row of its key.
+        setSearchWhy(new Map(results.filter(namesWriter).map((h) => [idOf(h), h] as const)));
         // The server hedges (abstain) when the top hit is below threshold;
         // surface it so weak matches aren't read as confident answers.
         setSearchAbstain(
@@ -270,29 +281,39 @@ export function useMemorySearch(
         // Server search spans the whole namespace, but the page only preloads
         // the top `limit` rows. Hydrate hits outside that window so they still
         // render, instead of being dropped by the key-set intersection below.
-        // agent="*" resolves the row regardless of which agent wrote it.
-        const missing = hits.filter((k) => !have.has(k) && !kwKeys.has(k));
-        if (missing.length === 0) {
+        // agent="*" resolves the row regardless of which agent wrote it, but one row per
+        // key: a hit that names its writer takes that row only if it is the row it names,
+        // else it reads its own.
+        const unseen = results.filter((h) => !held.has(idOf(h)));
+        if (unseen.length === 0) {
           setSearchExtra(new Map(kwExtra));
           return;
         }
         // One memory.bulk_get, not one memory.get per hit — the list path below already
         // reads this way.
+        const missing = [...new Set(unseen.map((h) => h.memory_key))];
         const bulk = await bulkGetMemories({ ...identity, agent: "*" }, missing, {
           signal: ac.signal,
         }).catch(() => ({
           results: {} as Record<string, MemoryDetail>,
           missing,
         }));
-        const fetched = missing.map((k) => {
-          const d = bulk.results[k];
-          return d ? detailToEntry(k, d) : null;
-        });
+        const rowFor = async (h: SearchHit): Promise<MemoryListEntry | null> => {
+          const d = bulk.results[h.memory_key];
+          const e = d ? detailToEntry(h.memory_key, d) : null;
+          if (e && idsOf(e).includes(idOf(h))) return e;
+          if (!namesWriter(h)) return null;
+          const own = { ...identity, agent: h.agent ?? "", user_id: h.user_id, session_id: h.session_id };
+          const exact = await getMemory(own, h.memory_key, { signal: ac.signal }).catch(() => null);
+          const x = exact?.found ? detailToEntry(h.memory_key, exact) : null;
+          return x && idsOf(x).includes(idOf(h)) ? x : null;
+        };
+        const fetched = await Promise.all(unseen.map(rowFor));
         if (cancelled) return;
         setSearchExtra(
           new Map([
             ...kwExtra,
-            ...fetched.filter((e): e is MemoryListEntry => e !== null).map((e) => [e.memory_key, e] as const),
+            ...fetched.filter((e): e is MemoryListEntry => e !== null).map((e) => [idOf(e), e] as const),
           ]),
         );
       } catch {
@@ -422,7 +443,10 @@ export function useMemoryListRead({
           if (!live()) return;
           setBulkValues((prev) => {
             const next = new Map(prev);
-            for (const [k, d] of Object.entries(b.results)) next.set(k, d.value);
+            // By the row's own id: the one row bulk_get answers for a key may be a namesake's.
+            for (const [k, d] of Object.entries(b.results)) {
+              next.set(rowIdentity(identity.namespace, { ...d, memory_key: k }), d.value);
+            }
             return next;
           });
         } catch {

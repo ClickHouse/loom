@@ -21,6 +21,7 @@ import {
   type SearchHit,
 } from "../api";
 import { isCollectionName } from "../lib/namespace";
+import { namesWriter, rowIdentity } from "../lib/memoriesSearch";
 import { sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
@@ -341,10 +342,29 @@ export function HeaderSearch({
     setQ("");
   };
 
-  const openMemory = (e: Pick<MemoryListEntry, "memory_key" | "agent">) => {
-    inspect(e.memory_key, { agent: e.agent });
+  // A row opens as the one written by its agent, user and session: another session's row of
+  // the same key is not it. A listed row that names no writer (an older server) opens by key,
+  // as before. A search hit opens only when it names its writer: a shared or chunk hit, or
+  // one that does not, has no row of its own to open, and is not offered as one.
+  const openMemory = (
+    e: Pick<MemoryListEntry, "memory_key" | "agent" | "user_id" | "session_id"> & { namespace?: string },
+  ) => {
+    inspect(
+      e.memory_key,
+      namesWriter(e)
+        ? {
+            agent: e.agent,
+            userId: e.user_id,
+            sessionId: e.session_id,
+            namespace: e.namespace || identity?.namespace,
+            exact: true,
+          }
+        : { agent: e.agent || "" },
+    );
     setOpen(false);
   };
+  const openable = (h: SearchHit) => namesWriter(h) && !h.memory_key.startsWith("chunk:");
+  const openHit = (h: SearchHit) => openable(h) && openMemory(h);
 
   const openDocument = (d: KnowledgeEntry) => {
     openDoc(d.source_uri);
@@ -492,7 +512,7 @@ export function HeaderSearch({
     else if (a.kind === "recent") openMemory(a.mem);
     else if (a.kind === "ns") switchNs(a.ns.namespace);
     else if (a.kind === "profile") openProfileSection(a.section.label);
-    else if (a.kind === "mem") openMemory({ memory_key: a.mem.memory_key, agent: a.mem.agent || "" });
+    else if (a.kind === "mem") openHit(a.mem);
     else if (a.kind === "doc") openDocument(a.doc);
   };
 
@@ -688,7 +708,7 @@ export function HeaderSearch({
                 {recentShown.map((e, i) => (
                   <button
                     type="button"
-                    key={`${e.agent}::${e.memory_key}`}
+                    key={namesWriter(e) ? rowIdentity(identity?.namespace ?? "", e) : offRecent + i}
                     {...optionProps(offRecent + i)}
                     onClick={() => openMemory(e)}
                   >
@@ -770,9 +790,10 @@ export function HeaderSearch({
                   return (
                     <button
                       type="button"
-                      key={`${e.agent || ""}::${e.memory_key}`}
+                      key={namesWriter(e) ? rowIdentity(identity?.namespace ?? "", e) : idx}
                       {...optionProps(idx)}
-                      onClick={() => openMemory({ memory_key: e.memory_key, agent: e.agent || "" })}
+                      aria-disabled={!openable(e) || undefined}
+                      onClick={() => openHit(e)}
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeIcon kind="memory" />
@@ -784,6 +805,7 @@ export function HeaderSearch({
                         {e.content_excerpt || "(empty)"}
                       </div>
                       <GuidanceLabel hit={e} />
+                      {!openable(e) && <div className="pl-6 text-xs text-text-muted">Preview only</div>}
                     </button>
                   );
                 })}

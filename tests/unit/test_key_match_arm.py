@@ -508,6 +508,43 @@ async def test_a_key_match_row_carries_its_version(monkeypatch) -> None:
     assert [h.version for h in ctx.all_hits] == [9]
 
 
+async def test_a_key_match_row_carries_its_status(monkeypatch) -> None:
+    # an `include_superseded` read serves the row; a handle-only continuation re-checks
+    # the status the hit was served with, so the arm has to keep it
+    import server.core.ch as ch_mod
+
+    row = {"memory_key": "task_worktree", "agent": "a", "user_id": "u", "session_id": "s1"}
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            if "any_key" in sql:
+                return [{"any_key": 1}]
+            assert "e.status AS status" in sql
+            return [{**row, "version": 2, "status": "superseded"}]
+
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
+    inp = MemorySearchInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        query="task worktree",
+        key_match_mode="always",
+        include_superseded=True,
+    )
+    ctx = SimpleNamespace(
+        input=inp,
+        all_hits=[],
+        actual_work={},
+        namespaces=["n"],
+        query_vec=[0.1],
+        embedder=SimpleNamespace(model_name="m"),
+        endpoint=None,
+        query_shape="",
+    )
+    await _run_key_match_pool(ctx)
+    assert [h.status for h in ctx.all_hits] == ["superseded"]
+
+
 @pytest.mark.parametrize("shape", ["aggregational", "temporal_diff"])
 async def test_the_gate_counts_rows_per_key_as_the_final_block_keeps_them(
     monkeypatch, shape: str

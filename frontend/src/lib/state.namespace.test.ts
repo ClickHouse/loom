@@ -21,6 +21,7 @@ function at(url: string, state: unknown = null): void {
   history.replaceState(state, "", url);
 }
 const address = () => location.pathname + location.search;
+const patchState = (state: unknown) => history.replaceState(state, "", location.href);
 
 /** Back one entry, then what App's popstate handler does for a view change. */
 async function back(view: Parameters<ReturnType<typeof useStore.getState>["arriveFromHistory"]>[0]) {
@@ -204,6 +205,32 @@ describe("an entry Back reaches from another namespace", () => {
     useStore.getState().bootIdentity(team);
     useStore.getState().bootView("memories");
     expect(useStore.getState()).toMatchObject({ inspectedMemoryKey: "team-key", inspectedAgent: "bot" });
+  });
+
+  it("a row opened as one session's reopens as that row after a reload; a bare link opens its key", async () => {
+    useStore.getState().navigate("recall");
+    useStore.getState().setIdentity(team);
+    await back("memories");
+    useStore
+      .getState()
+      .inspect("team-key", { agent: "bot", userId: "ada", sessionId: "two", namespace: "team", exact: true });
+    const reload = () => {
+      useStore.setState({ identity: null, inspectedMemoryKey: null, inspectedAgent: "", inspectedOwner: null });
+      useStore.getState().bootIdentity(team);
+      useStore.getState().bootView("memories");
+      return useStore.getState();
+    };
+    expect(reload()).toMatchObject({
+      inspectedMemoryKey: "team-key",
+      inspectedAgent: "bot",
+      inspectedOwner: { user_id: "ada", session_id: "two" },
+      inspectedScope: { namespace: "team", exact: true },
+    });
+    // An entry stamped before the owner was kept, and a link with no state at all.
+    patchState({ loomNamespace: "team", loomInspect: { key: "team-key", agent: "bot" } });
+    expect(reload()).toMatchObject({ inspectedAgent: "bot", inspectedOwner: null, inspectedScope: null });
+    history.replaceState(null, "", "/memories?namespace=team&memory=team-key");
+    expect(reload()).toMatchObject({ inspectedAgent: "*", inspectedOwner: null, inspectedScope: null });
   });
 
   it("after the account loses that namespace, a reload opens nothing under the no-access page", async () => {
