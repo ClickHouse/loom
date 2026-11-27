@@ -709,6 +709,51 @@ async def test_a_rename_alone_moves_the_link(env) -> None:
     assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "moved")
 
 
+async def test_a_file_link_follows_its_cited_lines_and_the_definition_its_memory_names(
+    env,
+) -> None:
+    repo = env
+    path = "src/widgets/dates.py"
+    src = "from http import http_date\n\n\ndef dump(o):\n    return http_date(o)\n"
+    c1 = repo.commit({path: src})
+    await _index(TRUNK, repo, c1, [path])
+    claim = "dates go through `http_date`"
+    cited = await _remember(MEM, "dates", claim, files=[path])
+    named = await _remember(MEM, "delta", "`dump_delta` returns seconds", files=[path])
+    rule = await _remember(MEM, "tiny", "keep this module tiny", files=[path])
+    await _pass()
+    for mid in (cited, named, rule):  # the file holds no definition any of them names
+        assert [(link["symbol"], link["state"]) for link in await _links(mid)] == [("", "fresh")]
+
+    # c2: the function a memory names merges; the lines another one cites stay
+    merged = src + "\n\ndef dump_delta(o):\n    return o.total_seconds()\n"
+    c2 = repo.commit({path: merged})
+    await _index(TRUNK, repo, c2, [path])
+    await _pass()
+    (link,) = await _links(named)
+    assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("dump_delta", "fresh")
+    for mid in (cited, rule):
+        assert [(link["symbol"], link["state"]) for link in await _links(mid)] == [("", "fresh")]
+
+    # c3: a cited line and the merged function are edited; the rule cites neither
+    edited = merged.replace("return http_date(o)", "return http_date(o).lower()")
+    c3 = repo.commit({path: edited.replace("o.total_seconds()", "o.total_seconds() * 1000")})
+    await _index(TRUNK, repo, c3, [path])
+    await _pass()
+    for mid in (cited, named):
+        assert [(link["state"], link["changed_since"]) for link in await _links(mid)] == [
+            ("changed", c3)
+        ]
+    assert [link["state"] for link in await _links(rule)] == ["fresh"]
+    assert (await _search(MEM, claim)).get("dates") == "changed"
+
+    # c4: the cited line is back
+    c4 = repo.commit({path: merged.replace("o.total_seconds()", "o.total_seconds() * 1000")})
+    await _index(TRUNK, repo, c4, [path])
+    await _pass()
+    assert [link["state"] for link in await _links(cited)] == ["fresh"]
+
+
 async def test_a_file_named_by_its_basename_resolves_to_its_one_live_path(env) -> None:
     from server.code.app.memory_links import live_paths
 

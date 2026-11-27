@@ -8,6 +8,9 @@ from dataclasses import replace
 from server.code.domain.anchor import (
     Definition,
     Link,
+    cited_fingerprint,
+    cited_lines,
+    cited_names,
     local_name,
     mentions,
     recheck,
@@ -224,6 +227,56 @@ def test_recheck_of_a_file_link() -> None:
     assert recheck(link, path_now="docs/b.md", head="c2").path == "docs/b.md"
     assert recheck(link, path_now="", head="c2").state == "missing"
     assert recheck(link, path_now="docs/a.md", head="c2").state == "fresh"
+
+
+def test_a_file_link_follows_the_lines_its_memory_cites() -> None:
+    names = cited_names(mentions("Dates go through `http_date`; `Reader.get` is unused."))
+    assert names == ["http_date"]  # `get` is a word of any file
+    then = [
+        "from werkzeug.http import http_date",
+        "",
+        "def _default(o):",
+        "    if isinstance(o, date):",
+        "        return http_date(o)",
+        "    return str(o)",
+    ]
+    assert cited_lines(then, names) == [then[0], "return http_date(o)"]
+    written = cited_fingerprint(then, names)
+    link = Link(path="src/p.py", body_hash=written, checked_hash=written)
+
+    # another line edited, the cited ones shifted and indented again: as it was
+    shifted = [
+        then[0],
+        "import uuid",
+        *then[1:4],
+        "            return http_date(o)",
+        "    return 0",
+    ]
+    as_it_was = cited_fingerprint(shifted, names)
+    assert recheck(link, path_now="src/p.py", cited=as_it_was, head="c2") == link
+    assert recheck(link, path_now="lib/p.py", cited=as_it_was, head="c2").state == "moved"
+
+    edited = [line.replace("http_date(o)", "http_date(o).lower()") for line in then]
+    changed = recheck(link, path_now="src/p.py", cited=cited_fingerprint(edited, names), head="c3")
+    assert (changed.state, changed.changed_since, changed.body_hash) == ("changed", "c3", written)
+    # edited again it is still changed since c3, and so it reads once every cited line went
+    assert recheck(changed, path_now="src/p.py", cited="h4", head="c4").changed_since == "c3"
+    assert recheck(link, path_now="src/p.py", cited="", head="c4").state == "changed"
+    back = recheck(changed, path_now="src/p.py", cited=written, head="c5")
+    assert (back.state, back.changed_since) == ("fresh", "")
+
+
+def test_a_file_link_written_against_no_cited_line_takes_the_first_it_finds() -> None:
+    # a rule about the file as a whole cites nothing: no edit to the file changes it
+    rule = "Changelog entries go in CHANGES.rst only for user-visible changes."
+    assert cited_names(mentions(rule)) == []
+    assert cited_fingerprint(["Version 3.1.0", "-   one entry"], []) == ""
+    link = Link(path="CHANGES.rst")
+    assert recheck(link, path_now="CHANGES.rst", cited="", head="c2") == link
+    # a name the file did not hold yet: the lines that bring it are its baseline
+    found = recheck(link, path_now="CHANGES.rst", cited="h1", head="c2")
+    assert (found.state, found.body_hash, found.checked_hash) == ("fresh", "h1", "h1")
+    assert recheck(found, path_now="CHANGES.rst", cited="h2", head="c3").state == "changed"
 
 
 def test_a_rename_keeps_an_earlier_change_and_rebaselines_only_a_current_link() -> None:

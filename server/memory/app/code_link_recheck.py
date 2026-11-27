@@ -330,8 +330,13 @@ async def _recheck(
                 lost[before.qualified_name] = before.read_path
         found.append(_Read(a, own, before, now, defs, renamed, gone))
     elsewhere = await _elsewhere(org, cns, lost)
+    in_files = await links.file_links(org, cns, [(r.row, r.now) for r in found], head, files)
     moves: list[Move] = []
-    for r in found:
+    for r, file in zip(found, in_files, strict=True):
+        if file and file.defined:
+            # the file now defines what the memory names: the finer links replace it
+            moves += [_anchored(r.row, d, head) for d in file.defined]
+            continue
         renamed, far = r.renamed, []
         candidates: list[Definition] = []
         mirror_unsure = False
@@ -369,6 +374,7 @@ async def _recheck(
             elsewhere=far,
             uncertain=renamed.uncertain or mirror_unsure,
             carried=renamed.carried,
+            cited=file.cited if file else "",
             head=head,
         )
         if after != r.before:
@@ -602,27 +608,32 @@ async def _resolve_pending(
             here = await links.at_head(files, head, d) if d is not None else None
         except code.ParseFailed:
             continue  # stays pending: retried next pass
-        if here is None:
-            continue
-        anchored: PendingLink = {
-            **r,
-            "anchored_commit": head,
-            "anchored_path": here.path,
-            "anchored_hash": here.body_hash,
-            "anchored_name": here.qualified_name,
-            "baseline_commit": "",  # the baseline is the new anchor
-            "fingerprint_version": fingerprint_version(),  # hashed just now
-        }
-        link = Link(
-            path=here.path,
-            qualified_name=here.qualified_name,
-            body_hash=here.body_hash,
-            start_line=here.start_line,
-            end_line=here.end_line,
-            checked_hash=here.body_hash,
-        )
-        moves.append(Move(anchored, link))
+        if here is not None:
+            moves.append(_anchored(r, here, head))
     return moves
+
+
+def _anchored(r: LinkRow, here: Definition, head: str) -> Move:
+    """The move that links `r` (a pending name, or a file link) to `here`, a definition
+    the head has: anchored where it is now."""
+    anchored: LinkRow = {
+        **r,
+        "anchored_commit": head,
+        "anchored_path": here.path,
+        "anchored_hash": here.body_hash,
+        "anchored_name": here.qualified_name,
+        "baseline_commit": "",  # the baseline is the new anchor
+        "fingerprint_version": fingerprint_version(),  # hashed just now
+    }
+    link = Link(
+        path=here.path,
+        qualified_name=here.qualified_name,
+        body_hash=here.body_hash,
+        start_line=here.start_line,
+        end_line=here.end_line,
+        checked_hash=here.body_hash,
+    )
+    return Move(anchored, link)
 
 
 async def _relink(
@@ -714,13 +725,13 @@ async def _write_moves(moves: list[Move], head: str) -> None:
     """One new version per moved link, above the one read (a newer write stays); a link
     whose key changed is replaced in the same insert."""
     rows: list[LinkRow] = []
-    gone: list[LinkRow] = []
+    gone: dict[tuple[str, ...], LinkRow] = {}  # once each: a file link may become several
     revised = await policy.revised_namespaces([m.row for m in moves])
     for m in moves:
         a, link = m.row, m.link
         relinked = (link.path, link.qualified_name) != (a["path"], a["qualified_name"])
         if relinked:
-            gone.append(a)
+            gone[(a["namespace"], a["memory_id"], a["path"], a["qualified_name"])] = a
         moved_from = relinked and bool(a["path"])
         # a correction holds only for a changed method its class did not carry: the
         # method's text cannot show what changed around it
@@ -758,7 +769,7 @@ async def _write_moves(moves: list[Move], head: str) -> None:
                 ),
             )
         )
-    await store.insert(store.tombstones(gone) + rows)
+    await store.insert(store.tombstones(list(gone.values())) + rows)
 
 
 def _edited(a: LinkRow, link: Link) -> bool:
