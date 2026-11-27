@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from server.memory.store.key_write_lock import LeaseBusy
+from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ async def run_pass() -> dict[str, Any]:
             # cursors last written
             log.exception("memory_code_links: linking failed")
             result.errors.append(f"link: {e!r}")
+            pass_context.note_failure(e, "link")
         await code_link_recheck.recheck_all(result)
         rec.outcome = result.as_dict()
         log_pass_errors(log, "memory_code_links", result.errors)

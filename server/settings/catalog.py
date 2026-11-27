@@ -1024,6 +1024,10 @@ class CodeSettings(BaseModel):
     # Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without
     # it the gc waits another interval.
     code_mirror_gc_margin_gb: float = 5.0
+    # Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its
+    # working tree, not a second copy. An older build's git jobs could write the shared
+    # packs: turn it on only once no older replica serves, and off before a rollback.
+    code_compiler_share_mirror_packs: bool = False
     # Resource limits (rlimits) for each process of a sandboxed repository job
     # (clone, fetch, dependency install, compiler-tier harness;
     # code/app/index/sandbox.py). They bound each process, not a job's total
@@ -1165,8 +1169,9 @@ class CodeSettings(BaseModel):
     # warning) and the issue mirror is skipped.
     code_github_token: str = ""
     # Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files →
-    # tree-sitter symbols/edges → context pack → advance watermark.
-    code_ingest_enabled: bool = False
+    # tree-sitter symbols/edges → context pack → advance watermark. It polls every
+    # configured repository; False = nothing polls, and `code.refresh` is the only trigger.
+    code_ingest_enabled: bool = True
     # Seconds between fast-tier ingest passes; extra-branch fetches of a shared mirror
     # are spaced by 0.9 of it (at least 30 s).
     code_ingest_interval_seconds: int = 120
@@ -2163,10 +2168,10 @@ class ExtractionSettings(BaseModel):
     # The coverage sweep reads its listed turns and sentences in groups of this
     # many items, one concurrent call each (more recall for more tokens). 0 = one call.
     memory_extract_coverage_sweep_batch_items: Annotated[int, LIVE] = 0
-    # A coding capture keeps the coverage sweep's density / uncovered
+    # A trajectory replay keeps the coverage sweep's density / uncovered
     # auto-gates only with at least this many user turns (on short sessions the
-    # sweep's output is mostly junk). 0 = always keep. An explicit namespace /
-    # per-call switch wins either way.
+    # sweep's output is mostly junk); a plugin's session capture never takes them.
+    # 0 = always keep. An explicit namespace / per-call switch wins either way.
     memory_extract_coding_sweep_min_user_turns: Annotated[int, LIVE] = 4
 
     # --- size segments ---
@@ -2894,7 +2899,8 @@ class MemorySettings(BaseModel):
     # Supersession pairs one bulk write follows on the triple plane in the request; the
     # rest are recorded for the projection repair to follow. 0 = the repair follows all.
     memory_bulk_follow_max_pairs: Annotated[int, LIVE] = Field(default=1024, ge=0)
-    # Bulk-path conflict checks run at once (at least 1).
+    # Similarity reads one request runs at once (at least 1): a bulk write's conflict
+    # checks, and a coding capture's reads of the stored memories nearest its facts.
     bulk_conflict_check_concurrency: int = Field(default=8, ge=1)
     # Facts per batched candidate lookup (conflict and value-update peers) on
     # the write path; matches the per-fact concurrency so wall time stays flat.
@@ -4160,9 +4166,10 @@ class ModelSettings(BaseModel):
     # mid answer escalates to strong once.
     memory_ask_mid_model: str = ""
     # The durability check on a coding capture: one batched call per capture per
-    # listed model (CSV) judges each fact durable or not and folds same-claim
-    # paraphrases and replaced states. A fact is dropped only when every model says
-    # drop; folds come from the first. Fails open. "" turns it off.
+    # listed model (CSV) judges each fact durable or not, folds same-claim
+    # paraphrases and replaced states, and names the facts a stored memory already
+    # states. A fact is dropped as non-durable only when every model says drop; folds
+    # and stored restatements come from the first. Fails open. "" turns it off.
     memory_extract_verify_models: str = "claude-opus-5-5"
     # The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence
     # thresholds were set on this model; a cheaper one is only safe for clears.
@@ -4371,9 +4378,10 @@ class ObservabilitySettings(BaseModel):
     # K=V), "" = auto (otlp when the endpoint is set, else ch).
     otel_exporter: Annotated[Literal["", "ch", "otlp"], CaseFolded] = ""
     # Seconds between refreshes of the per-namespace code-plane COUNT gauges
-    # (one FINAL scan each of code_files, code_chunks, code_symbols and
-    # code_edges, on the lease holder). The counts move once an index run, so
-    # an hour is enough; each refresh reads every live code row. 0 = every export.
+    # (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges
+    # and memory_code_links, on the lease holder). The counts move once an index
+    # run, so an hour is enough; each refresh reads every live code row. 0 = every
+    # export.
     otel_code_counts_cache_s: int = 3600
     # Seconds between recounts of the code.grep wrong-abstain gauge (a
     # `content` scan per namespace with abstains). 0 = gauge off.

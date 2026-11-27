@@ -1,8 +1,65 @@
 export const ranges = [30, 90, 365];
 export const grains = { day: "Daily", week: "Weekly", month: "Monthly" };
 export const thresholds = { 0: "Any successful request", 50000: "More than 50,000", 1000000: "More than 1,000,000" };
-const defaults = { tab: "self-hosted", days: 30, grain: "week", cohort: "month", installation: 0, domain: 0 };
+const defaults = { tab: "self-hosted", days: 30, grain: "week", cohort: "week", installation: 0, domain: 0 };
 const dayMs = 86_400_000;
+
+export const usageMetricGroups = /** @type {const} */ ([
+  {
+    title: "Successful requests by feature",
+    note: "All charts use the same request scale.",
+    sharedScale: true,
+    metrics: [
+      ["memory_requests", "Memory"],
+      ["code_requests", "Code intelligence"],
+      ["knowledge_requests", "Document knowledge"],
+      ["conversation_requests", "Conversations"],
+      ["tracker_requests", "Issue history"],
+      ["task_requests", "Tasks"],
+    ],
+  },
+  {
+    title: "Requests by transport",
+    note: "Successful requests over MCP and HTTP use the same scale.",
+    sharedScale: true,
+    metrics: [
+      ["mcp_requests", "MCP"],
+      ["http_requests", "HTTP"],
+    ],
+  },
+  {
+    title: "Model workloads",
+    note: "Each chart has its own scale.",
+    sharedScale: false,
+    metrics: [
+      ["llm_calls", "LLM calls"],
+      ["input_tokens", "Input tokens"],
+      ["output_tokens", "Output tokens"],
+      ["embedding_tokens", "Embedding tokens"],
+    ],
+  },
+  {
+    title: "Installation footprint",
+    note: "Median daily peak among active installations. Each chart has its own scale.",
+    sharedScale: false,
+    metrics: [
+      ["median_namespaces", "Active namespaces"],
+      ["median_agents", "Active agents"],
+      ["median_sessions", "Active sessions"],
+      ["median_active_orgs", "Active organizations"],
+      ["median_total_namespaces", "Enabled namespaces"],
+    ],
+  },
+  {
+    title: "Request outcomes",
+    note: "Each chart has its own scale.",
+    sharedScale: false,
+    metrics: [
+      ["requests", "All requests"],
+      ["server_errors", "Server errors"],
+    ],
+  },
+]);
 
 export function daysBefore(day, days) {
   return new Date(Date.parse(day) - days * dayMs).toISOString().slice(0, 10);
@@ -25,7 +82,7 @@ export function adoptionFilters(params) {
     tab: params.get("tab") === "oss" ? "oss" : defaults.tab,
     days: ranges.includes(days) ? days : defaults.days,
     grain: Object.hasOwn(grains, grain) ? grain : defaults.grain,
-    cohort: params.get("cohort") === "week" ? "week" : defaults.cohort,
+    cohort: params.get("cohort") === "month" ? "month" : defaults.cohort,
     installation: Object.hasOwn(thresholds, installation) ? Number(installation) : defaults.installation,
     domain: Object.hasOwn(thresholds, domain) ? Number(domain) : defaults.domain,
   };
@@ -39,6 +96,9 @@ export function omitDefaultAdoptionFilters(params) {
 
 export function adoptionUrl(filters, changes = {}, anchor = "") {
   const params = new URLSearchParams({ ...filters, ...changes });
+  if (params.get("tab") === "oss") {
+    for (const key of ["grain", "cohort", "installation", "domain"]) params.delete(key);
+  }
   omitDefaultAdoptionFilters(params);
   const search = params.toString();
   return `/adoption${search ? `?${search}` : ""}${anchor}`;
@@ -52,6 +112,7 @@ export function activityForRange(rows, filters, today) {
   const start = daysBefore(today, filters.days);
   return rows
     .filter(({ period, grain }) => period >= start && grain === filters.grain)
+    .sort((left, right) => left.period.localeCompare(right.period))
     .map((row) => {
       const current = row.period_end > today;
       const elapsed = (Date.parse(today) - Date.parse(row.period)) / dayMs;
@@ -62,6 +123,14 @@ export function activityForRange(rows, filters, today) {
           : null;
       return { ...row, estimate, current };
     });
+}
+
+export function adoptionGrowthForRange(rows, filters, today) {
+  const start = daysBefore(today, filters.days);
+  return (rows ?? [])
+    .filter(({ period, period_end, grain }) => grain === filters.grain && period_end > start && period < today)
+    .sort((left, right) => left.period.localeCompare(right.period))
+    .map((row) => ({ ...row, current: row.period_end > today }));
 }
 
 export function summarizeOss(metrics, range, today) {
@@ -123,6 +192,19 @@ export function adoptionCsv(dataset, activity, lifecycle, oss) {
           row.current,
         ]),
       ];
+    case "usage": {
+      const keys = [...new Set(usageMetricGroups.flatMap(({ metrics }) => metrics.map(([key]) => key)))];
+      return [
+        ["period_start_utc", "period_end_utc", "days_reported", "in_progress", ...keys],
+        ...activity.map((row) => [
+          row.period,
+          row.period_end,
+          row.days_reported,
+          row.current,
+          ...keys.map((key) => (Number.isFinite(row[key]) ? row[key] : null)),
+        ]),
+      ];
+    }
     case "lifecycle":
       return [
         [

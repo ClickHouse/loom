@@ -431,7 +431,9 @@ literal, a Python docstring's indentation, parentheses in Python, JavaScript and
 TypeScript) leave it as it was. Joining adjacent string literals, and any other edit, does
 not.
 What a file defines is read from the file at the repository's indexed head in its bare
-git mirror. On every indexed commit the worker follows the commit's renames and edits:
+git mirror. On every indexed commit the worker follows the commit's renames and edits, and
+a [`code.refresh`](../features/code-index/freshness.md#pushing-freshness-from-ci) call
+follows them as soon as its ingest pass ends:
 
 | Link state   | When                                                                                                               |
 | ------------ | ------------------------------------------------------------------------------------------------------------------ |
@@ -440,6 +442,22 @@ git mirror. On every indexed commit the worker follows the commit's renames and 
 | `changed`    | Its text changed after the memory was written (`changed_since` names the commit), renamed or not.                  |
 | `unresolved` | Its name is gone and a new definition in its place may be it, but none certainly is. Served, with a review signal. |
 | `missing`    | The code is gone: nothing new took its place. The link keeps its place, so a revert finds it again.                |
+
+A link to a file follows the lines of that file that hold a name the memory cites: the
+last part of each name above, of four or more characters, as a whole word. A name on
+more than eight lines of the file (`None`, `self`) is a word of that file and is not
+followed. The link reads `changed` when the cited lines are no longer the ones the memory
+was written against, and `fresh` again once they are back. An edit to a line that holds
+none of those names, a shift of the cited lines or a new indentation leaves it `fresh`,
+so a memory about a long file is not marked by every commit to it, and a memory that
+cites no name in the file (a rule about the file as a whole) is marked only when the file
+moves or goes. An edit that takes a name across eight lines changes which lines are
+followed, and marks the link. A link written against no cited line takes the first ones a
+later commit brings as the lines it was written against. When a commit defines a name the
+memory gives in the file (the memory was written before its function merged), a link to
+that definition, written against its text at that commit, replaces the file link. A name
+the memory already has a link for keeps that link: a commit never moves a link to a
+namesake. `revise` does not re-check a file link: a changed one is flagged.
 
 ![A memory's detail in the dashboard: its linked code, one definition current and one changed since a commit](../assets/screenshots/memory-linked-code.webp)
 
@@ -567,6 +585,23 @@ The links are read where the code is:
   the memories whose code moved, changed or went.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read.
+
+A memory with no link reads exactly as one whose code is current. `namespace.validate`
+counts the served memories that name code (a backticked or qualified name, a call, or
+`files`) and hold no link, by cause, as `info` findings:
+
+| Check                            | The memory                                                                                                                                                                                                                 |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code_unlinked_no_repository`    | names no repository Loom indexes that the caller may read: no `repo:<id>` tag of one, and not written in a code namespace. It is never linked.                                                                             |
+| `code_unlinked_file_not_indexed` | lists `files`, none of which is a path on the indexed trunk (not merged yet, outside the index, or a bare filename two files share), and no name in it is one definition.                                                  |
+| `code_unlinked_name_unresolved`  | lists no `files`, and each name is defined nowhere on trunk or more than once.                                                                                                                                             |
+| `code_unlinked_pending`          | waits for its link; each sample says what it `waits_for`: `link_pass` (the worker has not read this write), `index` (no index yet, or a file that does not parse) or `trunk` (a qualified name trunk does not define yet). |
+
+The counts are of the 2,000 served memories last written (all under `keys` when given),
+and only in an org that indexes a repository; a raw tool observation, which is never
+linked, is not counted. How far each repository's links trail its
+index is a gauge, and a health warning when it lasts
+([monitoring](../operations/monitoring.md#what-to-alert-on)).
 
 ## Time
 
