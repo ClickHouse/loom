@@ -16,7 +16,7 @@ models disagree on the boundary (a second judge disagreed with the labelled
 eval on 73 of its 77 stored-junk rows), and a lost real fact costs more than
 a stored junk one. Same-claim groups and replacements come from the primary
 (first) model: its folds were checked equal on the eval. Restatements of a
-stored memory come from it too. Every failure —
+stored memory come from it too, and it alone is shown them. Every failure —
 an error, a timeout, an unparseable answer — keeps every fact.
 """
 
@@ -276,23 +276,34 @@ async def verify(
     *,
     timeout_s: float = 45.0,
     context: CaptureContext | None = None,
-    stored: list[str] | None = None,
+    stored: list[list[tuple[str, str]]] | None = None,
 ) -> VerifyResult:
     """Judge `facts` with every client in `clients` (the first is primary).
     A dropped fact carries `_verify` (the reason) and, when folded,
-    `_duplicate_of` (the key of the fact that carries its claim). A fact one of
-    the `stored` memories already states is dropped with `_stored`, that
-    memory's position in `stored`."""
+    `_duplicate_of` (the key of the fact that carries its claim). `stored` holds,
+    for each fact, the `(memory id, text)` of the stored memories nearest it; a fact
+    one of them already states is dropped with `_stored`, that memory's id."""
     if len(facts) < 1 or not clients:
         return VerifyResult(kept=list(facts), dropped=[])
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
     t_in = t_out = 0
     answered = False
-    for start in range(0, len(facts), settings.memory_durability_verifier_max_facts_per_call):
-        chunk = facts[start : start + settings.memory_durability_verifier_max_facts_per_call]
+    size = settings.memory_durability_verifier_max_facts_per_call
+    for start in range(0, len(facts), size):
+        chunk = facts[start : start + size]
+        # The stored memories nearest this slice's facts, each once, for the primary alone.
+        near = list(
+            dict.fromkeys(m for of_fact in (stored or [])[start : start + size] for m in of_fact)
+        )
+        texts = [text for _, text in near]
         answers = list(
-            await asyncio.gather(*(_ask(c, chunk, timeout_s, context, stored) for c in clients))
+            await asyncio.gather(
+                *(
+                    _ask(c, chunk, timeout_s, context, None if n else texts)
+                    for n, c in enumerate(clients)
+                )
+            )
         )
         t_in += sum(a.tokens_in for a in answers)
         t_out += sum(a.tokens_out for a in answers)
@@ -302,7 +313,7 @@ async def verify(
         for i, f in enumerate(chunk):
             if i not in drops:
                 if i in restated:
-                    dropped.append(dict(f, _verify=ALREADY_STORED, _stored=restated[i]))
+                    dropped.append(dict(f, _verify=ALREADY_STORED, _stored=near[restated[i]][0]))
                 else:
                     kept.append(f)
                 continue

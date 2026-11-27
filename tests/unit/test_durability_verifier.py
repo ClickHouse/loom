@@ -7,6 +7,7 @@ content-free shapes are rules."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ import pytest
 
 from server.llm.client import LLMResult
 from server.memory.app import durability_verifier as dv
+from server.memory.app import handlers
 from server.memory.app import pipeline as mp
 from server.memory.app import pipeline_state as pipeline_state
 from server.memory.domain import durable_facts as df
@@ -171,16 +173,19 @@ async def test_a_fact_a_stored_memory_states_is_dropped_and_names_it() -> None:
     facts = _facts("The list has a new entry.", "A new claim.")
     restates = {**_answer(n=2), "stored": [{"i": 0, "s": 1}]}
     primary, other = _Scripted(restates), _Scripted(_answer(n=2))
-    stored = ["Another fact.", "The list now has an entry."]
+    near = [("m0", "Another fact."), ("m1", "The list now has an entry.")]
+    stored = [near, near[:1]]  # each fact's nearest; a memory near both is shown once
     res = await dv.verify(facts, [primary, other], stored=stored)
     assert [f["key"] for f in res.kept] == ["k1"]
     assert [(f["key"], f["_verify"], f["_stored"]) for f in res.dropped] == [
-        ("k0", dv.ALREADY_STORED, 1)
+        ("k0", dv.ALREADY_STORED, "m1")
     ]
     # The stored text is fenced as data, and the system prompt says what the markers mean.
-    assert "<<memory S1 " in primary.calls[0] and stored[1] in primary.calls[0]
+    assert primary.calls[0].count("<<memory S") == 2
+    assert "<<memory S1 " in primary.calls[0] and near[1][1] in primary.calls[0]
     assert primary.systems[0] == f"{dv.VERIFIER_SYSTEM_PROMPT}\n\n{FENCE_NOTE}"
-    # Restatements come from the primary model alone.
+    # Only the primary model names restatements, so only it is sent the stored text.
+    assert "<<memory" not in other.calls[0] and other.systems[0] == dv.VERIFIER_SYSTEM_PROMPT
     res = await dv.verify(facts, [other, primary], stored=stored)
     assert res.kept == facts and not res.dropped
     # With no stored memory shown there is no fence, no note, and nothing to restate.
@@ -189,7 +194,23 @@ async def test_a_fact_a_stored_memory_states_is_dropped_and_names_it() -> None:
     assert primary.systems[-1] == dv.VERIFIER_SYSTEM_PROMPT
 
 
-def test_the_prompt_names_the_fail_safe_and_both_tasks() -> None:
+@pytest.mark.asyncio
+async def test_a_slice_is_shown_the_stored_memories_of_its_own_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "memory_durability_verifier_max_facts_per_call", 2)
+    stored = [[("m0", "stored zero")], [("m1", "stored one")], [("m2", "stored two")]]
+    client = _Scripted({**_answer(n=2), "stored": [{"i": 0, "s": 0}]})
+    res = await dv.verify(_facts("a", "b", "c"), [client], stored=stored)
+    assert [[text in call for ((_, text),) in stored] for call in client.calls] == [
+        [True, True, False],
+        [False, False, True],
+    ]
+    # S0 is the first stored memory of the slice that named it.
+    assert [(f["key"], f["_stored"]) for f in res.dropped] == [("k0", "m0"), ("k2", "m2")]
+
+
+def test_the_prompt_names_the_fail_safes_and_the_three_tasks() -> None:
     p = dv.VERIFIER_SYSTEM_PROMPT
     assert (
         "useful to recall in a week" in p
@@ -197,6 +218,8 @@ def test_the_prompt_names_the_fail_safe_and_both_tasks() -> None:
         and '"same_claim"' in p
         and '"superseded"' in p
     )
+    # A fact is listed as stored only when the model is sure, in its own answer field.
+    assert "When unsure, do not list it" in p and '"stored"' in p
 
 
 # --- the pipeline step ---------------------------------------------------------
@@ -231,41 +254,69 @@ async def test_the_step_judges_coding_captures_only(monkeypatch: pytest.MonkeyPa
     assert len(st.extracted_facts) == 2 and len(client.calls) == 1  # a personal chat: no call
 
 
-def test_a_stored_row_is_of_the_captures_repository_by_its_tags() -> None:
-    def same(capture: list[str], row: list[str]) -> bool:
-        return mp._same_repository(_state(capture, []), row)
+def test_the_captures_repository_is_its_repo_tags_or_else_its_project_tags() -> None:
+    def tags(capture: list[str]) -> list[str]:
+        return mp._repository_tags(_state(capture, []))
 
-    assert same(["project:p", "repo:r1"], ["repo:r1"])  # the repository decides,
-    assert not same(["project:p", "repo:r1"], ["project:p", "repo:r2"])  # not the folder name
-    assert not same(["project:p", "repo:r1"], ["code"])
-    assert same(["project:p"], ["project:p"]) and not same(["project:p"], ["project:q"])
-    assert same(["source:codex"], ["repo:r2"])  # a capture that names neither is not narrowed
+    assert tags(["project:p", "repo:r1"]) == ["repo:r1"]  # the repository, not the folder name
+    assert tags(["source:codex", "project:p"]) == ["project:p"]
+    assert tags(["source:codex"]) == []  # a capture that names neither is not narrowed
 
 
-def _stored_world(
-    monkeypatch: pytest.MonkeyPatch, rows: object, policy: str = "auto_reinforce"
-) -> tuple[list[tuple], list[tuple]]:
-    """The step's stored-memory read, its policy read and its usage write, in memory:
-    (the reads made, the usage events recorded). `rows` an exception fails the read."""
-    reads: list[tuple] = []
-    events: list[tuple] = []
+def _row(key: str, value: str, tags: list[str]) -> SimpleNamespace:
+    return SimpleNamespace(memory_key=key, memory_id=f"id-{key}", value=value, tags=tags)
 
-    async def nearest(identity, text, top_k):
-        reads.append((identity.agent, identity.user_id, text, top_k))
-        if isinstance(rows, Exception):
-            raise rows
-        return list(rows)
 
-    async def record(**kw):
-        events.append((kw["event_type"], kw["memory_id"], kw["org"], kw["namespace"], kw["agent"]))
+class _StoredWorld:
+    """The store under the step's stored-memory read, with its embedder, its policy
+    read and its usage write, in memory. `rows` are the stored rows, nearest first; a
+    search applies its tags and then its cut, as the fact leg's WHERE and LIMIT do.
+    `rows` an exception fails the read."""
 
-    async def policy_of(state):
-        return policy
+    model_name = "fake"
 
-    monkeypatch.setattr("server.memory.app.handlers.nearest_existing_rows", nearest)
-    monkeypatch.setattr("server.memory.store.usage.record_usage_event", record)
-    monkeypatch.setattr(mp, "_conflict_policy", policy_of)
-    return reads, events
+    def __init__(
+        self, monkeypatch: pytest.MonkeyPatch, rows: object, policy: str = "auto_reinforce"
+    ) -> None:
+        self.rows = rows
+        self.batches: list[list[str]] = []
+        self.searches: list = []
+        self.events: list[tuple] = []
+        self.running = self.peak = 0
+
+        async def policy_of(state):
+            return policy
+
+        monkeypatch.setattr("server.memory.app.retrieval.vector_search", self.search)
+        monkeypatch.setattr("server.memory.store.get_many_by_keys", self.by_keys)
+        monkeypatch.setattr("server.memory.store.usage.record_usage_event", self.record)
+        monkeypatch.setattr(mp, "_conflict_policy", policy_of)
+        # Last: a module first imported under this patch would keep the stand-in.
+        monkeypatch.setattr("server.embedding.get_embedder", lambda: self)
+        monkeypatch.setattr(handlers, "get_embedder", lambda: self)
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        self.batches.append(list(texts))
+        return [[float(len(t))] for t in texts]
+
+    async def search(self, q):
+        self.searches.append(q)
+        if isinstance(self.rows, Exception):
+            raise self.rows
+        self.running += 1
+        self.peak = max(self.peak, self.running)
+        await asyncio.sleep(0)  # the reads that may run together are now running
+        self.running -= 1
+        found = [r for r in self.rows if not q.tags or set(q.tags) & set(r.tags)]
+        return [SimpleNamespace(memory_key=r.memory_key) for r in found[: q.top_k]]
+
+    async def by_keys(self, identity, keys, **kw):
+        return [r for r in self.rows if r.memory_key in keys]
+
+    async def record(self, **kw):
+        self.events.append(
+            (kw["event_type"], kw["memory_id"], kw["org"], kw["namespace"], kw["agent"])
+        )
 
 
 _RESTATED = ["The list has a new entry.", "Another claim.", "The list gained an entry."]
@@ -276,12 +327,16 @@ async def test_a_fact_an_earlier_session_stored_is_not_written_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rows = [
-        SimpleNamespace(memory_id="m1", value="The list now has an entry.", tags=["repo:r1"]),
-        SimpleNamespace(memory_id="m2", value="x" * 900, tags=["repo:r1", "code"]),
-        # The same sentence stored for another repository is another claim: never shown.
-        SimpleNamespace(memory_id="m3", value="The list has a new entry.", tags=["repo:r2"]),
+        # The same sentence stored for another repository is another claim: never shown,
+        # and three nearer rows of other repositories take none of a fact's three places.
+        _row("o2", "The list has a new entry.", ["repo:r2"]),
+        _row("o3", "The list has a new entry.", ["repo:r3"]),
+        _row("o4", "The list has a new entry.", ["repo:r4"]),
+        _row("m1", "The list now has an entry.", ["repo:r1"]),
+        _row("m2", "x" * 900, ["repo:r1", "code"]),
     ]
-    reads, events = _stored_world(monkeypatch, rows)
+    world = _StoredWorld(monkeypatch, rows)
+    monkeypatch.setattr(settings, "bulk_conflict_check_concurrency", 2)
     client = _Scripted({**_answer(n=3), "stored": [{"i": 0, "s": 0}, {"i": 2, "s": 0}]})
     monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
     st = await mp._REGISTRY["loom.verify_durable"](
@@ -289,26 +344,33 @@ async def test_a_fact_an_earlier_session_stored_is_not_written_again(
     )
     assert [f["key"] for f in st.extracted_facts] == ["k1"] and st.skipped_unverified == 2
     assert not any(k.startswith("_") for f in st.extracted_facts for k in f)
-    # Each fact's nearest rows are read under the writer's agent and user; a row of this
-    # repository found for several facts is shown once, clipped.
-    assert reads == [("a", "-", text, mp.STORED_PER_FACT) for text in _RESTATED]
+    # One embed call for the capture. Each fact's nearest rows of this repository are
+    # read under the writer's agent and user with the fact's vector, two reads at a time.
+    assert world.batches == [_RESTATED]
+    assert [
+        (q.agent, q.user_id, q.query_vec, q.top_k, q.tags, q.tags_soft) for q in world.searches
+    ] == [("a", "-", [float(len(t))], mp.STORED_PER_FACT, ["repo:r1"], False) for t in _RESTATED]
+    assert world.peak == 2
+    # A row found for several facts is shown once, clipped.
     assert client.calls[0].count("<<memory S") == 2
     assert "x" * mp.STORED_VALUE_CHARS in client.calls[0]
     assert "x" * (mp.STORED_VALUE_CHARS + 1) not in client.calls[0]
     # Reinforce: one evidence event on the stored row, however many facts restated it.
-    assert events == [("evidence", "m1", "o", "n", "a")]
+    assert world.events == [("evidence", "id-m1", "o", "n", "a")]
 
 
 @pytest.mark.asyncio
 async def test_an_append_only_namespace_keeps_every_restatement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    rows = [SimpleNamespace(memory_id="m1", value="The list now has an entry.", tags=[])]
-    reads, events = _stored_world(monkeypatch, rows, policy="append_only")
+    world = _StoredWorld(
+        monkeypatch, [_row("m1", "The list now has an entry.", [])], policy="append_only"
+    )
     client = _Scripted({**_answer(n=3), "stored": [{"i": 0, "s": 0}]})
     monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
     st = await mp._REGISTRY["loom.verify_durable"](_state(["source:claude-code"], _RESTATED), {})
-    assert len(st.extracted_facts) == 3 and not reads and not events
+    assert len(st.extracted_facts) == 3
+    assert not world.batches and not world.searches and not world.events
     assert "<<memory" not in client.calls[0]
 
 
@@ -316,11 +378,11 @@ async def test_an_append_only_namespace_keeps_every_restatement(
 async def test_a_failed_stored_memory_read_keeps_every_fact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    reads, events = _stored_world(monkeypatch, RuntimeError("store down"))
+    world = _StoredWorld(monkeypatch, RuntimeError("store down"))
     client = _Scripted({**_answer(n=3), "stored": [{"i": 0, "s": 0}]})
     monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
     st = await mp._REGISTRY["loom.verify_durable"](_state(["source:claude-code"], _RESTATED), {})
-    assert len(st.extracted_facts) == 3 and reads and not events
+    assert len(st.extracted_facts) == 3 and world.searches and not world.events
     assert "<<memory" not in client.calls[0]
 
 

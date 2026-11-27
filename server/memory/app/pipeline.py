@@ -652,8 +652,9 @@ async def _step_drop_non_durable(
 
 
 def _verify_clients(state: WorkflowState) -> list[Any]:
-    """The durable-fact verifier models, primary first; cached like the
-    extractor's clients so a replayed capture is not re-billed."""
+    """The durable-fact verifier models, primary first, behind the extractor's response
+    cache when it is on. A replayed capture is answered from it unless the primary
+    model is shown other stored memories than before."""
     names = [m.strip() for m in str(settings.memory_extract_verify_models).split(",")]
     if settings.llm_provider == "fake":  # a dev/test stack: no model to ask
         return []
@@ -678,24 +679,26 @@ STORED_PER_FACT = 3  # not a setting: a restated memory is among a fact's neares
 STORED_VALUE_CHARS = 400
 
 
-def _same_repository(state: WorkflowState, row_tags: list[str]) -> bool:
-    """Whether a stored row is of the capture's repository: it shares one of the
-    capture's `repo:` tags, or of its `project:` tags when the capture names no
-    repository. The same sentence about another repository is another claim, and a
-    read scoped to this one would not find it."""
+def _repository_tags(state: WorkflowState) -> list[str]:
+    """The tags that name the capture's repository: its `repo:` tags, or its
+    `project:` tags when it has none. The same sentence about another repository is
+    another claim, and a read scoped to this one would not find it."""
     for prefix in ("repo:", "project:"):
-        mine = {str(t) for t in state.extra_tags if str(t).startswith(prefix)}
+        mine = [str(t) for t in state.extra_tags if str(t).startswith(prefix)]
         if mine:
-            return bool(mine.intersection(row_tags))
-    return True
+            return mine
+    return []
 
 
-async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) -> list[Any]:
-    """The live rows nearest each fact among this agent's and user's in the capture's
-    repository, any session, each once: what an earlier session may already have
-    stored of this capture's claims. None under `append_only`, where every write is
-    its own event. Fail-open: with none, every fact goes on to the write."""
+async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) -> list[list[Any]]:
+    """For each fact, the live rows nearest it among this agent's and user's in the
+    capture's repository, any session: what an earlier session may already have stored
+    of this capture's claims. One embed call for the capture, and the reads bounded like
+    the conflict checks of the write that follows. None under `append_only`, where
+    every write is its own event. Fail-open: with none, every fact goes on to the
+    write."""
     import server.memory.store as memory_repo
+    from server.embedding import get_embedder
     from server.memory.app.handlers import nearest_existing_rows
     from server.memory.domain.conflicts import APPEND_ONLY_POLICY
 
@@ -708,19 +711,25 @@ async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) 
         user_id=state.user_id,
         session_id=state.session_id,
     )
+    tags = _repository_tags(state)
     texts = [str(f.get("value") or "").strip()[:1024] for f in facts]
+    wanted = list(dict.fromkeys(t for t in texts if t))
+    sem = asyncio.Semaphore(int(settings.bulk_conflict_check_concurrency))
+
+    async def _near(text: str, vec: list[float]) -> list[Any]:
+        async with sem:
+            return await nearest_existing_rows(
+                identity, text, STORED_PER_FACT, query_vec=vec, tags=tags
+            )
+
     try:
-        found = await asyncio.gather(
-            *(nearest_existing_rows(identity, t, STORED_PER_FACT) for t in texts if t)
-        )
+        # Document vectors, the space the stored rows are in.
+        vectors = await get_embedder().embed_many(wanted)
+        found = dict(zip(wanted, await asyncio.gather(*map(_near, wanted, vectors)), strict=True))
     except Exception as e:  # noqa: BLE001 — a failed read must not fail the extraction
         log.warning("verify_durable: stored-memory read failed (non-fatal): %s", e)
         return []
-    rows: dict[str, Any] = {}
-    for r in (r for near in found for r in near):
-        if _same_repository(state, list(r.tags or [])):
-            rows.setdefault(str(r.memory_id), r)
-    return list(rows.values())
+    return [found.get(t, []) for t in texts]
 
 
 async def _reinforce_restated(state: WorkflowState, memory_ids: list[str]) -> None:
@@ -760,18 +769,19 @@ async def _step_verify_durable(
         return state
     from server.memory.app import durability_verifier
 
-    stored = await _stored_neighbours(state, facts)
+    near = await _stored_neighbours(state, facts)
     result = await durability_verifier.verify(
         facts,
         clients,
         timeout_s=float(settings.memory_extract_verify_timeout_s),
         # The goal and what the lookups returned
         context=durability_verifier.capture_context(state.messages, state.session_values),
-        stored=[str(r.value or "")[:STORED_VALUE_CHARS] for r in stored],
+        stored=[
+            [(str(r.memory_id), str(r.value or "")[:STORED_VALUE_CHARS]) for r in rows]
+            for rows in near
+        ],
     )
-    await _reinforce_restated(
-        state, [str(stored[f["_stored"]].memory_id) for f in result.dropped if "_stored" in f]
-    )
+    await _reinforce_restated(state, [f["_stored"] for f in result.dropped if "_stored" in f])
     state.extracted_facts = [
         {k: v for k, v in f.items() if not k.startswith("_")} for f in result.kept
     ]

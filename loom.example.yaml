@@ -3406,7 +3406,9 @@ settings:
   # [live]
   # memory_bulk_follow_max_pairs: 1024
 
-  # Bulk-path conflict checks run at once (at least 1). [restart]
+  # Similarity reads one request runs at once (at least 1): a bulk write's conflict
+  # checks, and a coding capture's reads of the stored memories nearest its facts.
+  # [restart]
   # bulk_conflict_check_concurrency: 8
 
   # Facts per batched candidate lookup (conflict and value-update peers) on the write

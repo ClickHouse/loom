@@ -297,7 +297,7 @@
           "default": 8,
           "minimum": 1,
           "type": "integer",
-          "description": "Bulk-path conflict checks run at once (at least 1)."
+          "description": "Similarity reads one request runs at once (at least 1): a bulk write's conflict checks, and a coding capture's reads of the stored memories nearest its facts."
         },
         "bulk_conflict_check_max_entries": {
           "default": 200,

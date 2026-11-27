@@ -2894,7 +2894,8 @@ class MemorySettings(BaseModel):
     # Supersession pairs one bulk write follows on the triple plane in the request; the
     # rest are recorded for the projection repair to follow. 0 = the repair follows all.
     memory_bulk_follow_max_pairs: Annotated[int, LIVE] = Field(default=1024, ge=0)
-    # Bulk-path conflict checks run at once (at least 1).
+    # Similarity reads one request runs at once (at least 1): a bulk write's conflict
+    # checks, and a coding capture's reads of the stored memories nearest its facts.
     bulk_conflict_check_concurrency: int = Field(default=8, ge=1)
     # Facts per batched candidate lookup (conflict and value-update peers) on
     # the write path; matches the per-fact concurrency so wall time stays flat.

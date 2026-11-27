@@ -127,15 +127,20 @@ async def nearest_existing_rows(
     identity: Any,  # memory_repo.Identity
     query_text: str,
     top_k: int,
+    *,
+    query_vec: list[float] | None = None,
+    tags: list[str] | None = None,
 ) -> list[Any]:
     """The live fact rows of `identity`'s agent and user, in any session, nearest
-    `query_text`, nearest first. Never a row that is or reads 'high': the callers show
-    these rows to an LLM provider."""
+    `query_text` (`query_vec` when the caller has its vector), nearest first; with
+    `tags`, among the rows that carry one of them. Never a row that is or reads 'high':
+    the callers show these rows to an LLM provider."""
     import server.memory.store as memory_repo
     from server.memory.app import retrieval as memory_search
 
     embedder = get_embedder()
-    query_vec = await embedder.embed(query_text)
+    if query_vec is None:
+        query_vec = await embedder.embed(query_text)
     search_query = memory_search.SearchQuery(
         org=identity.org,
         namespace=identity.namespace,
@@ -147,6 +152,7 @@ async def nearest_existing_rows(
         user_id=identity.user_id,
         query_text=query_text,
         search_mode="semantic",
+        tags=tags or [],
         # Only a fact row can be updated or restated. Chunk hits would take about half of
         # the slots and resolve to nothing, and the chunk leg would be a second query on
         # every extraction.
