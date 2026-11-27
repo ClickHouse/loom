@@ -138,6 +138,29 @@ def test_a_name_keeps_its_definitions_outside_tests_or_its_test_ones() -> None:
     ]
 
 
+def test_a_definition_on_a_demoted_path_is_no_candidate_unless_the_query_asks_for_tests() -> None:
+    names = [_name("test_combine"), _name("combine")]
+    # the search ranks a test down for this query, so the name defined only there is
+    # passed over for the next one
+    assert named_definitions(names, _SYMBOLS, asks_tests=False) == [
+        [("pkg/query.py", "pkg.query::Query::combine"), ("pkg/tree.py", "pkg.tree::Q::combine")]
+    ]
+    assert [name[0][0] for name in named_definitions(names, _SYMBOLS, asks_tests=True)] == [
+        "tests/q.py",
+        "pkg/query.py",
+    ]
+    # test doubles do not make a name ambiguous: one vendored definition and three
+    # test classes of the same name leave the one
+    rows = [
+        _sym("Admin", "pkg.contrib.admin::Admin", "pkg/contrib/admin.py"),
+        *[_sym("Admin", f"tests.t{i}::Admin", f"tests/t{i}.py") for i in range(3)],
+    ]
+    assert named_definitions([_name("Admin")], rows, asks_tests=False) == [
+        [("pkg/contrib/admin.py", "pkg.contrib.admin::Admin")]
+    ]
+    assert named_definitions([_name("Admin")], rows, asks_tests=True) == []
+
+
 def test_a_name_defined_in_too_many_places_is_dropped() -> None:
     assert named_definitions([_name("save")], _SYMBOLS) == []
     # as is one whose read stopped at its bound, whatever paths it returned
@@ -555,6 +578,25 @@ def test_the_leg_serves_the_definitions_of_the_first_name_that_has_a_chunk() -> 
     res = _search(repo, "fn_0 fn_1 fn_2 fn_3 fn_4 fn_5 all fail", top_k=10)
     assert len(repo.kw["definitions"]) == 7  # six names, one of them defined twice
     assert [u.unit_id for u in res.units if u.via == "definition"] == ["m1", "n1"]
+
+
+def test_a_name_defined_only_in_tests_is_served_when_the_query_asks_for_tests() -> None:
+    class _TestOnly(_Repo):
+        async def symbols_named(self, *a: Any, **k: Any) -> list[dict[str, Any]]:
+            return [_sym("parse_quota", "tests.q::parse_quota", "tests/d.cpp")]
+
+        async def definition_chunks(self, *a: Any, **k: Any) -> list[dict[str, Any]]:
+            self.kw["definitions"] = a[3]
+            return [
+                {"chunk_id": "d", "path": "tests/d.cpp", "scope": "tests.q::parse_quota", **_UNIT}
+            ]
+
+    repo = _TestOnly()
+    res = _search(repo, "why does parse_quota() fail")
+    assert repo.kw["definitions"] == [] and "named_definitions" not in res.retrieval_work
+    assert [u.unit_id for u in res.units] == ["a", "c", "b"]
+    res = _search(_TestOnly(), "which test covers parse_quota()")
+    assert [u.unit_id for u in res.units] == ["a", "d", "c", "b"]
 
 
 def test_a_vector_only_run_skips_the_leg_and_a_constraint_reaches_its_chunk_read() -> None:

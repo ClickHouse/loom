@@ -8,6 +8,8 @@ import logging
 import re
 from typing import Any
 
+from server.code.app.search.priors import _noise_path
+from server.code.app.search.window import _has_test_intent
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.idents import spelled_names
 from server.code.domain.search_scope import SearchScope
@@ -26,14 +28,20 @@ _MAX_DEFINITIONS_PER_NAME = 3  # not a setting: what an ambiguous name is, not a
 
 
 def named_definitions(
-    names: list[tuple[str, ...]], symbols: list[dict[str, Any]], *, path_prefix: str = ""
+    names: list[tuple[str, ...]],
+    symbols: list[dict[str, Any]],
+    *,
+    path_prefix: str = "",
+    asks_tests: bool = True,
 ) -> list[list[tuple[str, str]]]:
     """The `(path, qualified name)` definitions of each of `names` that says where it is
     defined, from their symbol rows, in the order the query mentions the names. A name
-    keeps its definitions outside test paths, or its test ones when it has no other, and
-    is dropped when more than `_MAX_DEFINITIONS_PER_NAME` remain under `path_prefix`.
-    The read bound is the namespace's: a name with `_SYMBOLS_PER_NAME` live keys there
-    is dropped whatever the prefix."""
+    keeps its definitions outside test and vendored paths, or those ones when it has no
+    other, and is dropped when more than `_MAX_DEFINITIONS_PER_NAME` remain under
+    `path_prefix`. A definition on a path the noise penalty demotes is no candidate
+    unless the query `asks_tests`: the place after the first unit would undo the
+    penalty. The read bound is the namespace's: a name with `_SYMBOLS_PER_NAME` live
+    keys there is dropped whatever the prefix."""
     by_name: dict[str, list[dict[str, Any]]] = {}
     for row in symbols:
         by_name.setdefault(str(row["name"]), []).append(row)
@@ -43,7 +51,11 @@ def named_definitions(
         if len(rows) >= _SYMBOLS_PER_NAME:
             continue  # the read stopped at its bound: more definitions than it returned
         named = {(str(r["path"]), str(r["qualified_name"])) for r in rows}
-        found = sorted(d for d in named if d[0].startswith(path_prefix))
+        found = sorted(
+            d
+            for d in named
+            if d[0].startswith(path_prefix) and (asks_tests or not _noise_path(d[0]))
+        )
         found = [d for d in found if not is_noise_path(d[0])] or found
         if found and len(found) <= _MAX_DEFINITIONS_PER_NAME:
             wanted.append(found)
@@ -96,7 +108,9 @@ async def _definition_leg(
                 qualified=sorted({".".join(name) for name in names if len(name) > 1}),
                 per_name=_SYMBOLS_PER_NAME,
             )
-            wanted = named_definitions(names, symbols, path_prefix=path_prefix)
+            wanted = named_definitions(
+                names, symbols, path_prefix=path_prefix, asks_tests=_has_test_intent(query)
+            )
             found = await repo.definition_chunks(
                 org, ns, model, [d for name in wanted for d in name], scope=scope
             )
