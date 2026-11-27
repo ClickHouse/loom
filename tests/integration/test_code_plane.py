@@ -647,6 +647,13 @@ async def test_edit_context_batch_returns_shared_member_source_at_its_revision(
     assert single_result.read_sources == [source.model_copy(update={"sites": source.sites[:1]})]
     assert "edit_targets" not in single_result.model_dump()
 
+    for lookup, full in ((request, result), (single, single_result)):
+        focused = await handle_code_edit_context(
+            lookup.model_copy(update={"include_related_source": False})
+        )
+        assert focused.definitions == full.definitions
+        assert "read_sources" not in focused.model_dump()
+
     explicit = await handle_code_edit_context(
         request.model_copy(update={"names": [*names, f"{member_path}:Options.label"]})
     )

@@ -44,17 +44,21 @@ _EditName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1
 class CodeEditContextInput(_CodeIdentity, _ResultLessons):
     name: str = Field(
         default="",
-        description="Definition name, path:symbol, or path:line. File path with clues if known.",
+        description="Name, path:symbol, path:line, or file with clues.",
     )
     clues: list[GrepText] = Field(
         default_factory=list,
         max_length=255,
-        description="Fragments for one target, or exact declaration fragments across files.",
+        description="Text fragments or exact declarations.",
     )
     names: list[_EditName] = Field(
         default_factory=list,
         max_length=EDIT_CONTEXT_MAX_NAMES,
-        description="Batch name, path:symbol or path:line. Replaces name and clues.",
+        description="Batch of exact names or locations.",
+    )
+    include_related_source: bool = Field(
+        default=True,
+        description="Set false after reading extra bodies.",
     )
 
 

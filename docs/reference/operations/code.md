@@ -590,9 +590,10 @@ Read source, tests, and notes.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `name` | `str` | `''` | Definition name, path:symbol, or path:line. |
-| `clues` | `list[str]` | *(computed)* | Fragments for one target, or exact declaration fragments across files. |
-| `names` | `list[str]` | *(computed)* | Batch name, path:symbol or path:line. |
+| `name` | `str` | `''` | Name, path:symbol, path:line, or file with clues. |
+| `clues` | `list[str]` | *(computed)* | Text fragments or exact declarations. |
+| `names` | `list[str]` | *(computed)* | Batch of exact names or locations. |
+| `include_related_source` | `bool` | `True` | Set false after reading extra bodies. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

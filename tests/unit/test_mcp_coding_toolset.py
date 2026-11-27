@@ -410,6 +410,7 @@ def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None
     schema = edit["inputSchema"]
     assert "name" not in schema.get("required", [])
     assert {"name", "names", "clues"} <= schema["properties"].keys()
+    assert schema["properties"]["include_related_source"]["default"] is True
     assert "Batch exact `names` or declaration `clues`" in edit["description"]
     assert edit["annotations"]["readOnlyHint"]
     grep = next(tool for tool in tools if tool["name"] == "loom_code_grep")

@@ -584,7 +584,7 @@ async def _edit_context_for_target(
         )
     out = await handle_code_symbol(
         CodeSymbolInput(
-            **input.model_dump(exclude={"name", "clues", "names"}),
+            **input.model_dump(exclude={"name", "clues", "names", "include_related_source"}),
             name=target.name,
             include_history=False,
             test_examples_only=True,
@@ -597,6 +597,7 @@ async def _edit_context_for_target(
         match_witnesses=target.matches,
         related_test_names=_edit_batch_names(input.names),
         standalone_edit=not in_batch,
+        include_related_source=input.include_related_source,
     )
     if target.revision is not None:
         if not out.definitions:
@@ -712,7 +713,11 @@ async def _batched_edit_context(
         + estimate_json_tokens([target.model_dump() for target in targets])
         + estimate_json_tokens(candidates)
     )
-    read_sources = await batch_read_sources(org, ns, definitions, targets)
+    read_sources = (
+        await batch_read_sources(org, ns, definitions, targets)
+        if input.include_related_source
+        else []
+    )
     tokens += estimate_json_tokens([source.model_dump() for source in read_sources])
     route = f"edit_context_{shape}"
     trace_id = _symbol_trace(
@@ -830,6 +835,7 @@ async def handle_code_symbol(
     match_witnesses: list[dict[str, Any]] | None = None,
     related_test_names: tuple[str, ...] = (),
     standalone_edit: bool = False,
+    include_related_source: bool = True,
 ) -> CodeSymbolOutput:
     require_code_intel()
     # Presence on several namespaces: one verdict per namespace, no bodies. Unset: the
@@ -929,7 +935,7 @@ async def handle_code_symbol(
     ambiguous = not matched_members and len({(u.symbol, u.signature) for u in budgeted}) > 1
     read_sources = (
         await read_sources_for_definitions(org, ns, budgeted, set(range(len(budgeted))))
-        if standalone_edit and not ambiguous
+        if standalone_edit and include_related_source and not ambiguous
         else []
     )
     if read_sources:
