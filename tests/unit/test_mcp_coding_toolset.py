@@ -11,10 +11,13 @@ Hermetic: `_caller_default_context` (which can hit ClickHouse) is patched."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 
 import server.transport.mcp_call as mcp_call
+from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.operations.capabilities import capability_snapshot
 from server.operations.reach import catalogue_facets
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
@@ -420,14 +423,19 @@ def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None
         assert "loom_code_edit_context for a known definition" in grep["description"]
 
 
-def _bound_listing(toolset: str, profile: str) -> list[dict]:
-    from server.code.domain.scope import reset_code_scope, set_code_scope
-
+@contextmanager
+def _bound() -> Iterator[None]:
+    """A connection whose header names a repository."""
     scope = set_code_scope("acme/code-repo")
     try:
-        return asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset=toolset))
+        yield
     finally:
         reset_code_scope(scope)
+
+
+def _bound_listing(toolset: str, profile: str) -> list[dict]:
+    with _bound():
+        return asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset=toolset))
 
 
 def test_a_bound_compact_coding_connection_lists_the_code_tools_alone(monkeypatch) -> None:
@@ -440,21 +448,39 @@ def test_a_bound_compact_coding_connection_lists_the_code_tools_alone(monkeypatc
     flagged = {name for name, tool in tools.items() if tool.get("_meta")}
     assert flagged == {"loom_code_edit_context", "loom_code_grep"}
     grep = tools["loom_code_grep"]["inputSchema"]
-    assert set(grep["properties"]) == {
-        "pattern",
-        "regex",
-        "path_globs",
-        "include_body",
-        "context_lines",
-        "limit",
-        "include_lessons",
-    }
+    unbound = asyncio.run(mt._tools_descriptor(schema_profile="compact", toolset="coding"))
+    compact = next(t for t in unbound if t["name"] == "loom_code_grep")["inputSchema"]
+    # the binding fills the scope arguments, and `path_globs` expresses the two path filters
+    left_out = {"namespace", "namespaces", "path_prefix", "langs"}
+    assert set(grep["properties"]) == set(compact["properties"]) - left_out
+    assert left_out <= set(compact["properties"])
+    # a reply's `next_cursor` and the description's `mode=files` name listed arguments
+    assert {"cursor", "mode", "path_globs", "exclude_globs", "case_sensitive"} <= set(
+        grep["properties"]
+    )
+    assert "mode=files" in tools["loom_code_grep"]["description"]
     assert grep["required"] == ["pattern"]
     assert grep["properties"]["context_lines"]["type"] == "integer"
     # the call still takes every argument the listing leaves out
-    fields = OPERATIONS_BY_NAME["code.grep"].input_model.model_fields
-    assert {"mode", "cursor", "path_prefix", "namespace"} <= fields.keys()
+    assert left_out <= OPERATIONS_BY_NAME["code.grep"].input_model.model_fields.keys()
     assert not mt.code_only_listing("coding", "compact")
+
+
+def test_a_reply_on_the_listing_of_code_tools_alone_names_no_tool_it_leaves_out() -> None:
+    text = "Save with memory.set, inspect with memory.related, read callers with code.callers."
+    listed = "Save with loom_memory_set, inspect with memory.related (via loom_op)"
+    with _bound():
+        assert mt.listed_tool_names("coding", "compact") == {
+            tool["name"] for tool in _bound_listing("coding", "compact")
+        }
+        with mt.hint_naming("coding", "compact") as name:
+            assert name(text) == (
+                "Save with memory.set, inspect with memory.related, "
+                "read callers with loom_code_callers."
+            )
+        for toolset, profile in (("coding", "standard"), ("coding+tracker", "compact")):
+            assert mt.mentor_namer(toolset, profile)(text).startswith(listed)
+    assert mt.mentor_namer("coding", "compact")(text).startswith(listed)
 
 
 @pytest.mark.parametrize(
@@ -472,11 +498,15 @@ def test_a_bound_connection_on_another_listing_keeps_its_tools(toolset, profile)
     assert {"loom_op", "loom_search"} <= {tool["name"] for tool in unbound}
 
 
-def test_edit_context_says_it_is_the_first_call_for_a_fix() -> None:
+def test_edit_context_says_when_to_use_it_without_ordering() -> None:
     for profile in ("standard", "compact"):
         tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
         text = next(t["description"] for t in tools if t["name"] == "loom_code_edit_context")
-        assert text.startswith("Call first for a fix: returns source, tests and notes.")
+        assert text == (
+            "Before editing, read source, tests and notes. "
+            "Batch exact `names` or declaration `clues`."
+        )
+        assert "first" not in text.lower()
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding+tracker"])

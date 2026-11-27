@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.settings import settings
 from server.transport import mcp_primer
 
@@ -16,8 +18,9 @@ NAMESPACE = "agent-a-long-default-namespace-name"
 
 
 @pytest.fixture(autouse=True)
-def wired_caller(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
-    """The caller's workspace and profile; returns the restricted-access checks made."""
+def wired_caller(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Any]]:
+    """The caller's workspace and profile on a connection bound to a repository;
+    yields the restricted-access checks made."""
     restricted_checks: list[Any] = []
 
     async def defaults(*_a: Any, **_k: Any) -> dict[str, str]:
@@ -41,8 +44,9 @@ def wired_caller(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     monkeypatch.setattr("server.identity.app.namespace_classification.is_restricted", unrestricted)
     monkeypatch.setattr(mcp_primer, "_mentor_line", mentor)
     monkeypatch.setattr(mcp_primer, "_caller_default_context", workspace)
-    monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: ("acme", "code-repo"))
-    return restricted_checks
+    bound = set_code_scope("acme/code-repo")
+    yield restricted_checks
+    reset_code_scope(bound)
 
 
 def _split(text: str) -> tuple[str, str]:
@@ -121,7 +125,7 @@ def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) 
     for primer in (standard, activation):
         assert primer.index(reuse) < primer.index("with the task as `query`. Skip it when")
     assert "first with the task" not in activation
-    monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: None)
+    set_code_scope(None)
     unbound = mcp_primer._coding_instructions("coding", defaults, compact=True)
     assert "First step of each task" in unbound
     assert "`loom_op(" in unbound and "`loom_search`" in unbound
@@ -161,6 +165,8 @@ def test_bound_coding_activation_with_no_default_memory_home() -> None:
 
 def test_compact_coding_catalog_describes_the_task_pack_without_ordering() -> None:
     from server.transport.mcp_tools import _tools_descriptor
+
+    set_code_scope(None)  # the listing of code tools alone carries no task pack
 
     async def describe(profile: str) -> str:
         tools = await _tools_descriptor(toolset="coding", schema_profile=profile)
@@ -202,7 +208,7 @@ def test_coding_startup_reuses_routing_text_across_implicit_bindings(
     monkeypatch.setattr(mcp_primer, "_mentor_line", mentor_should_be_on_demand)
     first = asyncio.run(mcp_primer._initialize_instructions(object(), toolset))
     monkeypatch.setattr(mcp_primer, "_caller_defaults", different_default)
-    monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: ("other-org", "other-repo"))
+    set_code_scope("other-org/other-repo")
     second = asyncio.run(mcp_primer._initialize_instructions(object(), toolset))
     assert first == second
     assert NAMESPACE not in first

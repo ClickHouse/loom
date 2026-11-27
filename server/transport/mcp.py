@@ -213,23 +213,8 @@ async def _handle_request(
     if method == "ping":
         return _ok(req_id, {})
 
-    if method == "tools/list":
-        # `?schema_profile=compact` on the MCP URL selects the compact listing
-        # (see mcp_schemas.compact_descriptor); `?toolset=coding` selects a
-        # toolset — one deployment serves both archetypes.
-        # Defaults from settings; an unknown value is the default.
-        # The listing is a property of the deployment and the URL, not of the
-        # caller: a client may hold it for five minutes and a shared cache may
-        # keep it. The listing of code tools alone also follows the connection's
-        # repository header, so only the client keeps that one.
-        shared = "private" if code_only_listing(toolset, schema_profile) else "public"
-        return _ok(
-            req_id,
-            {
-                "tools": await _tools_descriptor(schema_profile=schema_profile, toolset=toolset),
-                **cache_hints(LIST_TTL_MS, shared),
-            },
-        )
+    if method in ("tools/list", "prompts/list", "resources/list"):
+        return _ok(req_id, await _list_result(method, toolset, schema_profile))
 
     if method == "tools/call":
         from server.transport.lean_results import single_channel
@@ -243,29 +228,44 @@ async def _handle_request(
                     client_name,
                     mcp_session_id=mcp_session_id,
                     toolset=toolset,
+                    schema_profile=schema_profile,
                 )
             ),
             _client_name_to_agent(client_name),
         )
 
-    if method == "prompts/list":
-        return _ok(
-            req_id, {"prompts": _prompts_descriptor(toolset), **cache_hints(LIST_TTL_MS, "public")}
-        )
-
     if method == "prompts/get":
         return await _get_prompt(req_id, params, auth, client_name, toolset)
-
-    if method == "resources/list":
-        return _ok(
-            req_id,
-            {"resources": _resources_descriptor(toolset), **cache_hints(LIST_TTL_MS, "public")},
-        )
 
     if method == "resources/read":
         return await _read_resource(req_id, params, auth, toolset)
 
     return _err(req_id, METHOD_NOT_FOUND, f"Method not found: {method!r}")
+
+
+async def _list_result(
+    method: str, toolset: str | None, schema_profile: str | None
+) -> dict[str, Any]:
+    """`tools/list`, `prompts/list` or `resources/list`. `?schema_profile=compact`
+    on the MCP URL selects the compact listing (see mcp_schemas.compact_descriptor);
+    `?toolset=coding` selects a toolset — one deployment serves both archetypes.
+    Defaults from settings; an unknown value is the default.
+
+    A listing is a property of the deployment and the URL, not of the caller: a
+    client may hold it for five minutes and a shared cache may keep it. The
+    listing of code tools alone also follows the connection's repository header,
+    so only the client keeps that one. It lists no prompt and no resource: the
+    primer they serve routes memory through tools that listing leaves out."""
+    code_only = code_only_listing(toolset, schema_profile)
+    if method == "tools/list":
+        listed: dict[str, Any] = {
+            "tools": await _tools_descriptor(schema_profile=schema_profile, toolset=toolset)
+        }
+    elif method == "prompts/list":
+        listed = {"prompts": [] if code_only else _prompts_descriptor(toolset)}
+    else:
+        listed = {"resources": [] if code_only else _resources_descriptor(toolset)}
+    return {**listed, **cache_hints(LIST_TTL_MS, "private" if code_only else "public")}
 
 
 async def _discover_result(

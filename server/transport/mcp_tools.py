@@ -398,12 +398,15 @@ def _curated_description(toolset: str, op_name: str) -> str | None:
     return tiered or _TOOL_DESCRIPTIONS.get(op_name)
 
 
-def listed_tool_names(toolset: str | None) -> set[str]:
-    """The tool names a `tools/list` on ``toolset`` shows."""
+def listed_tool_names(toolset: str | None, schema_profile: str | None = None) -> set[str]:
+    """The tool names a `tools/list` on ``toolset`` and ``schema_profile`` shows."""
     from server.settings import settings
 
     resolved = resolve_toolset(toolset, settings.mcp_toolset)
-    return _tool_names(listed_ops(resolved), resolved)
+    ops = listed_ops(resolved)
+    if code_only_listing(resolved, schema_profile):
+        return {op.mcp_tool_name for op in ops if op.name.startswith("code.")}
+    return _tool_names(ops, resolved)
 
 
 def name_ops_for_toolset(text: str, toolset: str | None) -> str:
@@ -411,8 +414,8 @@ def name_ops_for_toolset(text: str, toolset: str | None) -> str:
     return name_ops_for_listing(text, listed_tool_names(toolset), writes=routes_writes(toolset))
 
 
-def mentor_namer(toolset: str | None) -> Callable[[str], str]:
-    """Names a stored mentor hint as ``toolset``'s listing does, working the listing
+def mentor_namer(toolset: str | None, schema_profile: str | None = None) -> Callable[[str], str]:
+    """Names a stored mentor hint as the connection's listing does, working the listing
     out on first use. The core-listing note goes: the listing marks an op it leaves
     out itself."""
     from server.insights.app.mentor_rules import without_listing_note
@@ -422,20 +425,22 @@ def mentor_namer(toolset: str | None) -> Callable[[str], str]:
     def name(text: str) -> str:
         nonlocal listing
         if listing is None:
-            listing = (listed_tool_names(toolset), routes_writes(toolset))
+            listing = (listed_tool_names(toolset, schema_profile), routes_writes(toolset))
         return name_ops_for_listing(without_listing_note(text), listing[0], writes=listing[1])
 
     return name
 
 
 @contextmanager
-def hint_naming(toolset: str | None) -> Iterator[Callable[[str], str]]:
+def hint_naming(
+    toolset: str | None, schema_profile: str | None = None
+) -> Iterator[Callable[[str], str]]:
     """Sets `mentor.hint_namer` for one tool call, so the mentor text the handler
-    renders names ops as ``toolset``'s listing does; yields the namer for the
+    renders names ops as the connection's listing does; yields the namer for the
     call's own hint."""
     from server.insights.app.mentor import hint_namer
 
-    namer = mentor_namer(toolset)
+    namer = mentor_namer(toolset, schema_profile)
     token = hint_namer.set(namer)
     try:
         yield namer
@@ -532,16 +537,14 @@ _COMPACT_CODING_GREP_OMITTED_ARGS = {
     "neighbour_k",
     "deadline_ms",
 }
-# The grep arguments a connection bound to a repository lists. The call accepts
-# the full set; the bound repository fills `namespace`.
-_BOUND_CODING_GREP_ARGS = {
-    "pattern",
-    "regex",
-    "path_globs",
-    "include_body",
-    "context_lines",
-    "limit",
-    "include_lessons",
+# The listing of code tools alone also leaves out the scope arguments the bound
+# repository fills and the path filters `path_globs` expresses. The call accepts
+# the full set.
+_CODE_ONLY_GREP_OMITTED_ARGS = _COMPACT_CODING_GREP_OMITTED_ARGS | {
+    "namespace",
+    "namespaces",
+    "path_prefix",
+    "langs",
 }
 
 
@@ -580,10 +583,8 @@ async def _tools_descriptor(
     profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
     descriptors: list[dict[str, Any]] = []
     code_only = code_only_listing(toolset, profile)
-    ops = listed_ops(toolset)
-    if code_only:
-        ops = [op for op in ops if op.name.startswith("code.")]
-    listed = {op.mcp_tool_name for op in ops} if code_only else _tool_names(ops, toolset)
+    listed = listed_tool_names(toolset, profile)
+    ops = [op for op in listed_ops(toolset) if op.mcp_tool_name in listed]
     writes = routes_writes(toolset)
     for op in ops:
         custom = _curated_description(toolset, op.name)
@@ -621,12 +622,10 @@ async def _tools_descriptor(
             )
             input_schema = _with_identity(input_schema, op)
         if profile == "compact" and toolset == "coding" and op.name == "code.grep":
-            omitted = (
-                set(input_schema["properties"]) - _BOUND_CODING_GREP_ARGS
-                if code_only
-                else _COMPACT_CODING_GREP_OMITTED_ARGS
+            input_schema = _without(
+                input_schema,
+                _CODE_ONLY_GREP_OMITTED_ARGS if code_only else _COMPACT_CODING_GREP_OMITTED_ARGS,
             )
-            input_schema = _without(input_schema, omitted)
             # JSON Schema numeric bounds do not constrain a string alternative.
             input_schema["properties"]["context_lines"]["type"] = "integer"
         if defaults := mcp_argument_defaults(op.name, toolset):

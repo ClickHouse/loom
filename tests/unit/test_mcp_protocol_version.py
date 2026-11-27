@@ -251,19 +251,29 @@ def test_list_results_carry_cache_hints_and_the_primer_is_private(
 
 
 def test_a_listing_that_follows_the_repository_header_is_the_clients_own() -> None:
+    """The listing of code tools alone lists no prompt and no resource: the primer
+    they serve names tools it leaves out."""
     from server.code.domain.scope import reset_code_scope, set_code_scope
 
-    def scope_of(profile: str) -> str:
+    def listed(method: str, profile: str) -> dict[str, Any]:
         request = mcp._handle_request(
-            _rpc("tools/list"), auth=None, toolset="coding", schema_profile=profile
+            _rpc(method), auth=None, toolset="coding", schema_profile=profile
         )
-        return asyncio.run(request)["result"]["cacheScope"]
+        return asyncio.run(request)["result"]
 
-    assert scope_of("compact") == "public"
+    lists = (("tools/list", "tools"), ("prompts/list", "prompts"), ("resources/list", "resources"))
+    for method, key in lists:
+        assert listed(method, "compact")["cacheScope"] == "public"
+        assert listed(method, "compact")[key]
     bound = set_code_scope("acme/code-repo")
     try:
-        assert scope_of("compact") == "private"
-        assert scope_of("standard") == "public"
+        for method, key in lists:
+            assert listed(method, "compact")["cacheScope"] == "private"
+            assert listed(method, "standard")["cacheScope"] == "public"
+            assert listed(method, "standard")[key]
+        assert listed("tools/list", "compact")["tools"]
+        assert listed("prompts/list", "compact")["prompts"] == []
+        assert listed("resources/list", "compact")["resources"] == []
     finally:
         reset_code_scope(bound)
 

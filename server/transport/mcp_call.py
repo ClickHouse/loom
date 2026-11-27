@@ -245,6 +245,7 @@ async def _call_tool(
     client_name: str | None = None,
     mcp_session_id: str = "",
     toolset: str | None = None,
+    schema_profile: str | None = None,
 ) -> dict[str, Any]:
     """One MCP `tools/call`, in phases (each below this function, in order):
     resolve the tool → session-content admission → bind the caller's identity →
@@ -373,7 +374,7 @@ async def _call_tool(
             with (
                 gates.tenant_slot(auth, target),
                 llm_free.serving(op),
-                hint_naming(toolset) as namer,
+                hint_naming(toolset, schema_profile) as namer,
             ):
                 result = await op.handler(input_obj)
         except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error

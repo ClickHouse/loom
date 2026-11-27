@@ -577,7 +577,7 @@ Is this already tested?
 
 ## `code.edit_context`
 
-Call first for a fix: returns source, tests and notes.
+Before editing, read source, tests and notes.
 
 `POST /v1/code.edit_context` · MCP `loom_code_edit_context` · role `viewer` · read · not listed under the MCP `all` toolset
 

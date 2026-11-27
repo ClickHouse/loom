@@ -44,6 +44,7 @@ from server.transport.mcp_schemas import resolve_schema_profile
 from server.transport.mcp_tools import (
     _emit_mcp_event,
     assistant_connection,
+    code_only_listing,
     listed_ops,
     mentor_text_for_toolset,
     name_ops_for_toolset,
@@ -563,7 +564,7 @@ async def _initialize_instructions(
         )
     # A coding client needs the workspace name only when it must pass one;
     # a listing of code tools alone has no call that takes it.
-    if compact and scope:
+    if code_only_listing(toolset, schema_profile):
         workspace = ""
     elif coding:
         workspace = _coding_workspace_line(defaults)
@@ -591,7 +592,7 @@ def _coding_instructions(
     A compact connection bound to a repository gets the code routing alone: its
     listing carries no memory tool and no `loom_op`."""
     tool = _tool_refs(toolset)
-    code_only = compact and _bound_coding_connection(toolset)
+    code_only = compact and code_only_listing(toolset, "compact")
     save = tool["memory.set"]
     memory = (
         "Recall before answering from memory: call `loom_search` once"
