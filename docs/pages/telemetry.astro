@@ -1,4 +1,9 @@
 ---
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
 import SiteFrame from "../components/SiteFrame.astro";
 ---
 
@@ -7,40 +12,40 @@ import SiteFrame from "../components/SiteFrame.astro";
   description="What self-hosted Loom reports and how to control sharing."
   path="/telemetry"
 >
-  <h1>Telemetry</h1>
-  <p class="lead">
+  <Title type="h1" size="xl" family="brand">Telemetry</Title>
+  <Text color="muted" className="lead">
     Self-hosted Loom reports aggregate usage so we can see which features people use
     and how installations adopt them.
-  </p>
+  </Text>
   <div class="telemetry-grid">
     <div class="details">
     <section>
-      <h2>What Loom sends</h2>
-      <p>
+      <Title type="h2" size="lg">What Loom sends</Title>
+      <Text color="muted">
         Every completed 12-hour window can produce one report with an installation identifier,
         software versions, and counts of requests, feature usage, namespaces, agents, and sessions.
         The report contains no customer content, full email addresses, or credentials.
-      </p>
+      </Text>
     </section>
     <section>
-      <h2>Where it goes</h2>
-      <p>
+      <Title type="h2" size="lg">Where it goes</Title>
+      <Text color="muted">
         The server sends reports over HTTPS to <code>loom.clickhouse.com/api/v1/adoption</code>.
         Reports are retained for 400 days.
-      </p>
-      <p>The <a href="/adoption#reported-contact-domains">public adoption page</a> lists namespace contact domain names from version 2 reports with successful requests in the last 90 complete UTC days.</p>
+      </Text>
+      <Text color="muted">The <Link href="/adoption#reported-contact-domains">public adoption page</Link> lists namespace contact domain names from version 2 reports with successful requests in the last 90 complete UTC days.</Text>
     </section>
-    <a class="text-link" href="/docs/features/observability/telemetry#self-hosted-adoption">Read the telemetry field reference <span class="link-arrow" aria-hidden="true">→</span></a>
+    <Link className="text-link" href="/docs/features/observability/telemetry#self-hosted-adoption">Read the telemetry field reference <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
     </div>
-    <section class="site-panel sharing">
-      <h2>Control sharing</h2>
-      <p>Set these options on every server and worker replica.</p>
-      <h3>Disable adoption reports</h3>
+    <Panel orientation="vertical" alignItems="start" gap="none" hasBorder role="region" aria-labelledby="sharing-heading" className="site-panel sharing">
+      <Title type="h2" size="lg" id="sharing-heading">Control sharing</Title>
+      <Text color="muted">Set these options on every server and worker replica.</Text>
+      <Title type="h3" size="md">Disable adoption reports</Title>
       <pre><code>LOOM_ADOPTION_TELEMETRY_ENABLED=false</code></pre>
-      <h3>Share counts only</h3>
-      <p>Reports include namespace contact domains and aggregate counts by default. Use this setting to omit domains.</p>
+      <Title type="h3" size="md">Share counts only</Title>
+      <Text color="muted">Reports include namespace contact domains and aggregate counts by default. Use this setting to omit domains.</Text>
       <pre><code>LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false</code></pre>
-    </section>
+    </Panel>
   </div>
 </SiteFrame>
 

@@ -1,3 +1,12 @@
+:root {
+  --loom-docs-gutter: clamp(1rem, 3.2vw, 4rem);
+  --loom-docs-navigation: clamp(14rem, 16vw, 17rem);
+  --loom-docs-outline: clamp(13.5rem, 14vw, 16rem);
+  --loom-docs-column-gutter: clamp(1.75rem, 3.2vw, 4rem);
+  --loom-docs-top: clamp(1.5rem, 2vw, 2.5rem);
+  --loom-docs-measure: 60ch;
+}
+
 :root[data-theme="dark"] {
   --blume-background: var(--click-global-color-background-default, #1f1f1c);
   --blume-foreground: var(--click-global-color-text-default, #ffffff);
@@ -10,7 +19,7 @@
   --blume-action-foreground: var(--blume-accent-foreground);
   --blume-code-background: var(--click-global-color-background-muted, #282828);
   --blume-radius: 0.5rem;
-  --blume-content-width: 44rem;
+  --blume-content-width: 100%;
 }
 
 :root[data-theme="dark"] .loom-logo-background,
@@ -27,14 +36,37 @@
   border-block-end: 1px solid var(--blume-border);
 }
 
-[data-blume-doc-grid] {
-  max-inline-size: 88rem;
-  margin-inline: auto;
+[data-blume-header],
+[data-blume-footer] {
+  padding-inline: var(--loom-docs-gutter);
 }
 
-@media (min-width: 88rem) {
-  [data-blume-header] {
-    padding-inline: calc((100% - 88rem) / 2 + 3.5rem);
+@media (min-width: 64rem) {
+  [data-blume-doc-grid] {
+    padding-inline: var(--loom-docs-gutter);
+  }
+
+  [data-blume-doc-grid]:has(> :where([data-blume-nav-drawer]:not(.lg\:hidden))) {
+    grid-template-columns: var(--loom-docs-navigation) minmax(0, 1fr);
+  }
+
+  [data-blume-nav-drawer] {
+    padding-block-start: var(--loom-docs-top);
+    padding-inline: 0 1rem;
+    border-inline-end: 1px solid var(--blume-border);
+    overscroll-behavior-block: contain;
+  }
+}
+
+@media (min-width: 80rem) {
+  [data-blume-doc-grid]:has(> :where([data-blume-toc])) {
+    grid-template-columns: var(--loom-docs-navigation) minmax(0, 1fr) var(--loom-docs-outline);
+  }
+
+  [data-blume-toc] {
+    --blume-rail-inset: 0px;
+    padding-block-start: var(--loom-docs-top);
+    overscroll-behavior-block: contain;
   }
 }
 
@@ -54,6 +86,16 @@
   border-radius: var(--blume-radius);
 }
 
+[data-blume-nav-tree] :is(.blume-nav-heading, .blume-nav-summary) {
+  font-weight: 600;
+}
+
+[data-blume-nav-tree] .blume-nav-heading + div {
+  margin-inline-start: 0.625rem;
+  padding-inline-start: 0.5rem;
+  border-inline-start: 1px solid var(--blume-border);
+}
+
 [data-blume-search-open] {
   border: 1px solid var(--blume-border);
   border-radius: var(--blume-radius);
@@ -63,8 +105,35 @@
   color: var(--blume-accent);
 }
 
+[data-blume-toc] blume-toc > ul {
+  border-inline-start: 1px solid var(--blume-border);
+}
+
+[data-blume-toc] blume-toc li {
+  position: relative;
+}
+
+[data-blume-toc] blume-toc a {
+  padding-inline-start: 0.75rem;
+}
+
+[data-blume-toc] blume-toc li:has(> a[aria-current="location"])::before {
+  position: absolute;
+  inset-block: 0.375rem;
+  inset-inline-start: -1px;
+  inline-size: 2px;
+  background: var(--blume-accent);
+  content: "";
+}
+
 #blume-content {
-  padding-block-start: clamp(1.5rem, 3vw, 2.75rem);
+  min-inline-size: 0;
+  padding-block-start: var(--loom-docs-top);
+  padding-inline: clamp(1rem, 3.2vw, 1.5rem);
+
+  @media (min-width: 64rem) {
+    padding-inline: var(--loom-docs-column-gutter);
+  }
 }
 
 .prose {
@@ -73,12 +142,17 @@
   line-height: 1.7;
 }
 
-.prose > :where(p, blockquote) {
-  max-inline-size: 60ch;
+.prose > :where(p, ul, ol, blockquote):not(:has(:is(img, video, pre, table))) {
+  max-inline-size: var(--loom-docs-measure);
+}
+
+.docs-fragment-anchors > a {
+  display: block;
+  scroll-margin-block-start: 5rem;
 }
 
 .prose :where(h1) {
-  font-size: clamp(2rem, 4vw, 3.125rem);
+  font-size: clamp(2rem, 3vw, 2.75rem);
   font-weight: 600;
   letter-spacing: -0.045em;
   text-wrap: balance;
@@ -149,11 +223,18 @@
 }
 
 .prose
-  > :is(h2#start-here:has(~ h2#use-cases), h2#find-and-share-context, h2#plan-a-deployment, h2#look-up-an-interface)
+  > :is(
+    h2#start-here:has(~ h2#browse-the-docs),
+    h2#browse-the-docs,
+    h2#find-and-share-context,
+    h2#plan-a-deployment,
+    h2#look-up-an-interface
+  )
   + ul {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+  max-inline-size: none;
   padding: 0;
   list-style: none;
 
@@ -196,6 +277,12 @@
 
   & a:hover {
     color: var(--blume-accent);
+  }
+}
+
+@media (min-width: 92rem) {
+  .prose > :is(h2#start-here:has(~ h2#browse-the-docs), h2#browse-the-docs) + ul {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 

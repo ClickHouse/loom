@@ -221,8 +221,11 @@ class VertexAgentModel:
         timeout = settings.llm_request_timeout_s
         try:
             headers = await vertex_auth.headers(self._url, timeout)
-        except vertex_auth.VertexCredentialsError as e:
-            raise AssistantUpstreamError(str(e)) from e
+        except vertex_auth.VertexCredentialsError:
+            raise AssistantUpstreamError(
+                "Vertex AI credentials are unavailable. "
+                "Check Google Application Default Credentials and IAM."
+            ) from None
         parser = _VertexStream(turn)
         with recording("vertex:assistant"):
             turn.sent = True
