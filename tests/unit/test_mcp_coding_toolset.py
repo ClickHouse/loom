@@ -420,6 +420,65 @@ def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None
         assert "loom_code_edit_context for a known definition" in grep["description"]
 
 
+def _bound_listing(toolset: str, profile: str) -> list[dict]:
+    from server.code.domain.scope import reset_code_scope, set_code_scope
+
+    scope = set_code_scope("acme/code-repo")
+    try:
+        return asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset=toolset))
+    finally:
+        reset_code_scope(scope)
+
+
+def test_a_bound_compact_coding_connection_lists_the_code_tools_alone(monkeypatch) -> None:
+    default = Settings.model_fields["mcp_always_load_tools"].get_default()
+    monkeypatch.setattr(settings, "mcp_always_load_tools", default)
+    tools = {tool["name"]: tool for tool in _bound_listing("coding", "compact")}
+    coding = [op for op in mt.listed_ops("coding") if op.name.startswith("code.")]
+    assert list(tools) == [op.mcp_tool_name for op in coding]
+    assert {"loom_code_read", "loom_code_search", "loom_code_callers"} <= tools.keys()
+    flagged = {name for name, tool in tools.items() if tool.get("_meta")}
+    assert flagged == {"loom_code_edit_context", "loom_code_grep"}
+    grep = tools["loom_code_grep"]["inputSchema"]
+    assert set(grep["properties"]) == {
+        "pattern",
+        "regex",
+        "path_globs",
+        "include_body",
+        "context_lines",
+        "limit",
+        "include_lessons",
+    }
+    assert grep["required"] == ["pattern"]
+    assert grep["properties"]["context_lines"]["type"] == "integer"
+    # the call still takes every argument the listing leaves out
+    fields = OPERATIONS_BY_NAME["code.grep"].input_model.model_fields
+    assert {"mode", "cursor", "path_prefix", "namespace"} <= fields.keys()
+    assert not mt.code_only_listing("coding", "compact")
+
+
+@pytest.mark.parametrize(
+    ("toolset", "profile"),
+    [
+        ("coding", "standard"),
+        ("coding", "full"),
+        ("coding+tracker", "compact"),
+        ("core", "compact"),
+    ],
+)
+def test_a_bound_connection_on_another_listing_keeps_its_tools(toolset, profile) -> None:
+    unbound = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset=toolset))
+    assert _bound_listing(toolset, profile) == unbound
+    assert {"loom_op", "loom_search"} <= {tool["name"] for tool in unbound}
+
+
+def test_edit_context_says_it_is_the_first_call_for_a_fix() -> None:
+    for profile in ("standard", "compact"):
+        tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
+        text = next(t["description"] for t in tools if t["name"] == "loom_code_edit_context")
+        assert text.startswith("Call first for a fix: returns source, tests and notes.")
+
+
 @pytest.mark.parametrize("toolset", ["core", "coding+tracker"])
 def test_other_default_toolsets_keep_the_generic_dispatcher_upfront(monkeypatch, toolset) -> None:
     monkeypatch.setattr(settings, "mcp_always_load_tools", "auto")

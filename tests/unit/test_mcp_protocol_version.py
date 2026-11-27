@@ -250,6 +250,24 @@ def test_list_results_carry_cache_hints_and_the_primer_is_private(
     assert read["contents"][0]["text"] == "PRIMER"
 
 
+def test_a_listing_that_follows_the_repository_header_is_the_clients_own() -> None:
+    from server.code.domain.scope import reset_code_scope, set_code_scope
+
+    def scope_of(profile: str) -> str:
+        request = mcp._handle_request(
+            _rpc("tools/list"), auth=None, toolset="coding", schema_profile=profile
+        )
+        return asyncio.run(request)["result"]["cacheScope"]
+
+    assert scope_of("compact") == "public"
+    bound = set_code_scope("acme/code-repo")
+    try:
+        assert scope_of("compact") == "private"
+        assert scope_of("standard") == "public"
+    finally:
+        reset_code_scope(bound)
+
+
 def test_tools_list_order_is_deterministic() -> None:
     a = asyncio.run(mcp._handle_request(_rpc("tools/list"), auth=None))["result"]["tools"]
     b = asyncio.run(mcp._handle_request(_rpc("tools/list"), auth=None))["result"]["tools"]

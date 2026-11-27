@@ -35,6 +35,13 @@ startup instructions. Find the other tools through discovery. When the
 `coding` toolset is bound to a repository, the primer uses the task context pack
 for prior decisions or procedures beyond the lessons returned with indexed source.
 
+A compact coding connection bound to a repository lists the code tools alone.
+Its startup instructions carry the source workflows and the repository
+binding, with no memory, workspace or `loom_op` guidance. Lessons linked to
+source still arrive with code results, and every other tool stays callable by
+name. This listing follows the `X-Loom-Code-Scope` header, so its `cacheScope`
+is `private`.
+
 With the automatic loading policy, compact coding connections load
 `code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
 definition name or location to read implementation, indexed tests, and linked
@@ -48,7 +55,9 @@ An explicit `LOOM_MCP_ALWAYS_LOAD_TOOLS` list controls loading on every profile.
 Compact coding connections list grep's main inputs for reading enclosing
 definitions. Use `mode: "files"` to list matching paths. Use `loom_op` with
 `{"op": "help", "query": "code.grep"}` to find controls for match excerpts,
-full bodies, related source, neighbours and deadlines. Calls accept the full
+full bodies, related source, neighbours and deadlines. Bound to a repository,
+the listing keeps `pattern`, `regex`, `path_globs`, `include_body`,
+`context_lines`, `limit` and `include_lessons`. Calls accept the full
 argument set.
 
 On coding connections, `code.symbol` includes related indexed tests and nearby

@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator, Set
 from contextlib import contextmanager
 from typing import Any, get_args
 
+from server.code.domain.scope import current_code_scope
 from server.memory.api.models_loom_search import SearchInput
 from server.memory.app.loom_search.answer_first import withheld_note
 from server.memory.app.loom_search.tracker_leg import tracker_text_lines
@@ -531,6 +532,32 @@ _COMPACT_CODING_GREP_OMITTED_ARGS = {
     "neighbour_k",
     "deadline_ms",
 }
+# The grep arguments a connection bound to a repository lists. The call accepts
+# the full set; the bound repository fills `namespace`.
+_BOUND_CODING_GREP_ARGS = {
+    "pattern",
+    "regex",
+    "path_globs",
+    "include_body",
+    "context_lines",
+    "limit",
+    "include_lessons",
+}
+
+
+def code_only_listing(toolset: str | None, schema_profile: str | None) -> bool:
+    """Whether this connection lists the code tools alone: the compact `coding`
+    listing on a connection bound to a repository. Every other tool stays callable
+    by name. The binding is a request header, so this listing is the client's own
+    and no shared cache may keep it."""
+    from server.settings import settings
+    from server.transport.mcp_schemas import resolve_schema_profile
+
+    return (
+        resolve_toolset(toolset, settings.mcp_toolset) == "coding"
+        and resolve_schema_profile(schema_profile, settings.mcp_schema_profile) == "compact"
+        and current_code_scope() is not None
+    )
 
 
 async def _tools_descriptor(
@@ -552,8 +579,11 @@ async def _tools_descriptor(
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
     profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
     descriptors: list[dict[str, Any]] = []
+    code_only = code_only_listing(toolset, profile)
     ops = listed_ops(toolset)
-    listed = _tool_names(ops, toolset)
+    if code_only:
+        ops = [op for op in ops if op.name.startswith("code.")]
+    listed = {op.mcp_tool_name for op in ops} if code_only else _tool_names(ops, toolset)
     writes = routes_writes(toolset)
     for op in ops:
         custom = _curated_description(toolset, op.name)
@@ -591,7 +621,12 @@ async def _tools_descriptor(
             )
             input_schema = _with_identity(input_schema, op)
         if profile == "compact" and toolset == "coding" and op.name == "code.grep":
-            input_schema = _without(input_schema, _COMPACT_CODING_GREP_OMITTED_ARGS)
+            omitted = (
+                set(input_schema["properties"]) - _BOUND_CODING_GREP_ARGS
+                if code_only
+                else _COMPACT_CODING_GREP_OMITTED_ARGS
+            )
+            input_schema = _without(input_schema, omitted)
             # JSON Schema numeric bounds do not constrain a string alternative.
             input_schema["properties"]["context_lines"]["type"] = "integer"
         if defaults := mcp_argument_defaults(op.name, toolset):
@@ -607,7 +642,7 @@ async def _tools_descriptor(
             "outputSchema": _shape_schema(model_schema(op.output_model)),
         }
         descriptors.append(descriptor)
-    if not is_assistant(toolset):
+    if not is_assistant(toolset) and not code_only:
         descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
     _with_loading_hints(
         descriptors, _upfront_tools(settings.mcp_always_load_tools, toolset, profile)

@@ -112,21 +112,42 @@ def test_compact_coding_primer_preserves_scope_and_profile() -> None:
 
 def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) -> None:
     defaults = {"org": "project", "namespace": "history", "agent": "coding"}
-    bound = mcp_primer._coding_instructions("coding", defaults, compact=True)
     standard = mcp_primer._coding_instructions("coding", defaults)
-    assert "First step of each task" not in bound
-    assert "For prior decisions or procedures beyond linked code lessons" in bound
+    assert "First step of each task" not in standard
     assert "For prior decisions or procedures beyond linked code lessons" in standard
     reuse = "For a repeat source lookup, set `include_lessons: false`"
     activation = asyncio.run(mcp_primer._loom_primer_text(object(), toolset="coding"))
     assert "For prior decisions or procedures beyond linked code lessons" in activation
-    for primer in (bound, standard, activation):
+    for primer in (standard, activation):
         assert primer.index(reuse) < primer.index("with the task as `query`. Skip it when")
     assert "first with the task" not in activation
-    assert reuse not in mcp_primer._coding_instructions("coding", compact=True)
     monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: None)
     unbound = mcp_primer._coding_instructions("coding", defaults, compact=True)
     assert "First step of each task" in unbound
+    assert "`loom_op(" in unbound and "`loom_search`" in unbound
+
+
+def test_bound_compact_coding_primer_routes_code_tools_alone() -> None:
+    """Its listing carries the code tools alone, so the text names no other tool."""
+    defaults = {"org": "project", "namespace": "history", "agent": "coding"}
+    reuse = "For a repeat source lookup, set `include_lessons: false`"
+    bound = mcp_primer._coding_instructions("coding", defaults, compact=True)
+    assert bound.startswith("Use Loom first for unchanged indexed code and tests.")
+    assert reuse in bound
+    code_only = mcp_primer._coding_instructions(
+        "coding", {**defaults, "namespace": ""}, compact=True
+    )
+    assert reuse not in code_only
+    assert reuse not in mcp_primer._coding_instructions("coding", compact=True)
+    started = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "coding", schema_profile="compact")
+    )
+    for text in (bound, code_only, _split(started)[0]):
+        assert "`loom_code_edit_context`" in text
+        for absent in ("loom_op", "loom_search", "loom_memory", "loom_context_pack"):
+            assert absent not in text, absent
+    assert "repository bound to this connection when namespace is omitted" in started
+    assert "default memory namespace" not in started
 
 
 def test_bound_coding_activation_with_no_default_memory_home() -> None:

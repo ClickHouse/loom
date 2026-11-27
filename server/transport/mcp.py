@@ -92,7 +92,11 @@ from server.transport.mcp_primer import (
     _resources_descriptor,
 )
 from server.transport.mcp_refusals import classify_tool_errors
-from server.transport.mcp_tools import _tools_descriptor, assistant_connection
+from server.transport.mcp_tools import (
+    _tools_descriptor,
+    assistant_connection,
+    code_only_listing,
+)
 
 log = logging.getLogger(__name__)
 
@@ -214,14 +218,16 @@ async def _handle_request(
         # (see mcp_schemas.compact_descriptor); `?toolset=coding` selects a
         # toolset — one deployment serves both archetypes.
         # Defaults from settings; an unknown value is the default.
+        # The listing is a property of the deployment and the URL, not of the
+        # caller: a client may hold it for five minutes and a shared cache may
+        # keep it. The listing of code tools alone also follows the connection's
+        # repository header, so only the client keeps that one.
+        shared = "private" if code_only_listing(toolset, schema_profile) else "public"
         return _ok(
             req_id,
             {
                 "tools": await _tools_descriptor(schema_profile=schema_profile, toolset=toolset),
-                # The listing is a property of the deployment and the URL, not
-                # of the caller: a client may hold it for five
-                # minutes and a shared cache may keep it.
-                **cache_hints(LIST_TTL_MS, "public"),
+                **cache_hints(LIST_TTL_MS, shared),
             },
         )
 

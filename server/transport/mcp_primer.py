@@ -362,11 +362,15 @@ def _bound_coding_connection(toolset: str | None) -> bool:
     )
 
 
+_LINKED_LESSON_REUSE = (
+    "For a repeat source lookup, set `include_lessons: false` when you already have "
+    "the linked lessons for that scope. "
+)
+
+
 def _linked_history_guidance(task_pack: str | None) -> str:
     return (
-        "For a repeat source lookup, set `include_lessons: false` when you already have "
-        "the linked lessons for that scope. "
-        "For prior decisions or procedures beyond linked code lessons, use "
+        _LINKED_LESSON_REUSE + "For prior decisions or procedures beyond linked code lessons, use "
         f"{task_pack} with the task as `query`. "
     )
 
@@ -526,7 +530,9 @@ async def _initialize_instructions(
     """Session-start instructions for the `initialize` result: the rules, the
     code scope, the workspace, then the profile. Coding connections use fixed
     wording for implicit scopes and read usage hints during the session. Other
-    connections also get their current mentor hint. Clients control display and
+    connections also get their current mentor hint. A compact coding connection
+    bound to a repository lists the code tools alone, so its instructions carry
+    no memory, workspace or `loom_op` text. Clients control display and
     context limits. The profile comes only with a verified
     bearer: an anonymous probe (discovery_only / open modes) must not read
     profile content.
@@ -555,12 +561,14 @@ async def _initialize_instructions(
             else f"\n\n**Code index scope for this connection:** `{scope[0]}/{scope[1]}` — "
             "applied to every loom_code_* call that names no namespace."
         )
-    # A coding client needs the workspace name only when it must pass one.
-    workspace = (
-        _coding_workspace_line(defaults)
-        if coding
-        else await _caller_default_context(auth, defaults)
-    )
+    # A coding client needs the workspace name only when it must pass one;
+    # a listing of code tools alone has no call that takes it.
+    if compact and scope:
+        workspace = ""
+    elif coding:
+        workspace = _coding_workspace_line(defaults)
+    else:
+        workspace = await _caller_default_context(auth, defaults)
     profile = await _profile_section(auth, defaults) if auth is not None else ""
     mentor = "" if coding else await _mentor_line(auth, defaults, toolset)
     # the rules and the mentor line are rendered apart: mark each op once across both
@@ -579,8 +587,11 @@ def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
 def _coding_instructions(
     toolset: str | None, defaults: dict[str, Any] | None = None, *, compact: bool = False
 ) -> str:
-    """Code and memory routing for coding clients, including clients without hooks."""
+    """Code and memory routing for coding clients, including clients without hooks.
+    A compact connection bound to a repository gets the code routing alone: its
+    listing carries no memory tool and no `loom_op`."""
     tool = _tool_refs(toolset)
+    code_only = compact and _bound_coding_connection(toolset)
     save = tool["memory.set"]
     memory = (
         "Recall before answering from memory: call `loom_search` once"
@@ -636,6 +647,10 @@ def _coding_instructions(
     code = lead + definition_hint + route_hint + follow if routes or definition_hint else ""
     # A code-only token can have no default memory workspace.
     context = ""
+    if code_only:
+        if defaults and defaults.get("namespace"):
+            context = "\n\n" + _LINKED_LESSON_REUSE.rstrip()
+        return name_ops_for_toolset(code.lstrip("\n") + context, toolset)
     if defaults and defaults.get("namespace") and tool["context.pack"]:
         if _bound_coding_connection(toolset):
             context = "\n\n" + _linked_history_guidance(tool["context.pack"])
