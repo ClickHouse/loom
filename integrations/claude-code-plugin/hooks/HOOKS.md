@@ -95,18 +95,25 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   (0600), and the primer points the user to the claim page (`claim_url`), where
   the code works once with a password of their own; a single-user server
   returns its one identity, so there is no claim code and the primer just says it connected. The MCP
-  headers helper cannot see install options, so with no LOOM_BASE_URL or saved
-  URL it waits for this hook's credential (`LOOM_MCP_HOOK_WAIT_MS`, 5 s, under
+  headers helper may see neither the install options nor LOOM_API_KEY, so with
+  no token it waits for this hook to save one (`LOOM_MCP_HOOK_WAIT_MS`, 5 s, under
   Codex's 10 s helper limit) before signing up through the same lock itself.
   `LOOM_AUTO_SIGNUP=off` disables
   it; a server without self-signup (404) or rate-limiting it (429) leaves the
   machine without a credential and the primer says how to get a token by
   hand. A token given as the `token` install option is first copied into
-  ~/.loom/config.json, where the headers helper can read it. In Claude Code,
+  ~/.loom/config.json, where the headers helper can read it. So is
+  LOOM_API_KEY, or the token in the file LOOM_API_KEY_FILE names, where
+  Claude Code runs the hook for its plugin (CLAUDE_PLUGIN_ROOT set, not an
+  agent): it keeps both variables from the plugin's helper. None replaces a
+  saved token: when the hooks use another token than the helper will send,
+  from LOOM_API_KEY or the named file, or the helper will find none, the
+  primer says to save the hooks' token in the config. There too,
   when that helper will send the config's token and the config names another
   server than the MCP entry's, the primer says so. The `server_url` option
-  is saved to a tmp state file (`loom-install-<hash>.json`, one per plugin
-  install) for the status script, whose shell carries no option.
+  and whether the hook ran for the plugin are saved to a tmp state file
+  (`loom-install-<hash>.json`, one per plugin install) for the status script,
+  whose shell carries neither.
 - **loom-session-start, primer.** One `context.pack` (mode startup, the
   project's working-memory block first, the recent-runs shortlist only with
   `LOOM_CONTEXT_RUNS=true`), plus: the repository tag line; in an indexed
@@ -272,9 +279,12 @@ Install-time options (`claude plugin install loom@loom --config key=value`)
 reach the hooks as `CLAUDE_PLUGIN_OPTION_<KEY>`: `server_url` and `token`
 (read by `lib/loom-client.mjs`), `toolset` (the MCP URL only),
 `local_first` and `code_repo` (`CLAUDE_PLUGIN_OPTION_CODE_REPO`). Resolution order: the environment, then the option, then
+the file `LOOM_API_KEY_FILE` names (token only), then
 ~/.loom/config.json (`LOOM_CONFIG_FILE`), then ~/.loom/token
-(`LOOM_API_KEY_FILE`, token only), then the plugin's `plugin-defaults.json`
-(URL only), then http://localhost:7777.
+(token only, with `LOOM_API_KEY_FILE` unset), then the plugin's `plugin-defaults.json`
+(URL only), then http://localhost:7777. Claude Code gives the MCP headers
+helper of a plugin neither the options nor `LOOM_API_KEY` or
+`LOOM_API_KEY_FILE`: there it reads ~/.loom/config.json, then ~/.loom/token.
 
 An agent with no Loom token of its own sets `LOOM_CLIENT_ID` (a workload trust,
 `loom bot create --agent-claim`) and `LOOM_WORKLOAD_TOKEN` or
@@ -321,7 +331,7 @@ Switches read on/true/1/yes and off/false/0/no. Defaults in parentheses.
 | `LOOM_MENTOR_HINTS` (on)                                                                                                                      | mentor-hint                   | mentor hints                                                                             |
 | `LOOM_NAMESPACE_HEALTH` (on)                                                                                                                  | namespace-health              | the first-Stop audit                                                                     |
 | `LOOM_MCP_CODE_SCOPE` (on)                                                                                                                    | headers helper                | the X-Loom-Code-Scope header                                                             |
-| `LOOM_MCP_HOOK_WAIT_MS` (5000)                                                                                                                | headers helper                | how long a first session waits for the hook's credential                                 |
+| `LOOM_MCP_HOOK_WAIT_MS` (5000)                                                                                                                | headers helper                | how long a helper with no token waits for the hook to save one                           |
 | `LOOM_CODE_REPO` (unset), the `code_repo` option / config key                                                                                 | repo-scope, every code hook   | the fallback repository for the index: outside a checkout, or when the checkout has none |
 
 The code-plane hooks' own settings (`LOOM_CODE_SHUNT`, `LOOM_SHUNT_*`,

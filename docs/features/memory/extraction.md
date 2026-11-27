@@ -229,6 +229,11 @@ before the queue's 30-day TTL is dropped with a `loom.memory_drops` record.
 batches. Until a batch runs, `memory.search` and `memory.ask` report
 `pending_extraction`. With the worker off, deferred saves stay `pending`.
 
+Model spend is recorded as one `worker.extraction_queue` ledger row for each replay that
+spent, under the request's namespace, agent, user and session, whether the replay
+finished, failed or was cut short. It counts toward the namespace's and the user's
+[daily spend caps](../observability/cost-and-usage.md#daily-spend-caps).
+
 `memory.extraction_status` is an HTTP and SDK view, hidden from MCP. An agent follows up
 on its own batches over MCP, through `loom_op`, with two ops that take the `queue_id`s
 its deferred calls returned, at most 20 a call:
