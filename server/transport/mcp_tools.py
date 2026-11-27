@@ -522,9 +522,8 @@ def _upfront_tools(configured: str, toolset: str, profile: str) -> set[str]:
     if configured.strip().casefold() != "auto":
         return {name.strip() for name in configured.split(",") if name.strip()}
     if toolset == "coding":
-        # A client sends an upfront schema with every request, and discovery finds the
-        # rest. Outside the compact profile the instructions name code.symbol for a
-        # definition, so it loads with the pre-edit read and literal search.
+        # Outside the compact profile the instructions send a definition lookup to
+        # code.symbol, so it loads with the pre-edit read and literal search.
         names = {"code.edit_context", "code.grep"}
         return names if profile == "compact" else names | {"code.symbol"}
     return {"code.search", "code.symbol", "code.grep", "search.query", LOOM_OP_TOOL_NAME}
