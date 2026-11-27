@@ -514,11 +514,9 @@ class AnalysisUnavailableError(LoomServerError):
 
 
 class AssistantUnavailableError(LoomServerError):
-    """The assistant cannot answer in this web process: no LibreChat is configured
-    (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its
-    caller's token), or this process's setup has not succeeded yet (at boot, or again
-    after LibreChat refused the stored key). `detail.reason` says which; `/v1/health`
-    (`assistant_service_failing`) names a setup try that failed."""
+    """The native assistant cannot answer: it is disabled, authentication is off,
+    or its provider, model price or credentials are missing. `detail.reason` names
+    the refusal; `/v1/health` reports a configured assistant that cannot answer."""
 
     code = "ASSISTANT_UNAVAILABLE"
     status_code = 503
@@ -533,10 +531,9 @@ class AssistantSelfCallError(LoomServerError):
 
 
 class AssistantUpstreamError(LoomServerError):
-    """LibreChat could not give this answer: it was unreachable, refused the
-    request, ended the answer with an error, or ran past the answer's limit. The
-    message names none of LibreChat's text. Ask again: each answer spends model
-    budget, so the SDKs do not resend one on their own."""
+    """The native assistant could not complete its answer: a model or tool failed,
+    a citation was unverified, or an answer budget was exhausted. Each answer spends
+    model budget, so clients ask again explicitly rather than retrying it."""
 
     code = "ASSISTANT_UPSTREAM_FAILED"
     status_code = 503

@@ -768,12 +768,14 @@ export interface CodeEditContextInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Definition name, path:symbol, or path:line. File path with clues if known. */
+  /** Name, path:symbol, path:line, or file with clues. */
   name?: string;
-  /** Fragments for one target, or exact declaration fragments across files. */
+  /** Text fragments or exact declarations. */
   clues?: string[];
-  /** Batch name, path:symbol or path:line. Replaces name and clues. */
+  /** Exact names or locations. */
   names?: string[];
+  /** Set false after reading extra bodies. */
+  include_related_source?: boolean;
 }
 
 export interface CodeUnit {
@@ -1392,7 +1394,7 @@ export interface CodeReadInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  ranges?: string[] | Array<CodeReadRangeInput | string>;
+  ranges?: string[] | Array<CodeReadRangeInput | string> | number[][];
   path?: string | null;
   start_line?: number | null;
   end_line?: number | null;

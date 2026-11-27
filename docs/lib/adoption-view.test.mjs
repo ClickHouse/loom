@@ -7,6 +7,7 @@ import {
   adoptionFilters,
   adoptionUrl,
   csvBody,
+  omitDefaultAdoptionFilters,
   relativeChange,
   summarizeOss,
 } from "./adoption-view.mjs";
@@ -25,7 +26,7 @@ test("allowlists shareable ranges, grains, and thresholds", () => {
   });
   assert.equal(
     adoptionUrl(filters, {}, "#downloads"),
-    "?tab=oss&days=90&grain=day&cohort=week&installation=50000&domain=1000000#downloads",
+    "/adoption?tab=oss&days=90&grain=day&cohort=week&installation=50000&domain=1000000#downloads",
   );
   assert.deepEqual(adoptionFilters(new URLSearchParams("days=31&grain=__proto__&domain=50001")), {
     tab: "self-hosted",
@@ -35,6 +36,21 @@ test("allowlists shareable ranges, grains, and thresholds", () => {
     installation: 0,
     domain: 0,
   });
+});
+
+test("shortens default links and native filter submissions while preserving selections and exports", () => {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(adoptionFilters(new URLSearchParams("days=90")))) {
+    form.set(key, String(value));
+  }
+  omitDefaultAdoptionFilters(form);
+  assert.deepEqual([...form], [["days", "90"]]);
+
+  const defaults = adoptionFilters(new URLSearchParams());
+  assert.equal(adoptionUrl(defaults), "/adoption");
+  assert.equal(adoptionUrl(defaults, { tab: "oss" }), "/adoption?tab=oss");
+  assert.equal(adoptionUrl(defaults, { csv: "activity" }), "/adoption?csv=activity");
+  assert.equal(adoptionUrl(defaults, {}, "#installation-activity"), "/adoption#installation-activity");
 });
 
 test("projects only an in-progress period with every completed day represented", () => {

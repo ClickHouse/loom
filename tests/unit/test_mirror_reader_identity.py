@@ -188,11 +188,11 @@ async def test_delegation_never_copies_a_personal_reader_claim(
 async def test_answer_token_explicitly_reads_as_the_callers_person_and_its_child_does_not(
     monkeypatch: pytest.MonkeyPatch, grants: Any, claims: dict[str, Any], reader: str
 ) -> None:
-    from server.assistant.app import bridge
+    from server.assistant.app import runtime
     from server.auth.reader_identity import reader_subject
 
     token = tokens.verify_token(
-        await bridge.answer_token(_caller(namespaces=("a",), **claims), "o", "a")
+        await runtime.answer_token(_caller(namespaces=("a",), **claims), "o", "a")
     )
     assert token.reads_as_creator is bool(reader)
     assert reader_subject(token) == reader
@@ -209,7 +209,7 @@ async def test_answer_token_explicitly_reads_as_the_callers_person_and_its_child
     from server.core.errors import AssistantSelfCallError
 
     with pytest.raises(AssistantSelfCallError):
-        bridge.refuse_self_call(child_auth)
+        runtime.refuse_self_call(child_auth)
 
 
 async def test_personal_kind_survives_listing_and_revocation(

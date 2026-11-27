@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from server.core.leases import ClaimExpired
+from server.core.leases import ClaimExpired, Lease
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.tasks.api import models_task as wire
 from server.tasks.app import inboxes, transitions
@@ -65,20 +65,37 @@ async def test_a_create_that_raced_on_its_key_answers_with_the_stored_task(
         "disclosure": "internal",
         "idempotency_key": "k1",
     }
-    # Each insert waits a moment: without the key's lease the second call would
-    # look the key up before the first one's task landed.
+    # The retry starts while the first holds the key. Wait for the retry's
+    # failed lease attempt before letting the first write its task.
+    first_inserting = asyncio.Event()
+    retry_contended = asyncio.Event()
     insert = repo.insert_task_version
+    attempt = Lease.attempt
 
-    async def slow_insert(*args: Any, **kwargs: Any) -> None:
-        await asyncio.sleep(0.1)
+    async def pause_insert(*args: Any, **kwargs: Any) -> None:
+        first_inserting.set()
+        await retry_contended.wait()
         await insert(*args, **kwargs)
 
-    monkeypatch.setattr(repo, "insert_task_version", slow_insert)
-    first, second = await asyncio.gather(
-        transitions.handle_task_create(wire.TaskCreateInput(**body)),
-        _late(1, transitions.handle_task_create, wire.TaskCreateInput(**body, brief={"n": 2})),
-    )
+    async def record_contention(lease: Lease) -> bool:
+        won = await attempt(lease)
+        if not won and lease.name.startswith("task.create/"):
+            retry_contended.set()
+        return won
 
+    async def retry() -> wire.TaskCreateOutput:
+        await first_inserting.wait()
+        return await transitions.handle_task_create(wire.TaskCreateInput(**body, brief={"n": 2}))
+
+    monkeypatch.setattr(repo, "insert_task_version", pause_insert)
+    monkeypatch.setattr(Lease, "attempt", record_contention)
+    async with asyncio.timeout(30), asyncio.TaskGroup() as creates:
+        first_call = creates.create_task(
+            transitions.handle_task_create(wire.TaskCreateInput(**body))
+        )
+        retry_call = creates.create_task(retry())
+
+    first, second = first_call.result(), retry_call.result()
     assert first.created and not second.created
     assert second.task.task_id == first.task.task_id
     rows = await ch.query_all(

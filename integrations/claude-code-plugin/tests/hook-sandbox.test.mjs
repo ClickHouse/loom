@@ -80,7 +80,13 @@ test("an unfinished job refuses removal at the cleanup deadline", async () => {
   const job = path.join(box.tmp, "loom-flush-2-3.json");
   fs.writeFileSync(job, "{}");
   try {
-    await assert.rejects(removeSandbox(box, { timeoutMs: 0 }), /unfinished detached jobs/);
+    await assert.rejects(removeSandbox(box, { timeoutMs: 0 }), (error) => {
+      assert.match(error.message, /^unfinished detached jobs in hook sandbox: /);
+      const pending = JSON.parse(error.message.split("sandbox: ")[1]);
+      assert.equal(pending.count, 1);
+      assert.deepEqual(pending.jobs, [{ name: path.basename(job), bytes: 2 }]);
+      return true;
+    });
     assert.equal(fs.existsSync(job), true);
   } finally {
     fs.rmSync(box.dir, { recursive: true, force: true });
@@ -178,5 +184,28 @@ test("sandbox removal waits for the real flusher's completion marker", async () 
       await new Promise((resolve) => server.close(resolve));
       fs.rmSync(box.dir, { recursive: true, force: true });
     }
+  }
+});
+
+test("unfinished job details are bounded and contain no job contents", async () => {
+  const box = sandbox();
+  const secret = "private-capture-not-in-diagnostics";
+  for (let i = 0; i < 10; i++) fs.writeFileSync(path.join(box.tmp, `loom-flush-3-${i}.json`), secret);
+  try {
+    await assert.rejects(removeSandbox(box, { timeoutMs: 0 }), (error) => {
+      assert.equal(error.message.includes(secret), false);
+      const pending = JSON.parse(error.message.split("sandbox: ")[1]);
+      assert.equal(pending.count, 10);
+      assert.equal(pending.jobs.length, 8);
+      for (const job of pending.jobs) {
+        assert.deepEqual(Object.keys(job), ["name", "bytes"]);
+        assert.match(job.name, /^loom-flush-3-\d+\.json$/);
+        assert.equal(job.bytes, Buffer.byteLength(secret));
+      }
+      return true;
+    });
+    assert.equal(fs.readdirSync(box.tmp).length, 10);
+  } finally {
+    fs.rmSync(box.dir, { recursive: true, force: true });
   }
 });

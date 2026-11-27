@@ -26,12 +26,10 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
 from server.cli import code_backfill_workers as pool
-from server.cli._proc import cancel_on_sigterm
 
 # --- the hand-out, against threads on real pipes -------------------------------------
 
@@ -519,35 +517,6 @@ def test_a_worker_whose_retirement_fails_fails_the_command(
     assert "republished" in kinds[watermark:]  # the counts carry the new watermark
 
 
-async def test_sigterm_preserves_batch_cleanup_after_the_parent_pipe_closes() -> None:
-    import asyncio
-
-    loop = asyncio.get_running_loop()
-    flushed = asyncio.Event()
-    receiver, sender = multiprocessing.Pipe(duplex=False)
-
-    async def batch() -> None:
-        sender.close()
-        try:
-            await asyncio.Future()
-        finally:
-            # The parent has closed its pipe and the worker now handles the group signal.
-            handle_sigterm = install.call_args.args[1]
-            handle_sigterm()
-            await asyncio.sleep(0)
-            flushed.set()
-
-    with (
-        receiver,
-        sender,
-        patch.object(loop, "add_signal_handler") as install,
-        patch.object(loop, "remove_signal_handler"),
-        pytest.raises(SystemExit, match="the run stopped during its batch"),
-    ):
-        await cancel_on_sigterm(pool._until_closed(receiver, batch(), 1))
-    assert flushed.is_set()
-
-
 @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
 def test_a_signal_to_the_whole_group_stops_each_batch_before_its_worker_retires(
     tmp_path: Path, sig: signal.Signals
@@ -570,6 +539,43 @@ def test_a_signal_to_the_whole_group_stops_each_batch_before_its_worker_retires(
         mine = [e["event"] for e in _events(log) if e["pid"] == pid]
         # cancelled once: the batch's own cleanup completes before the worker retires
         assert mine.index("cancelled") < mine.index("flushed") < mine.index("retired")
+
+
+async def test_a_sigterm_after_the_parent_pipe_closes_lets_the_batch_flush(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    from collections.abc import Callable
+
+    from server.cli._proc import cancel_on_sigterm
+
+    loop = asyncio.get_running_loop()
+    on_term: Callable[[], None] | None = None
+    flushed = False
+
+    def _install(sig: signal.Signals, handler: Callable[[], None]) -> None:
+        nonlocal on_term
+        assert sig == signal.SIGTERM
+        on_term = handler
+
+    monkeypatch.setattr(loop, "add_signal_handler", _install)
+    monkeypatch.setattr(loop, "remove_signal_handler", lambda _sig: None)
+    reader, writer = multiprocessing.Pipe()
+
+    async def _batch() -> None:
+        nonlocal flushed
+        try:
+            writer.close()
+            await asyncio.Future()
+        finally:
+            assert on_term is not None
+            on_term()
+            await asyncio.sleep(0)
+            flushed = True
+
+    with reader, writer, pytest.raises(SystemExit, match="run stopped during its batch"):
+        await cancel_on_sigterm(pool._until_closed(reader, _batch(), 1))
+    assert flushed
 
 
 def test_the_edge_pass_in_a_worker_resolves_imports_to_files_another_worker_wrote(

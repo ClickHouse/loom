@@ -53,9 +53,9 @@ test.describe("375 px", () => {
   test("the current phone tab has the rail's selected fill", async ({ page }) => {
     await open(page, "/memories");
     const fills = await page.evaluate(() => {
-      const tab = document.querySelector<HTMLElement>("nav[aria-label='Sections'] a[aria-current='page']");
+      const tab = document.querySelector<HTMLElement>(".workspace-mobile-nav a[aria-current='page']");
       const probe = document.createElement("div");
-      probe.style.background = "var(--click-sidebar-main-navigation-item-color-background-active)";
+      probe.style.background = "var(--color-nav-selected)";
       document.body.append(probe);
       const want = getComputedStyle(probe).backgroundColor;
       probe.remove();

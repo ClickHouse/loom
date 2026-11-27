@@ -166,7 +166,7 @@ class AssistantClient:
         the earlier turns in `history` (`{"role": "user" | "assistant", "content"}`):
         an `AssistantText` for each piece as it is written, then one `AssistantAnswer`.
         A refusal before the answer starts raises its typed error; a failure once it
-        has started (LibreChat failing, the answer limit) raises the same way, after
+        has started (The native assistant failing, the answer limit) raises the same way, after
         the text written so far."""
         body = {"stream": True, "messages": _messages(question, history)}
         reading = _Reading()

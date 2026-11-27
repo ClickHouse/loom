@@ -95,8 +95,7 @@ class HealthState:
     analysis_error: str = ""
     # The finding's own fix, when it has one.
     analysis_fix: str = ""
-    # The assistant's LibreChat service: None = not set up yet, being set up again or
-    # no LibreChat configured, False = its setup failed (`assistant_error` says why).
+    # Native assistant configuration readiness; None when disabled.
     assistant_ok: bool | None = None
     assistant_error: str = ""
     # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
@@ -306,6 +305,11 @@ def _runtime_problems(state: HealthState) -> list[Problem]:
             fix = (
                 "Check that the model server at LOOM_LOCAL_LLM_BASE_URL is running and "
                 "serves the models Loom names (Ollama: ollama pull <model>)"
+            )
+        elif name.startswith("vertex:"):
+            fix = (
+                "Check Google Application Default Credentials, Vertex AI permissions, "
+                "model availability and project quota"
             )
         else:
             key_env = _key_env_for_health_name(name)
@@ -880,8 +884,7 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
 
 
 def _assistant_problems(settings: Any, state: HealthState) -> list[Problem]:
-    """The assistant needs its LibreChat service user and agent; until a boot sets them
-    up, the assistant is unavailable."""
+    """A configured native assistant that cannot answer remains visible."""
     del settings
     if state.assistant_ok is not False:
         return []
@@ -890,11 +893,8 @@ def _assistant_problems(settings: Any, state: HealthState) -> list[Problem]:
             "assistant_service_failing",
             "warn",
             f"The assistant is unavailable: {state.assistant_error}",
-            "Check that LibreChat answers at LOOM_ASSISTANT_LIBRECHAT_URL; the next try "
-            "of the setup clears this. A sign-in LibreChat refuses (a 4xx other than its "
-            "429 limit) means its database came from elsewhere: empty it and run "
-            "`TRUNCATE TABLE loom.assistant_service`. A 5xx is LibreChat or its database "
-            "being unavailable: nothing to delete.",
+            "Check the native assistant provider, model price and credentials. "
+            "No database deletion or service restart is needed to inspect configuration.",
             source="runtime",
         )
     ]

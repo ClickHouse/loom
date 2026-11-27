@@ -706,6 +706,7 @@ function MemoryList() {
     <PageContainer className="pb-24">
       <PageHeader
         title="Memories"
+        description="Find the decisions, preferences, and lessons your agents use across sessions."
         actions={
           <>
             {/* Not on a phone, where the title row keeps the first memory inside the first
@@ -772,11 +773,7 @@ function MemoryList() {
             value={query}
             onChange={(value) => setQuery(value)}
             // A phone's field holds the short form only.
-            placeholder={
-              phone
-                ? "Search, or tag:work"
-                : "Search memories. Try a keyword, or filter with tag:work, agent:claude-desktop…"
-            }
+            placeholder={phone ? "Search, or tag:work" : "Search memories by keyword, tag:work, or agent:name"}
             aria-label="Search memories"
           />
         </ListToolbarSearch>

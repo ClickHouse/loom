@@ -996,7 +996,6 @@
   "tests/unit/test_ledger_subject_last_used.py": 0.03,
   "tests/unit/test_lemmatize.py": 0.12,
   "tests/unit/test_lesson_grade_attribution_bench.py": 0.02,
-  "tests/unit/test_librechat_integration.py": 1.08,
   "tests/unit/test_lineage_and_snapshot_fidelity.py": 0.11,
   "tests/unit/test_linear_probe.py": 0.28,
   "tests/unit/test_link_reads_final_census.py": 0.7,

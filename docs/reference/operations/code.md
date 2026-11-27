@@ -577,7 +577,7 @@ Is this already tested?
 
 ## `code.edit_context`
 
-Read source, tests, and notes.
+Before editing, read source, tests and notes.
 
 `POST /v1/code.edit_context` · MCP `loom_code_edit_context` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -590,9 +590,10 @@ Read source, tests, and notes.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `name` | `str` | `''` | Definition name, path:symbol, or path:line. |
-| `clues` | `list[str]` | *(computed)* | Fragments for one target, or exact declaration fragments across files. |
-| `names` | `list[str]` | *(computed)* | Batch name, path:symbol or path:line. |
+| `name` | `str` | `''` | Name, path:symbol, path:line, or file with clues. |
+| `clues` | `list[str]` | *(computed)* | Text fragments or exact declarations. |
+| `names` | `list[str]` | *(computed)* | Exact names or locations. |
+| `include_related_source` | `bool` | `True` | Set false after reading extra bodies. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1138,7 +1139,7 @@ A PR draft asks whether a PR like it already exists.
 
 ## `code.read`
 
-Read inclusive, one-based indexed lines.
+Read indexed lines.
 
 `POST /v1/code.read` · MCP `loom_code_read` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -1151,8 +1152,8 @@ Read inclusive, one-based indexed lines.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `ranges` | `list[str] \| list[CodeReadRangeInput \| str]` | *(computed)* | Batch of inclusive one-based ranges as path:start-end strings or objects with path, start_line, and optional end_line. |
-| `path` | `str \| None` | `None` | Repository-relative file for a single range. |
+| `ranges` | `list[str] \| list[CodeReadRangeInput \| str] \| list[list[int]]` | *(computed)* | Inclusive one-based ranges as path:start-end strings, objects with path and line bounds, or [start, end] pairs sharing the top-level path. |
+| `path` | `str \| None` | `None` | Repository-relative file for a single range or a batch of line pairs. |
 | `start_line` | `int \| None` | `None` | First line of a single range, one-based. |
 | `end_line` | `int \| None` | `None` | Inclusive last line, defaulting to start_line. |
 

@@ -1,6 +1,7 @@
 import type { MouseEvent, ReactNode } from "react";
 import { Link } from "@clickhouse/click-ui/Link";
 import type { HelpOutlineEntry } from "../../api/help";
+import { HELP_HOME_PAGE, viewHref } from "../../lib/state";
 import { inline, renderBlocks } from "../assistant/AnswerText";
 
 /**
@@ -25,7 +26,9 @@ export function HelpText({
   onFollow?: (e: MouseEvent, href: string) => void;
 }) {
   const spans = (line: string) => withLinks(line, path, onFollow);
-  return <div className="space-y-2 text-sm text-text break-words">{sections(text, outline, spans)}</div>;
+  return (
+    <div className="space-y-3 text-sm leading-relaxed text-text wrap-anywhere">{sections(text, outline, spans)}</div>
+  );
 }
 
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
@@ -119,5 +122,6 @@ export function helpHref(target: string, page: string): string | null {
 }
 
 export function pageHref(page: string): string {
-  return `/help?page=${encodeURIComponent(page)}`;
+  const home = viewHref("help");
+  return page === HELP_HOME_PAGE ? home : `${home}?page=${encodeURIComponent(page)}`;
 }

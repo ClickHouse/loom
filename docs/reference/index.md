@@ -1,32 +1,37 @@
 # Reference
 
-Reference pages say what exists and what each option means. The reasons behind a design are in
-[Concepts](../concepts/memory.md) and [Architecture](../architecture/system-overview.md).
-Procedures are in the [guides](../guides/index.md) and
-[operations](../operations/deployment.md) sections.
+Look up SDKs, request and response fields, CLI commands, and server settings.
+
+## Look up an interface
+
+- [Call Loom](http-api.md)
+  Find HTTP routes, authentication, pagination, and request headers.
+- [Connect over MCP](mcp.md)
+  Check authentication, toolsets, and tool results.
+- [Look up an operation](operations.md)
+  Find the required role and the input and output fields.
+- [Look up a setting](configuration.md)
+  Check defaults and allowed values for every server setting.
+
+## Client SDKs
+
+[Python](python-sdk.md) · [TypeScript](typescript-sdk.md) · [Go](go-sdk.md) · [Rust](rust-sdk.md)
 
 ## Generated from the code
 
-These pages, or the tables in them, are rendered from the source that defines them. Each
-generator has a `--check` mode that `make lint` runs, so a page that drifts from the code fails
-CI. Edit the source and regenerate; never edit a generated table by hand.
+These references describe what the server exposes with each release.
 
-| Page                                | What it lists                                                                                                 | Source                                                                               | Generator                                      |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| [Configuration](./configuration.md) | Every `LOOM_*` setting, its default and meaning, by area.                                                     | the comments above fields in `server/settings/`                                      | `python scripts/codegen/settings_reference.py` |
-| [Operations](./operations.md)       | Every operation, grouped, with role, kind, MCP `all` listing and audit flag; plus how the registry works.     | `server.operations.registry.ALL_OPERATIONS`                                          | `python scripts/codegen/docs_reference.py`     |
-| [Workers](./workers.md)             | Every background worker, its switch, default and cadence; plus how the supervisor runs them.                  | `server/workers/registry.py` (`_WORKERS`)                                            | `python scripts/codegen/docs_reference.py`     |
-| [CLI](./cli.md)                     | Every `loom` command and subcommand with its flags; plus where the CLI runs and the common commands.          | the `loom` parser tree (`tests/unit/snapshots/cli_tree.json`)                        | `python scripts/codegen/docs_reference.py`     |
-| [Errors](./errors.md)               | Every error code the server answers with; plus the envelope, retry rules and fixes for the common codes.      | `server/core/errors.py` and every `"code"` literal under `server/`                   | `python scripts/codegen/docs_reference.py`     |
-| [Status](./status.md)               | How many of each op group's ops are stable, each experimental op, and every boolean setting that loads false. | op `maturity` in the registry and the boolean fields of `server/settings/catalog.py` | `python scripts/codegen/docs_reference.py`     |
-| [Schema](./schema.md)               | Every table and materialized view with engine, keys, TTL and indexes; plus the column conventions.            | `schemas/schema.sql`                                                                 | `python scripts/codegen/docs_reference.py`     |
+| Page                              | What it lists                                             |
+| --------------------------------- | --------------------------------------------------------- |
+| [Configuration](configuration.md) | Settings, defaults, and allowed values.                   |
+| [Operations](operations.md)       | Operation names, roles, MCP listings, and audit behavior. |
+| [Workers](workers.md)             | Background workers and their schedules and settings.      |
+| [CLI](cli.md)                     | Commands and flags, with examples.                        |
+| [Errors](errors.md)               | Error codes, retry rules, and common fixes.               |
+| [Status](status.md)               | Operation maturity and settings that default to off.      |
+| [Schema](schema.md)               | Tables, materialized views, keys, TTLs, and indexes.      |
 
-On the `docs_reference.py` pages only the regions between the
-`<!-- BEGIN GENERATED: … -->` and `<!-- END GENERATED: … -->` markers are generated; the prose
-around them is hand-written. The op tables inside the SDK packages (`sdk/python/loom/ops.py`,
-`sdk/typescript/src/generated/ops.ts`) are generated too, by
-`scripts/codegen/sdk_py_gen.py` and `sdk_ts_gen.py`; see
-[Code generation](../development/code-generation.md).
+Contributors can read how to update these pages in [Code generation](../development/code-generation.md).
 
 ## Written by hand
 
@@ -41,9 +46,6 @@ around them is hand-written. The op tables inside the SDK packages (`sdk/python/
 | [Environment variables](./environment.md)     | Variables read outside the settings model: provider keys, the image, compose files, the CLI, the SDKs and the operator scripts.                                    |
 | [SQL surface](./sql-surface.md)               | The read-only `sql_v1_*` views over a tenant's data: columns, compatibility rule, what they withhold, freshness, `loom sql-access`.                                |
 | [Extractor contract](./extractor-contract.md) | Version 1 of the HTTP contract an extractor service serves: capabilities, extraction, error codes, the artifact's fields and rules.                                |
-
-The hand-written pages name only things that exist in the tree and link to the source they
-describe.
 
 ## Which page answers…
 

@@ -13,6 +13,7 @@ moves on.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import defaultdict
 from contextlib import AbstractAsyncContextManager
@@ -206,10 +207,7 @@ async def _link(
         markers = [_awaiting(r, cns) for r in memories]
         old = [a for r in memories for a in existing.get(r["mid"], [])]
         return markers, [a for a in old if a["qualified_name"] != AWAITING_INDEX]
-    # one past the cap: a memory with exactly the cap's mentions is not cut
-    named = {
-        r["mid"]: mentions(link_pass.text_of(r["value"]), cap=_MAX_MENTIONS + 1) for r in memories
-    }
+    named = await asyncio.to_thread(_memory_mentions, memories)
     # a word of the prose links only inside the memory's files
     names = sorted(
         {
@@ -225,11 +223,11 @@ async def _link(
         by_name[d.name].append(d)
     refs = sorted({str(f) for r in memories for f in r.get("files") or []})
     paths = await code.live_paths(org, cns, refs) if refs else {}
+    # Name matching also runs here when a pending pre-index marker is relinked.
+    plans = await asyncio.to_thread(_memory_plans, memories, named, by_name, paths)
     rows: list[LinkRow] = []
     gone: list[LinkRow] = []
-    for r in memories:
-        files_named = [str(f) for f in r.get("files") or []]
-        links, waiting, complete = _plan(named[r["mid"]], by_name, files_named, paths)
+    for r, (links, waiting, complete) in zip(memories, plans, strict=True):
         keep = set()
         for d in links:
             here = await at_head(files, head, d)
@@ -264,6 +262,25 @@ async def at_head(files: link_pass.RepoReads, head: str, d: Definition) -> Defin
         group = await files.defs(head, d.path, d.qualified_name)
         return group[0] if group else None
     return d if await files.at(head, d.path) is not None else None
+
+
+def _memory_mentions(memories: list[dict[str, Any]]) -> dict[str, list[Mention]]:
+    # A memory with exactly the cap's mentions fits.
+    return {
+        r["mid"]: mentions(link_pass.text_of(r["value"]), cap=_MAX_MENTIONS + 1) for r in memories
+    }
+
+
+def _memory_plans(
+    memories: list[dict[str, Any]],
+    named: dict[str, list[Mention]],
+    by_name: dict[str, list[Definition]],
+    paths: dict[str, str],
+) -> list[tuple[list[Definition], list[str], bool]]:
+    return [
+        _plan(named[r["mid"]], by_name, [str(f) for f in r.get("files") or []], paths)
+        for r in memories
+    ]
 
 
 def _plan(

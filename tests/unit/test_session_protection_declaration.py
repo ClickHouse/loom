@@ -12,7 +12,7 @@ from fastapi import Request
 from fastapi.testclient import TestClient
 from starlette.responses import StreamingResponse
 
-from server.assistant.app import bridge
+from server.assistant.app import runtime
 from server.auth.answer_tokens import ANSWER_JTI_PREFIX
 from server.auth.delegation import Delegated
 from server.auth.jwt import AuthInfo, TokenError, mint_token, verify_token
@@ -166,7 +166,7 @@ def test_a_signed_non_boolean_promise_is_refused(claim: Any) -> None:
 @pytest.mark.parametrize("caller_protected", [False, True])
 @pytest.mark.parametrize("mirrored", [False, True])
 @pytest.mark.asyncio
-async def test_the_bridge_fixes_the_callers_declaration_in_the_answer(
+async def test_the_runtime_fixes_the_callers_declaration_in_the_answer(
     monkeypatch: pytest.MonkeyPatch, caller_protected: bool, mirrored: bool
 ) -> None:
     parent = _auth()
@@ -188,9 +188,9 @@ async def test_the_bridge_fixes_the_callers_declaration_in_the_answer(
             is_service_account=False,
         )
 
-    monkeypatch.setattr(bridge, "delegate", delegate)
+    monkeypatch.setattr(runtime, "delegate", delegate)
     with request_declaration({"headers": [_HEADER] if caller_protected else []}):
-        token = await bridge.answer_token(parent, "example", "notes", mirrored=mirrored)
+        token = await runtime.answer_token(parent, "example", "notes", mirrored=mirrored)
     answer = verify_token(token)
     assert answer.session_protection is caller_protected
     assert answer.answer_mirrors is (caller_protected and mirrored)

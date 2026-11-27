@@ -1,4 +1,4 @@
-"""The line the bridge puts after a question: the caller's kind of credential, the role
+"""Caller context in the native run's system message: the kind of credential, the role
 the gate gives it in the namespace and the kind of namespace, in fixed words."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from server.assistant.app import bridge
+from server.assistant.app import runtime
 from server.auth import fail_closed
 from server.auth.jwt import AuthInfo
 from server.operations.base import Role
@@ -55,16 +55,16 @@ def _gate(
                 fail_closed.note_unreadable()
             return False
 
-    monkeypatch.setattr(bridge, "CachedGate", Gate)
+    monkeypatch.setattr(runtime, "CachedGate", Gate)
 
 
 def _line(auth: AuthInfo, namespace: str = NS) -> str:
-    return asyncio.run(bridge.asker_line(auth, ORG, namespace))
+    return asyncio.run(runtime.asker_line(auth, ORG, namespace))
 
 
 @pytest.fixture(autouse=True)
 def _wired(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(bridge, "directory", lambda: _Directory({"vault"}))
+    monkeypatch.setattr(runtime, "directory", lambda: _Directory({"vault"}))
 
 
 @pytest.mark.parametrize(
@@ -110,7 +110,7 @@ def test_a_refusal_for_a_failed_read_or_a_failing_check_gives_unknown(
         async def admits(self, *_a: Any) -> bool:
             raise RuntimeError("the grant table is down")
 
-    monkeypatch.setattr(bridge, "CachedGate", Broken)
+    monkeypatch.setattr(runtime, "CachedGate", Broken)
     assert _line(_caller()).endswith("whose role in this namespace is unknown.")
 
 
@@ -134,17 +134,6 @@ def test_the_line_carries_no_subject_or_name(monkeypatch: pytest.MonkeyPatch) ->
     _gate(monkeypatch, Role.ADMIN)
     line = _line(_caller(), "col-me-alice")
     assert "alice" not in line and "\n" not in line and NS not in line
-
-
-def test_the_line_closes_the_question_and_leaves_earlier_turns_alone() -> None:
-    messages = [
-        {"role": "user", "content": "hi"},
-        {"role": "assistant", "content": "Hello."},
-        {"role": "user", "content": "How do I share this?"},
-    ]
-    sent = bridge._with_asker(messages, "Loom: the line.")
-    assert sent[:2] == messages[:2]
-    assert sent[2] == {"role": "user", "content": "How do I share this?\n\nLoom: the line."}
 
 
 def test_the_role_is_the_real_gate_s_answer_from_the_grant_maps(

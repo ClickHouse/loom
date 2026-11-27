@@ -83,6 +83,9 @@ export function viewHref(v: View): string {
   return `/${viewToPath(v)}`;
 }
 
+export const DEFAULT_SETTINGS_TAB = "tokens";
+export const HELP_HOME_PAGE = "index.md";
+
 /** Query-string keys a view owns. Graph links a walk with `?seed=`, the
  *  Repositories view a repo with `?repo=`; nobody else reads either, so a
  *  navigation carries a key only into the view that owns it — otherwise
@@ -191,6 +194,8 @@ export function navigationHref(v: View, query?: Record<string, string>): string 
       if (value != null) kept.set(key, value);
     }
   }
+  if (v === "setup" && kept.get("tab") === DEFAULT_SETTINGS_TAB) kept.delete("tab");
+  if (v === "help" && kept.get("page") === HELP_HOME_PAGE) kept.delete("page");
   const qs = withNamespace(kept);
   return qs ? `${want}?${qs}` : want;
 }
