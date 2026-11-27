@@ -30,12 +30,12 @@ module ClickHouse
       CODE = "ASSISTANT_SELF_CALL"
     end
 
-    # `ASSISTANT_UNAVAILABLE`: HTTP 503. The assistant cannot answer in this web process: no LibreChat is configured (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its caller's token), or this process's setup has…
+    # `ASSISTANT_UNAVAILABLE`: HTTP 503. The native assistant cannot answer: it is disabled, authentication is off, or its provider, model price or credentials are missing.
     class AssistantUnavailable < Error
       CODE = "ASSISTANT_UNAVAILABLE"
     end
 
-    # `ASSISTANT_UPSTREAM_FAILED`: HTTP 503. LibreChat could not give this answer: it was unreachable, refused the request, ended the answer with an error, or ran past the answer's limit.
+    # `ASSISTANT_UPSTREAM_FAILED`: HTTP 503. The native assistant could not complete its answer: a model or tool failed, a citation was unverified, or an answer budget was exhausted.
     class AssistantUpstreamFailed < Error
       CODE = "ASSISTANT_UPSTREAM_FAILED"
     end

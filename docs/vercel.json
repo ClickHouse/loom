@@ -3,5 +3,11 @@
   "framework": "astro",
   "installCommand": "npm ci",
   "buildCommand": "npm run build",
-  "cleanUrls": true
+  "cleanUrls": true,
+  "functions": {
+    "api/playground/check.py": {
+      "includeFiles": "api/playground/_loom_anchor_state.py",
+      "excludeFiles": "{.blume/**,.blume-content/**,.vercel/output/**,dist/**,public/**,**/*.md,**/*.mdx}"
+    }
+  }
 }

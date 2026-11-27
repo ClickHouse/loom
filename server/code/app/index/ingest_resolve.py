@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, cast
 
-from server.code.app.index.ingest_headers import include_candidates
+from server.code.app.index.ingest_headers import forget_headers, include_candidates
 from server.code.app.index.ingest_parse import (
     _LANE_INCLUDE_LANGS,
     CODE_ISLAND_LANGS,
@@ -125,6 +125,25 @@ async def _live_paths(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) -> set[
         hit = cast(tuple[float, set[str]], await single_flight(("live_paths", *key), _reload))
     hit[1].add(pf.path)
     return hit[1]
+
+
+def forget_index_reads() -> None:
+    """Forget what this process cached of the index for a file's edges: the header
+    texts and, for import resolution, the live path sets, layouts, manifests, listings
+    and barrels. A pass that must read the finished index (the edges-only second pass)
+    starts here, whichever process wrote the rows."""
+    forget_headers()
+    _LIVE_PATHS_CACHE.clear()
+    for cache in (
+        _PY_LAYOUT_CACHE,
+        _GO_LISTING_CACHE,
+        _GO_MODULE_INDEX_CACHE,
+        _PACKAGE_JSON_CACHE,
+        _TSCONFIG_CACHE,
+        _WORKSPACE_CACHE,
+        _BARREL_CACHE,
+    ):
+        cache.clear()
 
 
 def _probes(wanted: Callable[[str], list[str]], specs: list[str]) -> list[str]:

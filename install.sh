@@ -415,7 +415,7 @@ main() {
   elif [ -z "${LOOM_LOCAL_MODELS:-}" ] && [ -z "${had_env:-}" ] \
     && [ -t 0 ] && [ -t 1 ] \
     && curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/version >/dev/null 2>&1; then
-    printf 'Ollama answers on this machine. Use it for extraction, the assistant and the other model jobs (%s, no API key)? [Y/n] ' "$local_model"
+    printf 'Ollama answers on this machine. Use it for extraction and the other model jobs (%s, no API key)? [Y/n] ' "$local_model"
     read -r answer || answer=n
     case $answer in '' | [Yy]*) use_local=1 ;; esac
   fi
@@ -424,9 +424,6 @@ main() {
     set_env LOOM_LLM_PROVIDER local
     set_env LOOM_LLM_MODEL "$local_model"
     set_env LOOM_LOCAL_LLM_BASE_URL http://host.docker.internal:11434/v1
-    set_env LOOM_ASSISTANT_PROVIDER local
-    set_env LOOM_ASSISTANT_MODEL "$local_model"
-    set_env LOOM_ASSISTANT_ANSWER_CEILING_USD 0
     # The capture verifier drops facts and the conflict resolver retires rows on a
     # hosted model's judgment: both off rather than on the small model.
     set_env LOOM_MEMORY_EXTRACT_VERIFY_MODELS ""

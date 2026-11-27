@@ -65,6 +65,8 @@ def _doctor_llm_provider_check() -> tuple[str, str, str]:
         if settings.llm_provider_inferred()
         else "set by LOOM_LLM_PROVIDER"
     )
+    if provider == "vertex":
+        how += ", uses Google Application Default Credentials"
     if provider_key_missing(provider):
         key_env = KEY_ENV_BY_PROVIDER.get(provider, "its API key")
         return (

@@ -1927,9 +1927,6 @@ LOCAL_PRESET = {
     "LOOM_LLM_PROVIDER": "local",
     "LOOM_LLM_MODEL": "qwen2.5:3b",
     "LOOM_LOCAL_LLM_BASE_URL": "http://host.docker.internal:11434/v1",
-    "LOOM_ASSISTANT_PROVIDER": "local",
-    "LOOM_ASSISTANT_MODEL": "qwen2.5:3b",
-    "LOOM_ASSISTANT_ANSWER_CEILING_USD": "0",
     "LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED": "false",
     "LOOM_LLM_REQUEST_TIMEOUT_S": "900",
     "LOOM_LLM_RETRY_ATTEMPTS": "1",
@@ -1973,7 +1970,8 @@ def test_the_local_preset_loads_with_the_verifier_resolver_and_entity_tagging_of
     assert loaded.memory_extract_verify_models == ""
     assert loaded.memory_conflict_resolver_enabled is False
     assert loaded.entity_extract_enabled is False
-    assert loaded.assistant_answer_ceiling_usd == 0
+    assert loaded.assistant_answer_ceiling_usd == 0.10
+    assert loaded.assistant_enabled is False
     # A call with every retry fits in the extraction queue's pass (its lease follows the
     # pass: test_extraction_queue).
     tries = loaded.llm_retry_attempts

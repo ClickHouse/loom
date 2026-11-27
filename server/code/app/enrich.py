@@ -14,7 +14,9 @@ import asyncio
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from itertools import pairwise
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -31,6 +33,67 @@ if TYPE_CHECKING:
     from server.code.domain.units import CodeUnit
 
 logger = logging.getLogger(__name__)
+
+type _ExampleWindow = tuple[int, int, str]
+type _ExampleWindowKey = tuple[str, str, str, str, str, int, int, int]
+
+
+class _EditExampleReads:
+    def __init__(self, group: asyncio.TaskGroup) -> None:
+        self.group = group
+        self.windows: dict[_ExampleWindowKey, asyncio.Task[_ExampleWindow | None]] = {}
+        self.closed = False
+
+    async def read(
+        self,
+        key: _ExampleWindowKey,
+        load: Callable[[], Awaitable[_ExampleWindow | None]],
+    ) -> _ExampleWindow | None:
+        while not self.closed:
+            task = self.windows.get(key)
+            if task is None or (task.done() and (task.cancelled() or task.result() is None)):
+                return await asyncio.shield(self._start(key, load))
+            # The batch owns the read. A shared miss leaves this target's attempt available.
+            window = await asyncio.shield(task)
+            if window is not None:
+                return window
+        return None
+
+    def _start(
+        self, key: _ExampleWindowKey, load: Callable[[], Awaitable[_ExampleWindow | None]]
+    ) -> asyncio.Task[_ExampleWindow | None]:
+        task = self.group.create_task(self._load(load))
+        self.windows[key] = task
+        return task
+
+    @staticmethod
+    async def _load(load: Callable[[], Awaitable[_ExampleWindow | None]]) -> _ExampleWindow | None:
+        return await bounded(load(), None)
+
+    def close(self) -> None:
+        self.closed = True
+        for task in self.windows.values():
+            if not task.done():
+                task.cancel()
+        self.windows.clear()
+
+
+_EDIT_EXAMPLE_READS: ContextVar[_EditExampleReads | None] = ContextVar(
+    "_EDIT_EXAMPLE_READS", default=None
+)
+
+
+@asynccontextmanager
+async def share_edit_example_reads() -> AsyncIterator[None]:
+    """Own verified test-source reads for one edit batch."""
+    async with asyncio.TaskGroup() as group:
+        reads = _EditExampleReads(group)
+        token = _EDIT_EXAMPLE_READS.set(reads)
+        try:
+            yield
+        finally:
+            _EDIT_EXAMPLE_READS.reset(token)
+            reads.close()
 
 
 async def bounded[T](coro: Awaitable[T], fallback: T, seconds: float | None = None) -> T:
@@ -642,16 +705,20 @@ async def _example_context(
     if line <= 0 or not revision:
         return site
     start, end = max(1, line - radius), line + radius
-    with code_span("enrich.example_context"):
-        rows = await bounded(
-            repo.source_chunks_for_span(
-                org, ns, site["path"], start, end, model, with_revision=True
-            ),
-            [],
+    path = site["path"]
+
+    async def load() -> _ExampleWindow | None:
+        rows = await repo.source_chunks_for_span(
+            org, ns, path, start, end, model, with_revision=True
         )
-    if len(rows) > 400:
-        return site
-    window = retained_source_window(rows, start, end, anchor=line, revision=revision)
+        if len(rows) > 400:
+            return None
+        return retained_source_window(rows, start, end, anchor=line, revision=revision)
+
+    reads = _EDIT_EXAMPLE_READS.get()
+    key = (org, ns, path, model, revision, start, end, line)
+    with code_span("enrich.example_context"):
+        window = await bounded(reads.read(key, load) if reads is not None else load(), None)
     if window is None:
         return site
     start, end, text = window

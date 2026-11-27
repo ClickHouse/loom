@@ -386,7 +386,7 @@ def is_assistant(toolset: str | None) -> bool:
 
 # How an assistant answer's tool calls bear on its label (server/assistant/domain/support.py):
 # a call to a CITABLE op returns rows the answer can cite and the citation check verifies; an
-# UNCITABLE op's output (counts, findings, history) has no citation form; a NO_NAMESPACE_DATA
+# UNCITABLE op's output (counts, findings) has no citation form; a NO_NAMESPACE_DATA
 # op returns Loom's own guide, documentation or catalog, never the namespace's data. Every
 # assistant op is in exactly one (tests/unit/test_assistant_support.py).
 ASSISTANT_CITABLE_OPS: frozenset[str] = frozenset(
@@ -396,6 +396,7 @@ ASSISTANT_CITABLE_OPS: frozenset[str] = frozenset(
         "memory.get",
         "memory.list",
         "memory.inspect",
+        "memory.history",
         "knowledge.search",
         "knowledge.get",
         "knowledge.list",

@@ -233,7 +233,8 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK) or ""
     if target == scip_commit:
         return not await _kept_when_nothing_built(repo, cfg)  # compiler tier is current
-    if await refusal_held(repo, cfg, WATERMARK, target, result):
+    shape = _delta_shape(cfg)
+    if await refusal_held(repo, cfg, WATERMARK, scip_commit, target, result, shape):
         return False
     checkout, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
@@ -263,7 +264,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         expected = modules or await _module_dirs(checkout)
         paths = await asyncio.to_thread(_deltas, out_dir, len(expected))
         for path in paths:
-            delta = await open_tier_delta(repo, cfg, WATERMARK, target, path)
+            delta = await open_tier_delta(repo, cfg, WATERMARK, scip_commit, target, path, shape)
             stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
             del delta  # free this module's paths before the next one is read
             result.modules_indexed += 1
@@ -321,6 +322,11 @@ def _make_cache_dirs(cfg: RepoConfig) -> list[Path]:
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
     return dirs
+
+
+def _delta_shape(cfg: RepoConfig) -> dict[str, object]:
+    """What, besides the window, shapes the deltas the harness writes (`refusal_held`)."""
+    return {"exclude_generated": cfg.exclude_generated}
 
 
 def _harness_env(out_dir: Path, modules: list[str], cfg: RepoConfig) -> dict[str, str]:

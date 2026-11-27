@@ -345,7 +345,7 @@ async def test_the_typescript_tier_refuses_a_linked_delta(
     monkeypatch.setattr(scip_ts_delta.settings, "code_scip_typescript_path", "/bin/sh")
     monkeypatch.setattr(scip_ts_delta, "prepare_dependencies", AsyncMock())
 
-    async def harness(co, base, head, delta_path, projects=()):
+    async def harness(co, base, head, delta_path, projects=(), **_):
         delta_path.symlink_to(target)
 
     monkeypatch.setattr(scip_ts_delta, "_run_harness", harness)

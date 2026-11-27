@@ -8,7 +8,7 @@ use std::{
 use reqwest::{
     header::{HeaderMap, HeaderValue, AUTHORIZATION},
     redirect::Policy,
-    Client as HttpClient, Url,
+    Client as HttpClient, RequestBuilder, StatusCode, Url,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
@@ -46,13 +46,13 @@ macro_rules! typed_call {
 /// Clones share a connection pool and may issue requests concurrently.
 #[derive(Clone)]
 pub struct Client {
-    http: HttpClient,
-    base_url: Url,
+    pub(crate) http: HttpClient,
+    pub(crate) base_url: Url,
     authorization: Option<HeaderValue>,
     identity: Value,
     retry: RetryPolicy,
-    pacing: bool,
-    ratelimit_max_wait: Duration,
+    pub(crate) pacing: bool,
+    pub(crate) ratelimit_max_wait: Duration,
     rate_state: Arc<Mutex<HashMap<String, Duration>>>,
 }
 
@@ -296,44 +296,23 @@ impl Client {
         loop {
             attempt += 1;
             let mut request = self
-                .http
-                .post(url.clone())
-                .json(&body)
-                .header("x-request-id", &request_id)
-                .header("x-loom-retry-count", sent.to_string())
-                .header(
-                    "user-agent",
-                    concat!("loom-rust/", env!("CARGO_PKG_VERSION")),
+                .identified(
+                    self.http.post(url.clone()).json(&body),
+                    &request_id,
+                    options.timeout,
                 )
-                .header(
-                    "x-loom-sdk",
-                    concat!("loom-rust/", env!("CARGO_PKG_VERSION")),
-                )
-                .header(
-                    "x-loom-runtime",
-                    format!("rust {} {}", env::consts::OS, env::consts::ARCH),
-                );
+                .header("x-loom-retry-count", sent.to_string());
             if let Some(key) = &idempotency_key {
                 request = request.header("idempotency-key", key);
             }
             if let Some(run_id) = self.identity.get("run_id").and_then(Value::as_str) {
                 request = request.header("x-loom-run-id", run_id);
             }
-            if let Some(timeout) = options.timeout {
-                request = request.timeout(timeout);
-            }
-            if let Some(authorization) = &self.authorization {
-                request = request.header(AUTHORIZATION, authorization);
-            }
             sent += 1;
             let mut metadata = CallMetadata::new(&request_id, sent);
             log::debug!(target: "clickhouse_loom", "{op} attempt={attempt} sent={sent} rid={request_id}");
             let received = async {
-                let response = request.send().await?;
-                let status = response.status();
-                let headers = response.headers().clone();
-                // Keep received headers even if reading the response body fails.
-                metadata.record_response(status.as_u16(), &headers);
+                let (status, headers, response) = send(request, &mut metadata).await?;
                 let bytes = response.bytes().await?;
                 Ok::<_, reqwest::Error>((status, headers, bytes))
             }
@@ -424,6 +403,51 @@ impl Client {
             self.rate_state.lock().await.insert(op.to_owned(), delay);
         }
     }
+
+    /// One request to this server with the SDK identity headers, `X-Request-Id`,
+    /// the credential and a per-call timeout.
+    pub(crate) fn identified(
+        &self,
+        request: RequestBuilder,
+        request_id: &str,
+        timeout: Option<Duration>,
+    ) -> RequestBuilder {
+        let request = request
+            .header("x-request-id", request_id)
+            .header(
+                "user-agent",
+                concat!("loom-rust/", env!("CARGO_PKG_VERSION")),
+            )
+            .header(
+                "x-loom-sdk",
+                concat!("loom-rust/", env!("CARGO_PKG_VERSION")),
+            )
+            .header(
+                "x-loom-runtime",
+                format!("rust {} {}", env::consts::OS, env::consts::ARCH),
+            );
+        let request = match timeout {
+            Some(timeout) => request.timeout(timeout),
+            None => request,
+        };
+        match &self.authorization {
+            Some(authorization) => request.header(AUTHORIZATION, authorization),
+            None => request,
+        }
+    }
+}
+
+/// Send one request and record its status and headers, which the metadata
+/// keeps when the body then fails to arrive.
+pub(crate) async fn send(
+    request: RequestBuilder,
+    metadata: &mut CallMetadata,
+) -> Result<(StatusCode, HeaderMap, reqwest::Response), reqwest::Error> {
+    let response = request.send().await?;
+    let status = response.status();
+    let headers = response.headers().clone();
+    metadata.record_response(status.as_u16(), &headers);
+    Ok((status, headers, response))
 }
 
 impl ClientBuilder {
@@ -539,7 +563,7 @@ impl ClientBuilder {
     }
 }
 
-fn request_id() -> String {
+pub(crate) fn request_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
@@ -551,7 +575,7 @@ fn valid_operation(op: &str) -> bool {
         })
 }
 
-fn pacing_delay(hint: Option<f64>, budget: Duration) -> Duration {
+pub(crate) fn pacing_delay(hint: Option<f64>, budget: Duration) -> Duration {
     let hint = hint
         .filter(|s| s.is_finite() && *s <= 60.0)
         .unwrap_or(1.0)

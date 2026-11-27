@@ -71,6 +71,7 @@ async def test_logical_mark_reaches_normal_and_waited_event_rows(
         "current",
         lambda: SimpleNamespace(
             cost_usd=0.125,
+            cost_estimated=False,
             embed_tokens=13,
             llm_input_tokens=17,
             llm_output_tokens=19,

@@ -67,7 +67,7 @@
           "maximum": 10,
           "minimum": 0,
           "type": "number",
-          "description": "USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price; 0 charges nothing."
+          "description": "USD reservation ceiling per answer. Unknown usage retains the reserved cost as an estimate; real unpriced models are refused before a send. Zero refuses calls."
         },
         "assistant_answer_ttl_s": {
           "default": 600,
@@ -90,37 +90,83 @@
           "type": "integer",
           "description": "Answers one web process runs at once per namespace (a replica runs its web workers' count times this); bounds how far answers that each passed the cap check can overshoot it."
         },
-        "assistant_librechat_url": {
-          "default": "",
-          "type": "string",
-          "description": "LibreChat's internal address (http://librechat:3080), reachable only from Loom. \"\" = no assistant: no service setup at boot, and the panel's chat is off; its starters still read."
+        "assistant_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "Serve the assistant with its explicitly configured provider; false refuses chat."
+        },
+        "assistant_max_context_bytes": {
+          "default": 100000,
+          "maximum": 1000000,
+          "minimum": 4096,
+          "type": "integer",
+          "description": "UTF-8 bytes of the complete context, tools and messages included."
+        },
+        "assistant_max_output_chars": {
+          "default": 20000,
+          "maximum": 100000,
+          "minimum": 1000,
+          "type": "integer",
+          "description": "Characters of provisional answer text allowed across all model turns."
+        },
+        "assistant_max_output_tokens": {
+          "default": 2048,
+          "maximum": 16384,
+          "minimum": 64,
+          "type": "integer",
+          "description": "Output tokens requested from one model turn."
+        },
+        "assistant_max_steps": {
+          "default": 8,
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Model turns, including the final answer; tool calls share a separate total bound."
+        },
+        "assistant_max_tokens": {
+          "default": 100000,
+          "maximum": 1000000,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Total reported input and output tokens allowed across all turns."
+        },
+        "assistant_max_tool_calls": {
+          "default": 16,
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Total host-context and model-selected tool calls allowed in one answer."
+        },
+        "assistant_max_tool_result_chars": {
+          "default": 20000,
+          "maximum": 100000,
+          "minimum": 1000,
+          "type": "integer",
+          "description": "Characters allowed in one tool result; oversize results refuse."
         },
         "assistant_model": {
           "default": "",
           "type": "string",
-          "description": "The assistant agent's model, which Loom writes into the agent definition at boot. \"\" = the definition's own (integrations/librechat/agent.yaml), not llm_model."
+          "description": "The assistant's model, required for real providers. The fake route defaults to fake-echo-1."
+        },
+        "assistant_price_model": {
+          "default": "",
+          "type": "string",
+          "description": "Price-table model used for assistant route aliases (for example a Bedrock inference profile). Empty uses assistant_model. The operator verifies its rate."
         },
         "assistant_provider": {
           "default": "",
           "enum": [
             "",
             "anthropic",
-            "local"
+            "openai",
+            "bedrock",
+            "vertex",
+            "local",
+            "fake"
           ],
           "type": "string",
-          "description": "The LibreChat endpoint the agent runs on: \"\" = the definition's (anthropic), \"local\" = LibreChat's local endpoint (a model server the operator runs; needs assistant_model)."
-        },
-        "assistant_service_email": {
-          "default": "loom-assistant@loom.invalid",
-          "type": "string",
-          "description": "Email of the LibreChat service user that owns the agent, read once, when the first boot writes loom.assistant_service; LibreChat sends it no mail."
-        },
-        "assistant_setup_retry_s": {
-          "default": 60.0,
-          "maximum": 3600,
-          "minimum": 60,
-          "type": "number",
-          "description": "Seconds before a failed assistant setup is tried again; each next failure doubles the wait, up to 16 times as long (docs/architecture/assistant.md#deployment)."
+          "description": "Native streaming provider. Vertex uses Google Application Default Credentials. Empty disables native model admission."
         },
         "audit_checkpoint_grace_seconds": {
           "default": 600,
@@ -999,6 +1045,11 @@
           "type": "number",
           "description": "Seconds a repository job's connection waits for a free egress tunnel slot."
         },
+        "code_embed_exclude": {
+          "default": "",
+          "type": "string",
+          "description": "CSV of path globs indexed but never described or embedded (the scalar entry's `embed_exclude`; not self-service entries); chunks already written keep their state."
+        },
         "code_embed_max_attempts": {
           "default": 8,
           "type": "integer",
@@ -1563,7 +1614,7 @@
         "code_ready_embed_coverage": {
           "default": 0.95,
           "type": "number",
-          "description": "Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says \"lexical only\". Poisoned rows count against it; fixtures unembedded by design do not."
+          "description": "Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says \"lexical only\". Poisoned rows count against it; rows unembedded by design (reference fixtures, `code_embed_exclude`) do not."
         },
         "code_reconcile_enabled": {
           "default": true,
@@ -3739,7 +3790,7 @@
         "llm_provider": {
           "default": "",
           "type": "string",
-          "description": "\"openai\" | \"anthropic\" | \"bedrock\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Bedrock requires llm_model and the SDK credential chain. Run `make bench-quick` before making anthropic a default."
+          "description": "\"openai\" | \"anthropic\" | \"bedrock\" | \"vertex\" | \"local\" | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name or provider prefix, then from the API keys present, then fake. An explicit value wins. Bedrock and Vertex require a model and deployment credentials. Run `make bench-quick` before making anthropic a default."
         },
         "llm_request_timeout_s": {
           "default": 300.0,
@@ -3912,7 +3963,7 @@
         "mcp_toolset": {
           "default": "core",
           "type": "string",
-          "description": "Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on \"assistant\"); on every toolset but \"assistant\" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on \"readonly\" routes read ops only. \"core\"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). \"coding\"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. \"tracker\", \"tasks\" — the tracker plane and the task inbox rosters. \"atomic\"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. \"readonly\"  — the \"all\" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. \"assistant\" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. \"all\"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops under mcp_code_upload_tools aside. An unknown value is \"core\"."
+          "description": "Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on \"assistant\", nor where \"coding\" lists the code tools alone); on every toolset but \"assistant\" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on \"readonly\" routes read ops only. \"core\"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). \"coding\"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. A connection bound to a repository lists the code tools alone when its URL carries `schema_profile=compact`. \"tracker\", \"tasks\" — the tracker plane and the task inbox rosters. \"atomic\"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. \"readonly\"  — the \"all\" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. \"assistant\" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. \"all\"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops under mcp_code_upload_tools aside. An unknown value is \"core\"."
         },
         "memory_ask_aggregational_window": {
           "default": 40,
@@ -4439,7 +4490,7 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Memory writes one pass links (at least 1)."
+          "description": "Rows per page of memory writes to link or pending links to recheck (at least 1)."
         },
         "memory_code_links_enabled": {
           "default": true,
@@ -4474,7 +4525,7 @@
           "default": 14,
           "minimum": 1,
           "type": "integer",
-          "description": "Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped."
+          "description": "Days to retry a code-shaped name absent from trunk, measured when each pending scan starts."
         },
         "memory_code_links_revise_per_pass": {
           "default": 20,
@@ -7366,6 +7417,16 @@
           "default": 3.0,
           "type": "number",
           "description": "Over-fetch for the codes-first read: stage 1 keeps LIMIT × this by code distance, stage 2 rescores. Only read when the codes setting is sent."
+        },
+        "vertex_location": {
+          "default": "",
+          "type": "string",
+          "description": "Vertex AI location: a region, a multi-region (\"eu\", \"us\"), or \"global\". Required with the Vertex provider."
+        },
+        "vertex_project": {
+          "default": "",
+          "type": "string",
+          "description": "Google Cloud project that owns the Vertex AI requests, required with the Vertex provider."
         },
         "web_workers": {
           "default": 1,

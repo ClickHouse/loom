@@ -671,8 +671,7 @@ def _read_outcome_columns(result: dict[str, Any]) -> dict[str, str]:
 def _hits_column(op_name: str, result: dict[str, Any]) -> dict[str, str]:
     """`out_hits`: how many rows an assistant op's call found, the summed length of the
     output lists `ASSISTANT_FOUND_FIELD` names for it ("0" on an abstention). The
-    assistant's label reads it (server/assistant/app/support.py); other ops' rows carry
-    none."""
+    assistant's support label uses it; other ops' rows carry none."""
     fields = ASSISTANT_FOUND_FIELD.get(op_name)
     if not fields:
         return {}

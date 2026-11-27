@@ -254,6 +254,8 @@ def mcp_op_result(
 
         followups: frozenset[str] = frozenset()
         if op_name == "code.grep" and (arguments or {}).get("include_body") is False:
+            # Both are code tools, which the listing of code tools alone keeps:
+            # the toolset decides, whatever the URL's profile.
             candidates = {"loom_code_read", "loom_code_edit_context"}
             followups = frozenset(candidates.intersection(listed_tool_names(toolset)))
         out = lean_code(op_name, out, arguments, followups=followups)

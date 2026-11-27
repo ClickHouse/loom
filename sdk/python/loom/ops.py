@@ -6412,6 +6412,7 @@ class CodeEditContextInput(TypedDict, total=False):
     name: NotRequired[str]
     clues: NotRequired[list[str]]
     names: NotRequired[list[str]]
+    include_related_source: NotRequired[bool]
 
 
 class CodeEditContextBody(TypedDict, total=False):
@@ -6425,6 +6426,7 @@ class CodeEditContextBody(TypedDict, total=False):
     name: NotRequired[str]
     clues: NotRequired[list[str]]
     names: NotRequired[list[str]]
+    include_related_source: NotRequired[bool]
 
 
 class CodeSymbolOutput(TypedDict, total=False):
@@ -7272,7 +7274,7 @@ class CodeReadInput(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    ranges: NotRequired[Union[list[str], list[Union["CodeReadRangeInput", str]]]]
+    ranges: NotRequired[Union[list[str], list[Union["CodeReadRangeInput", str]], list[list[int]]]]
     path: NotRequired[Optional[str]]
     start_line: NotRequired[Optional[int]]
     end_line: NotRequired[Optional[int]]
@@ -7292,7 +7294,7 @@ class CodeReadBody(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    ranges: NotRequired[Union[list[str], list[Union["CodeReadRangeInput", str]]]]
+    ranges: NotRequired[Union[list[str], list[Union["CodeReadRangeInput", str]], list[list[int]]]]
     path: NotRequired[Optional[str]]
     start_line: NotRequired[Optional[int]]
     end_line: NotRequired[Optional[int]]
@@ -13041,6 +13043,7 @@ class MemorySearchHit(TypedDict, total=False):
     code_state: NotRequired[
         Union[Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal[""]]
     ]
+    code_changed_since: NotRequired[str]
     body_truncated: NotRequired[bool]
     next: NotRequired[str]
     source_resource_id: NotRequired[str]

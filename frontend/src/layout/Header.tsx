@@ -78,7 +78,7 @@ export function Header() {
   };
 
   return (
-    <header className="min-h-14 border-b border-border bg-surface flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1.5 md:gap-3 px-3 py-2 md:px-5 md:py-0 shrink-0">
+    <header className="workspace-header min-h-14 border-b border-border flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1.5 md:gap-3 px-3 py-2 md:px-5 md:py-0 shrink-0">
       {/* Left cluster — namespace context. Capped so a long namespace truncates
           instead of squeezing the search. */}
       {/* On a phone it takes the room the actions leave (a basis of 0, so the row never
@@ -197,8 +197,9 @@ export function Header() {
                 className="inline-flex items-center gap-2 h-8 pl-1 pr-2 rounded-sm hover:bg-surface-2 data-[state=open]:bg-surface-2 transition-colors"
               >
                 <Avatar text={(whoami.subject || "?").charAt(0)} aria-hidden="true" />
-                <span className="text-sm text-text hidden lg:inline truncate max-w-[140px]" aria-hidden="true">
-                  {whoami.subject}
+                <span className="hidden xl:grid min-w-0 max-w-32 text-left" aria-hidden="true">
+                  <span className="truncate text-xs font-medium text-text">{whoami.subject}</span>
+                  <span className="truncate text-xs text-text-muted">{whoami.org}</span>
                 </span>
               </button>
             }

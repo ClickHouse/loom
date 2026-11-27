@@ -6,6 +6,7 @@ import time
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
 
 from server.cli import cell_attach, cell_control
 from tests.unit.cell_control_owner import owner
@@ -96,7 +97,8 @@ async def test_second_cancellation_preserves_original_failure_and_closes_before_
         await asyncio.gather(*owned_tasks, return_exceptions=True)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.usefixtures("_cleanup_clock")
 async def test_lock_owner_bounds_close_inside_the_same_cleanup_allowance():
     closing = asyncio.Event()
     conn = AsyncMock()
@@ -152,3 +154,71 @@ async def test_run_preserves_its_own_failure_without_hiding_normal_close_failure
         if failed:
             assert caught.value is original
     conn.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("scheduler_s", [0.0, 0.16])
+@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.usefixtures("_cleanup_clock")
+async def test_cleanup_allowance_ignores_independent_scheduler_time(monkeypatch, scheduler_s):
+    import time as wall_time
+
+    real_monotonic = wall_time.monotonic
+    elapsed = 0.0
+
+    def monotonic():
+        return real_monotonic() + elapsed
+
+    actual_close = cell_control.Owner.close
+
+    async def close(owned):
+        nonlocal elapsed
+        try:
+            return await actual_close(owned)
+        finally:
+            elapsed += scheduler_s
+
+    monkeypatch.setattr(wall_time, "monotonic", monotonic)
+    monkeypatch.setattr(cell_control.Owner, "close", close)
+    await test_lock_owner_bounds_close_inside_the_same_cleanup_allowance()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def _cleanup_clock(monkeypatch):
+    from server.core import pg
+    from tests.unit.clock_fake import ManualClock
+
+    before = set(asyncio.all_tasks())
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    selector = loop._selector
+    real_select = selector.select
+
+    def select(timeout=None):
+        if timeout is not None:
+            clock.advance(max(0.0, timeout))
+            timeout = 0
+        return real_select(timeout)
+
+    # The cleanup protocol spends idle time, independently of CPU scheduling.
+    monkeypatch.setattr(loop, "time", clock.monotonic)
+    monkeypatch.setattr(selector, "select", select)
+    monkeypatch.setattr(cell_control, "time", clock)
+    monkeypatch.setattr(pg, "time", clock)
+    monkeypatch.setattr(f"{__name__}.time", clock)
+    yield clock
+    leaked = asyncio.all_tasks() - before - {asyncio.current_task()}
+    for task in leaked:
+        task.cancel()
+    await asyncio.gather(*leaked, return_exceptions=True)
+    assert not leaked, "cell cleanup leaves no task on its private loop"
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_cleanup_clock_preserves_the_close_deadline(_cleanup_clock):
+    from server.core import pg
+
+    loop = asyncio.get_running_loop()
+    assert loop.time == time.monotonic == cell_control.time.monotonic == pg.time.monotonic
+    began = _cleanup_clock.monotonic()
+    await test_lock_owner_bounds_close_inside_the_same_cleanup_allowance()
+    assert _cleanup_clock.monotonic() - began == pytest.approx(0.03)

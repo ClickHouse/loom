@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import json
 import sys
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -71,10 +72,16 @@ def _analysis_lease(ch: Any) -> Any:
     return lease(ch)
 
 
-def _assistant_lease(ch: Any) -> Any:
-    from server.assistant.app.service import lease
+@contextlib.asynccontextmanager
+async def _assistant_lease(ch: Any) -> AsyncIterator[None]:
+    from server.core import leases
+    from server.core.ch import statement_timeout
 
-    return lease(ch)
+    # Retained provisioning credentials still need root-key rotation. Taking the
+    # same lease protects a mixed fleet without starting a retired runtime.
+    async with leases.cluster_lease("assistant.service", ttl_s=60, wait_s=120, ch=ch):
+        with statement_timeout(leases.statement_bound(60)):
+            yield
 
 
 # The rows a boot writes under a cluster lease, which the reseal takes too.
