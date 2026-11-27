@@ -78,7 +78,7 @@ async function readSearchPreview(
   const writer = namesWriter(hit);
   const scope = writer ? { ...identity, user_id: hit.user_id, session_id: hit.session_id } : identity;
   const key = rowIdentity(identity.namespace, hit);
-  for (let offset = 0; !signal.aborted; offset += KEYWORD_PAGE) {
+  for (let offset = 0; !signal.aborted; ) {
     const page = await listMemories(scope, KEYWORD_PAGE, {
       agent: writer ? hit.agent : undefined,
       prefix: hit.memory_key,
@@ -89,7 +89,9 @@ async function readSearchPreview(
     });
     const entry = page.entries.find((row) => rowIds(identity.namespace, row).includes(key));
     if (entry) return { ...entry, value: entry.value ?? null };
-    if (offset + KEYWORD_PAGE >= page.total) break;
+    // The server may cap a page below KEYWORD_PAGE: advance by the rows it returned.
+    offset += page.entries.length;
+    if (!page.entries.length || offset >= page.total) break;
   }
   return null;
 }

@@ -265,6 +265,22 @@ describe("Recent search with one key written by two sessions", () => {
     expect(screen.queryByText(/Suggested use/)).toBeNull();
   });
 
+  it("finds a ranked row's preview past pages the server caps below the page size", async () => {
+    const all = [
+      ...Array.from({ length: 10 }, (_, i) => written(`other${i}`)),
+      written("one", { sensitivity: "high", version: 2, version_text: "2", value: null }),
+      ...Array.from({ length: 4 }, (_, i) => written(`late${i}`)),
+    ];
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) => {
+      if (!opts?.prefix) return { entries: opts?.contains ? [] : [written("two")], total: 1, today: 0, truncated: false };
+      const offset = opts.offset ?? 0;
+      return { entries: all.slice(offset, offset + 10), total: all.length, today: 0, truncated: false };
+    });
+    vi.mocked(searchMemory).mockResolvedValue({ results: [ranked("one")], embedding_model: "fake" } as never);
+    await search();
+    expect(await screen.findByText(SENSITIVE_LABEL)).toBeInTheDocument();
+  });
+
   it("uses a list preview when an unloaded ranked writer's row becomes high sensitivity", async () => {
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) => {
       const entries = opts?.prefix
