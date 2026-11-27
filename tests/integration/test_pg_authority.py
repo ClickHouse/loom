@@ -248,15 +248,18 @@ async def _published_or_delivered(pg_conn: Any, org: str) -> int:
 
     async def landed() -> bool:
         nonlocal delivered
-        owed = await pg_conn.fetch(
-            "SELECT namespace, bool_or(lease_until < now()) AS due "
-            "FROM loom.memory_deliveries WHERE org = $1 AND NOT settled GROUP BY namespace",
+        due = await pg_conn.fetch(
+            "SELECT DISTINCT namespace FROM loom.memory_deliveries "
+            "WHERE org = $1 AND NOT settled AND lease_until < now()",
             org,
         )
-        for row in owed:
-            if row["due"]:
-                delivered += await deliver_namespace(org, row["namespace"])
-        return not owed
+        for row in due:
+            delivered += await deliver_namespace(org, row["namespace"])
+        # Read after the publishing: the poll that publishes the last delivery ends the wait.
+        owed = await pg_conn.fetchval(
+            "SELECT count(*) FROM loom.memory_deliveries WHERE org = $1 AND NOT settled", org
+        )
+        return owed == 0
 
     ch = get_client()
     await ch.connect()
