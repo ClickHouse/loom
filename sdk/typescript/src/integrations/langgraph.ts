@@ -11,9 +11,9 @@
  * - A JSON object is stored as the memory value; any other value is wrapped as
  *   `{ value }`.
  *
- * - `search` with a `query` ranks with `memory.search` (`score` is the hit's
- *   `similarity`) and then reads the values in one `memory.bulk_get`; without a
- *   query it lists by recency. `filter` applies to the stored value with
+ * - `search` with a `query` ranks the bound agent's rows (`score` is the hit's
+ *   `similarity`) and then reads their values in one `memory.bulk_get`; without
+ *   a query it lists by recency. `filter` applies to the stored value with
  *   `$eq $ne $gt $gte $lt $lte`, and a plain value means equality.
  * - `listNamespaces` derives the namespaces from the keys under `lg/`.
  *
@@ -45,7 +45,7 @@ import {
   type PutOperation,
   type SearchItem,
 } from "@langchain/langgraph-checkpoint";
-import type { Agent, Body, Scope as Ids } from "../agent.js";
+import type { Agent, Body } from "../agent.js";
 import type { OpName } from "../generated/ops.js";
 import { boundProtection, requireAutomaticAllowed, responseRoots, SessionCapture } from "../session-protection.js";
 import type { CallOptions } from "../transport.js";
@@ -186,13 +186,22 @@ function asObject(value: unknown): Record<string, unknown> {
 }
 
 // A timestamp without a zone is UTC, as in the Python adapter.
-function toDate(value: unknown): Date {
+function parseDate(value: unknown): Date | undefined {
   if (typeof value === "string" && value) {
     const iso = value.replace(" ", "T");
     const date = new Date(/(Z|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`);
     if (!Number.isNaN(date.getTime())) return date;
   }
-  return new Date();
+  return undefined;
+}
+
+function toDate(value: unknown): Date {
+  return parseDate(value) ?? new Date();
+}
+
+function isExpired(expiresAt: string | null | undefined, now: number): boolean {
+  const expiry = parseDate(expiresAt);
+  return expiry !== undefined && expiry.getTime() <= now;
 }
 
 function ttlSeconds(ttl: unknown): number | undefined {
@@ -302,7 +311,7 @@ export class LoomStore extends BaseStore {
       memoryKeyFor(op.namespace, op.key);
       return { kind: "get", namespace: [...(op as GetOperation).namespace], key: op.key };
     }
-    if ("matchConditions" in op) {
+    if ("limit" in op && "offset" in op) {
       const conditions = op.matchConditions ?? [];
       for (const c of conditions) {
         if ((c?.matchType !== "prefix" && c?.matchType !== "suffix") || !Array.isArray(c.path)) {
@@ -321,8 +330,8 @@ export class LoomStore extends BaseStore {
     throw new Error("LoomStore does not support this store operation");
   }
 
-  private send<K extends OpName>(name: K, body: Body<K>, scope: Scope, ids: Ids = {}) {
-    return this.agent.call(name, body, ids, scope);
+  private send<K extends OpName>(name: K, body: Body<K>, scope: Scope) {
+    return this.agent.call(name, body, {}, scope);
   }
 
   private async run(step: Step, scope: Scope): Promise<Item | SearchItem[] | string[][] | null> {
@@ -357,11 +366,13 @@ export class LoomStore extends BaseStore {
     for (let offset = 0; ; ) {
       const page = await this.send(
         "memory.list",
-        { prefix, ...(tags.length ? { tags } : {}), limit: LIST_PAGE, offset, fields: ["memory_key"] },
+        { prefix, ...(tags.length ? { tags } : {}), limit: LIST_PAGE, offset, fields: ["memory_key", "expires_at"] },
         scope,
       );
       const entries = page.entries ?? [];
-      yield entries.map((e) => e.memory_key);
+      // Loom can still list expired rows until the sweep. Advance by the raw page size.
+      const now = Date.now();
+      yield entries.filter((e) => !isExpired(e.expires_at, now)).map((e) => e.memory_key);
       if (!page.truncated || !entries.length) return;
       offset += entries.length;
     }
@@ -373,9 +384,10 @@ export class LoomStore extends BaseStore {
     if (!found.length) return [];
     const { results = {} } = await this.send("memory.bulk_get", { memory_keys: found.map((f) => f.memoryKey) }, scope);
     const items: SearchItem[] = [];
+    const now = Date.now();
     for (const { namespace, key, memoryKey, score } of found) {
       const row = results[memoryKey];
-      if (!row?.found) continue;
+      if (!row?.found || isExpired(row.expires_at, now)) continue;
       const value = asObject(row.value);
       if (!matchesFilter(value, filter)) continue;
       items.push({
@@ -411,7 +423,6 @@ export class LoomStore extends BaseStore {
           scope: "private",
         },
         scope,
-        { agentId: "*" },
       );
       const ranked = under(results.map((h) => [h.memory_key, h.similarity]));
       return (await this.items(ranked, filter, scope)).slice(offset, want);

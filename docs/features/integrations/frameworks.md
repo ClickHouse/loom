@@ -1181,32 +1181,48 @@ write and caps the rows one ranked search asks for.
 `langgraph` installed, the module still imports (structural twins of `Item`,
 `SearchItem` and the op types).
 
-### TypeScript
+## LangGraph.js
 
 `LoomStore` from `@clickhouse/loom/integrations/langgraph` extends `BaseStore` from
 `@langchain/langgraph-checkpoint`, an optional peer dependency (1.2.3 or later in the
 1.x line). Install it next to the SDK, and `@langchain/langgraph` to compile a graph.
-Items map to Loom as in the table above, so a Python graph and a TypeScript graph that
-use the same org and namespace read each other's items.
+Keys and tags use the layout of the [Python store](#langgraph), so a Python graph and a
+TypeScript graph using the same Loom org, namespace and agent can read each other's items.
 
 ```ts
+import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { Datapack } from "@clickhouse/loom";
 import { LoomStore } from "@clickhouse/loom/integrations/langgraph";
 
 const agent = new Datapack("acme", "support", { baseUrl, apiKey }).agent("assistant");
-const store = new LoomStore(agent, { tags: ["support"], searchTopKCap: 50 });
-// builder.compile({ store }): each node receives it as its `store` argument
+const State = Annotation.Root({ seat: Annotation<string> });
+const graph = new StateGraph(State)
+  .addNode("prefs", async (state, config) => {
+    const saved = await config.store?.get(["users", "alice"], "prefs");
+    if (typeof saved?.value.seat === "string") return { seat: saved.value.seat };
+    await config.store?.put(["users", "alice"], "prefs", { seat: state.seat });
+    return {};
+  })
+  .addEdge(START, "prefs")
+  .addEdge("prefs", END)
+  .compile({ store: new LoomStore(agent, { tags: ["support"] }) });
+
+await graph.invoke({ seat: "aisle" });
 
 // Outside a graph, a direct batch keeps `index` and `ttl`.
+const store = new LoomStore(agent);
 await store.batch([
   { namespace: ["users", "alice"], key: "prefs", value: { seat: "aisle" }, index: false, ttl: 30 },
 ]);
 const namespaces = await store.listNamespaces({ prefix: ["users"] });
 ```
 
+`LoomStore(agent, { tags?, searchTopKCap?, capture? })` takes extra tags for every write,
+the ranked-search cap and an optional `SessionCapture`.
+
 - **`index` and `ttl`.** In `@langchain/langgraph-checkpoint` 1.2.3 the store wrapper that
   a compiled graph hands to its nodes drops `index`, and the standard `put()` has no TTL
-  field. A put from a graph node is therefore semantic and never expires. A direct
+  field. A put from a graph node writes semantic memory without an explicit TTL. A direct
   `store.batch()` put keeps both: `index: false` writes an episodic memory, and `ttl`, in
   minutes, becomes `ttl_seconds`.
 - **`listNamespaces`.** The wrapper inherits the upstream method, which throws, so a graph
@@ -1215,12 +1231,17 @@ const namespaces = await store.listNamespaces({ prefix: ["users"] });
 - **Namespaces.** A write needs a nonempty namespace. Python also stores items with an
   empty namespace, which a TypeScript store reads by exact key but leaves out of search
   and namespace listing.
-- **Ranked search.** A search with a `query` asks the server for at most 50 candidates,
-  or `searchTopKCap` (1 to 500) when set, so `offset + limit` past that returns fewer
-  items. A search without a query pages through `memory.list` by recency.
+- **Search.** A search with a `query` ranks the bound agent's memories and fetches their
+  values under the same agent. It asks for at most 50 candidates by default, or
+  `searchTopKCap` (1 to 500) when set. A search without a query lists by recency.
+  Searches and namespace listing omit expired items.
 - **Filters.** The operators are `$eq`, `$ne`, `$gt`, `$gte`, `$lt` and `$lte`, and a plain
   value means equality. Comparisons follow JSON types: `$gt` and the other ordering
   operators compare two numbers or two strings, and a boolean never equals a number.
+- **Session protection.** `capture` is an app-owned `SessionCapture`. With it the store's
+  calls are automatic, and each checks the family's protection after the reply. Without it
+  the calls are explicit and only observe replies. The opening of the
+  [LangGraph](#langgraph) section covers how contributors are retained.
 
 ## Strands Agents
 

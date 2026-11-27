@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Agent } from "../agent.js";
 import {
   AutomaticCaptureSuppressed,
@@ -51,7 +51,10 @@ function harness(opts: { reply?: Reply; root?: SessionProtection } = {}) {
       const start = body.offset as number;
       const limit = body.limit as number;
       out = {
-        entries: keys.slice(start, start + limit).map((memory_key) => ({ memory_key })),
+        entries: keys.slice(start, start + limit).map((memory_key) => ({
+          memory_key,
+          expires_at: rows.get(memory_key)?.expires_at,
+        })),
         truncated: start + limit < keys.length,
       };
     } else if (op === "memory.bulk_get") {
@@ -246,13 +249,6 @@ describe("LoomStore (LangGraph.js adapter)", () => {
     ).rejects.toThrow();
     expect(calls).toEqual([]);
   });
-
-  it("rejects an operation type it does not serve", async () => {
-    const { agent, calls } = harness();
-    const store = new LoomStore(agent);
-    await expect(store.batch([{ limit: 1, offset: 0 } as never])).rejects.toThrow(/not support/);
-    expect(calls).toEqual([]);
-  });
 });
 
 // bulk_get echoes `found` rows, so a seeded key reads back with its value.
@@ -295,13 +291,41 @@ describe("LoomStore search", () => {
     ]);
   });
 
-  it("sends the prefix tag, top_k and the explicit private scope and agent '*'", async () => {
+  it("keeps ranked hits and values under the same writer when two agents use one key", async () => {
+    const key = "lg/users/alice/prefs";
+    const writers = [
+      { agent: "bot", value: { seat: "aisle" }, similarity: 0.6 },
+      { agent: "other", value: { seat: "window" }, similarity: 0.9 },
+    ];
+    const { agent, calls } = harness({
+      reply(op, body) {
+        if (op === "memory.search") {
+          const matches = writers.filter(
+            (writer) => (body.agent === "*" || body.agent === writer.agent) && body.query === writer.value.seat,
+          );
+          return { results: matches.map(({ similarity }) => ({ memory_key: key, similarity })) };
+        }
+        expect(op).toBe("memory.bulk_get");
+        expect(body.memory_keys).toEqual([key]);
+        const writer = writers.find((writer) => writer.agent === body.agent);
+        return { results: writer ? { [key]: { found: true, value: writer.value } } : {} };
+      },
+    });
+    const store = new LoomStore(agent);
+    expect(await store.search(["users", "alice"], { query: "window" })).toEqual([]);
+    expect(calls.map((call) => call.op)).toEqual(["memory.search"]);
+    expect(await store.search(["users", "alice"], { query: "aisle" })).toMatchObject([
+      { key: "prefs", value: { seat: "aisle" }, score: 0.6 },
+    ]);
+  });
+
+  it("sends the prefix tag, top_k, private scope and the bound agent", async () => {
     const { store, calls } = rankedStore();
     await store.search(["users", "alice"], { query: "seat", limit: 3, offset: 1 });
     expect(calls[0].body).toMatchObject({
       org: "acme",
       namespace: "support",
-      agent: "*",
+      agent: "bot",
       query: "seat",
       tags: ["lg:users/alice"],
       top_k: 8,
@@ -359,7 +383,13 @@ describe("LoomStore search", () => {
     expect(items[0]).not.toHaveProperty("score");
     expect(calls[0]).toMatchObject({
       op: "memory.list",
-      body: { prefix: "lg/users/alice/", tags: ["lg:users/alice"], limit: 1000, offset: 0, fields: ["memory_key"] },
+      body: {
+        prefix: "lg/users/alice/",
+        tags: ["lg:users/alice"],
+        limit: 1000,
+        offset: 0,
+        fields: ["memory_key", "expires_at"],
+      },
     });
     expect(calls.map((c) => c.op)).toEqual(["memory.list", "memory.bulk_get"]);
     expect((await store.search(["users", "alice"], { filter: { n: { $gte: 2 } } })).map((i) => i.key)).toEqual(["b"]);
@@ -368,6 +398,42 @@ describe("LoomStore search", () => {
     await store.search([]);
     expect(calls[0].body).toMatchObject({ prefix: "lg/" });
     expect(calls[0].body).not.toHaveProperty("tags");
+  });
+
+  it("skips an expired item and its namespace while the server still lists the row", async () => {
+    const { agent, rows, calls } = harness();
+    const expired = "lg/users/alice/a";
+    rows.set(expired, { found: true, value: { expired: true }, expires_at: "2026-03-01 10:00:00" });
+    seed(rows, "lg/users/bob/b");
+    const store = new LoomStore(agent);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-03-01T10:00:00Z"));
+    try {
+      expect((await store.search(["users"], { limit: 1 })).map((item) => item.key)).toEqual(["b"]);
+      expect(calls.find((call) => call.op === "memory.bulk_get")?.body.memory_keys).toEqual(["lg/users/bob/b"]);
+      expect(await store.listNamespaces()).toEqual([["users", "bob"]]);
+      expect(rows.has(expired)).toBe(true);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("skips a value that expires between memory.list and memory.bulk_get", async () => {
+    const key = "lg/users/alice/a";
+    const expires_at = "2026-03-01T11:00:01+01:00";
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-03-01T10:00:00Z"));
+    try {
+      const { agent } = harness({
+        reply(op) {
+          if (op === "memory.list") return { entries: [{ memory_key: key, expires_at }], truncated: false };
+          expect(op).toBe("memory.bulk_get");
+          clock.mockReturnValue(Date.parse(expires_at));
+          return { results: { [key]: { found: true, value: { expired: true }, expires_at } } };
+        },
+      });
+      expect(await new LoomStore(agent).search(["users"])).toEqual([]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("returns the first listed items in the server's order, then a later window", async () => {
@@ -504,7 +570,7 @@ describe("LoomStore listNamespaces", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       op: "memory.list",
-      body: { prefix: "lg/", limit: 1000, offset: 0, fields: ["memory_key"] },
+      body: { prefix: "lg/", limit: 1000, offset: 0, fields: ["memory_key", "expires_at"] },
     });
     expect(calls[0].body).not.toHaveProperty("tags");
   });
@@ -542,6 +608,16 @@ describe("LoomStore listNamespaces", () => {
     const { agent, rows } = harness();
     seed(rows, "lg/a.b/c:d/k");
     expect(await new LoomStore(agent).listNamespaces({ prefix: ["a.b"] })).toEqual([["a.b", "c:d"]]);
+  });
+
+  it("lists unfiltered namespaces in a batch without matchConditions", async () => {
+    const { store } = stored();
+    expect(
+      await store.batch([
+        { limit: 1, offset: 0 },
+        { maxDepth: 1, limit: 1, offset: 1 },
+      ]),
+    ).toEqual([[["teams", "x"]], [["users"]]]);
   });
 
   it("pages past one memory.list page", async () => {
