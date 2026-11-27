@@ -21,7 +21,7 @@ from server.memory.api.models_apply import ApplyTarget
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.transport import arg_check, mcp_op
 from server.transport._common import validation_errors
-from server.transport.arg_feedback import feedback, guesses, optional_args, required_args
+from server.transport.arg_feedback import example, feedback, guesses, optional_args, required_args
 from server.transport.lean_results import lean_result
 
 
@@ -140,19 +140,11 @@ def test_a_key_correction_keeps_every_write_target() -> None:
 
 
 def test_a_key_correction_does_not_overwrite_a_canonical_key() -> None:
-    message, data = _fail(
-        "memory.apply",
-        {
-            "target": {"keys": ["test/x/a"], "memory_keys": ["test/x/b"]},
-            "action": "expire",
-            "reason": "r" * 513,
-            "expire": {"ttl_seconds": 60},
-            "dry_run": False,
-        },
-    )
-    assert "did you mean 'target.keys'?" in message
-    assert "example:" not in message
-    assert "example" not in data
+    model = _model("memory.apply")
+    args = {"target": {"keys": ["test/x/a"], "memory_keys": ["test/x/b"]}}
+    near = guesses(model, args)
+    assert near == {"target.memory_keys": "target.keys"}
+    assert example(model, args, near) is None
 
 
 def test_working_memory_append_names_addition() -> None:
@@ -160,6 +152,20 @@ def test_working_memory_append_names_addition() -> None:
     assert "addition: Field required [missing]" in msg
     assert "'text' — did you mean 'addition'?" in msg
     assert data["example"] == {"addition": "hello"}
+
+
+def test_a_required_field_correction_rechecks_the_value() -> None:
+    message, data = _fail("code.grep", {"patern": "x"})
+    assert "did you mean 'pattern'?" in message
+    assert "example:" not in message
+    assert "example" not in data
+
+
+def test_a_scope_key_typo_does_not_create_a_retry_scope() -> None:
+    message, data = _fail("code.grep", {"namepsace": "other-project", "patern": "a valid literal"})
+    assert data["unknown"]["namepsace"] == "namespace"
+    assert "example:" not in message
+    assert "example" not in data
 
 
 def test_a_missing_required_arg_gets_a_placeholder() -> None:
@@ -232,6 +238,29 @@ def test_validation_failure_is_a_tool_result_the_model_reads(
     assert "separator:" in text
     assert "example:" not in text
     assert result["structuredContent"]["errors"]
+    assert "example" not in result["structuredContent"]
+
+
+def test_explicit_scope_does_not_get_a_scope_free_retry_example(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = "loom_memory_apply"
+    ran: list[Any] = []
+    _patched(monkeypatch, tool, ran)
+    args = {
+        "namespace": "team-b",
+        "agent": "project-agent",
+        "target": {"memory_keys": ["test/x/a"]},
+        "action": "expire",
+        "reason": "Retire obsolete examples",
+        "expire": {"ttl_seconds": 60},
+        "dry_run": False,
+    }
+    resp = asyncio.run(mcp_call._call_tool(1, {"name": tool, "arguments": args}, auth=None))
+    result = resp["result"]
+    assert result["isError"] is True and not ran
+    assert "did you mean 'target.keys'?" in result["content"][0]["text"]
+    assert "example:" not in result["content"][0]["text"]
     assert "example" not in result["structuredContent"]
 
 

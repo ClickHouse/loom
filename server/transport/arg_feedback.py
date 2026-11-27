@@ -118,10 +118,16 @@ def _renamed(
 
 
 def example(
-    model: type[BaseModel], arguments: dict[str, Any], near: dict[str, str | None]
+    model: type[BaseModel],
+    arguments: dict[str, Any],
+    near: dict[str, str | None],
+    *,
+    fill_missing: bool = True,
 ) -> dict[str, Any] | None:
     """Keep supplied values while correcting names and filling missing slots."""
     skip = IDENTITY_KEYS | TRANSPORT_KEYS
+    if any(target in skip for target in near.values()):
+        return None
     call = _renamed({k: v for k, v in arguments.items() if k not in skip}, near, "")
     if call is None:
         return None
@@ -131,8 +137,9 @@ def example(
             if renamed is None:
                 return None
             call[field] = renamed
-    for field in required_args(model):
-        call.setdefault(field, _placeholder(model, field))
+    if fill_missing:
+        for field in required_args(model):
+            call.setdefault(field, _placeholder(model, field))
     return call
 
 
@@ -142,16 +149,17 @@ def _retry_example(
     near: dict[str, str | None],
     errors: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], str] | None:
-    missing_only = all(e.get("type") == "missing" for e in errors)
-    if not isinstance(arguments, dict) or not (missing_only or any(near.values())):
+    has_correction = any(near.values())
+    missing_only = bool(errors) and all(e.get("type") == "missing" for e in errors)
+    if not isinstance(arguments, dict) or not (missing_only or has_correction):
         return None
-    call = example(model, arguments, near)
+    call = example(model, arguments, near, fill_missing=not has_correction)
     if call is None:
         return None
     shown = json.dumps(call, ensure_ascii=False, default=str)
     if len(shown) > _MAX_EXAMPLE_CHARS:
         return None
-    if not missing_only:
+    if has_correction:
         identity = {k: v for k, v in arguments.items() if k in IDENTITY_KEYS}
         try:
             model.model_validate({**identity, **call})
@@ -166,14 +174,16 @@ def _error_line(e: dict[str, Any]) -> str:
     return f"{loc}: {msg} [{e.get('type') or 'invalid'}]"
 
 
-def feedback(op: Any, arguments: Any, errors: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+def feedback(
+    op: Any, arguments: Any, errors: list[dict[str, Any]], *, include_example: bool = True
+) -> tuple[str, dict[str, Any]]:
     """`(message, data)` for a call whose arguments failed validation: the
     message is the whole correction in one line-per-part block; `data`
     carries the same parts typed, plus pydantic's `errors`."""
     model = op.input_model
     near = guesses(model, arguments)
     req, opt = required_args(model), optional_args(model)
-    retry = _retry_example(model, arguments, near, errors)
+    retry = _retry_example(model, arguments, near, errors) if include_example else None
     lines = [f"{op.name}: invalid arguments."]
     lines += [_error_line(e) for e in errors[:_MAX_ERRORS]]
     if len(errors) > _MAX_ERRORS:
