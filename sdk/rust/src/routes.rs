@@ -1,6 +1,9 @@
 //! Requests to the routes the server serves outside the op registry.
 
-use std::time::{Duration, Instant};
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 pub use reqwest::Method;
 use reqwest::{header::HeaderMap, header::CONTENT_TYPE};
@@ -24,15 +27,38 @@ enum Body {
 /// A request to a route the op registry does not hold, such as `/v1/whoami`
 /// or `/v1/knowledge.upload`.
 ///
-/// The body, query and headers go out as given: no org, namespace, agent or
-/// consumer is added.
-#[derive(Clone, Debug)]
+/// The body and query go out as given: no org, namespace, agent or consumer is
+/// added.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct RouteRequest {
     method: Method,
     path: String,
     query: Vec<(String, String)>,
     body: Body,
+}
+
+/// A route may carry a secret in its query or body, so neither is printed.
+impl fmt::Debug for RouteRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let body = match &self.body {
+            Body::Empty => "none".to_owned(),
+            Body::Json(value) => format!("json {} bytes", value.to_string().len()),
+            Body::Raw {
+                content_type,
+                bytes,
+            } => {
+                format!("{content_type} {} bytes", bytes.len())
+            }
+            Body::Unencodable(_) => "unencodable".to_owned(),
+        };
+        f.debug_struct("RouteRequest")
+            .field("method", &self.method)
+            .field("path", &self.path.split(['?', '#']).next().unwrap_or(""))
+            .field("query", &self.query.len())
+            .field("body", &body)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RouteRequest {
@@ -98,9 +124,9 @@ impl Client {
     /// response. A status below 400 is a response; any other is `Error::Api`.
     ///
     /// Only `CallOptions::timeout` and `CallOptions::request_id` apply. The
-    /// request is not retried, but for a 429, which the server answers before
-    /// doing anything: it is resent after the server's hint while the client's
-    /// pacing budget lasts.
+    /// SDK resends only on a 429, after the server's hint and within the
+    /// client's pacing budget. The HTTP transport may also resend a stream
+    /// refused by the peer.
     pub async fn request(&self, request: RouteRequest) -> Result<RouteResponse, Error> {
         self.request_with_options(request, CallOptions::default())
             .await
@@ -135,6 +161,8 @@ impl Client {
         if !query.is_empty() {
             url.query_pairs_mut().extend_pairs(query);
         }
+        // Logs name the path on the wire, never a query carried in the path.
+        let route = url.path().to_owned();
         let request_id = options.request_id.unwrap_or_else(request_id);
         let started = Instant::now();
         let mut attempts = 0_u64;
@@ -159,9 +187,9 @@ impl Client {
             };
             let request = self.identified(builder, &request_id, options.timeout);
             let mut metadata = CallMetadata::new(&request_id, attempts);
-            log::debug!(target: "clickhouse_loom", "{path} attempt={attempts} rid={request_id}");
+            log::debug!(target: "clickhouse_loom", "{route} attempt={attempts} rid={request_id}");
             let transport = |error: reqwest::Error, metadata: CallMetadata| {
-                log::error!(target: "clickhouse_loom", "{path} failed status=0 elapsed_ms={} attempts={attempts} rid={request_id}", started.elapsed().as_millis());
+                log::error!(target: "clickhouse_loom", "{route} failed status=0 elapsed_ms={} attempts={attempts} rid={request_id}", started.elapsed().as_millis());
                 CallFailure {
                     error: Error::Transport(error.without_url()),
                     metadata: Some(Box::new(metadata)),
@@ -175,7 +203,7 @@ impl Client {
                 Err(error) => return Err(transport(error, metadata)),
             };
             if status.as_u16() < 400 {
-                log::info!(target: "clickhouse_loom", "{path} status={} elapsed_ms={} attempts={attempts} rid={request_id}", status.as_u16(), started.elapsed().as_millis());
+                log::info!(target: "clickhouse_loom", "{route} status={} elapsed_ms={} attempts={attempts} rid={request_id}", status.as_u16(), started.elapsed().as_millis());
                 return Ok(CallResult {
                     data: RouteResponse {
                         status: status.as_u16(),
@@ -193,13 +221,13 @@ impl Client {
                     self.ratelimit_max_wait.saturating_sub(paced),
                 );
                 if !delay.is_zero() {
-                    log::warn!(target: "clickhouse_loom", "{path} status=429 wait_ms={} attempts={attempts} rid={request_id}", delay.as_millis());
+                    log::warn!(target: "clickhouse_loom", "{route} status=429 wait_ms={} attempts={attempts} rid={request_id}", delay.as_millis());
                     tokio::time::sleep(delay).await;
                     paced += delay;
                     continue;
                 }
             }
-            log::error!(target: "clickhouse_loom", "{path} failed status={} elapsed_ms={} attempts={attempts} rid={request_id}", status.as_u16(), started.elapsed().as_millis());
+            log::error!(target: "clickhouse_loom", "{route} failed status={} elapsed_ms={} attempts={attempts} rid={request_id}", status.as_u16(), started.elapsed().as_millis());
             return Err(CallFailure {
                 error: Error::Api(Box::new(error)),
                 metadata: Some(Box::new(metadata)),
@@ -225,20 +253,31 @@ impl Client {
         request: RouteRequest,
         options: CallOptions,
     ) -> Result<CallResult<T>, CallFailure> {
-        let result = self.request_with_options(request, options).await?;
-        let source = if result.data.bytes.is_empty() {
+        let route = request
+            .path
+            .split(['?', '#'])
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        let CallResult { data, metadata } = self.request_with_options(request, options).await?;
+        let source = if data.bytes.is_empty() {
             &b"{}"[..]
         } else {
-            &result.data.bytes[..]
+            &data.bytes[..]
         };
-        let data = serde_json::from_slice(source).map_err(|source| Error::Protocol {
-            status: result.data.status,
-            source,
-        })?;
-        Ok(CallResult {
-            data,
-            metadata: result.metadata,
-        })
+        match serde_json::from_slice(source) {
+            Ok(data) => Ok(CallResult { data, metadata }),
+            Err(source) => {
+                log::error!(target: "clickhouse_loom", "{route} invalid_response status={} attempts={} rid={}", data.status, metadata.attempts, metadata.request_id);
+                Err(CallFailure {
+                    error: Error::Protocol {
+                        status: data.status,
+                        source,
+                    },
+                    metadata: Some(Box::new(metadata)),
+                })
+            }
+        }
     }
 }
 
@@ -264,5 +303,20 @@ mod tests {
         assert!(matches!(request.body, Body::Raw { .. }));
         assert_eq!(RouteRequest::get("/v1/whoami").method, Method::GET);
         assert_eq!(RouteRequest::delete("/mcp").method, Method::DELETE);
+    }
+
+    #[test]
+    fn debug_output_omits_the_query_and_the_body() {
+        let request = RouteRequest::post("/v1/me/service_accounts.create?token=sk-1")
+            .query("secret", "s3cret")
+            .json(&serde_json::json!({"password": "hunter2"}));
+        let printed = format!("{request:?}");
+        assert!(
+            printed.contains("/v1/me/service_accounts.create"),
+            "{printed}"
+        );
+        for secret in ["sk-1", "s3cret", "hunter2", "?"] {
+            assert!(!printed.contains(secret), "{printed}");
+        }
     }
 }

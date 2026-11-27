@@ -391,10 +391,10 @@ To disable both automatic retries and 429 waiting, use
 The SDK logs through the `log` facade under the `clickhouse_loom` target:
 completed calls at INFO, retries and rate-limit waits at WARN, final failures at
 ERROR and attempts at DEBUG. Your application's logging configuration routes
-these records. Records contain the operation, request ID, attempts and timing.
-Tokens, request bodies, server addresses and server error text are not logged.
-Every request carries SDK identity headers, `X-Request-Id` and a cumulative
-`X-Loom-Retry-Count` starting at 0.
+these records. Records contain the operation or route, request ID, attempts
+and timing. Tokens, request bodies, server addresses and server error text are
+not logged. Every operation call carries SDK identity headers, `X-Request-Id`
+and a cumulative `X-Loom-Retry-Count` starting at 0.
 
 A final transport failure may follow a committed write. An independent call
 generates a different idempotency key; read the result before submitting it again.
@@ -461,6 +461,7 @@ let stored: Value = bot
             .query("org", "dev")
             .query("namespace", "local")
             .query("filename", "guide.pdf")
+            .query("content_type", "application/pdf")
             .bytes("application/pdf", std::fs::read("guide.pdf")?),
     )
     .await?;
@@ -469,15 +470,17 @@ let stored: Value = bot
 `RouteRequest::new` takes any `Method`; `get`, `post` and `delete` name the
 common ones. The path starts with `/` and is resolved on the server the client
 is bound to. `json` sends a serializable body and `bytes` sends raw bytes with
-their media type; each replaces the body set before it. The body, query and
-headers go out as given: no bound identity is added, and the route's own fields
-name the org and namespace it acts on.
+their media type as the `Content-Type` header; each replaces the body set
+before it. The body and query go out as given: no bound identity is added, and
+a route takes the org, namespace and other fields it needs from them.
 
 `request` returns the whole response of a status below 400 with its status and
 headers; a redirect is returned, not followed. `request_json` decodes the body
 as the requested type; an empty body decodes as an empty object and an invalid
-one is `Error::Protocol`. Any other status is `Error::Api` and is not retried.
-A 429 is resent after the server's hint while the client's pacing budget lasts.
+one is `Error::Protocol`. A status of 400 or higher is `Error::Api`. At the
+SDK level, only a 429 triggers a resend, after the server's hint and within
+the client's pacing budget. The HTTP transport may also resend a request the
+peer did not process, such as an HTTP/2 stream refused with `REFUSED_STREAM`.
 
 `request_with_options` and `request_json_with_options` accept `CallOptions`
 and return `CallResult` or `CallFailure`. Only `timeout` and `request_id`

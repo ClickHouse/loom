@@ -1,5 +1,5 @@
 use super::*;
-use clickhouse_loom::{CallOptions, RouteRequest, RouteResponse};
+use clickhouse_loom::{CallFailure, CallOptions, RouteRequest, RouteResponse};
 
 pub(super) fn unused_response() -> String {
     // A queued response keeps the fixture listening, so an extra request would arrive.
@@ -18,6 +18,7 @@ async fn routes_receive_what_they_are_given_and_no_identity() {
         .api_key("test-token")
         .user_id("user")
         .session_id("session")
+        .run_id("run")
         .build()
         .unwrap();
     let me: Value = client
@@ -156,6 +157,85 @@ async fn a_429_is_resent_after_the_hint_within_the_pacing_budget() {
 }
 
 #[tokio::test]
+async fn a_429_with_no_wait_to_take_is_returned() {
+    let refused = |wait| {
+        response(
+            429,
+            json!({"detail": {"code": "RATE_LIMITED", "message": "busy", "retry_after_s": wait}}),
+            "",
+        )
+    };
+    let route = || RouteRequest::get("/v1/me/sharing-summary");
+    let attempts_of = |failure: CallFailure| {
+        let Error::Api(error) = failure.error else {
+            panic!("expected API error");
+        };
+        assert_eq!(error.status, 429);
+        failure.metadata.unwrap().attempts
+    };
+
+    // A hint of zero asks for no wait.
+    let server = Server::new(vec![refused(json!(0)), unused_response()]);
+    let failure = server
+        .client()
+        .request_json_with_options::<Value>(route(), CallOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(attempts_of(failure), 1);
+    server.request().await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), server.request())
+            .await
+            .is_err()
+    );
+
+    // The last wait is cut to what is left of the budget, then the 429 stands.
+    let server = Server::new(vec![
+        refused(json!(0.05)),
+        refused(json!(0.05)),
+        refused(json!(0.05)),
+        unused_response(),
+    ]);
+    let client = Client::builder("org", "ns", "bot")
+        .base_url(&server.url)
+        .api_key("")
+        .ratelimit_max_wait(Duration::from_millis(80))
+        .build()
+        .unwrap();
+    let failure = client
+        .request_json_with_options::<Value>(route(), CallOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(attempts_of(failure), 3);
+    for _ in 0..3 {
+        server.request().await;
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), server.request())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn a_route_is_not_resent_when_the_connection_closes_without_an_answer() {
+    let server = Server::new(vec!["close".into(), unused_response()]);
+    let failure = server
+        .client()
+        .request_with_options(RouteRequest::get("/v1/whoami"), CallOptions::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(failure.error, Error::Transport(_)), "{failure:?}");
+    assert_eq!(failure.metadata.unwrap().status, None);
+    assert_eq!(server.request().await.line, "GET /v1/whoami HTTP/1.1");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), server.request())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn route_errors_are_returned_without_a_retry() {
     for (status, body, code, message) in [
         (
@@ -235,6 +315,8 @@ async fn a_path_must_stay_on_this_server() {
     let client = server.client();
     for path in [
         "v1/whoami",
+        // A tab or a backslash is dropped or read as a slash before the path is resolved.
+        "/\t//127.0.0.1:1/whoami",
         "/\\\\127.0.0.1:1/whoami",
         "//127.0.0.1:1/whoami",
         "http://127.0.0.1:1/whoami",
@@ -282,12 +364,21 @@ async fn an_empty_body_is_an_empty_object_and_an_invalid_one_is_a_protocol_error
             namespace: String::new()
         }
     );
-    assert!(matches!(
-        client
-            .request_json::<Value>(RouteRequest::get("/v1/operations"))
-            .await,
-        Err(Error::Protocol { status: 200, .. })
-    ));
+    // The response arrived; its attempt is the one to name.
+    let failure = client
+        .request_json_with_options::<Value>(
+            RouteRequest::get("/v1/operations"),
+            CallOptions::default().request_id("route-2"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&failure.error, Error::Protocol { status: 200, .. }),
+        "{failure:?}"
+    );
+    let metadata = failure.metadata.unwrap();
+    assert_eq!(metadata.attempts, 1);
+    assert_eq!(metadata.request_id, "route-2");
     let RouteResponse {
         status, headers, ..
     } = client

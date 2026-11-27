@@ -78,8 +78,8 @@
 //!
 //! [`Client::request`] and [`Client::request_json`] reach the routes the
 //! registry does not hold, such as `/v1/whoami` and `/v1/knowledge.upload`.
-//! The body, query and headers go out as given. Only a 429 is resent, after
-//! the server's hint.
+//! The body and query go out as given. The SDK waits and resends on a 429;
+//! the HTTP transport may also resend a stream refused by the peer.
 //!
 //! ```
 //! use clickhouse_loom::{Client, Error, RouteRequest};
@@ -95,11 +95,14 @@
 //! let stored: Value = client
 //!     .request_json(
 //!         RouteRequest::post("/v1/knowledge.upload")
+//!             .query("org", "dev")
+//!             .query("namespace", "local")
 //!             .query("filename", "notes.bin")
+//!             .query("content_type", "application/octet-stream")
 //!             .bytes("application/octet-stream", vec![0, 1, 2, 3]),
 //!     )
 //!     .await?;
-//! println!("{} {} {}", me["org"], chosen["namespace"], stored);
+//! println!("{} {} {}", me["org"], chosen["default_namespace"], stored);
 //! # Ok(())
 //! # }
 //! ```

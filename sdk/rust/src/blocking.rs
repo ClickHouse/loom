@@ -174,13 +174,7 @@ impl Client {
         request: &impl Serialize,
         mut options: CallOptions,
     ) -> Result<CallResult<T>, CallFailure> {
-        if tokio::runtime::Handle::try_current().is_ok() {
-            return Err(Error::Configuration(
-                "blocking calls require a thread outside a Tokio runtime; use the async client"
-                    .into(),
-            )
-            .into());
-        }
+        outside_runtime()?;
         let body = serde_json::to_value(request)
             .map_err(|e| Error::Input(format!("cannot encode request: {e}")))?;
         let op = op.to_owned();
@@ -236,13 +230,7 @@ impl Client {
         F: FnOnce(crate::Client) -> Fut + Send + 'static,
         Fut: Future<Output = Result<T, CallFailure>> + Send + 'static,
     {
-        if tokio::runtime::Handle::try_current().is_ok() {
-            return Err(Error::Configuration(
-                "blocking calls require a thread outside a Tokio runtime; use the async client"
-                    .into(),
-            )
-            .into());
-        }
+        outside_runtime()?;
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let job: Job = Box::new(move |client| {
             Box::pin(async move {
@@ -261,6 +249,15 @@ impl Client {
 
 fn worker_error() -> CallFailure {
     Error::Configuration("blocking client worker stopped".into()).into()
+}
+
+fn outside_runtime() -> Result<(), Error> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(Error::Configuration(
+            "blocking calls require a thread outside a Tokio runtime; use the async client".into(),
+        ));
+    }
+    Ok(())
 }
 
 macro_rules! setting {

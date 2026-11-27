@@ -96,6 +96,12 @@ impl Server {
                     .set_write_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
                 let request = read_request(&mut stream);
+                if response == "close" {
+                    // Answer nothing: the client sees a connection closed before a response.
+                    sender.send(request).unwrap();
+                    drop(stream);
+                    continue;
+                }
                 if response == "hold-body" {
                     stream
                         .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
