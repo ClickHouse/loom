@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -28,6 +28,74 @@ DEFS = [
     },
 ]
 DELAY = 0.05
+
+
+async def test_named_examples_require_type_references() -> None:
+    from server.code.app.symbol.named_examples import named_test_examples
+
+    repo = AsyncMock()
+    examples = await named_test_examples(repo, "o", "n", DEFS[0], 10)
+    assert not examples
+    repo.symbols_fuzzy.assert_not_awaited()
+
+
+async def test_named_examples_skip_ambiguous_bare_types(monkeypatch) -> None:
+    from server.code.app.symbol.named_examples import named_test_examples
+    from server.embedding.fake import fake_model_name
+
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    target = {**DEFS[0], "qualified_name": "modern::Cache", "name": "Cache", "kind": "class"}
+    legacy = {**target, "qualified_name": "legacy::Cache", "path": "src/legacy.cpp"}
+    repo = AsyncMock()
+    repo.symbols_by_name.return_value = [target, legacy]
+    repo.symbols_fuzzy.return_value = [{"name": "test_legacy_cache"}]
+    assert not await named_test_examples(repo, "o", "n", target, 10)
+    repo.source_chunks_for_span.assert_not_awaited()
+
+
+@pytest.mark.parametrize("tier", ["scip", "treesitter"])
+@pytest.mark.parametrize(("radius", "start"), [(2, 1), (1, 2)])
+async def test_named_examples_include_attached_decorators(monkeypatch, tier, radius, start) -> None:
+    from dataclasses import asdict
+
+    from server.code.app.symbol.named_examples import named_test_examples
+    from server.code.domain.extract.lang_python import parse_python
+    from server.code.domain.extract.py_decorated_chunks import python_chunks
+    from server.embedding.fake import fake_model_name
+
+    revision = "a" * 40
+    target = {**DEFS[0], "qualified_name": "modern::Cache", "name": "Cache", "kind": "class"}
+    source = '@pytest.mark.parametrize("value", [1])\ndef test_cache(value):\n    Cache(value)\n'
+    path = "tests/test_cache.py"
+    parsed = parse_python(path, source.encode())
+    (definition,) = (symbol for symbol in parsed.symbols if symbol.name == "test_cache")
+    repo = AsyncMock()
+    repo.symbols_by_name.return_value = [target]
+    repo.symbols_fuzzy.return_value = [
+        {
+            "path": path,
+            "name": definition.name,
+            "qualified_name": definition.qualified_name,
+            "kind": "function",
+            "tier": tier,
+            "start_line": definition.start_line,
+            "end_line": definition.end_line,
+            "indexed_commit": revision,
+        }
+    ]
+    repo.source_chunks_for_span.return_value = [
+        {**asdict(chunk), "indexed_commit": revision}
+        for chunk in python_chunks(parsed, max_chars=6000)
+    ]
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    (example,) = await named_test_examples(repo, "o", "n", target, radius)
+    assert example["context"] == {
+        "commit": revision,
+        "start_line": start,
+        "end_line": 3,
+        "text": "".join(source.splitlines(keepends=True)[start - 1 :]),
+    }
+    repo.source_chunks_for_span.assert_awaited_once()
 
 
 class _Clock:
@@ -187,7 +255,35 @@ def test_a_failing_leg_leaves_the_definition_served():
     d = out.definitions[0]
     assert d.body == "<body f1>"
     assert d.lessons == []  # the leg degraded to nothing; the answer did not
+    assert d.lessons_unread  # and it says so, unlike a symbol with no lessons
     assert [p["pr_number"] for p in d.recent_prs] == [7]
+
+
+def test_an_unread_lessons_leg_is_flagged_on_the_definition():
+    # None is what the bounded read answers when cut off or failed (tested below)
+    out, _wall = _run(_Clock(), lessons=None)
+    d = out.definitions[0]
+    assert d.lessons == [] and d.lessons_unread
+    assert d.model_dump()["lessons_unread"] is True
+
+
+def test_a_narrowed_token_gets_no_lessons_and_no_unread_flag():
+    from server.code.app.symbol import symbol as h
+
+    clock = _Clock()
+    with patch.object(h, "request_narrowed", return_value=True):
+        out, _wall = _run(clock, lessons=LESSON)
+    d = out.definitions[0]
+    assert "lessons" not in clock.calls  # the read is not made
+    assert not d.lessons_unread
+    assert "lessons_unread" not in d.model_dump() and "lessons" not in d.model_dump()
+
+
+def test_a_symbol_with_no_lessons_says_nothing_about_them():
+    out, _wall = _run(_Clock(), lessons=[])
+    d = out.definitions[0]
+    assert not d.lessons_unread
+    assert "lessons_unread" not in d.model_dump() and "lessons" not in d.model_dump()
 
 
 def test_enrichment_not_asked_reads_nothing_extra():
@@ -202,3 +298,49 @@ def test_enrichment_not_asked_reads_nothing_extra():
     assert not {"pr_history", "test_map", "lessons"} & set(clock.calls), clock.calls
     assert "edges:calls" not in clock.calls  # usage examples were not asked for
     assert out.definitions[0].recent_prs == [] and out.definitions[0].lessons == []
+    assert not out.definitions[0].lessons_unread  # not asked is not unread
+
+
+@pytest.mark.parametrize("outcome", ["slow", "failing"])
+def test_the_lessons_read_answers_none_when_cut_off_or_failed(monkeypatch, outcome):
+    from server.code.app import enrich as code_enrich
+    from server.memory.app import code_plane_reads
+
+    async def nss(org, ns, extra):
+        return ["code-a"]
+
+    async def read(*a, **kw):
+        if outcome == "failing":
+            raise RuntimeError("memory plane down")
+        await asyncio.sleep(5)
+        return [{"memory_key": "late"}]
+
+    monkeypatch.setattr(code_plane_reads, "lesson_namespaces", nss)
+    monkeypatch.setattr(code_plane_reads, "lessons_for_symbol", read)
+    monkeypatch.setattr(settings, "code_enrich_timeout_s", 0.05)
+    got = asyncio.run(
+        code_enrich.lessons_for_symbol(
+            "o", "code-a", symbol_name="f", paths=["a.py"], extra_namespaces=[]
+        )
+    )
+    assert got is None
+
+
+def test_a_member_whose_lessons_went_unread_keeps_the_others_and_flags_it():
+    from server.code.api.models_symbol import CodeSymbolInput
+    from server.code.app import enrich as code_enrich
+    from server.code.app.symbol import symbol as h
+
+    async def lessons_for_symbol(org, ns, *, symbol_name, paths, extra_namespaces):
+        return None if symbol_name == "A::y" else [dict(LESSON[0])]
+
+    head = [
+        {"qualified_name": "A::x", "path": "a.py", "symbol_id": "s1"},
+        {"qualified_name": "A::y", "path": "a.py", "symbol_id": "s2"},
+    ]
+    plain = CodeSymbolInput(name="A", include_history=False, include_examples=False)
+    with patch.object(code_enrich, "lessons_for_symbol", new=lessons_for_symbol):
+        out = asyncio.run(h._enrichment(None, "o", "n", plain, head, matched_members=True))
+    # the member that was read still serves its lesson; the other may have had some
+    assert [lesson["linked_symbols"] for lesson in out["lessons"]] == [["A::x"]]
+    assert out["lessons_unread"] is True

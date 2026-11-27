@@ -37,8 +37,24 @@ class _StubCH:
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         self.reads.append((sql, dict(params or {})))
-        if "system.mutations" in sql:
+        if "system.mutations" in sql or "FROM loom.memory_refusals" in sql:
             return []
+        if params and "source_version" in params:
+            from server.core.hashing import sha256_text
+
+            return (
+                [{"found": 1}]
+                if any(
+                    all(
+                        row.get(k) == params[k]
+                        for k in ("org", "namespace", "agent", "user_id", "session_id", "queue_id")
+                    )
+                    and row["version"] == params["source_version"]
+                    and sha256_text(row.get("payload") or "").upper() == params["payload_sha"]
+                    for row in self.rows
+                )
+                else []
+            )
         return [dict(r) for r in self.rows]
 
     async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
@@ -157,6 +173,7 @@ def test_a_failed_replay_ends_failed_again(max_attempts: int) -> None:
     ch = _StubCH([_failed_row(attempts=max_attempts)])
     _requeue(ch, ["q1"], max_attempts=max_attempts)
     row = _failed_row() | {"status": "pending", "attempts": ch.commands[0][1]["attempts"]}
+    ch.rows = [row]  # The in-place retry's current stored revision.
     status = asyncio.run(q.mark_error(row, error="again", max_attempts=max_attempts, ch=ch))
     assert status == "failed" and ch.inserted[-1]["attempts"] == max_attempts
 

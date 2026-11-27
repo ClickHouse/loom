@@ -37,8 +37,9 @@ class _Recorder:
     async def post(self, url: str, **kw: Any) -> httpx.Response:
         self.calls.append({"url": url, **kw})
         body = {
-            "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
         }
         return httpx.Response(200, json=body, request=httpx.Request("POST", url))
 
@@ -58,7 +59,8 @@ def test_a_switched_off_orgs_request_call_is_refused_before_anything_is_sent(mon
     _request("acme")
     with pytest.raises(customer.ModelCallsDisabled):
         _chat(monkeypatch)
-    assert "openai:chat" not in provider_health.status().get("providers", {})  # not its failure
+    # Not the provider's failure.
+    assert "openai:responses" not in provider_health.status().get("providers", {})
 
 
 def test_other_orgs_and_the_deployments_own_calls_go_on(monkeypatch) -> None:
@@ -94,7 +96,7 @@ def test_a_cli_command_for_a_switched_off_org_sends_nothing(monkeypatch, cmd: st
     # customer header it is what puts the org's switch in force.
     import argparse
 
-    from server.cli import app
+    from server.cli import dispatch
     from server.embedding.fake import FakeNGramEmbedder
 
     monkeypatch.setattr(settings, "inference_customer_header", "")
@@ -107,7 +109,7 @@ def test_a_cli_command_for_a_switched_off_org_sends_nothing(monkeypatch, cmd: st
         return 0
 
     with pytest.raises(customer.ModelCallsDisabled):
-        app._dispatch(
+        dispatch._dispatch(
             argparse.Namespace(cmd=cmd, org="acme" if cmd != "code" else None, func=command)
         )
     assert sent == []
@@ -435,8 +437,9 @@ async def test_the_embedding_worker_leaves_a_switched_off_orgs_stubs_until_it_is
             dict(s) for s in stubs if s["org"] not in exclude_orgs and s["memory_key"] not in done
         ]
 
-    async def insert_rows(rows: list[dict[str, Any]], *a: Any, **kw: Any) -> None:
+    async def insert_rows(rows: list[dict[str, Any]], *a: Any, **kw: Any) -> list[dict[str, Any]]:
         inserted.extend(rows)
+        return rows
 
     async def none(**_: Any) -> list[Any]:
         return []
@@ -618,7 +621,8 @@ def test_no_refusal_and_no_unreadable_switch_is_a_provider_failure(
     genai._identity.set(None)
     with pytest.raises(customer.Unattributed):
         asyncio.run(client.complete("s", "u"))
-    assert sent.calls == [] and "openai:chat" not in provider_health.status().get("providers", {})
+    assert sent.calls == []
+    assert "openai:responses" not in provider_health.status().get("providers", {})
 
 
 def test_a_failed_read_waits_its_turn_and_the_copy_serves_until_too_old(switch: _Switch) -> None:
@@ -662,6 +666,24 @@ class _DropCH:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if "FROM loom.memory_refusals" in sql:
+            return []
+        if "source_version" in params:
+            from server.core.hashing import sha256_text
+
+            return (
+                [{"found": 1}]
+                if any(
+                    all(
+                        row.get(k) == params[k]
+                        for k in ("org", "namespace", "agent", "user_id", "session_id", "queue_id")
+                    )
+                    and row["version"] == params["source_version"]
+                    and sha256_text(row.get("payload") or "").upper() == params["payload_sha"]
+                    for row in self.rows
+                )
+                else []
+            )
         self.sql, self.params = sql, params
         return self.rows
 
@@ -671,7 +693,19 @@ class _DropCH:
         self.inserts.append((table, rows))
 
 
-_WAITING = [{"org": "acme", "namespace": "n", "queue_id": "q1", "status": "pending"}]
+_WAITING = [
+    {
+        "org": "acme",
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "version": 1,
+        "payload": '{"messages":[]}',
+        "queue_id": "q1",
+        "status": "pending",
+    }
+]
 
 
 def test_a_dropped_request_is_marked_failed_after_its_drop_record_is_written() -> None:

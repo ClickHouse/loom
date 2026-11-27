@@ -550,9 +550,10 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
             )
         )
     if out:
-        await insert_embedding_rows(out, ch=ch)
+        admitted = await insert_embedding_rows(out, ch=ch)
         await retire_copies_under_unembedded_heads(out, ch=ch)
-    return len(out)
+        return len(admitted)
+    return 0
 
 
 async def _close_mined_facts(

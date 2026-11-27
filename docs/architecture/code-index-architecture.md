@@ -27,6 +27,19 @@ a missing one (or `loom code init` does, ahead of time) and fetches it on every 
 `server/code/app/index/gitrepo.py` shells out to `git`; it has no working tree and writes
 nothing except `fetch`. Branches of one repository share the mirror.
 
+CLI backfills resolve sibling imports and re-exports from the mirror at the pinned
+backfill commit, including their edge reconciliation pass. Search chunks can carry
+doc comments and overlapping context, so their concatenation is not authoritative
+source text for parsing a sibling module.
+
+Sibling text, Python layouts, workspace registries, module indexes, compiler configs
+and barrel targets cache by tenant and namespace plus the pinned Git directory and
+commit. Concurrent passes share a pending read only within that source. Indexed-text
+reads use a separate cache scope. Each cache expires entries and bounds their count;
+the text cache also bounds the bytes it holds. Python ingestion resolves its layout
+before chunking and passes the layout snapshot to facet extraction; chunking threads
+do not access the mutable cache.
+
 A history read (`blame_range`, bisect, `first_build`, a lesson's code check) on a host
 without the mirror clones it once in the background
 (`server/code/app/index/mirrors.py`, `history_dir`). A read that names its op waits up
@@ -177,7 +190,9 @@ flowchart LR
 2. **Re-indexes exactly the changed files** of each commit (`ingest_file` in
    `code/app/index/ingest.py`): parse, chunk, symbols, edges, call guards, the file
    row, and a context pack and review brief for the merged PR the commit names. Then it
-   advances `git_head`. A crash re-runs from the last complete commit.
+   advances `git_head`. A crash re-runs from the last complete commit. Across entries
+   the pass takes one commit per entry per round, so a long backlog never holds another
+   entry's new commits; a round the budget ends resumes next pass at the entry (org and namespace) it missed.
 3. **Walks** with the share `LOOM_CODE_INGEST_WALK_BUDGET_SHARE` leaves: reconciliation
    heals and extractor re-chunks (below).
 
@@ -196,6 +211,13 @@ Lanes help because a lane waits on ClickHouse round trips, not CPU.
 (`code/app/index/denylist.py`, `LOOM_CODE_INGEST_EXCLUDE`,
 `LOOM_CODE_INGEST_IGNORE_FILE`), is binary, or exceeds `LOOM_CODE_INGEST_MAX_FILE_BYTES`.
 So `coverage_floor: true` on a grep means every admitted chunk, not every byte.
+A path the entry's `embed_exclude` globs name (`LOOM_CODE_EMBED_EXCLUDE` for the scalar
+entry) is admitted, chunked and mapped, but its chunks are neither described nor embedded:
+they carry the `unembedded by design` marker, which every writer of a vector or a
+description honours and the coverage counts skip, the `code_summary` pass writes no card
+for them, and code.search reaches them through the lexical leg only. A changed glob
+applies to chunks written after it, in both directions (the operations guide's
+`embed_exclude` notes name the repair).
 
 ### Choosing a parser
 
@@ -234,11 +256,24 @@ Tree-sitter modules import lazily, so a server with the code workers off boots w
 | `file_header`    | Leading comments and includes.                                                                              |
 | `other`          | The rest, grouped.                                                                                          |
 
+Python search responses omit a prefixed class docstring when the skeleton already contains its text.
+
 Files without a tree fall back to whole-line windows; lanes without a grammar cut on
 their symbol spans (`lane_units.span_chunks`). A chunk id is
 `uuid5("loom://code/{namespace}/{path}#{scope}@{sha16}")`. It is content-addressed, so
 an unchanged chunk keeps its id and hash and the embed step skips it without a lookup.
 Identical chunks in one file get an ordinal suffix.
+
+Class skeletons carry compacted presentation text, not physical source coordinates.
+The chunker retains class source outside method chunks as `other` chunks, including
+documentation, declarations, data members and blank separators. These source runs
+keep their original line spans even when they are shorter than the general
+leftover-chunk threshold. Body reconstruction requires every source line; missing
+separators cause an incomplete read even when all member bodies are present.
+Skeletons remain available for class summaries, and unmappable chunks still disclose
+partial grep coverage. Retaining source adds chunk rows and can add embedding work.
+The shared chunker's stamp moves only the chunk stage, across language families;
+existing indexes need that stage re-derived before missing source becomes readable.
 
 ### Symbols and edges
 
@@ -336,6 +371,67 @@ the C++ tier; `loom code scip-delta` runs one delta pass.
 
 Where both tiers hold the same row, reads prefer the compiler row, and every answer
 names the tier it read (`scip` or `treesitter`).
+
+Exact code grep answers can carry the caller's readable code-linked lessons for
+the matched files. Lessons are read after cached match data, within the request's
+remaining deadline. Presence queries and uncovered paths carry none;
+`include_lessons=false` skips the read.
+
+`code.enclosing` carries the same file lessons for resolved locations. Repeated
+locations share one file read; unresolved locations bring no lessons. The caller's
+readable memory namespaces, narrowed-token refusal, timeout and token cap apply
+through the shared result enrichment. Resolved symbol names rank matching lessons
+after constraints and pins; unresolved names contribute no query terms. Empty
+lesson fields stay off the wire.
+
+When several grep hits need implementation source, pass their `path:line`
+locations to `code.enclosing` with `include_body=true`. It returns complete
+enclosing definitions together. `code.symbol` resolves a named definition or
+one location; the batch avoids a separate lookup for every located definition.
+
+`code.read` reads several known line ranges in one request. It uses a local
+Git mirror and checks the blob's hash against each indexed file record.
+Only files indexed for text search qualify. Projected notebook cells and
+reference fixtures with omitted text are unavailable. The response gives
+inclusive line numbers for each window and marks unavailable ranges, including
+ranges that exceed the request’s source byte limit.
+
+Python SCIP identities use the same placeholder for callables of every
+arity. Definition and enclosing-body responses recover the parameter list
+from a retained declaration with the matching name. Metadata-only responses
+leave the signature empty when the index provides only the placeholder.
+The stored identity and call edges keep their existing keys.
+
+Search and grep rank candidate lessons across all selected files by query-term
+overlap after constraints and pinned rows. English inflections share stems; equal
+matches keep path order, then the listing's confidence and recency order.
+The remaining file-lesson reads retain path and listing order.
+The ranking uses the existing namespace-scoped candidates. On trunk, uncapped
+grep responses focus lessons on the definitions their matches name. Search
+focuses a file's lessons when a returned definition has an exact linked lesson.
+Whole-file search hits use file-level selection. Grep omits a candidate by scope
+only if its link was checked at the same revision as the matched chunks. Matches
+outside a named definition also keep candidates with overlapping or unverified
+link ranges. Read the broader file history with `memory.for_file`. Before
+omitting a lesson by scope, the enrichment checks its live link set for pending
+and uncertain links within the request's enrichment deadline. Ranking and
+focusing add no model calls.
+
+File and symbol lessons carry complete memory text, including source references.
+The internal file listing reads complete values; the pre-edit block keeps its own
+read and render limits. A configured `code_result_lessons_tokens` budget leaves out
+whole lessons rather than cutting their conditions. Its default of zero is
+unlimited. With an explicit symbol request budget, source definitions take precedence;
+whole linked lessons fit in the remainder and `lessons_left_out` counts omissions.
+
+`bench/replay_code_lessons.py` compares recorded lesson order with query-aware order
+from an evaluation's native memory certificates and grep answers. It retains every
+timestamp-tie order that reproduces the recorded answer. Cases whose reads cannot be
+reconstructed remain unknown. This offline replay measures lesson order, not solver success.
+
+Python compiler conversion keeps callable and class descriptors distinct from
+parameters, type parameters and fields. Call edges require a containing function
+span; a reference at module or class scope does not belong to the preceding function.
 
 ## The extractor stamp
 
@@ -471,6 +567,28 @@ Every column is in the generated [schema reference](../reference/schema.md).
 
 ## Query patterns
 
+A file-qualified symbol request (`src/module.py:Type.method` or
+`src/Type.cpp:Namespace::Type::method`) keeps the filename as a hard constraint.
+The exact indexed path takes precedence even when it lacks the requested symbol.
+If it is absent, an unanchored relative path with two or more components can match
+the complete suffix of one live indexed file in the namespace. A `./` or absolute
+path keeps the lookup exact. Both symbol reads use the selected path before ranking
+and limiting. The response includes `resolved_by: file_symbol`, the canonical
+indexed path, and the stored symbol name and id. The shared resolver applies this
+spelling to structural code operations.
+
+Python import spellings use the bounded short-name candidate read after an exact
+symbol miss. Read-side matching preserves dotted module scopes and treats a package's
+`__init__.py` as implicit. Only Python source rows participate; ambiguous or incomplete
+candidate sets decline. The response discloses `resolved_by: python_module` while
+retaining stored names and ids. Extraction and its stamp do not change.
+
+Memory code links use the same Python import spellings when resolving named
+definitions. A package-level name such as `pkg.json.dumps` can anchor the definition
+in `pkg/json/__init__.py`; its stored qualified name remains intact. Constructor
+names remain explicit, and ambiguous matches stay unlinked unless the memory's
+file scope selects one definition.
+
 | Op                               | Path                          | How                                                                                                                                                                                                                                                                                                                                                                                                |
 | -------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `code.search`                    | `code/app/search/pipeline.py` | Routes first (pattern, path, history question), then runs legs under the deadline (`gather.py`): lexical (idf-weighted token count), vector (a scan with no vector index, or twin shortlist), PR history, fuzzy symbol vote. `fusion.py` fuses by reciprocal rank (k = 60); `serve.py` pages into the token budget or abstains. A repeat within the memo window is one read of `code_search_memo`. |
@@ -479,14 +597,30 @@ Every column is in the generated [schema reference](../reference/schema.md).
 | `code.callers`, `code.impact`    | `code/store/index/edges.py`   | Callers are the `to_symbol_id` range of `code_edges`, compiler rows preferred, with the unresolved count. `code.impact` maps diff hunks to seed symbols and walks outward; an empty walk answers `no_indexed_paths`, `no_seeds_in_hunks` or `no_static_callers`.                                                                                                                                   |
 | `code.outline`, `code.enclosing` | —                             | Per-path reads of `code_symbols` and `code_chunks` spans.                                                                                                                                                                                                                                                                                                                                          |
 
+The lexical text-index gate tokenizes the query with `splitByNonAlpha`, matching the
+index tokenizer. The score counts only whole app lexemes and rejects partial matches
+from the gate. Underscore-only lexemes use the exact score within the same tenant,
+model and path scope because the text index has no token for them.
+
+After relevance ranking, per-file saturation spreads broad search results across
+files. It is skipped for an explicit path, a symbol route, test intent, or a
+code-shaped identifier named in the query that matches a qualified symbol
+component in the relevance window. This keeps related definitions together for
+questions about a named identifier. An unmatched identifier does not disable
+saturation. Per-symbol deduplication still removes repeated chunks of one definition,
+and continuation pages retain the final served order.
+
 ### Symbol bodies
 
 Literal hits, rendered-message matches and symbol mentions use the same retained-source
 line mapping as definition bodies. Copied doc comments and continuation headers do not
-become file lines. Compacted class skeletons and incomplete source fragments cannot
-establish exact hit coordinates: grep omits those lines and marks its response partial,
-and symbol mentions disclose truncation. A missing hit in that response is not evidence
-that the file lacks the text.
+become file lines. Compacted class skeletons cannot establish exact hit coordinates.
+Grep and symbol mentions recover their retained raw chunks under the same tenant,
+model and path. A summary is replaced only when those chunks cover its span without
+gaps or disagreements with already-read source. Recovery shares the grep scan's
+character bound and any caller-supplied deadline. Incomplete or failed recovery leaves
+grep partial and symbol mentions truncated. A missing hit in that response is not
+evidence that the file lacks the text.
 
 Grep continuation pools retain source-mapping and partial-coverage metadata. A
 pool with another mapping triggers a disclosed rerun; restart pagination for

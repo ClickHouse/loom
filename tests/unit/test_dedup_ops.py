@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
+from server.core.hashing import sha256_value
 from server.memory.domain.webhook_events import memory_change
 from server.memory.store.dedup import CanonicalRef, DuplicateCluster
 from server.memory.store.rows import MemoryRow
@@ -557,17 +558,28 @@ async def test_clear_duplicate_tag_writes_a_full_version_and_mirrors_it(monkeypa
             if "FROM loom.memory_refusals" in sql:
                 return []
             if "FROM loom.memory FINAL" in sql and "PREWHERE (org, namespace" in sql:
-                return [mr.build_memory_version_row(existing)]
-            emb = {c: None for c in mr.EMBEDDING_PERSISTED_COLS}
-            identity = {
-                "org": "src-org",
-                "namespace": "src-ns",
-                "agent": "a",
-                "user_id": "u",
-                "session_id": "s",
-                "memory_key": "k",
-            }
-            return [emb | identity | {"status": "duplicate"}]
+                return next(
+                    (rows for table, rows in reversed(self.inserts) if table == "loom.memory"),
+                    [mr.build_memory_version_row(existing)],
+                )
+            return [
+                mr.build_embedding_row(
+                    **{
+                        c: getattr(existing, c)
+                        for c in (
+                            "org",
+                            "namespace",
+                            "agent",
+                            "user_id",
+                            "session_id",
+                            "memory_key",
+                        )
+                    },
+                    status="duplicate",
+                    version=existing.version,
+                    content_sha256=sha256_value(existing.value),
+                )
+            ]
 
         async def insert(self, table, rows, settings=None):
             self.inserts.append((table, rows))

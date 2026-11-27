@@ -401,26 +401,22 @@ async def _fetch_for_forget_requests(
 async def _retire_forgotten(state: WorkflowState, keys: set[str]) -> int:
     """Tombstone the live row of every key the user asked to forget, under
     this identity's org/namespace and any agent/session (the row may have
-    been written in an earlier session). Fails open per key; returns how many
-    were retired."""
+    been written in an earlier session). Refusal policy failures stop extraction."""
     from server.memory.app.handlers import handle_memory_delete
 
     n = 0
     for key in sorted(keys):
-        try:
-            out = await handle_memory_delete(
-                MemoryDeleteInput(
-                    org=state.org,
-                    namespace=state.namespace,
-                    agent="*",
-                    user_id=state.user_id or "-",
-                    session_id="-",
-                    memory_key=key,
-                )
+        out = await handle_memory_delete(
+            MemoryDeleteInput(
+                org=state.org,
+                namespace=state.namespace,
+                agent="*",
+                user_id=state.user_id or "-",
+                session_id="-",
+                memory_key=key,
             )
-            n += 1 if getattr(out, "tombstoned", False) else 0
-        except Exception as e:  # noqa: BLE001 — a forget that fails is logged, never fatal
-            log.warning("forget request: retiring %r failed (open): %s", key, e)
+        )
+        n += 1 if getattr(out, "tombstoned", False) else 0
     return n
 
 

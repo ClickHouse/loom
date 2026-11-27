@@ -81,6 +81,9 @@ The diagnostic holds ClickHouse reachability and worker and embedder configurati
 
 ## Development setup
 
+The [source contribution lab](.devcontainer/source/README.md) provides a local
+development container and bounded public-fork checks for a first reproduction.
+
 ```bash
 git clone https://github.com/ClickHouse/loom.git
 cd loom
@@ -183,7 +186,7 @@ Adding a new operation ([full walkthrough](./docs/development/adding-an-operatio
 1. Define `<Op>Input` / `<Op>Output` Pydantic models in `server/<domain>/api/models_<group>.py`.
 2. Write the handler in `server/<domain>/app/<group>.py`; it imports the models at module top.
 3. Declare the `Operation` in `server/<domain>/api/ops_<group>.py` and append it to that module's `OPERATIONS`.
-4. Regenerate the SDK op tables and the Python per-op client: `python scripts/codegen/sdk_py_gen.py`, `python scripts/codegen/sdk_py_client_gen.py` and `python scripts/codegen/sdk_ts_gen.py` (CI runs each with `--check`). Add a method to the hand-written client in `sdk/python/loom/<group>.py` when the op belongs in the high-level API.
+4. Regenerate the SDK op tables and the Python per-op client: `python scripts/codegen/sdk_py_gen.py`, `python scripts/codegen/sdk_py_client_gen.py`, `python scripts/codegen/sdk_ts_gen.py` and `python scripts/codegen/sdk_rb_gen.py` (each has a `--check`). Add a method to the hand-written client in `sdk/python/loom/<group>.py` when the op belongs in the high-level API.
 5. Add unit tests, and an integration test under `tests/integration/` for a new read or write path.
 
 The HTTP and MCP transports discover registered operations; you don't touch transport code.
@@ -200,7 +203,7 @@ With an allowance and the restricted runner configured, translation follows an E
 
 `python -m scripts.i18n.translate check` reports every missing, stale and obsolete page across all five translation locales. `check --skip-stale` permits pending coverage but still checks present stamps, banners, links, anchors and translated labels, plus the content invariants of current output. Ordinary PR tests follow this asynchronous contract. A changed prompt requires an explicit `update --all`; a generated refresh receipt tracks that request across bounded scheduled batches and pending-branch reuse. Completed source/output proofs prevent repeated calls; the receipt stays until main contains those results. A concurrent main translation is preserved when it differs from the refresh's recorded base output. Model and banner changes invalidate stamps automatically.
 
-The updater imports only validated generated blobs from `i18n/update`, preserving fresh main output. Owned output outside a selected batch can remain as hidden checkpoint data after its English source changes or disappears. Such archives never become publication routes; activation still requires current source, model and content validation. A conflicting existing checkpoint refuses replacement so both versions remain recoverable. It executes no code from that branch. It dispatches hosted CI for the exact bot commit because PR events created with `GITHUB_TOKEN` do not start CI. A hosted finalizer checks the successful commit, generated diff, current main parent, current language approval and repository review requirements before merging. Required human reviews remain required. After merge it explicitly dispatches the docs-site workflow; publication also requires the site's deployment configuration. A newer main commit defers merging until the producer composes another batch.
+The updater imports only validated generated blobs from `i18n/update`, preserving fresh main output. Owned output outside a selected batch can remain as hidden checkpoint data after its English source changes or disappears. Such archives never become publication routes; activation still requires current source, model and content validation. A conflicting existing checkpoint refuses replacement so both versions remain recoverable. It executes no code from that branch. It dispatches hosted CI for the exact bot commit because PR events created with `GITHUB_TOKEN` do not start CI. A hosted finalizer checks for successful CI on a 15-minute schedule. Finalization checks and translation batches wait in the same queue and run one at a time. It checks the exact commit, generated diff, current main parent, current language approval and repository review requirements before merging. Required human reviews remain required. After merge it explicitly dispatches the docs-site workflow; publication also requires the site's deployment configuration. A newer main commit defers merging until the producer composes another batch.
 
 The script calls Claude Sonnet 5.5 on Amazon Bedrock through `AnthropicBedrock`. Local runs also spend money and require separate authorization. For an authorized run:
 

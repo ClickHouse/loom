@@ -9,8 +9,20 @@ from typing import Any
 
 import pytest
 
+from server.core.hashing import sha256_value
 from server.memory import store as memory_repo
 from server.memory.store import lifecycle
+
+
+@pytest.fixture
+def mirror_publication(monkeypatch):
+    """Reconcile selection uses an acknowledged publisher; consent has separate cases."""
+
+    async def publish(rows, *, ch):
+        await ch.insert("loom.memory_embeddings", rows)
+        return rows
+
+    monkeypatch.setattr("server.memory.store.embeddings.insert_embedding_rows", publish)
 
 
 class _CH:
@@ -19,11 +31,18 @@ class _CH:
     def __init__(self, emb_status: str = "active") -> None:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
         self.emb_status = emb_status
+        self.heads: dict[Any, Any] = {}
 
     async def query_all(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         p = params or {}
+        if "FROM loom.memory FINAL" in sql:
+            return [
+                memory_repo.build_memory_version_row(self.heads[key])
+                for key in p.get("keys", [])
+                if key in self.heads
+            ]
         if "FROM loom.memory_embeddings FINAL" in sql:
             # the keyed read: one identity per position of the six arrays
             return [
@@ -42,6 +61,7 @@ class _CH:
                     "status": self.emb_status,
                     "version": 1,
                     "content_excerpt": "x",
+                    "content_sha256": sha256_value("x"),
                 }
                 for o, n, a, u, s_, k in zip(
                     p["o"], p["n"], p["a"], p["u"], p["s"], p["k"], strict=True
@@ -53,6 +73,13 @@ class _CH:
         self, table: str, rows: list[dict[str, Any]], settings: dict[str, Any] | None = None
     ) -> None:
         self.inserts.append((table, rows))
+        if table == "loom.memory":
+            from server.memory.store.rows import identity_key
+
+            for row in rows:
+                key = identity_key(row)
+                if key in self.heads:
+                    self.heads[key] = self.heads[key].model_copy(update=row)
 
 
 def _existing(status: str = "active") -> Any:
@@ -72,6 +99,13 @@ def _existing(status: str = "active") -> Any:
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, ch: _CH, existing: Any) -> None:
+    from server.memory.store.rows import MemoryRow, identity_key
+
+    source = MemoryRow.from_snapshot(
+        {**vars(existing), "value": "x", "content_sha256": sha256_value("x")}
+    )
+    ch.heads[identity_key(source)] = source
+
     async def _get_by_id(
         memory_id: str,
         *,
@@ -159,6 +193,7 @@ async def test_already_mirrored_row_is_not_rewritten(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("mirror_publication")
 async def test_reconcile_holds_back_a_key_the_authority_has_moved_past(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -229,6 +264,7 @@ def test_reconcile_status_reports_the_held_back_keys_apart_from_the_statuses(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("mirror_publication")
 async def test_reconcile_counts_on_dry_run_and_mirrors_otherwise() -> None:
     class _RCH(_CH):
         async def query_all(
@@ -278,6 +314,7 @@ async def test_reconcile_counts_on_dry_run_and_mirrors_otherwise() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("mirror_publication")
 async def test_reconcile_reads_the_mirror_by_the_full_identity() -> None:
     """One memory_key lives under many identities,
     each with its own status. The divergence is computed per identity row and
@@ -322,6 +359,7 @@ async def test_reconcile_reads_the_mirror_by_the_full_identity() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("mirror_publication")
 async def test_reconcile_reads_the_mirror_in_one_statement_per_batch() -> None:
     """`loom reconcile-status` hands up to 5,000 divergent identities to the
     mirror: one keyed read per 500 of them, not one read per identity."""
@@ -643,9 +681,12 @@ class _RejectCH(_CH):
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         if "FROM loom.memory FINAL" in sql:
+            if "keys" in (params or {}):
+                return await super().query_all(sql, params)
             assert (params or {})["key"] == "home"
             return [{"memory_id": "m1"}, {"memory_id": "m2"}]
-        self.vector_reads.append(sql)
+        if "FROM loom.memory_embeddings FINAL" in sql:
+            self.vector_reads.append(sql)
         rows = await super().query_all(sql, params)
         # Each vector row was copied at read + 1 since its memory row (version 1).
         return [{**r, "version": 2} for r in rows]
@@ -668,10 +709,20 @@ def _wire_sessions(monkeypatch: pytest.MonkeyPatch, ch: _CH) -> None:
         return heads[memory_id]
 
     async def _current(keys, **kwargs):
-        from server.memory.store.rows import MemoryRow, identity_key
 
-        rows = [MemoryRow.from_snapshot(vars(row)) for row in heads.values()]
-        return {identity_key(row): row for row in rows if identity_key(row) in keys}
+        return {key: row for key, row in ch.heads.items() if key in keys}
+
+    from server.memory.store.rows import MemoryRow, identity_key
+
+    ch.heads = {
+        identity_key(row): row
+        for row in (
+            MemoryRow.from_snapshot(
+                {**vars(head), "value": "x", "content_sha256": sha256_value("x")}
+            )
+            for head in heads.values()
+        )
+    }
 
     monkeypatch.setattr(lifecycle, "get_by_id", _get_by_id)
     monkeypatch.setattr("server.memory.store.write_fence.memory_rows_by_identity_keys", _current)

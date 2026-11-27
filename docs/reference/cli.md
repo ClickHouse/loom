@@ -228,7 +228,7 @@ python scripts/codegen/docs_reference.py
 | --- | --- | --- |
 | `loom code` | Code intelligence plane operations. |  |
 | `loom code init` | Create the bare clone + seed state. | `--org`, `--namespace` |
-| `loom code backfill` | Full-tree indexing (resumable). | `--org`, `--namespace`, `--phase`, `--embed`, `--include-poisoned`, `--allow-fake-embedder`, `--no-fetch`, `--limit`, `--commit`, `--paths-file`, `--concurrency`, `--edges-second-pass`, `--no-edges-second-pass`, `--dialect-folder-pass`, `--embedding-model-suffix`, `--context-callees`, `--callers-from` |
+| `loom code backfill` | Full-tree indexing (resumable). | `--org`, `--namespace`, `--phase`, `--embed`, `--include-poisoned`, `--allow-fake-embedder`, `--no-fetch`, `--limit`, `--commit`, `--paths-file`, `--concurrency`, `--workers`, `--edges-second-pass`, `--no-edges-second-pass`, `--dialect-folder-pass`, `--embedding-model-suffix`, `--context-callees`, `--callers-from` |
 | `loom code reconcile` | Content-based staleness check: paths whose chunks predate their last change at the branch head; --heal re-ingests them (watermark untouched). | `--org`, `--namespace`, `--heal`, `--limit`, `--max-commits`, `--no-fetch`, `--show` |
 | `loom code compact` | OPTIMIZE ... FINAL a code vector table when its physical copies per key reach --min-ratio, and wait for the merge. | `--table`, `--min-ratio`, `--apply`, `--dry-run`, `--timeout-s` |
 | `loom code reembed` | Write the namespace's live chunks under a second embedding model's label: in-database, resumable, no checkout. | `--org`, `--namespace`, `--embedding-model`, `--source-model`, `--prefix`, `--batch` |

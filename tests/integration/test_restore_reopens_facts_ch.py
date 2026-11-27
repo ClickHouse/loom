@@ -52,15 +52,15 @@ async def _paris_open(ch: Any, org: str, want: bool) -> bool:
 
 async def test_undoing_a_delete_reopens_the_facts_the_row_states(ch) -> None:
     from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput
-    from server.memory.app.handlers import handle_memory_delete
     from server.memory.app.restore import handle_memory_restore
+    from tests.integration._memory import retire_reversibly
 
     org = unique_org("restore-facts")
     fact = ("user", "live_in", "paris")
     a, b = f"a-{uuid.uuid4().hex[:6]}", f"b-{uuid.uuid4().hex[:6]}"
     await _set(org, a, "I live in Paris", [fact])
     await _set(org, b, "Home for me is the city of Paris, France", [fact])
-    await handle_memory_delete(MemoryDeleteInput(org=org, namespace=NS, agent="bot", memory_key=a))
+    await retire_reversibly(MemoryDeleteInput(org=org, namespace=NS, agent="bot", memory_key=a))
     # B still states it, so it stays open; B's revision drops it, and nothing holds it.
     assert await _paris_open(ch, org, want=True)
     await _set(org, b, "Weekends go to sailing lessons on the lake", [])

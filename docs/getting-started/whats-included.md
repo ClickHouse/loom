@@ -65,9 +65,10 @@ cited answers need a real LLM ([models and API keys](models-and-keys.md)).
 ## Ways to connect
 
 MCP for any MCP client, plugins for Claude Code and Codex, framework adapters, an HTTP API,
-Python and TypeScript SDKs, and the `loom` CLI:
+Python, TypeScript and Rust SDKs, and the `loom` CLI:
 [Integrations](../features/integrations/index.md) ·
 [MCP clients](../features/integrations/mcp-clients.md) ·
 [Frameworks](../features/integrations/frameworks.md) ·
 [HTTP API](../reference/http-api.md) · [Python SDK](../reference/python-sdk.md) ·
-[TypeScript SDK](../reference/typescript-sdk.md) · [CLI](../reference/cli.md).
+[TypeScript SDK](../reference/typescript-sdk.md) ·
+[Rust SDK](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md) · [CLI](../reference/cli.md).

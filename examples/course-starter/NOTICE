@@ -1,0 +1,17 @@
+Loom
+Copyright 2026 ClickHouse, Inc.
+
+This product includes software developed at ClickHouse, Inc.
+(https://clickhouse.com).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+-------------------------------------------------------------------------------
+Third-party components
+-------------------------------------------------------------------------------
+
+Loom contains third-party software and data distributed under their own
+licenses, including Apache-2.0, MIT, BSD, ISC, MPL-2.0, the SIL Open Font
+License, and CC BY-SA 4.0 material. The required attributions and links are in
+THIRD_PARTY_NOTICES. Distribution-specific dependency notices accompany the
+corresponding binary artifacts.

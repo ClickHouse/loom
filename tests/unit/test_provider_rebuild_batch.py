@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from server.code.domain.extract.lang_reference import UNEMBEDDED_BY_DESIGN, UNEMBEDDED_EMBED_EXCLUDE
 from server.insights.app import provider_rebuild_batch
 from server.insights.app.provider_rebuild_batch import (
     PASSAGE_TABLES,
@@ -122,6 +123,23 @@ async def test_code_uses_context_and_falls_back_to_content(target):
     raw = {**contextual, "context_text": ""}
     await rebuild_batch("code_chunks", [contextual, raw], target)
     target.embed_many.assert_awaited_once_with(["contextual source", "raw source"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("table", ["code_chunks", "code_summaries"])
+async def test_a_code_row_unembedded_by_design_is_staged_without_a_vector(table, target):
+    """A reference fixture or an `embed_exclude` path keeps its marker under the new model."""
+    marked = [
+        {**row_for(table), "embedding": [], "embedding_dim": 0, "embed_last_error": marker}
+        for marker in (UNEMBEDDED_BY_DESIGN, UNEMBEDDED_EMBED_EXCLUDE)
+    ]
+    out = (await rebuild_batch(table, [row_for(table), *marked], target)).rows
+    target.embed_many.assert_awaited_once()
+    assert [r["embedding_dim"] for r in out] == [2, 0, 0]
+    assert [r.get("embed_last_error", "") for r in out[1:]] == [
+        UNEMBEDDED_BY_DESIGN,
+        UNEMBEDDED_EMBED_EXCLUDE,
+    ]
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,9 @@
+---
+description: Build an AI agent with persistent memory using the Python SDK. Save user-scoped facts, recall them in a new session, and ground answers in stored evidence.
+seo:
+  title: Give a Python AI agent persistent memory
+---
+
 # Your first agent
 
 This tutorial builds a small agent with the Python SDK. It continues from the

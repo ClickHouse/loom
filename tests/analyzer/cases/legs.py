@@ -593,22 +593,13 @@ async def _entity_write(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 
 async def _deep_evidence(ch: RecordingCH, c: dict[str, Any]) -> None:
-    from server.memory.app.deep_evidence import fetch_raw_evidence, fetch_session_turns
+    from server.memory.app.deep_evidence import fetch_raw_evidence
 
     await fetch_raw_evidence(
         org=ORG,
         namespace=NS,
         memory_keys=["k1", "k2"],
         max_chars_per_memory=800,
-        max_chars_total=4000,
-        ch=ch,
-    )
-    await fetch_session_turns(
-        org=ORG,
-        namespace=NS,
-        session_ids=["s1"],
-        question="q",
-        max_chars_per_session=800,
         max_chars_total=4000,
         ch=ch,
     )

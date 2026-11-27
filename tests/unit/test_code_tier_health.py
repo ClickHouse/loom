@@ -190,7 +190,7 @@ def test_a_credential_fix_names_the_host_the_submodule_and_the_setting() -> None
     "secret",
     [
         "https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz0123@github.com/o/r",
-        "token ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        "token ghp_abc" + "0" * 33,
         "Authorization: Basic eC1hY2Nlc3MtdG9rZW46c2VjcmV0",
         "github_pat_11ABCDEFG0123456789_abcdefghijklmnop",
     ],
@@ -634,7 +634,7 @@ async def test_an_entry_the_budget_cut_is_not_recorded_healthy() -> None:
 
     await ingest_pass._run_leg(result, spent, [served, cut], "walk", never)
     assert result.unserved == {("o", "code-x"), ("o", "code-y")}
-    assert result.resume == "code-x:walk"  # the next pass starts at the first
+    assert result.resume == "o/code-x:walk"  # the next pass starts at the first
 
 
 @pytest.mark.asyncio

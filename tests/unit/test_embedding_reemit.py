@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from server.core.hashing import sha256_value
 from server.memory import store as M
 
 
@@ -33,15 +35,60 @@ ROOT = Path(__file__).resolve().parents[2]
 class _CH:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
+        self.heads = {}
+        self.execute_calls = []
+        for row in rows:
+            if row.get("scope") != "shared":
+                source = _memory_row(
+                    **{
+                        k: row[k]
+                        for k in (
+                            "org",
+                            "namespace",
+                            "agent",
+                            "user_id",
+                            "session_id",
+                            "memory_key",
+                        )
+                    }
+                )
+                self.heads[M.identity_key(source)] = M.build_memory_version_row(source)
         self.query_all_calls: list[tuple[str, dict[str, Any]]] = []
         self.insert_calls: list[tuple[str, list[dict[str, Any]], dict[str, Any]]] = []
 
     async def query_all(self, sql, params=None):
         self.query_all_calls.append((sql, params or {}))
+        if "memory_refusals" in sql:
+            return []
+        if "FROM loom.memory FINAL" in sql:
+            return [r for k, r in self.heads.items() if k in (params or {}).get("keys", self.heads)]
         return list(self.rows)
 
     async def insert(self, table, rows, settings=None):
         self.insert_calls.append((table, rows, settings or {}))
+        if table == "loom.memory":
+            self.heads.update((M.identity_key(r), dict(r)) for r in rows)
+
+    async def execute(self, sql, params=None, *, settings=None):
+        self.execute_calls.append((sql, params, settings))
+        assert sql.startswith("DELETE FROM loom.memory_embeddings")
+        columns = (
+            "org",
+            "namespace",
+            "agent",
+            "user_id",
+            "session_id",
+            "scope",
+            "embedding_model",
+            "memory_key",
+        )
+        self.rows = [
+            r
+            for r in self.rows
+            if not (
+                all(r.get(c) == params[c] for c in columns) and r["version"] < params["version"]
+            )
+        ]
 
 
 _LIVE = {
@@ -59,6 +106,7 @@ _LIVE = {
     "memory_key_embedding": [0.4, 0.5, 0.6],
     "memory_key_embedding_dim": 3,
     "content_excerpt": "text",
+    "content_sha256": sha256_value("text"),
     "tags": ["t"],
     "confidence": 0.9,
     "expires_at": datetime(2026, 1, 1),
@@ -130,8 +178,11 @@ async def test_shared_reemit_reads_the_scope_shared_rows_of_the_key() -> None:
     sql, params = ch.query_all_calls[0]
     assert "scope = 'shared'" in sql and "FINAL" in sql and "tombstoned_at IS NULL" in sql
     assert params == {"org": "o", "ns": "n", "k": "k"}
-    ((_, rows, _),) = ch.insert_calls
-    assert rows[0]["scope"] == "shared" and rows[0]["tombstoned_at"] == ts
+    assert not ch.insert_calls and not ch.rows
+    ((delete_sql, delete_params, settings),) = ch.execute_calls
+    assert delete_sql.startswith("DELETE FROM loom.memory_embeddings")
+    assert delete_params["scope"] == "shared" and delete_params["version"] > _LIVE["version"]
+    assert settings == {"lightweight_deletes_sync": 2}
 
 
 def _of_keys(rows: list[dict[str, Any]], params: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -156,6 +207,8 @@ class _VectorsCH(_CH):
         self.entity_rows = entity_rows
 
     async def query_all(self, sql, params=None):
+        if "memory_refusals" in sql or "FROM loom.memory FINAL" in sql:
+            return await super().query_all(sql, params)
         self.query_all_calls.append((sql, params or {}))
         if "loom.entity_vectors" in sql:
             return list(self.entity_rows)
@@ -268,6 +321,48 @@ class _RMTCH:
     def __init__(self) -> None:
         self.emb: list[dict[str, Any]] = []
         self.ent: list[dict[str, Any]] = []
+        self.heads = {M.identity_key(_memory_row()): M.build_memory_version_row(_memory_row())}
+        self.execute_calls = []
+
+    def remember(self, rows):
+        for row in rows:
+            key = M.identity_key(row)
+            base = self.heads.get(key) or M.build_memory_version_row(
+                _memory_row(
+                    **dict(
+                        zip(
+                            ("org", "namespace", "agent", "user_id", "session_id", "memory_key"),
+                            key,
+                            strict=True,
+                        )
+                    )
+                )
+            )
+            self.heads[key] = {
+                **base,
+                **{k: v for k, v in row.items() if k in M.MEMORY_PERSISTED_COLS},
+            }
+
+    async def execute(self, sql, params=None, *, settings=None):
+        self.execute_calls.append((sql, params, settings))
+        assert sql.startswith("DELETE FROM loom.memory_embeddings")
+        columns = (
+            "org",
+            "namespace",
+            "agent",
+            "user_id",
+            "session_id",
+            "scope",
+            "embedding_model",
+            "memory_key",
+        )
+        self.emb = [
+            r
+            for r in self.emb
+            if not (
+                all(r.get(c) == params[c] for c in columns) and r["version"] < params["version"]
+            )
+        ]
 
     @staticmethod
     def _final(rows: list[dict[str, Any]], key: Any, ver: Any) -> list[dict[str, Any]]:
@@ -290,12 +385,50 @@ class _RMTCH:
         )
 
     async def query_all(self, sql, params=None):
+        if "memory_refusals" in sql:
+            return []
+        if "FROM loom.memory FINAL" in sql:
+            return [r for k, r in self.heads.items() if k in (params or {}).get("keys", self.heads)]
         if "entity_vectors" in sql:
             return [dict(r) for r in self.live_ent()]
         return [dict(r) for r in _of_keys(self.live_emb(), params)]
 
     async def insert(self, table, rows, settings=None):
-        (self.ent if table == "loom.entity_vectors" else self.emb).extend(dict(r) for r in rows)
+        if table == "loom.memory":
+            self.remember(rows)
+        elif table == "loom.entity_vectors":
+            self.ent.extend(dict(r) for r in rows)
+        elif table == "loom.memory_embeddings":
+            self.emb.extend(dict(r) for r in rows)
+
+
+def _native_admission(monkeypatch, ch):
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    async def execute(*args, **kwargs):
+        return None
+
+    async def fetch(*args, **kwargs):
+        return []
+
+    async def fetchval(*args, **kwargs):
+        return None
+
+    @asynccontextmanager
+    async def transaction():
+        yield SimpleNamespace(execute=execute, fetch=fetch, fetchval=fetchval)
+
+    async def heads(keys, **kwargs):
+        return {k: ch.heads[k] for k in keys if k in ch.heads}
+
+    async def on_connection(conn, keys, **kwargs):
+        assert kwargs["lock"]
+        return await heads(keys)
+
+    monkeypatch.setattr(pg, "transaction", transaction)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads)
+    monkeypatch.setattr(pg_memory, "heads_on_connection", on_connection)
 
 
 class _Head(dict[str, Any]):
@@ -320,21 +453,32 @@ async def test_a_reject_copies_the_heads_own_rows_and_retires_the_rest_bare(monk
     from server.core.ch import sequential_reads_active
     from server.memory.store import lifecycle, pg_memory, pg_publish
 
-    sha = "a" * 64
+    sha = sha256_value("text")
     ch = _RMTCH()
+    _native_admission(monkeypatch, ch)
     ent = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "memory_key": "k"}
     ch.ent.append({**ent, "entity_text": "e", "created_at": datetime(2026, 1, 1)})
     ch.emb += [
         {**_LIVE, "content_sha256": sha},
-        {**_LIVE, "embedding_model": "m2", "content_sha256": "b" * 64, "content_excerpt": "old"},
-        {**_LIVE, "session_id": "s2", "content_sha256": "c" * 64, "content_excerpt": "secret"},
+        {
+            **_LIVE,
+            "embedding_model": "m2",
+            "content_sha256": sha256_value("old"),
+            "content_excerpt": "old",
+        },
+        {
+            **_LIVE,
+            "session_id": "s2",
+            "content_sha256": sha256_value("secret"),
+            "content_excerpt": "secret",
+        },
     ]
     heads = [
         {**ent, "session_id": "s", "content_sha256": sha},
         {
             **ent,
             "session_id": "s2",
-            "content_sha256": "c" * 64,
+            "content_sha256": sha256_value("secret"),
             "redacted_at": datetime(2026, 2, 1),
         },
     ]
@@ -343,6 +487,7 @@ async def test_a_reject_copies_the_heads_own_rows_and_retires_the_rest_bare(monk
         return heads
 
     async def _commit(rows: Any, **_: object) -> pg_memory.Committed:
+        ch.remember(rows)
         deadline = time.monotonic() + 30
         targets = [0] * len(rows)
         return pg_memory.Committed(
@@ -394,7 +539,8 @@ async def test_a_reject_whose_vector_copy_fails_still_stands_and_publishes(
     from server.memory.store import lifecycle, pg_memory, pg_publish
 
     ch = _RMTCH()
-    ch.emb.append({**_LIVE, "content_sha256": "a" * 64})
+    _native_admission(monkeypatch, ch)
+    ch.emb.append({**_LIVE, "content_sha256": sha256_value("text")})
     published: list[Any] = []
     deadline = 0.0 if failure == "lease ended" else time.monotonic() + 30
 
@@ -405,9 +551,10 @@ async def test_a_reject_whose_vector_copy_fails_still_stands_and_publishes(
         monkeypatch.setattr(ch, "insert", _refused)
 
     async def _heads(*_: object) -> list[dict[str, Any]]:
-        return [{**_LIVE, "content_sha256": "a" * 64}]
+        return [{**_LIVE, "content_sha256": sha256_value("text")}]
 
     async def _commit(rows: Any, **_: object) -> pg_memory.Committed:
+        ch.remember(rows)
         return pg_memory.Committed(rows=rows, audits=[], seqs=[], targets=[0], deadline=deadline)
 
     async def _publish(committed: Any, **_: object) -> None:
@@ -451,7 +598,7 @@ async def test_a_rejected_head_with_no_search_document_copies_no_row_of_its_text
     not landed: the reject copies none of them above it, and retires them with no text."""
     from server.memory.store import lifecycle
 
-    sha = "a" * 64
+    sha = sha256_value("text")
     ch = _RMTCH()
     ch.emb.append({**_LIVE, "content_sha256": sha})
     rejected = {**_LIVE, "memory_type": "semantic", "content_sha256": sha, "version": 50}
@@ -635,6 +782,7 @@ async def test_a_status_retire_writes_the_memory_rows_version_and_keeps_newer_ro
         {**_LIVE, "status": "superseded", "version": 30},
         {**newer, "status": "superseded", "version": 30},
     ]
+    ch.remember(rows)
     await M.mirror_status_to_embeddings(rows, ch=ch)
     by_agent = {r["agent"]: r for r in ch.live_emb()}
     assert (by_agent["a"]["status"], by_agent["a"]["version"]) == ("superseded", 30)
@@ -674,13 +822,10 @@ class _SiteCH(_RMTCH):
     async def query_all(self, sql, params=None):
         if "embeddings_status" in sql:
             return [{**_LIVE, "status": "superseded", "invalid_at": None}]
-        if "entity_vectors" in sql or "memory_embeddings" in sql:
-            return await super().query_all(sql, params)
-        return []
+        return await super().query_all(sql, params)
 
     async def insert(self, table, rows, settings=None):
-        if table in ("loom.memory_embeddings", "loom.entity_vectors"):
-            await super().insert(table, rows, settings)
+        await super().insert(table, rows, settings)
 
 
 def _memory_row(**over: Any) -> Any:
@@ -689,7 +834,8 @@ def _memory_row(**over: Any) -> Any:
         **{c: _LIVE[c] for c in ("org", "namespace", "agent", "user_id", "session_id")},
         "memory_key": "k",
         "memory_type": "episodic",  # not searchable: no chunk side paths
-        "value": "v",
+        "value": "text",
+        "content_sha256": sha256_value("text"),
         "confidence": 0.9,
         "version": 1,
         "tags": [],
@@ -709,7 +855,10 @@ def _patch_memory_io(mp: pytest.MonkeyPatch, ch: Any, row: Any) -> None:
     async def get_by_id(*_a, **_k):
         return row
 
-    async def no_insert(*_a, **_k):
+    ch.remember([M.build_memory_version_row(row)])
+
+    async def no_insert(rows, *_a, **_k):
+        ch.remember(rows)
         if on_inserted := _k.get("on_inserted"):
             on_inserted()
         return None
@@ -892,6 +1041,7 @@ async def _site_dedup_collapse(ch, mp):
     from server.memory.api.models_graph import MemoryDedupCollapseInput
     from server.memory.app import dedup
 
+    ch.remember([M.build_memory_version_row(_memory_row(), status="duplicate")])
     pair = SimpleNamespace(agent="a", user_id="u", session_id="s", memory_key="k", duplicate_of="c")
 
     async def pairs(*_a, **_k):
@@ -982,8 +1132,9 @@ async def test_a_copy_under_a_high_or_deleted_head_is_retired_above_itself(
     async def _heads(ch: Any, keys: Any, sequential: bool) -> dict[Any, str]:
         return {k: ("high" if k[5] == "hi" else "") for k in keys if k[5] != "gone"}
 
-    async def _insert(rows: Any, **_k: Any) -> None:
+    async def _insert(rows: Any, **_k: Any) -> Any:
         inserted.extend(rows)
+        return rows
 
     monkeypatch.setattr(M.embeddings, "_head_sensitivity", _heads)
     monkeypatch.setattr(M.embeddings, "insert_embedding_rows", _insert)
@@ -1035,8 +1186,8 @@ async def test_every_vector_copy_site_rechecks_its_head(site: str, monkeypatch) 
         checked.append(list(rows))
         return 0
 
-    async def _insert(rows: Any, **_k: Any) -> None:
-        return None
+    async def _insert(rows: Any, **_k: Any) -> Any:
+        return rows
 
     monkeypatch.setattr(embeddings, "retire_copies_under_unembedded_heads", _check)
     monkeypatch.setattr(embeddings, "insert_embedding_rows", _insert)
@@ -1095,7 +1246,12 @@ async def test_the_live_read_is_chunked_and_can_be_sequential() -> None:
 
 def _judged_memory_row() -> dict[str, Any]:
     # A deferred verdict lands at the judged write's version + 1 (`conflicts.judged_write`).
-    return {**_LIVE, "content_sha256": "a", "status": "duplicate", "version": _LIVE["version"] + 1}
+    return {
+        **_LIVE,
+        "content_sha256": sha256_value("text"),
+        "status": "duplicate",
+        "version": _LIVE["version"] + 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -1104,9 +1260,10 @@ async def test_a_judged_mirror_outranks_a_metadata_copy_that_landed_first() -> N
     verdict's mirror must not tie with it or skip it."""
     ch = _RMTCH()
     ch.emb += [
-        {**_LIVE, "content_sha256": "a"},
-        {**_LIVE, "content_sha256": "a", "version": _LIVE["version"] + 1},
+        {**_LIVE, "content_sha256": sha256_value("text")},
+        {**_LIVE, "content_sha256": sha256_value("text"), "version": _LIVE["version"] + 1},
     ]
+    ch.remember([_judged_memory_row()])
     await M.mirror_status_to_embeddings([_judged_memory_row()], ch=ch, judged=True)
     (live,) = ch.live_emb()
     assert live["status"] == "duplicate"
@@ -1115,10 +1272,13 @@ async def test_a_judged_mirror_outranks_a_metadata_copy_that_landed_first() -> N
 @pytest.mark.asyncio
 async def test_a_judged_mirror_outranks_a_metadata_copy_that_lands_after() -> None:
     ch = _RMTCH()
-    ch.emb.append({**_LIVE, "content_sha256": "a"})
+    ch.emb.append({**_LIVE, "content_sha256": sha256_value("text")})
+    ch.remember([_judged_memory_row()])
     await M.mirror_status_to_embeddings([_judged_memory_row()], ch=ch, judged=True)
     # A copy that read write V before the mirror landed writes V + 1, still active.
-    ch.emb.append({**_LIVE, "content_sha256": "a", "version": _LIVE["version"] + 1})
+    ch.emb.append(
+        {**_LIVE, "content_sha256": sha256_value("text"), "version": _LIVE["version"] + 1}
+    )
     (live,) = ch.live_emb()
     assert live["status"] == "duplicate"
 
@@ -1126,11 +1286,11 @@ async def test_a_judged_mirror_outranks_a_metadata_copy_that_lands_after() -> No
 @pytest.mark.asyncio
 async def test_a_judged_mirror_leaves_a_newer_revisions_vector_alone() -> None:
     ch = _RMTCH()
-    newer = {**_LIVE, "content_sha256": "b", "version": M.next_version()}
-    ch.emb += [{**_LIVE, "content_sha256": "a"}, newer]
+    newer = {**_LIVE, "content_sha256": sha256_value("old"), "version": M.next_version()}
+    ch.emb += [{**_LIVE, "content_sha256": sha256_value("text")}, newer]
     assert await M.mirror_status_to_embeddings([_judged_memory_row()], ch=ch, judged=True) == 0
     (live,) = ch.live_emb()
-    assert live["content_sha256"] == "b" and live["status"] == "active"
+    assert live["content_sha256"] == sha256_value("old") and live["status"] == "active"
 
 
 @pytest.mark.asyncio
@@ -1138,8 +1298,13 @@ async def test_a_judged_mirror_leaves_a_vector_a_supersede_hid_meanwhile() -> No
     """Another write's refines verdict superseded A between the settle's memory row
     and its mirror: the retire stands, A does not come back into search."""
     ch = _RMTCH()
-    retired = {**_LIVE, "content_sha256": "a", "status": "superseded", "version": M.next_version()}
-    ch.emb += [{**_LIVE, "content_sha256": "a"}, retired]
+    retired = {
+        **_LIVE,
+        "content_sha256": sha256_value("text"),
+        "status": "superseded",
+        "version": M.next_version(),
+    }
+    ch.emb += [{**_LIVE, "content_sha256": sha256_value("text")}, retired]
     assert await M.mirror_status_to_embeddings([_judged_memory_row()], ch=ch, judged=True) == 0
     (live,) = ch.live_emb()
     assert live["status"] == "superseded"
@@ -1153,19 +1318,39 @@ async def test_a_reject_copies_only_rows_of_the_heads_hash() -> None:
     own, redacted = ("o", "n", "a", "u", "s", "k"), ("o", "n", "a", "u", "s2", "k")
     ch = _VectorsCH(
         [
-            {**_LIVE, "content_sha256": "b" * 64},
-            {**_LIVE, "embedding_model": "m2", "content_sha256": "a" * 64},
+            {**_LIVE, "content_sha256": sha256_value("old")},
+            {**_LIVE, "embedding_model": "m2", "content_sha256": sha256_value("text")},
             {**_LIVE, "embedding_model": "m3", "content_sha256": ""},
-            {**_LIVE, "embedding_model": "m4", "content_sha256": "c" * 64, "version": 99},
-            {**_LIVE, "embedding_model": "m5", "content_sha256": "a" * 64, "version": 99},
-            {**_LIVE, "session_id": "s2", "content_sha256": "a" * 64},
+            {
+                **_LIVE,
+                "embedding_model": "m4",
+                "content_sha256": sha256_value("secret"),
+                "version": 99,
+            },
+            {
+                **_LIVE,
+                "embedding_model": "m5",
+                "content_sha256": sha256_value("text"),
+                "version": 99,
+            },
+            {**_LIVE, "session_id": "s2", "content_sha256": sha256_value("text")},
         ],
         [],
     )
-    assert await M.reject_embedding_rows([(own, 50, "a" * 64), (redacted, 50, None)], ch=ch) == 4
+    ch.heads[own].update(status="rejected", version=50)
+    assert (
+        await M.reject_embedding_rows(
+            [(own, 50, sha256_value("text")), (redacted, 50, None)], ch=ch
+        )
+        == 4
+    )
     # One read for the hashed key, and one for the redacted key that fetches no text.
-    fetched = {params["s"][0]: _selected(sql) for sql, params in ch.query_all_calls}
-    assert len(ch.query_all_calls) == 2 and sorted(fetched) == ["s", "s2"]
+    vector_reads = [
+        (sql, params) for sql, params in ch.query_all_calls if "FROM loom.memory_embeddings" in sql
+    ]
+    fetched = {params["s"][0]: _selected(sql) for sql, params in vector_reads}
+    assert len(vector_reads) == 2 and sorted(fetched) == ["s", "s2"]
+    assert len([sql for sql, _ in ch.query_all_calls if "FROM loom.memory FINAL" in sql]) == 2
     assert sorted(fetched["s2"]) == sorted(
         [
             "org",
@@ -1285,10 +1470,12 @@ async def test_a_merge_retires_only_the_rows_still_holding_the_text_it_read(monk
     async def written(org, ids, update, *, skip, strong, **_k):
         asked["strong"] = strong
         heads = [
-            _memory_row(memory_id="m-same", content_sha256="a" * 64),
-            _memory_row(memory_id="m-rewritten", content_sha256="b" * 64),
-            _memory_row(memory_id="m-pinned", content_sha256="a" * 64, pinned=True),
-            _memory_row(memory_id="m-locked", content_sha256="a" * 64, lock_mode="no_delete"),
+            _memory_row(memory_id="m-same", content_sha256=sha256_value("text")),
+            _memory_row(memory_id="m-rewritten", content_sha256=sha256_value("old")),
+            _memory_row(memory_id="m-pinned", content_sha256=sha256_value("text"), pinned=True),
+            _memory_row(
+                memory_id="m-locked", content_sha256=sha256_value("text"), lock_mode="no_delete"
+            ),
         ]
         rows = [update(h) for h in heads if not skip(h)]
         return len(rows)
@@ -1306,10 +1493,22 @@ async def test_a_merge_retires_only_the_rows_still_holding_the_text_it_read(monk
         object(),
         MemoryConsolidateInput(org="o", namespace="n", agent="a", user_id="u", session_id="s"),
         [
-            {"memory_id": "m-same", "memory_key": "k-same", "content_sha256": "a" * 64},
-            {"memory_id": "m-rewritten", "memory_key": "k-rewritten", "content_sha256": "a" * 64},
-            {"memory_id": "m-pinned", "memory_key": "k-pinned", "content_sha256": "a" * 64},
-            {"memory_id": "m-locked", "memory_key": "k-locked", "content_sha256": "a" * 64},
+            {"memory_id": "m-same", "memory_key": "k-same", "content_sha256": sha256_value("text")},
+            {
+                "memory_id": "m-rewritten",
+                "memory_key": "k-rewritten",
+                "content_sha256": sha256_value("text"),
+            },
+            {
+                "memory_id": "m-pinned",
+                "memory_key": "k-pinned",
+                "content_sha256": sha256_value("text"),
+            },
+            {
+                "memory_id": "m-locked",
+                "memory_key": "k-locked",
+                "content_sha256": sha256_value("text"),
+            },
         ],
         canonical_key="canon",
         now_naive=datetime.now(),
@@ -1322,11 +1521,16 @@ async def test_a_copy_of_one_content_leaves_another_versions_vectors_alone() -> 
     """`of_content` copies only the rows of the head's hash: a row of another version's
     text, which a redaction may be purging, is not carried forward."""
     ch = _SiteCH()
-    ch.emb.append({**_LIVE, "content_sha256": "a" * 64, "version": 10})
-    ch.emb.append({**_LIVE, "embedding_model": "m2", "content_sha256": "b" * 64, "version": 10})
+    ch.emb.append({**_LIVE, "content_sha256": sha256_value("text"), "version": 10})
+    ch.emb.append(
+        {**_LIVE, "embedding_model": "m2", "content_sha256": sha256_value("old"), "version": 10}
+    )
+    ch.remember([M.build_memory_version_row(_memory_row(), status="conflicted", version=20)])
     n = await M.reemit_embedding_rows_for_keys(
-        [(_KEY, {"status": "conflicted", "version": 20})], ch=ch, of_content={_KEY: "a" * 64}
+        [(_KEY, {"status": "conflicted", "version": 20})],
+        ch=ch,
+        of_content={_KEY: sha256_value("text")},
     )
     assert n == 1
     copied = [r for r in ch.emb if r["version"] == 20]
-    assert [r["content_sha256"] for r in copied] == ["a" * 64]
+    assert [r["content_sha256"] for r in copied] == [sha256_value("text")]

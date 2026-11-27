@@ -95,6 +95,7 @@ async def commit(
     admission: Admission | None = None,
     idempotent: bool = False,
     publisher_lease: bool = True,
+    refuse_values: bool = False,
 ) -> Committed:
     """The commit alone; `publish` sends it. `idempotent`: these are the op's own rows,
     which the request's idempotency key records as committed (another write the request
@@ -114,6 +115,7 @@ async def commit(
         request_id=rid,
         idempotency=idempotency.bound_key() if idempotent else None,
         publisher_lease=publisher_lease,
+        refuse_values=refuse_values,
     )
 
 
@@ -338,8 +340,9 @@ async def commit_and_publish(
     *,
     ch: _CHClient | None = None,
     admission: Admission | None = None,
+    refuse_values: bool = False,
 ) -> Committed:
     """`insert_memory_versions` under the Postgres authority, held to its admission."""
-    committed = await commit(rows, admission=admission)
+    committed = await commit(rows, admission=admission, refuse_values=refuse_values)
     await publish(committed, ch=ch)
     return committed

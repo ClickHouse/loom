@@ -12,10 +12,11 @@ conversion run in subprocesses; the tiers consume the JSON delta.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -26,6 +27,7 @@ from server.code.app.index.gitrepo import is_local_remote, upload_pack_args
 from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.repo_modes import PRIVATE_DIR_MODE, set_repo_dir_mode
 from server.code.app.index.sandbox import JobOptions, run_job, sandbox_available
+from server.code.app.index.untrusted_files import FileRefused
 from server.code.domain.index.repos import checkout_for
 from server.core.errors import caller_text
 from server.settings import settings
@@ -33,7 +35,7 @@ from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
 if TYPE_CHECKING:
-    from server.code.app.index.delta_file import DeltaFile
+    from server.code.app.index.delta_file import DeltaCaps, DeltaFile
     from server.code.domain.index.repos import RepoConfig
     from server.code.store.index import CodeRepo
 
@@ -339,6 +341,73 @@ async def restart_full(
         cfg.namespace,
         watermark_key,
     )
+
+
+def _refusal_hold(base: str, target: str, caps: DeltaCaps, shape: Mapping[str, object]) -> str:
+    """What a refused delta holds: the inputs of the run that wrote it, as they read in
+    `code_index_state`. That is its window (the watermark `base` to `target`), the caps
+    its open read, the entry fields and settings the tier's harness read (`shape`), and
+    Loom's version."""
+    from server import __version__
+
+    return json.dumps(
+        {"base": base, "target": target, "caps": list(caps), "inputs": shape, "loom": __version__},
+        sort_keys=True,
+    )
+
+
+async def refusal_held(
+    repo: CodeRepo,
+    cfg: RepoConfig,
+    watermark: str,
+    base: str,
+    target: str,
+    result: TierResult,
+    shape: Mapping[str, object],
+) -> bool:
+    """Whether the tier's delta from `base` to `target` was refused (`open_tier_delta`)
+    under the caps and `shape` in effect now: the same run would write the same delta,
+    so the harness is not run and the entry is a skip, which leaves its failing record
+    and its fix. Any other input releases the hold: a new target, a watermark another
+    writer moved, a raised cap (a live setting), a changed entry field or Loom release.
+    The pass reads `shape` once and runs its harness under that same snapshot."""
+    from server.code.app.index.delta_file import delta_caps
+
+    held = await repo.get_state(cfg.org, cfg.namespace, f"{watermark}_refused")
+    if held != _refusal_hold(base, target, delta_caps(), shape):
+        return False
+    result.skipped.append(
+        f"{cfg.namespace}: delta refused at {target[:12]}; held until its inputs change"
+    )
+    return True
+
+
+async def open_tier_delta(
+    repo: CodeRepo,
+    cfg: RepoConfig,
+    watermark: str,
+    base: str,
+    target: str,
+    path: Path,
+    shape: Mapping[str, object],
+) -> DeltaFile:
+    """`open_delta` for the tier's run from `base` to `target` under `shape`. A refusal
+    the same run would meet again (over a cap, a link, not a regular file) holds the
+    tier (`refusal_held`) under the caps that open read, not the ones in effect once it
+    failed; a delta that changed while it was read holds nothing."""
+    import asyncio
+
+    from server.code.app.index.delta_file import delta_caps, open_delta
+
+    caps = delta_caps()
+    try:
+        return await asyncio.to_thread(open_delta, path, caps)
+    except FileRefused as e:
+        if not e.changed:
+            check_held()
+            hold = _refusal_hold(base, target, caps, shape)
+            await repo.set_state(cfg.org, cfg.namespace, f"{watermark}_refused", hold)
+        raise
 
 
 async def compiler_target(repo: CodeRepo, cfg: RepoConfig) -> str:

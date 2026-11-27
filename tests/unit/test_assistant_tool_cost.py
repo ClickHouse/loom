@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import httpx
@@ -218,6 +219,15 @@ def test_fail_open_tool_cannot_swallow_a_refused_provider_send(
     [
         ("chat/completions", {"model": "gpt-4o-mini", "messages": [], "max_completion_tokens": 12}),
         ("v1/messages", {"model": "claude-sonnet-4-6", "messages": [], "max_tokens": 12}),
+        (
+            "responses",
+            {
+                "model": "gpt-4o-mini",
+                "input": [{"role": "user", "content": "query"}],
+                "store": False,
+                "max_output_tokens": 16,
+            },
+        ),
     ],
 )
 def test_supported_protocol_reserves_before_each_actual_http_dispatch(
@@ -422,10 +432,14 @@ def test_builtin_llm_reranking_still_uses_priced_bounded_dispatch(
             return httpx.Response(
                 200,
                 json={
-                    "choices": [
-                        {"message": {"content": '{"ranked": [1, 0]}'}, "finish_reason": "stop"}
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": '{"ranked": [1, 0]}'}],
+                        }
                     ],
-                    "usage": {"prompt_tokens": 100, "completion_tokens": 5},
+                    "usage": {"input_tokens": 100, "output_tokens": 5},
                 },
             )
 
@@ -455,7 +469,10 @@ def test_builtin_llm_reranking_still_uses_priced_bounded_dispatch(
                     candidates=[first, second],
                 )
         assert ordered == [second, first]
-        assert len(sent) == 1 and sent[0].url.path.endswith("/chat/completions")
+        assert len(sent) == 1 and sent[0].url.path.endswith("/responses")
+        payload = json.loads(sent[0].content)
+        assert payload["store"] is False
+        assert payload["max_output_tokens"] > 0
         assert len(budget.sends) == 1 and budget.sends[0].reported
 
     asyncio.run(check())
@@ -571,5 +588,33 @@ def test_nontext_or_external_work_cannot_use_the_text_token_bound(path: str, pay
         with provider_budget.limited(1) as budget:
             provider_budget.sending(
                 httpx.Request("POST", "https://provider.invalid/" + path, json=payload)
+            )
+    assert budget.sends == []
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"store": True},
+        {"max_output_tokens": 0},
+        {"max_output_tokens": True},
+        {"previous_response_id": "saved-response"},
+        {"tools": [{"type": "web_search"}]},
+        {"input": [{"role": "user", "content": [{"type": "input_image"}]}]},
+    ],
+)
+def test_responses_refuses_work_without_a_text_and_output_bound(overrides: dict) -> None:
+    from server.observability import provider_budget
+
+    payload = {
+        "model": "gpt-4o-mini",
+        "input": [{"role": "user", "content": "query"}],
+        "store": False,
+        "max_output_tokens": 16,
+    } | overrides
+    with pytest.raises(AssistantUpstreamError):
+        with provider_budget.limited(1) as budget:
+            provider_budget.sending(
+                httpx.Request("POST", "https://provider.invalid/responses", json=payload)
             )
     assert budget.sends == []

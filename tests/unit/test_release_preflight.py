@@ -218,10 +218,9 @@ def test_the_image_and_the_release_ask_for_latest_when_they_apply_it() -> None:
     assert "latest" not in meta["with"]["tags"]
     (tag,) = [s for s in jobs["docker-tag"]["steps"] if s.get("name") == "Tag the scanned images"]
     assert tag["env"]["LATEST"] == "${{ steps.latest.outputs.latest }}"
-    (publish,) = [
-        s for s in jobs["github-release"]["steps"] if "action-gh-release" in s.get("uses", "")
-    ]
-    assert publish["with"]["make_latest"] == "${{ steps.latest.outputs.latest }}"
+    (publish,) = [s for s in jobs["github-release"]["steps"] if s.get("id") == "publish-release"]
+    assert publish["env"]["LATEST"] == "${{ steps.latest.outputs.latest }}"
+    assert '--latest="$LATEST"' in publish["run"]
     assert "latest" not in jobs["version"].get("outputs", {})
 
 
@@ -594,11 +593,15 @@ def test_the_python_sdk_takes_the_tags_pep440_version(
     (sdk / "loom" / "__init__.py").write_text("from loom._version import __version__\n")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    # pip installs nothing; python is this interpreter, and `python -m venv DIR`
+    # Both pip entry points install nothing; `python -m venv DIR`
     # makes a venv whose python imports the synced SDK above.
-    (bin_dir / "pip").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "pip").write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$PIP_CALLS"\n')
     (bin_dir / "python").write_text(
         "#!/bin/sh\n"
+        'if [ "$1" = -m ] && [ "$2" = pip ]; then\n'
+        "  shift 2\n"
+        '  exec pip "$@"\n'
+        "fi\n"
         'if [ "$1" = -m ] && [ "$2" = venv ]; then\n'
         '  mkdir -p "$3/bin"\n'
         '  printf "#!/bin/sh\\nexit 0\\n" > "$3/bin/pip"\n'
@@ -615,12 +618,16 @@ def test_the_python_sdk_takes_the_tags_pep440_version(
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "VERSION": tag_version,
         "RUNNER_TEMP": str(tmp_path / "runner"),
+        "PIP_CALLS": str(tmp_path / "pip-calls"),
     }
     for step in (sync, installed):
         result = subprocess.run(
             ["bash", "-e", "-c", step["run"]], env=env, cwd=tmp_path, capture_output=True
         )
         assert result.returncode == 0, result.stderr
+    assert (tmp_path / "pip-calls").read_text().splitlines() == [
+        "install --require-hashes --only-binary=:all: -r scripts/release/requirements.txt"
+    ]
     assert f'version = "{python_version}"' in (sdk / "pyproject.toml").read_text()
     assert (sdk / "loom" / "_version.py").read_text() == f'__version__ = "{python_version}"\n'
 
@@ -738,7 +745,7 @@ def test_release_sdk_inventory_generates_canonical_extra_and_peerless_row(tmp_pa
     assert json.loads(outputs["node_peers"]) == {
         "include": [
             {"peer": "none", "requirement": ""},
-            {"peer": "@example/adapter", "requirement": "@example/adapter@>=1 <2"},
+            {"peer": "@example/adapter", "requirement": ">=1 <2"},
         ]
     }
 

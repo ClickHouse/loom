@@ -10,8 +10,10 @@ import json
 import re
 import shutil
 import subprocess
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from clickhouse_connect.driver.binding import bind_query
@@ -57,21 +59,28 @@ def _output(
     # session is in UTC, as the server's is, since a zone-less one is read in it.
     _, bound = bind_query(script, params or {}, UTC)
     binds = [f"--{k}={v}" for k, v in bound.items()]
-    kept = ["--path", str(path)] if path else []
-    # The script goes on stdin: a test that keeps vector rows outgrows one argument's limit.
-    out = subprocess.run(
-        [
-            CLICKHOUSE or "clickhouse",
-            "local",
-            "--multiquery",
-            "--session_timezone=UTC",
-            *kept,
-            *binds,
-        ],
-        input=f"{script} FORMAT {fmt}",
-        capture_output=True,
-        text=True,
+    # Use private storage even when clickhouse-local defaults to a persistent path.
+    storage = (
+        TemporaryDirectory(prefix="loom-clickhouse-local-")
+        if path is None
+        else nullcontext(str(path))
     )
+    # The script goes on stdin because vector rows can outgrow one argument's limit.
+    with storage as data_path:
+        out = subprocess.run(
+            [
+                CLICKHOUSE or "clickhouse",
+                "local",
+                "--multiquery",
+                "--session_timezone=UTC",
+                "--path",
+                data_path,
+                *binds,
+            ],
+            input=f"{script} FORMAT {fmt}",
+            capture_output=True,
+            text=True,
+        )
     if out.returncode != 0:
         raise AssertionError(out.stderr.strip()[-2000:])
     return [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
@@ -126,6 +135,13 @@ class KeptCH:
 
     def create(self, *statements: str) -> None:
         """Run DDL (with any session `SET` it needs) in one session."""
+        created = {m.group(1) for statement in statements for m in _CREATED.finditer(statement)}
+        if "loom.memory" in created:
+            # Canonical writers read consent and erasure state even when both are empty.
+            dependencies = ("memory_refusals", "erasure_requests")
+            statements += tuple(
+                ddl(table) for table in dependencies if f"loom.{table}" not in created | self.tables
+            )
         run(list(statements), "SELECT 1", path=self.path)
         self.tables |= {m.group(1) for s in statements for m in _CREATED.finditer(s)}
 

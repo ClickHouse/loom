@@ -30,7 +30,7 @@ import { ROLE_LOADING } from "../../../lib/callReason";
 import { isFresh, readCard, startStarter, useCardGate } from "./cardStore";
 import { MentorBody } from "./MentorBody";
 import { askNow, asks, useStarterPrefs } from "./prefs";
-import { AUDIT_WINDOWS, MENTOR_WINDOWS, DEFAULT_WINDOW, starterOf } from "./starters";
+import { AUDIT_WINDOWS, MENTOR_WINDOWS, DEFAULT_WINDOW, starterOf } from "./starterCatalog";
 import { TuneBody } from "./TuneBody";
 import type { CardArgs, CardOp, TurnCard } from "./types";
 

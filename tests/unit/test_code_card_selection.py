@@ -17,6 +17,7 @@ from server.code.domain.index.card_selection import (
     twin_rows,
 )
 from server.settings import settings
+from tests.unit.code_fixtures import repo_config
 
 # ---- pure selection ---------------------------------------------------------
 
@@ -89,9 +90,8 @@ def test_setting_default_and_shape():
 # ---- worker ------------------------------------------------------------------
 
 
-class _Cfg:
-    org = "clickhouse"
-    namespace = "code-clickhouse"
+def _cfg(**overrides):
+    return repo_config(**{"org": "clickhouse", "namespace": "code-clickhouse", **overrides})
 
 
 def _fake_repo(*, hashes, live, others, churn):
@@ -132,7 +132,7 @@ def _live(path, *, model="m", pagerank=0.0, summary="", inputs_hash=""):
     }
 
 
-async def _run_worker(repo, monkeypatch, **overrides):
+async def _run_worker(repo, monkeypatch, cfg=None, **overrides):
     from server.code.workers import summary as code_summary
 
     for k, v in overrides.items():
@@ -149,7 +149,7 @@ async def _run_worker(repo, monkeypatch, **overrides):
             "server.code.store.index.CodeRepo.tombstone_of",
             side_effect=lambda table, live: {**live, "tombstoned_at": "now"},
         ),
-        patch("server.code.domain.index.repos.configured_repos", return_value=[_Cfg()]),
+        patch("server.code.domain.index.repos.configured_repos", return_value=[cfg or _cfg()]),
         patch("server.embedding.embedder.get_embedder", return_value=embedder),
         patch("server.llm.client.get_llm_client", return_value=llm),
         patch("server.observability.budget.namespace_over_cap", AsyncMock(return_value=False)),
@@ -252,17 +252,42 @@ async def test_worker_dedupe_tombstones_twins_and_carries_text(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_worker_writes_and_carries_no_card_for_an_embed_excluded_file(monkeypatch):
+    hashes = {"src/a.cpp": "ha", "tests/b.cpp": "hb"}
+    live = [_live("src/a.cpp", pagerank=0.1), _live("tests/b.cpp", pagerank=0.9)]
+    # a twin whose text matches would be carried, but not into an excluded file
+    others = [_live("tests/b.cpp", model="gemini", summary="b card", inputs_hash="hb")]
+    repo = _fake_repo(hashes=hashes, live=live, others=others, churn=[])
+    res = await _run_worker(repo, monkeypatch, cfg=_cfg(embed_exclude=("tests/",)))
+    assert res.cards_written == 1 and res.cards_carried == 0 and not res.errors
+    assert _written(repo) == [("tests/b.cpp", "gemini", True), ("src/a.cpp", "m", False)]
+
+
+@pytest.mark.asyncio
+async def test_an_embed_excluded_files_card_goes_once_the_file_changes(monkeypatch):
+    hashes = {"tests/changed.cpp": "new", "tests/same.cpp": "hs"}
+    live = [
+        _live("tests/changed.cpp", summary="old card", inputs_hash="old"),
+        _live("tests/same.cpp", summary="current card", inputs_hash="hs"),
+        _live("tests/gone.cpp", summary="card of a deleted file", inputs_hash="hg"),
+        _live("tests/ranked.cpp", pagerank=0.5),  # a rank row, no card
+    ]
+    repo = _fake_repo(hashes=hashes, live=live, others=[], churn=[])
+    res = await _run_worker(repo, monkeypatch, cfg=_cfg(embed_exclude=("tests/",)))
+    assert res.cards_written == 0 and not res.errors
+    assert _written(repo) == [("tests/changed.cpp", "m", True), ("tests/gone.cpp", "m", True)]
+
+
+@pytest.mark.asyncio
 async def test_the_card_cap_is_per_pass_across_repositories(monkeypatch):
     """`code_summary_max_scopes_per_pass` bounds the pass's LLM calls, not
     each repository's, so a pass over N repositories cannot write (and pay
     for) N x the cap. The cap is shared out, so the first repository cannot
     spend all of it."""
-    from types import SimpleNamespace
-
     hashes = {"a.cpp": "h1", "b.cpp": "h2"}
     live = [_live("a.cpp", pagerank=0.9), _live("b.cpp", pagerank=0.5)]
     repo = _fake_repo(hashes=hashes, live=live, others=[], churn=[])
-    repos = [SimpleNamespace(org="clickhouse", namespace=f"code-{i}") for i in range(3)]
+    repos = [_cfg(namespace=f"code-{i}") for i in range(3)]
     from server.code.workers import summary as code_summary
 
     monkeypatch.setattr(code_summary, "_run", _with_repos(code_summary._run, repos))
@@ -286,17 +311,15 @@ def _with_repos(run, repos):
 
 @pytest.mark.asyncio
 async def test_a_share_one_repository_does_not_use_rolls_to_the_next(monkeypatch):
-    from types import SimpleNamespace
-
     from server.code.workers import summary as code_summary
 
     got: list[tuple[str, int]] = []
 
-    async def fake_repo(org, ns, result, *, cap):
+    async def fake_repo(org, ns, result, *, cap, **_):
         got.append((ns, cap - result.cards_written))
         result.cards_written += 0 if ns == "quiet" else min(5, cap - result.cards_written)
 
-    repos = [SimpleNamespace(org="o", namespace=n) for n in ("quiet", "busy-1", "busy-2")]
+    repos = [_cfg(org="o", namespace=n) for n in ("quiet", "busy-1", "busy-2")]
     monkeypatch.setattr(code_summary, "_summarize_repo", fake_repo)
     monkeypatch.setattr(settings, "code_summary_max_scopes_per_pass", 9)
     with patch("server.code.domain.index.repos.configured_repos", return_value=repos):

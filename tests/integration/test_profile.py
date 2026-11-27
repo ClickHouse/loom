@@ -159,7 +159,17 @@ async def test_profile_append_respects_existing_cap(agent) -> None:
 @pytest.mark.asyncio
 async def test_profile_restore_preserves_char_limit(agent) -> None:
     await agent.profile.set("revivable", "Stable persona text.", char_limit=1024)
-    await agent.profile.delete("revivable")
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from tests.integration._memory import retire_reversibly
+
+    await retire_reversibly(
+        MemoryDeleteInput(
+            org=agent.org,
+            namespace=agent.namespace,
+            agent=agent.agent,
+            memory_key="revivable",
+        )
+    )
     await agent.memory.restore("revivable")
     got = await agent.profile.get("revivable")
     assert got is not None
@@ -226,7 +236,17 @@ async def test_memory_restore_preserves_pinned(agent) -> None:
     got = await agent.memory.get(memory_key="important")
     assert got is not None and got.get("pinned") is True, "pin failed to take"
 
-    await agent.memory.delete(memory_key="important")
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from tests.integration._memory import retire_reversibly
+
+    await retire_reversibly(
+        MemoryDeleteInput(
+            org=agent.org,
+            namespace=agent.namespace,
+            agent=agent.agent,
+            memory_key="important",
+        )
+    )
     await agent.memory.restore("important")
 
     got = await agent.memory.get(memory_key="important")

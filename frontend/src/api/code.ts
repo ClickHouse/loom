@@ -23,6 +23,7 @@ export interface CodeRepoSummary {
   quality_warnings?: string[];
   git_head: string;
   clone_head: string;
+  fetch_overdue?: boolean;
   fast_tier_lag: number;
   /** The ENTRY'S compiler tier (the one `scip_producer` names), not the C++ key by name —
    *  a TypeScript repository's scip_lag is its scip-typescript watermark against the tip.
@@ -335,7 +336,6 @@ export async function codeSymbol(id: CodeId, name: string): Promise<CodeSymbolRe
     include_history: true,
     include_examples: false,
     include_lessons: false,
-    token_budget: 4000,
   });
 }
 
@@ -381,7 +381,7 @@ export async function codeMap(
 ): Promise<{ map: string; tokens_used: number; commit_sha: string }> {
   return post("/v1/code.map", {
     ...id,
-    token_budget: opts.token_budget ?? 1500,
+    token_budget: opts.token_budget,
     module_prefix: opts.module_prefix ?? "",
   });
 }
@@ -503,7 +503,7 @@ export async function listCodeContextPacks(
 export async function codeContextPack(
   id: CodeId,
   pr_number: number,
-  token_budget = 4000,
+  token_budget?: number,
 ): Promise<{ context: string; tokens_used: number; source: "precomputed" | "orientation"; merge_commit_sha: string }> {
   return post("/v1/code.context_pack", {
     ...id,

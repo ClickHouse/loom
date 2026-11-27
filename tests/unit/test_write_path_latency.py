@@ -96,6 +96,7 @@ def post_insert(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(set_commit, "_project_set_entities_fail_open", _project)
     monkeypatch.setattr(ks, "supersede_same_key_rows", _supersede)
     monkeypatch.setattr(audit, "emit", _emit)
+    monkeypatch.setattr(audit, "emit_strict", _emit)
     monkeypatch.setattr(after_write, "schedule", _schedule)
     from server.memory.store import graph_projections
 
@@ -115,16 +116,23 @@ def _set_input(value: str = "Alice deploys Project Phoenix on Tuesday") -> Any:
 async def _post_insert(
     value: str = "Alice deploys Project Phoenix on Tuesday", revised: bool = False
 ) -> None:
+    w = set_commit._SetWrite(
+        input=_set_input(value),
+        version=1,
+        retyped_from="",
+        existing=None,
+        expires_at=None,
+        memory_id="m1",
+        new_sha="sha",
+        source_class="asserted",
+        writer_actor="u",
+        had_existing_row=revised,
+    )
     await set_commit._set_post_insert(
-        _set_input(value),
+        w,
         ch=object(),
         cfg=type("Cfg", (), {"policy": "newest_wins"})(),
-        memory_id="m1",
-        content_sha256="sha",
-        source_class="asserted",
         verdict="clear",
-        actor="u",
-        revised=revised,
     )
 
 

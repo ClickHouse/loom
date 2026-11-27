@@ -84,6 +84,7 @@ async def test_triple_valid_from_null_when_undated() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_schema_mode_entry_defaults_valid_at_from_observation_date(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

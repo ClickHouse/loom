@@ -12,6 +12,7 @@ import pytest
 
 from server.cli import code_backfill
 from server.code.app.index import round_reads
+from server.code.app.index.ingest_resolve import _GIT_TEXT_SOURCE
 from server.settings import settings
 
 
@@ -39,17 +40,20 @@ def _drive(monkeypatch: pytest.MonkeyPatch, size: int, paths: list[str]) -> tupl
     real_prefetch = round_reads.RoundReads.prefetch
 
     async def _prefetch(self, sources, denylist=None):
+        assert _GIT_TEXT_SOURCE.get() == ("repo.git", "a" * 40)
         prefetched.append(sorted(sources))
         await real_prefetch(self, sources, denylist)
 
     monkeypatch.setattr(round_reads.RoundReads, "prefetch", _prefetch)
 
     async def _source(path: str) -> tuple[str, bytes | None]:
+        assert _GIT_TEXT_SOURCE.get() == ("repo.git", "a" * 40)
         if path.endswith(".missing"):
             return path, None
         return path, f"int {path.replace('/', '_').replace('.', '_')}() {{ return 1; }}\n".encode()
 
     async def _one(reads, path: str, source: bytes) -> None:
+        assert _GIT_TEXT_SOURCE.get() == ("repo.git", "a" * 40)
         seen.append((reads, path, source))
 
     asyncio.run(
@@ -61,8 +65,11 @@ def _drive(monkeypatch: pytest.MonkeyPatch, size: int, paths: list[str]) -> tupl
             source=_source,
             one=_one,
             denylist=None,
+            git_dir="repo.git",
+            head="a" * 40,
         )
     )
+    assert _GIT_TEXT_SOURCE.get() is None
     return prefetched, seen
 
 

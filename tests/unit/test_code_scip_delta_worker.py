@@ -6,6 +6,7 @@ git_head has outrun scip_commit AND the host has the checkout + binary.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -129,6 +130,58 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
     sub = git_kwargs[next(i for i, c in enumerate(git_calls) if c[0] == "submodule")]
     assert sub["token"] == "ghs_test" and sub["remote"] == "https://github.com/o/private"
     assert sub["proxy_identity"] == "acme.widgets-indexer"
+
+
+@pytest.mark.asyncio
+async def test_a_hold_records_the_translation_unit_cap_its_harness_ran_under(monkeypatch, tmp_path):
+    """A delta refused from a harness run at `MAX_TUS` 200, while the setting changes to
+    100 during the run: the hold records 200, so the next pass, at 100, runs again."""
+    import json
+
+    from server.code.workers import scip_delta as w
+    from server.settings import settings
+
+    for d in ("checkout", "bare.git"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "scip-clang").touch()
+    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "checkout"))
+    monkeypatch.setattr(settings, "code_git_dir", str(tmp_path / "bare.git"))
+    monkeypatch.setattr(settings, "code_scip_clang_path", str(tmp_path / "scip-clang"))
+    monkeypatch.setattr(settings, "code_scip_delta_max_nodes", 10)
+    monkeypatch.setattr(settings, "code_scip_delta_max_tus", 200)
+    monkeypatch.setattr(w, "git", AsyncMock())
+    runs: list[str] = []
+    files = [{"path": f"src/f{i}.cpp", "symbols": [], "edges": []} for i in range(5)]
+
+    def write(path: Path, commit: str) -> None:
+        path.write_text(json.dumps({"delta_version": 1, "commit": commit, "files": files}))
+
+    async def harness(script, checkout, args, env, **kw):
+        runs.append(env["MAX_TUS"])
+        write(Path(env["DELTA_OUT"]), args[1])
+        settings.code_scip_delta_max_tus = 100  # changed while the harness runs
+        return 0, ""
+
+    monkeypatch.setattr(w, "run_harness", harness)
+    state = {"git_head": "a" * 40, "scip_commit": "b" * 40}
+    repo = _repo("a" * 40, "b" * 40)
+
+    async def get_state(org, ns, key):
+        return state.get(key, "")
+
+    async def set_state(org, ns, key, value, detail=""):
+        state[key] = value
+
+    repo.get_state.side_effect = get_state
+    repo.set_state.side_effect = set_state
+    with (
+        patch("server.code.store.index.CodeRepo", return_value=repo),
+        patch("server.code.domain.index.repos.configured_repos", return_value=[_Cfg()]),
+    ):
+        refused = await run_pass()
+        again = await run_pass()
+    assert refused.errors and "FileRefused" in refused.errors[0]
+    assert not again.skipped and runs == ["200", "100"]
 
 
 @pytest.mark.asyncio

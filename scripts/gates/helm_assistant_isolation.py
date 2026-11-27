@@ -21,6 +21,24 @@ def render(overlay: str, *sets: str) -> list[dict[str, Any]]:
     return [d for d in yaml.safe_load_all(out) if d]
 
 
+def _assistant_switch(rows: list[dict[str, Any]]) -> list[str | None]:
+    web = next(
+        (
+            doc
+            for doc in rows
+            if doc["kind"] == "Deployment"
+            and doc["metadata"].get("labels", {}).get("app.kubernetes.io/component") == "web"
+        ),
+        None,
+    )
+    assert web is not None, "web Deployment is missing"
+    containers = web["spec"]["template"]["spec"]["containers"]
+    env = next(
+        (container.get("env", []) for container in containers if container["name"] == "loom"), []
+    )
+    return [entry.get("value") for entry in env if entry["name"] == "LOOM_ASSISTANT_ENABLED"]
+
+
 def main() -> None:
     for overlay in ("values-kind.yaml", "values-eks.yaml"):
         off = render(overlay, "networkPolicy.enabled=true")
@@ -35,11 +53,9 @@ def main() -> None:
             return [d for d in rows if d["kind"] == "NetworkPolicy"]
 
         assert policies(off) == policies(on), "enablement widened network access"
+        assert _assistant_switch(off) == ["false"], "web assistant must be disabled by default"
+        assert _assistant_switch(on) == ["true"], "web assistant enablement was not rendered"
         for doc in on:
-            if doc["kind"] == "ConfigMap":
-                data = doc.get("data", {})
-                if "LOOM_ASSISTANT_ENABLED" in data:
-                    assert data["LOOM_ASSISTANT_ENABLED"] == "true"
             assert "librechat" not in yaml.safe_dump(doc).lower()
             assert "mongodb" not in yaml.safe_dump(doc).lower()
         # Native tool dispatch has no plain-HTTP connection to a service port.

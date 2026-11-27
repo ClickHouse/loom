@@ -449,7 +449,8 @@ def test_literal_hit_is_byte_identical_and_never_falls_back() -> None:
     # and no regex read happens
     assert repo.calls == [("chunks", False)]
     data = json.loads(out.model_dump_json())
-    assert data["matches"] == [] and data["note"] == ""
+    assert data["matches"] == []
+    assert "No exact match" in data["note"]
     assert set(data) == {
         "matches",
         "next_cursor",
@@ -466,6 +467,13 @@ def test_literal_hit_is_byte_identical_and_never_falls_back() -> None:
     }, "a matches-mode payload carries no message-mode field"
 
 
+def test_message_literal_fallback_does_not_scan_for_related_arguments() -> None:
+    repo = _Repo(message=[], literal=[], regex=[])
+    out = _grep(repo, pattern="missing(request.path)", mode="message", related_on_miss=True)
+    assert not out.matches and out.related is None
+    assert repo.calls.count(("chunks", False)) == 1
+
+
 def test_regex_shaped_literal_with_no_chunks_is_run_once_as_a_regex() -> None:
     repo = _Repo(literal=[], regex=[LINE_CHUNK])
     out = _grep(repo, pattern="ALIAS|isAlias|Alias")
@@ -477,7 +485,8 @@ def test_regex_shaped_literal_with_no_chunks_is_run_once_as_a_regex() -> None:
 def test_plain_literal_with_no_chunks_does_not_fall_back() -> None:
     repo = _Repo(literal=[], regex=[LINE_CHUNK])
     out = _grep(repo, pattern="isSerializable")
-    assert repo.calls == [("chunks", False)] and out.matches == [] and out.note == ""
+    assert repo.calls == [("chunks", False)] and out.matches == []
+    assert "code.symbol" in out.note
 
 
 def test_invalid_regex_shaped_literal_only_notes() -> None:
@@ -485,6 +494,8 @@ def test_invalid_regex_shaped_literal_only_notes() -> None:
     out = _grep(repo, pattern=r"convertFieldToType(f, \*actual_type")
     assert repo.calls == [("chunks", False)] and out.matches == []
     assert out.note == mg.REGEX_INVALID_NOTE
+    assert "shorter literal fragment" in out.note
+    assert "escape literal punctuation and pass regex=true" in out.note
 
 
 def test_files_mode_falls_back_the_same_way() -> None:

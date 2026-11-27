@@ -30,12 +30,47 @@ Query parameters on the URL select what `tools/list` shows for that connection:
   `full` (adds `outputSchema`) or `compact` (the first paragraph and the
   argument tree).
 
+Compact coding connections describe the common source workflows in the
+startup instructions. Find the other tools through discovery. When the
+`coding` toolset is bound to a repository, the primer uses the task context pack
+for prior decisions or procedures beyond the lessons returned with indexed source.
+
+With the automatic loading policy, compact coding connections load
+`code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
+definition name or location to read implementation, indexed tests, and linked
+lessons together. Supply multiple literal clues from the same definition to
+resolve it when individual clues also appear in other definitions. A method
+with no direct tests or lessons can receive
+examples or notes labeled with its verified owning type. Clients can discover
+`code.symbol` and `code.search` as needed.
+An explicit `LOOM_MCP_ALWAYS_LOAD_TOOLS` list controls loading on every profile.
+
+Compact coding connections list grep's main inputs for reading enclosing
+definitions. Use `mode: "files"` to list matching paths. Use `loom_op` with
+`{"op": "help", "query": "code.grep"}` to find controls for match excerpts,
+full bodies, related source, neighbours and deadlines. Calls accept the full
+argument set.
+
+On coding connections, `code.symbol` includes related indexed tests and nearby
+source with the definition. Set `include_examples: false` to omit the tests,
+`test_examples_only: false` for general usage examples, or
+`example_context_lines: 0` for locations alone. A lookup with
+`include_body: false` returns test locations unless you request an excerpt.
+The MCP schema advertises the defaults applied to the call.
+
 An unknown value for either falls back to the deployment default, so a typo
 never widens or narrows a listing silently. The `?toolset=` value also shapes the
 session primer (`initialize` instructions, `server/discover`, the `loom` prompt,
 `loom://primer` and `loom_activate`): the primer names an op's own tool when the
 toolset lists it, else the op name marked "(via loom_op)", and leaves out an op
 `loom_op` does not route there.
+
+Coding connections describe implicit code and memory scopes as defaults in
+`initialize` and `server/discover`. The routing text can be reused across
+sessions with different default bindings. When a call needs a namespace
+argument, the instructions name the available namespaces. Authored profiles
+remain in the instructions. Usage hints are available in tool results and
+through `mentor.brief`.
 
 Methods served: `initialize`, `notifications/initialized`,
 `notifications/cancelled`, `ping`, `tools/list`, `tools/call`, `prompts/list`,
@@ -287,6 +322,10 @@ diagnostic shape costs several thousand tokens for a short answer.
 `explain: true` on the call returns the full shape. HTTP, the SDKs and the
 `assistant` toolset always get the full result (on `assistant`, a `memory.search` without
 its per-hit score breakdown).
+
+Lean grep definitions keep source, matching lines and qualified names. When
+the full body is present, Loom can omit a short name already in the qualified
+name and a signature already in the source declaration.
 
 ### The assistant toolset
 

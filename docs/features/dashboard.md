@@ -1,3 +1,9 @@
+---
+description: Inspect agent memories and runs, review conflicting facts, and manage access from the dashboard served by your Loom instance.
+seo:
+  title: Self-hosted agent memory dashboard
+---
+
 # The dashboard
 
 The dashboard is a React single-page app the Loom server serves at its root URL. It calls the same operations agents call,

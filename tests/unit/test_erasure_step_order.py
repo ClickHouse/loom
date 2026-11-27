@@ -58,6 +58,7 @@ def _push_delete(namespaces: int) -> tuple[str, tuple[tuple[str, str], ...]]:
 
 
 USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
+    ("memory.refusals", _SILENT),
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
     (
@@ -424,6 +425,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
 # A user purge: the memory rows the later steps read the user's keys from are stamped
 # first and deleted, with the summaries built from them, in `memory.retire`.
 USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
+    ("memory.refusals", _SILENT),
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
     (
@@ -625,6 +627,7 @@ async def test_namespace_saga_trace(
     run: Any, scope_type: str, scope_value: str, backends: list[str]
 ) -> None:
     want = [
+        ("memory.refusals", _SILENT),
         _SOURCES_RETIRE,
         _push_delete(1 if scope_type == "namespace" else 2),
         (
@@ -646,6 +649,7 @@ async def test_namespace_purge_saga_trace(run: Any, external: bool) -> None:
     lightweight DELETE, the narrow ones by an ALTER DELETE. Same steps."""
     got = await run("namespace_list", _ns_list(purge=True, external=external))
     assert got == [
+        ("memory.refusals", _SILENT),
         _SOURCES_RETIRE,
         _push_delete(2),
         (

@@ -174,12 +174,13 @@ export function localFirstBlock(asOf, scopeLine = "") {
 const CODE_ARBITRATION =
   "# Loom code index: this repository is indexed (per-merge fresh).\n" +
   "- Use Loom first when indexed evidence is needed: loom_code_symbol for definitions, " +
-  "loom_code_callers for callers, loom_code_search for concepts, loom_code_impact for a change's effects.\n" +
+  "loom_code_callers for callers, loom_code_search for concepts, loom_code_grep for exact text or errors, " +
+  "loom_code_impact for a change's effects.\n" +
   "- If the needed tool is deferred, discover it with the client's tool search (ToolSearch in Claude Code). " +
   "A definition does not supply its callers; retrieve the missing evidence for the question.\n" +
   "- If a hook already supplied the answer, use it; do not repeat the lookup. Read only a returned span " +
   "to verify it. Skip retrieval for self-contained tasks.\n" +
-  "- Explicit literal-search requests, uncommitted changes and unindexed files: use local grep/Read. " +
+  "- Explicit local-tool requests, uncommitted changes and unindexed files: use local grep/Read. " +
   "A code question quoting an identifier or error is still a code investigation. If Loom is " +
   "unavailable or abstains, use a targeted local lookup and name the limitation.\n" +
   "- The index is master; this checkout may be behind it. For unchanged files, report the index's path:line.\n";

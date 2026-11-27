@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from server.core import leases
+from server.core.hashing import sha256_value
 from server.memory import store as memory_repo
 from server.memory.api.models_crud import MemoryRestoreInput
 from server.memory.app import handlers as mem_handlers
@@ -67,6 +68,7 @@ def _row(memory_type: str, **over: Any) -> MemoryRow:
         "memory_key": "alert:disk-full:host-7",
         "memory_type": memory_type,
         "value": {"state": "firing"},
+        "content_sha256": sha256_value({"state": "firing"}),
         "value_text": '{"state": "firing"}',
         "confidence": 1.0,
         "version": 100,
@@ -101,6 +103,7 @@ _EMBEDDED_ROW = {
 
 class _CH:
     def __init__(self, emb_rows: list[dict[str, Any]], *, fail: tuple[str, ...] = ()) -> None:
+        self.heads = {}
         self.emb_rows = emb_rows
         self.fail = fail
         self.inserts: list[tuple[str, list[dict[str, Any]], dict[str, Any]]] = []
@@ -112,6 +115,8 @@ class _CH:
 
     async def query_all(self, sql: str, params: Any = None, **_: Any) -> list[dict[str, Any]]:
         self.sqls.append(sql)
+        if params and "keys" in params and "FROM loom.memory FINAL" in sql:
+            return [self.heads[k] for k in params["keys"] if k in self.heads]
         if "FROM loom.memory_embeddings" in sql:
             return [dict(r) for r in self.emb_rows]
         return []
@@ -120,6 +125,8 @@ class _CH:
         if table in self.fail:
             raise RuntimeError(f"insert into {table} unavailable")
         self.inserts.append((table, [dict(r) for r in rows], settings or {}))
+        if table == "loom.memory":
+            self.heads.update({memory_repo.identity_key(r): dict(r) for r in rows})
 
     async def execute(self, *_: Any, **__: Any) -> None:
         return None
@@ -151,6 +158,9 @@ def _query_one_row(existing: MemoryRow, **over: Any) -> dict[str, Any]:
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow, ch: _CH) -> None:
+    ch.heads[memory_repo.identity_key(existing)] = memory_repo.build_memory_version_row(existing)
+    for row in ch.emb_rows:
+        row.setdefault("content_sha256", existing.content_sha256)
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
     monkeypatch.setattr(_restore_mod, "get_client", lambda: ch)

@@ -28,7 +28,7 @@ async def search(
     *,
     query: str,
     top_k: int = 5,
-    token_budget: int = 3000,
+    token_budget: int = 0,
     path_prefix: str = "",
     # the caller's seen-set: dropped from the fused list after fusion and
     # before diversification (pushing NOT IN into the legs saves nothing)
@@ -125,6 +125,7 @@ async def search(
             ns,
             st,
             abstain_threshold=abstain_threshold,
+            token_budget=token_budget,
             track_path=track_path,
             embedder=embedder,
         )

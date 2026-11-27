@@ -277,3 +277,40 @@ async def test_resolve_revise_tombstones_peers(
         # No remaining conflicts
         post = await a.conflicts.list()
         assert len(post["rows"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_list_conflicted_only_lists_each_conflicted_row_as_its_own(
+    control_plane_url,
+    mint_test_token,
+) -> None:
+    """`memory.list` with `conflicted_only` returns the conflicted rows themselves: a newer,
+    unrelated row another agent wrote under a conflicted key is not listed in its place."""
+    from loom import Agent
+
+    ns = f"confl-{uuid.uuid4().hex[:6]}"
+    tok = mint_test_token(org=ORG, namespaces=[ns], roles=["admin"])
+    async with (
+        Agent(org=ORG, namespace=ns, agent="a1", base_url=control_plane_url, api_key=tok) as a1,
+        Agent(org=ORG, namespace=ns, agent="a2", base_url=control_plane_url, api_key=tok) as a2,
+    ):
+        # The threshold test_semantic_conflict_flags_both_rows uses, for the same strings.
+        await a1.namespaces.register(owner_email="itest@loom", conflict_threshold=0.60)
+        await a1.memory.set("style", "Always use 2-space indentation", memory_type="semantic")
+        await _wait_for_embedding(a1, "2-space indentation", "style")
+        await a1.memory.set(
+            "shared",
+            "Always use 2-space indentation throughout the project",
+            memory_type="semantic",
+        )
+        await a2.memory.set(
+            "shared", "The office plants are watered on Fridays.", memory_type="semantic"
+        )
+
+        body = {"org": ORG, "namespace": ns, "agent": "*", "limit": 50}
+        listed = await a1.transport.post("/v1/memory.list", {**body, "conflicted_only": True})
+
+    rows = {(e["memory_key"], e["agent"]): e for e in listed["entries"]}
+    assert set(rows) == {("style", "a1"), ("shared", "a1")}, listed["entries"]
+    assert all(e["status"] == "conflicted" for e in rows.values())
+    assert listed["total"] == 2

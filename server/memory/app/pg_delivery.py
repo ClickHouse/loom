@@ -133,7 +133,7 @@ async def _publish_audits(rows: list[dict[str, Any]], start_by: float) -> Except
     return None
 
 
-async def _publish(claims: list[Claimed], *, stub: bool = False) -> None:
+async def _publish(claims: list[Claimed], *, stub: bool = False) -> int:
     """One namespace's claims: memory rows and audit rows (`pg_publish.publish_rows`),
     then the search documents still owed, the old vectors' retirements, then the deleted
     decisions' records."""
@@ -169,14 +169,22 @@ async def _publish(claims: list[Claimed], *, stub: bool = False) -> None:
         [c for c in owed if pg_publish.document_id(c.row) not in held], deadline
     )
     docs = await _search_documents(build, stub=stub)
+    admitted: list[dict[str, Any]] = []
     if docs:
         with pg_lease.leased(deadline):
-            await memory_repo.insert_embedding_rows(docs, ch=ch)
-        after_write.index_late_rows(docs, ch=ch)
+            admitted = await memory_repo.insert_embedding_rows(docs, ch=ch)
+        after_write.index_late_rows(admitted, ch=ch)
+    received = {(row["org"], row["namespace"], *pg_publish.document_id(row)) for row in admitted}
+    withheld = {
+        _key(c)
+        for c, row in zip(build, docs, strict=True)
+        if (row["org"], row["namespace"], *pg_publish.document_id(row)) not in received
+    }
+    settled = [c for c in owed if _key(c) not in withheld]
     await pg_memory.complete(
-        [(c.org, c.namespace, c.seq) for c in owed],
+        [_key(c) for c in settled],
         pg_memory.SEARCH_DOC,
-        tokens=[c.lease_token for c in owed],
+        tokens=[c.lease_token for c in settled],
     )
     old_vectors = await _retire_old_vectors(
         [c for c in claims if c.targets & pg_memory.OLD_VECTORS], deadline, ch=ch
@@ -193,6 +201,9 @@ async def _publish(claims: list[Claimed], *, stub: bool = False) -> None:
     failed = refused or old_vectors or unretired
     if failed is not None:
         raise failed  # an attempt that failed, once the rest is in
+    if withheld:
+        await pg_memory.release([c for c in owed if _key(c) in withheld])
+    return len(claims) - len(withheld)
 
 
 async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
@@ -333,8 +344,7 @@ async def _publish_namespace(group: list[Claimed], run: _Pass) -> None:
     batch = await pg_memory.renew([c for c in group if not c.taken_over and c.attempts < limit])
     if batch:
         try:
-            await _publish_marked(batch, run)
-            run.landed += len(batch)
+            run.landed += await _publish_marked(batch, run)
             batch = []
         except pg.PostgresUnavailableError:
             raise
@@ -346,8 +356,7 @@ async def _publish_namespace(group: list[Claimed], run: _Pass) -> None:
             log.warning("pg_delivery: a batch of %s failed (%s); one at a time", _ns(batch[0]), why)
     async for c in _one_by_one([*alone, *batch], run):
         try:
-            await _publish_marked([c], run)
-            run.landed += 1
+            run.landed += await _publish_marked([c], run)
         except pg.PostgresUnavailableError:
             raise
         except Exception as e:  # one revision must not hold back the rest
@@ -361,19 +370,20 @@ async def _publish_namespace(group: list[Claimed], run: _Pass) -> None:
                 run.failed += await pg_memory.record_failure([c], e)
 
 
-async def _publish_marked(claims: list[Claimed], run: _Pass, *, stub: bool = False) -> None:
+async def _publish_marked(claims: list[Claimed], run: _Pass, *, stub: bool = False) -> int:
     """`_publish`, with the claims marked as running while it does: a worker's pass
     cancelled in it keeps them held. A publish that ends, either way, clears the mark."""
     keys = {_key(c) for c in claims} if run.worker else set()
     run.running |= keys
     try:
-        await _publish(claims, stub=stub)
+        landed = await _publish(claims, stub=stub)
     except asyncio.CancelledError:
         raise
     except BaseException:
         run.running -= keys
         raise
     run.running -= keys
+    return landed
 
 
 async def _last_attempt(c: Claimed, error: Exception | None, run: _Pass) -> None:
@@ -419,8 +429,7 @@ async def _publish_stub(c: Claimed, run: _Pass) -> bool:
     if held.targets & pg_memory.SEARCHED != pg_memory.SEARCH_DOC:
         await pg_memory.release(renewed)
         return False
-    await _publish_marked([held], run, stub=True)
-    return True
+    return bool(await _publish_marked([held], run, stub=True))
 
 
 def _ns(c: Claimed) -> tuple[str, str]:

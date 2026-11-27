@@ -44,6 +44,39 @@ def test_a_part_of_a_qualified_name_is_not_a_mention_of_its_own() -> None:
     ]
 
 
+def test_a_pytest_node_id_does_not_name_an_anchor() -> None:
+    assert _names(
+        "`Blueprint.register` can be checked with tests/test_blueprints.py::test_nested_blueprint."
+    ) == ["Blueprint.register"]
+
+
+def test_pytest_class_and_configured_function_selectors_do_not_name_anchors() -> None:
+    assert _names(
+        "`Blueprint.register` can be checked with pytest tests/test_blueprints.py::TestBlueprints "
+        "or tests/test_blueprints.py::TestBlueprints::check_nested."
+    ) == ["Blueprint.register"]
+
+
+def test_pytest_class_nodes_and_parameters_leave_other_names_intact() -> None:
+    assert _names(
+        "`Factory.prepare` and `company.py::test_lookup` use "
+        r"`C:\work\test_cache.py::TestCache::test_lookup[outer[middle[CacheRegion::read]]]`, "
+        "then `Factory.finish`, ::Storage::write and py::test_registry."
+    ) == [
+        "Factory.prepare",
+        "company.py::test_lookup",
+        "Factory.finish",
+        "Storage::write",
+        "py::test_registry",
+    ]
+
+
+def test_unclosed_pytest_parameters_leave_other_mentions_intact() -> None:
+    assert _names("Run `tests/test_cache.py::test_lookup[case` and check `Storage::write`.") == [
+        "Storage::write"
+    ]
+
+
 def test_mentions_drop_short_names_and_repeat_once() -> None:
     assert _names("`get` and `getValue` and `getValue`") == ["getValue"]
 
@@ -58,6 +91,26 @@ def test_resolve_skips_a_homonym_it_cannot_tell_apart() -> None:
     defs = [_d("src/a.py", "a::Reader::read"), _d("src/b.py", "b::Reader::read")]
     assert resolve("read", defs, []) is None
     assert resolve("a::Reader::read", defs, []) == defs[0]
+
+
+def test_package_import_spelling_resolves_a_memorys_symbol_anchor() -> None:
+    target = _d("src/pkg/json/__init__.py", "src.pkg.json.__init__::dumps", "before")
+    for name in ("pkg.json.dumps", "src.pkg.json::dumps", "json.dumps"):
+        assert resolve(name, [target], [target.path]) == target
+    link = Link(target.path, target.qualified_name, body_hash=target.body_hash)
+    edited = replace(target, body_hash="after")
+    assert recheck(link, path_now=target.path, here=[edited], head="b").state == "changed"
+
+
+def test_package_import_spelling_preserves_constructor_names_and_ambiguity() -> None:
+    target = _d("src/pkg/__init__.py", "src.pkg.__init__::Client::__init__")
+    assert resolve("pkg.Client.__init__", [target], [target.path]) == target
+    assert resolve("pkg.Client", [target], [target.path]) is None
+    other = _d("other/pkg/__init__.py", "other.pkg.__init__::Client::__init__")
+    assert resolve("pkg.Client.__init__", [target, other], []) is None
+    assert resolve("pkg.Client.__init__", [target, other], [target.path]) == target
+    directory = _d("src/__init__/client.py", "src.__init__.client::Client")
+    assert resolve("src.client.Client", [directory], [directory.path]) is None
 
 
 def test_resolve_takes_overloads_as_one_target() -> None:

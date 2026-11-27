@@ -492,7 +492,7 @@ class Scenario:
 
     def ordinary_events_across(self) -> None:
         """Actual requests from each build retain every ordinary catalog value."""
-        table = next(t for t in boundary.TABLES if t.name == "agent_events")
+        table = next(t for t in boundary.TABLES if t.name == boundary.ORDINARY_EVENTS_VIEW)
         columns = ", ".join(f"toString({c.name})" for c in table.columns)
         for writer in self.builds:
             agent = "event_" + uuid.uuid4().hex
@@ -512,15 +512,27 @@ class Scenario:
                 f"AND agent = {sql_string(agent)} AND operation = 'memory.set' "
                 f"AND memory_key = {sql_string(key)}"
             )
-            statement = f"SELECT {columns} FROM loom.agent_events WHERE {where}"
+            physical = f"SELECT {columns} FROM loom.agent_events WHERE {where}"
+            statement = f"SELECT {columns} FROM loom.{table.name} WHERE {where}"
             deadline = time.monotonic() + SETTLE_S
             while True:
-                raw = sql(self.ch_port, statement + " FORMAT JSONCompactEachRow")
+                raw = sql(self.ch_port, physical + " FORMAT JSONCompactEachRow")
                 if raw or time.monotonic() > deadline:
                     break
                 time.sleep(0.1)
             expected = [json.loads(line) for line in raw.splitlines()]
             self.check(len(expected) == 1, f"{writer} emits one real ordinary event")
+            totals = (
+                "toString(count()), toString(sum(input_tokens)), toString(sum(upstream_cost_usd))"
+            )
+            wanted = json.loads(
+                sql(
+                    self.ch_port,
+                    f"SELECT {totals} FROM loom.agent_events WHERE {where} "
+                    "FORMAT JSONCompactEachRow",
+                )
+            )
+            aggregate = f"SELECT {totals} FROM loom.{table.name} WHERE {where}"
             for reader in self.builds:
                 result = self.call(
                     reader,
@@ -535,12 +547,6 @@ class Scenario:
                     result["rows"] == expected,
                     f"{reader} reads all ordinary fields written by {writer}",
                 )
-                aggregate = (
-                    "SELECT toString(count()), toString(sum(input_tokens)), "
-                    "toString(sum(upstream_cost_usd)) FROM loom.agent_events "
-                    f"WHERE {where}"
-                )
-                wanted = json.loads(sql(self.ch_port, aggregate + " FORMAT JSONCompactEachRow"))
                 result = self.call(
                     reader,
                     "insights.query",
@@ -554,9 +560,9 @@ class Scenario:
                     result["rows"] == [wanted],
                     f"{reader} aggregates {writer}'s ordinary event exactly",
                 )
-        self.private_event_grants_across()
+        self.event_access_across()
 
-    def private_event_grants_across(self) -> None:
+    def event_access_across(self) -> None:
         marker = "event_private_" + uuid.uuid4().hex
         sql(
             self.ch_port,
@@ -565,19 +571,31 @@ class Scenario:
             f"{sql_string(self.org)}, 'mixed', 'gate', {sql_string(marker)}, 1, 'private', 987)",
         )
         for label in self.builds:
-            response = httpx.post(
-                f"{self.builds[label].url}/v1/insights.query",
-                json={
+            for table in boundary.EVENT_STORAGE_TABLES:
+                response = httpx.post(
+                    f"{self.builds[label].url}/v1/insights.query",
+                    json={
+                        "org": self.org,
+                        "namespace": "mixed",
+                        "sql": f"SELECT count() FROM loom.{table}",
+                    },
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=60,
+                )
+                self.check(response.status_code == 422, f"{label} cannot read physical {table}")
+            ledger = self.call(
+                label,
+                "insights.query",
+                {
                     "org": self.org,
                     "namespace": "mixed",
-                    "sql": "SELECT count() FROM loom.agent_events_private",
+                    "sql": (
+                        f"SELECT model, input_tokens FROM loom.{boundary.EVENTS_VIEW} "
+                        f"WHERE request_id = {sql_string(marker)}"
+                    ),
                 },
-                headers={"Authorization": f"Bearer {self.token}"},
-                timeout=60,
             )
-            self.check(
-                response.status_code != 200, f"{label} cannot read the private physical event store"
-            )
+            self.check(ledger["rows"] == [["", 0]], f"{label} reads the masked event")
 
     def answers_insights(self, label: str) -> bool:
         """Whether `label` answers insights.query within SETTLE_S: a process

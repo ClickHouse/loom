@@ -36,6 +36,7 @@ async def checked_write(
     *,
     expected_heads: Mapping[IdentityKey, MemoryRow | None] | None,
     ch: _CHClient,
+    refuse_values: bool = False,
 ) -> AsyncIterator[None]:
     """Every value writer takes these fences too, closing the check/insert window.
 
@@ -45,7 +46,13 @@ async def checked_write(
     keys = {identity_key(r) for r in rows}
     if expected_heads is not None and set(expected_heads) != keys:
         raise ValueError("expected heads must name exactly the inserted keys")
-    names = [lease_name(key) for key in sorted(keys)]
+    from server.memory.store import refusals
+
+    names = sorted(
+        set(
+            [lease_name(key) for key in keys] + refusals.fence_names(rows, forgetting=refuse_values)
+        )
+    )
     async with lease_writes.fenced_many(
         names, ch=_lease_client(ch), wait_s=_admission_wait_s()
     ) as mark:
@@ -60,6 +67,9 @@ async def checked_write(
                 for key, head in expected_heads.items()
             ):
                 raise AdmissionContendedError("the memory changed while it was read")
+        await refusals.check_clickhouse(ch, rows)
         mark(True)
+        if refuse_values:
+            await refusals.record_clickhouse(ch, rows)
         yield
         mark(False)

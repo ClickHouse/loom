@@ -347,3 +347,37 @@ def stub_status_before(monkeypatch: pytest.MonkeyPatch, status: str = "") -> lis
 
     monkeypatch.setattr(mr, "status_before", before)
     return asked
+
+
+def seed_summary_sources(monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]]) -> None:
+    """Give model-policy fixtures real, complete extractive digests and source heads."""
+    heads = {}
+    for row in rows:
+        key = (row.get("derived_from") or [f"source:{row['session_id']}"])[0]
+        for column in ("agent", "user_id", "session_id"):
+            row.setdefault(column, "-")
+        text = row["summary_text"]
+        row.update(derived_from=[key], key_facts=[text])
+        source = mr.MemoryRow(
+            memory_id=str(uuid.uuid4()),
+            org=row["org"],
+            namespace=row["namespace"],
+            agent=row["agent"],
+            user_id=row["user_id"],
+            session_id=row["session_id"],
+            memory_key=key,
+            memory_type="semantic",
+            value=text,
+            confidence=1,
+            version=1,
+            pinned=False,
+            created_at=datetime.now(UTC),
+            expires_at=None,
+        )
+        heads[mr.identity_key(source)] = source
+
+    async def read(keys: Any, **kwargs: Any) -> dict[Any, Any]:
+        assert kwargs["sequential"]
+        return {key: heads[key] for key in keys if key in heads}
+
+    monkeypatch.setattr("server.memory.store.summary_sources.memory_rows_by_identity_keys", read)

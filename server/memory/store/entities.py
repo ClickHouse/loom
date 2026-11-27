@@ -304,9 +304,9 @@ async def _copy_mirrors(
         )
         for r in emb_rows
     ]
-    await insert_embedding_rows(copies, ch=ch)
-    await retire_copies_under_unembedded_heads(copies, ch=ch)
-    return len(emb_rows)
+    acknowledged = await insert_embedding_rows(copies, ch=ch)
+    await retire_copies_under_unembedded_heads(acknowledged, ch=ch)
+    return len(acknowledged)
 
 
 def _shows(mirror: Mapping[str, Any], head_sha256: str) -> bool:
@@ -375,6 +375,6 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
         )
         for r in emb_rows
     ]
-    await insert_embedding_rows(copies, ch=ch)
-    await retire_copies_under_unembedded_heads(copies, ch=ch)
-    return len(emb_rows)
+    acknowledged = await insert_embedding_rows(copies, ch=ch)
+    await retire_copies_under_unembedded_heads(acknowledged, ch=ch)
+    return len(acknowledged)

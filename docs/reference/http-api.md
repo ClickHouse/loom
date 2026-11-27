@@ -275,6 +275,10 @@ dropping them silently (`server/transport/arg_check.py`):
   `memory.set_from_messages` does this for `agent_learnings=true` while
   `memory_extract_agent_learnings` is off.
 
+`X-Loom-Ignored-Args` joins percent-encoded UTF-8 names with commas. Decode each
+component after splitting the header. JSON `ignored_args` retains the original names.
+Ordinary field names such as `unknown_field` have the same header spelling.
+
 Operations and fields can change between releases. Nothing keeps a registry of removed
 fields: `ignored_args` is how a client finds out that the server no longer reads something it
 sends, and the catalogue below is how it checks what the server serves before relying on it.

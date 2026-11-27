@@ -15,6 +15,7 @@ import pytest
 from server.llm import customer
 from server.observability import genai
 from server.settings import settings
+from tests.unit.code_fixtures import repo_config
 from tests.unit.model_client import through_the_model_client
 from tests.unit.test_conflict_resolver import row_env  # noqa: F401
 
@@ -90,9 +91,10 @@ class _Recorder:
         return httpx.Response(200, json=self.body, request=httpx.Request("POST", url))
 
 
-_CHAT = {
-    "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
-    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+_RESPONSE = {
+    "status": "completed",
+    "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
+    "usage": {"input_tokens": 1, "output_tokens": 1},
 }
 _MESSAGES = {
     "content": [{"type": "text", "text": "hi"}],
@@ -111,7 +113,7 @@ def test_chat_and_embedding_requests_carry_the_customer(metered, monkeypatch) ->
     _request("acme")
     sent: list[dict[str, str]] = []
 
-    chat = _Recorder(_CHAT)
+    chat = _Recorder(_RESPONSE)
     monkeypatch.setattr(chat_mod, "_http_client", lambda: chat)
     asyncio.run(chat_mod.OpenAILLMClient(model="gpt-4o-mini", api_key="k").complete("s", "u"))
     sent.append(chat.calls[0]["headers"])
@@ -189,7 +191,7 @@ def test_a_refused_call_sends_nothing(metered, monkeypatch) -> None:
     from server.llm import openai as chat_mod
 
     genai.set_worker_identity("extraction_queue", org="acme")  # a worker that named no org
-    chat = _Recorder(_CHAT)
+    chat = _Recorder(_RESPONSE)
     monkeypatch.setattr(chat_mod, "_http_client", lambda: chat)
     with pytest.raises(customer.Unattributed):
         asyncio.run(chat_mod.OpenAILLMClient(model="gpt-4o-mini", api_key="k").complete("s", "u"))
@@ -287,7 +289,7 @@ def test_a_provider_rebuild_batch_makes_one_call_per_org(metered, monkeypatch) -
 def test_a_cli_command_for_one_org_bills_it(metered, monkeypatch) -> None:
     import argparse
 
-    from server.cli import app
+    from server.cli import dispatch
 
     seen: list[str] = []
 
@@ -295,10 +297,10 @@ def test_a_cli_command_for_one_org_bills_it(metered, monkeypatch) -> None:
         seen.append(customer.current())
         return 0
 
-    app._dispatch(argparse.Namespace(cmd="reembed", org="acme", func=command))
+    dispatch._dispatch(argparse.Namespace(cmd="reembed", org="acme", func=command))
     monkeypatch.setattr(settings, "code_org", "code-org")
-    app._dispatch(argparse.Namespace(cmd="code", org=None, func=command))  # LOOM_CODE_ORG
-    app._dispatch(
+    dispatch._dispatch(argparse.Namespace(cmd="code", org=None, func=command))  # LOOM_CODE_ORG
+    dispatch._dispatch(
         argparse.Namespace(cmd="reembed", func=command)
     )  # every org: each row names its own
     assert seen == ["acme", "code-org", ""]
@@ -366,19 +368,31 @@ def test_the_fakes_check_the_customer_as_a_metered_provider_would(metered) -> No
         asyncio.run(FakeNGramEmbedder(dim=8).embed_many(["text"]))
 
 
-def test_a_reflection_is_written_for_the_org_of_its_pair(metered) -> None:
+def test_a_reflection_is_written_for_the_org_of_its_pair(
+    metered, monkeypatch, no_blacklisted_values
+) -> None:
     # The contrast call and the reflection's write (which embeds) are both that org's.
     from server.memory.app import session_outcomes as so
 
     seen: list[tuple[str, str]] = []
-    neg = {"org": "acme", "namespace": "ns", "session_id": "s1", "summary_embedding": [0.1]}
+    from tests.unit.memory_store import seed_summary_sources
+
+    neg = {
+        "org": "acme",
+        "namespace": "ns",
+        "session_id": "s1",
+        "summary_embedding": [0.1],
+        "summary_text": "failed step",
+    }
+    pos = {**neg, "session_id": "s2", "similarity": 0.99, "summary_text": "ok"}
+    seed_summary_sources(monkeypatch, [neg, pos])
 
     class _CH:
         async def query_all(self, sql: str, params: Any) -> list[Any]:
             return [neg]
 
         async def query_one(self, sql: str, params: Any) -> Any:
-            return {"session_id": "s2", "similarity": 0.99, "summary_text": "ok"}
+            return pos
 
     class _LLM:
         async def complete(self, *a: Any, **k: Any) -> Any:
@@ -772,7 +786,7 @@ def test_code_ingest_names_each_repos_org_in_its_commits_bootstrap_and_walk(
     monkeypatch.setattr(w, "selected_repos", lambda org, ns: [cfg])
     monkeypatch.setattr(w, "_without_unsandboxed", lambda repos, result: repos)
     monkeypatch.setattr(w, "prefetch_mirrors", nothing)
-    monkeypatch.setattr(w, "ingest_oldest_first", nothing)
+    monkeypatch.setattr(w, "ingest_round_robin", nothing)
     monkeypatch.setattr(w, "_post_steps", nothing)
     monkeypatch.setattr(w, "_run_repo", run_repo)
     monkeypatch.setattr(w, "_bootstrap_leg", leg)
@@ -791,7 +805,7 @@ def test_code_ingest_names_each_entrys_org_for_its_commits(metered, monkeypatch,
 
     seen: list[str] = []
     clock = _Clock()
-    _wire_streams(monkeypatch, clock, {"a1": int(clock.time()) - 50})
+    _wire_streams(monkeypatch, clock)
 
     async def ingest_commit(*a: Any, **k: Any) -> None:
         await _model_call(seen)
@@ -801,23 +815,22 @@ def test_code_ingest_names_each_entrys_org_for_its_commits(metered, monkeypatch,
     plan, _ = _plan("code-a", ["a1"])
     result = pass_budget.CodeIngestResult()
     budget = pass_budget.PassBudget(clock.now, clock.now + 1000.0)
-    asyncio.run(pass_stream.ingest_oldest_first([plan], result, budget))
+    asyncio.run(pass_stream.ingest_round_robin([plan], result, budget))
     assert seen == [plan.cfg.org] and not result.errors
     _no_refusal_logged(caplog)
 
 
 def test_code_summary_names_each_repos_org(metered, monkeypatch, caplog) -> None:
-    from types import SimpleNamespace
 
     from server.code.domain.index import repos
     from server.code.workers import summary
 
     seen: list[str] = []
 
-    async def summarize(org: str, ns: str, result: Any, cap: int) -> None:
+    async def summarize(org: str, ns: str, result: Any, cap: int, **_: Any) -> None:
         await _model_call(seen)
 
-    cfg = SimpleNamespace(org="acme", namespace="code-a")
+    cfg = repo_config(org="acme", namespace="code-a")
     monkeypatch.setattr(repos, "configured_repos", lambda: [cfg])
     monkeypatch.setattr(summary, "_summarize_repo", summarize)
     monkeypatch.setattr(settings, "code_summary_max_scopes_per_pass", 10)
@@ -1075,7 +1088,9 @@ def test_the_code_link_judge_names_the_links_org(metered, monkeypatch, caplog) -
     _no_refusal_logged(caplog)
 
 
-def test_the_period_digest_names_the_periods_org(metered, monkeypatch, caplog) -> None:
+def test_the_period_digest_names_the_periods_org(
+    metered, monkeypatch, caplog, no_blacklisted_values
+) -> None:
     from server.embedding.fake import FakeNGramEmbedder
     from server.memory.app.period_digest import PeriodDigestConfig, run_period_digest
     from tests.unit.test_period_digest import _digests, _FakeCH
@@ -1084,11 +1099,15 @@ def test_the_period_digest_names_the_periods_org(metered, monkeypatch, caplog) -
         return None
 
     monkeypatch.setattr("server.memory.app.evidence.link_belief_sources", link)
+    from tests.unit.memory_store import seed_summary_sources
+
+    digests = _digests(1, 5)
+    seed_summary_sources(monkeypatch, digests)
     cfg = PeriodDigestConfig(sessions_per_period=5, namespace_filter="ns", require_opt_in=False)
     res = asyncio.run(
         run_period_digest(
             cfg,
-            ch=_FakeCH(_digests(1, 5)),
+            ch=_FakeCH(digests),
             llm=_MeteredLLM("Between 2023-07-01 and 2023-07-05, Caroline painted."),
             embedder=FakeNGramEmbedder(dim=3),
         )

@@ -1,29 +1,44 @@
 import { defineConfig } from "blume";
 import { vercel } from "blume/deploy";
+import { publisher, siteDescription, siteUrl, website } from "./lib/site-identity.mjs";
 
 export default defineConfig({
-  title: "ClickHouse Loom",
+  title: website.name,
   logo: {
+    href: siteUrl,
     image: "/loom.svg",
-    text: "ClickHouse Loom",
+    text: website.name,
   },
-  description:
-    "Self-hosted MCP server that gives AI agents shared long-term memory, document search with citations, and a code index stored in ClickHouse.",
+  description: siteDescription,
   deployment: vercel({
-    site: "https://loom.clickhouse.com",
+    site: new URL(siteUrl).origin,
     base: "/docs",
   }),
   content: {
     root: ".blume-content",
     include: ["**/*.{md,mdx}"],
   },
+  seo: {
+    sitemap: { alternates: true },
+    jsonLd: {
+      websiteId: website["@id"],
+      organizationId: publisher["@id"],
+    },
+  },
+  lastModified: "frontmatter",
   agents: {
+    llmsTxt: {
+      details:
+        "Use the [MCP installation runbook](https://loom.clickhouse.com/docs/llms-install.md) to install Loom for Cline or another MCP client.\n\n" +
+        "Use the [coding-agent memory selector](https://loom.clickhouse.com/agent-memory-selector) to compare memory setups and copy an evaluation checklist.",
+    },
     mcp: {
       enabled: true,
     },
   },
   i18n: {
     defaultLocale: "en",
+    fallbackLocale: null,
     locales: [
       { code: "en", label: "English" },
       { code: "es", label: "Español" },

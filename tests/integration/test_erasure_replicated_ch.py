@@ -36,6 +36,8 @@ _TABLES = (
     "documents",
     "memory_code_links",
     "memory_versions",
+    "memory_refusals",
+    "erasure_requests",
     "shared",
 )
 # loom.entity_vectors is left out: this fixture's copy of its quantized codec column is

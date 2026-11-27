@@ -168,6 +168,7 @@ class SearchScope:
     path_globs_re: tuple[str, ...] = ()
     exclude_globs_re: tuple[str, ...] = ()
     extensions: tuple[str, ...] = ()
+    exact_path: str = ""
     # the request's own spellings, for explanations and memo keys
     path_globs: tuple[str, ...] = field(default=(), compare=False)
     exclude_globs: tuple[str, ...] = field(default=(), compare=False)
@@ -179,7 +180,9 @@ class SearchScope:
 
     @property
     def has_path_filters(self) -> bool:
-        return bool(self.path_globs_re or self.exclude_globs_re or self.extensions)
+        return bool(
+            self.exact_path or self.path_globs_re or self.exclude_globs_re or self.extensions
+        )
 
     @property
     def constrained(self) -> bool:
@@ -216,6 +219,9 @@ class SearchScope:
     def path_conditions(self) -> tuple[list[str], dict[str, Any]]:
         conds: list[str] = []
         params: dict[str, Any] = {}
+        if self.exact_path:
+            conds.append("path = {sc_path:String}")
+            params["sc_path"] = self.exact_path
         if self.path_globs_re:
             conds.append("multiMatchAny(path, {sc_globs:Array(String)})")
             params["sc_globs"] = list(self.path_globs_re)

@@ -1,17 +1,18 @@
 # Plugin evals — the memory guidance, graded by what it writes
 
-`claude plugin eval integrations/claude-code-plugin` runs the three cases
-under `loom-memory/`. Each case's `prompt.md` body is the task brief under
+`claude plugin eval integrations/claude-code-plugin` runs the cases
+under `loom-memory/` and `loom-mentor/`. Each memory case's `prompt.md` body is the task brief under
 `bench/skill_eval/tasks/` — the same text the bench runner hands to
 `claude -p`; `tests/unit/test_skill_eval.py` keeps the two identical.
 
 ## Manifest
 
-| case                      | skill         | expected behaviour                                                                      | graders (`graders/*.md`)                                                                                                                             |
-| ------------------------- | ------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pr_review_batch`         | `loom-memory` | one row per PR, review bodies kept as documents, the reviewer's claim in working memory | `one-row-per-pr` (≥ 8 writes), `no-blob-values`, `no-claim-in-memory`, `no-double-encoding`, `no-hash-keys`, `skill-fired`                           |
-| `research_note_revisions` | `loom-memory` | each revision rewrites the same readable key; nothing base64-encoded or double-encoded  | `no-key-per-revision`, `no-base64`, `no-blob-values`, `no-double-encoding`, `no-hash-keys`, `skill-fired`                                            |
-| `sre_alert_investigation` | `loom-memory` | the five answers as separate claims, the lease in working memory                        | `claims-written` (≥ 5), `lease-in-working-memory` (≥ 1), `no-lease-in-memory`, `no-blob-values`, `no-double-encoding`, `no-hash-keys`, `skill-fired` |
+| case                       | skill         | expected behaviour                                                                      | graders (`graders/*.md`)                                                                                                                             |
+| -------------------------- | ------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr_review_batch`          | `loom-memory` | one row per PR, review bodies kept as documents, the reviewer's claim in working memory | `one-row-per-pr` (≥ 8 writes), `no-blob-values`, `no-claim-in-memory`, `no-double-encoding`, `no-hash-keys`, `skill-fired`                           |
+| `research_note_revisions`  | `loom-memory` | each revision rewrites the same readable key; nothing base64-encoded or double-encoded  | `no-key-per-revision`, `no-base64`, `no-blob-values`, `no-double-encoding`, `no-hash-keys`, `skill-fired`                                            |
+| `sre_alert_investigation`  | `loom-memory` | the five answers as separate claims, the lease in working memory                        | `claims-written` (≥ 5), `lease-in-working-memory` (≥ 1), `no-lease-in-memory`, `no-blob-values`, `no-double-encoding`, `no-hash-keys`, `skill-fired` |
+| `shared-records-and-tasks` | `loom-mentor` | discover read operations and their arguments without routing writes                     | `relevant-routing`, `no-routed-writes`, `skill-fired`                                                                                                |
 
 - **Rubric.** Every scored grader is a `tool_used` count over the trace: a
   `min` says the right write happened, a `max: 0` says a bad shape never
@@ -38,6 +39,9 @@ under `loom-memory/`. Each case's `prompt.md` body is the task brief under
 ```
 claude plugin eval integrations/claude-code-plugin --trust-plugin --no-publish \
   --case 'loom-memory/*' --runs 3 --threshold 1.0 --json evals-result.json
+
+claude plugin eval integrations/claude-code-plugin --trust-plugin --no-publish \
+  --case 'loom-mentor/*' --runs 3 --threshold 1.0 --json mentor-evals-result.json
 ```
 
 `--case` filters by name glob (`--case sre_alert_investigation`);

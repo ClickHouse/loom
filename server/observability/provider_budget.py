@@ -152,6 +152,24 @@ def _completion_input(payload: dict[str, object]) -> bool:
     )
 
 
+def _responses_input(payload: dict[str, object]) -> bool:
+    fields = {"model", "input", "store", "max_output_tokens", "reasoning", "temperature", "text"}
+    messages = payload.get("input")
+    return (
+        not set(payload) - fields
+        and payload.get("store") is False
+        and isinstance(messages, list)
+        and bool(messages)
+        and all(
+            isinstance(message, dict)
+            and set(message) == {"role", "content"}
+            and message["role"] in ("developer", "user")
+            and isinstance(message["content"], str)
+            for message in messages
+        )
+    )
+
+
 def _price(request: httpx.Request) -> tuple[str, float]:
     payload = json.loads(request.content)
     if not isinstance(payload, dict):
@@ -182,21 +200,26 @@ def _price(request: httpx.Request) -> tuple[str, float]:
         and isinstance(payload.get("texts"), list)
     ):
         return model, cost_accumulator.embed_cost_usd(model, size)
-    if path.endswith(
-        ("/chat/completions", "/messages", "/converse")
-    ) and cost_accumulator.is_priced_for(model, embedding=False):
-        if not _completion_input(payload):
-            raise ValueError("provider input has no text-only token bound")
+    responses = path.endswith("/responses")
+    completion = path.endswith(("/chat/completions", "/messages", "/converse"))
+    if not (responses or completion) or not cost_accumulator.is_priced_for(model, embedding=False):
+        raise ValueError("provider protocol has no bounded price")
+    if responses:
+        bounded_input = _responses_input(payload)
+        maximum = payload.get("max_output_tokens")
+    else:
+        bounded_input = _completion_input(payload)
         config = payload.get("inferenceConfig", {})
         maximum = payload.get(
             "max_completion_tokens", payload.get("max_tokens", config.get("maxTokens"))
         )
-        if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum <= 0:
-            raise ValueError("provider output is not bounded")
-        return model, cost_accumulator.turn_cost_usd(
-            model, input_tokens=0, output_tokens=maximum, cache_creation_1h_tokens=size
-        )
-    raise ValueError("provider protocol has no bounded price")
+    if not bounded_input:
+        raise ValueError("provider input has no text-only token bound")
+    if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum <= 0:
+        raise ValueError("provider output is not bounded")
+    return model, cost_accumulator.turn_cost_usd(
+        model, input_tokens=0, output_tokens=maximum, cache_creation_1h_tokens=size
+    )
 
 
 def sending(request: httpx.Request) -> None:

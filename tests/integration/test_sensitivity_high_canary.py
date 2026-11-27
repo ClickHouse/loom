@@ -285,12 +285,17 @@ def test_payment_and_identity_numbers_are_labelled_on_write(
         "recall_by_agent": [],
         "sensitivity": level,
     }, r.text[:500]
-    stored = ch_client.query(
-        "SELECT memory_id, org, namespace, agent, user_id, session_id, sensitivity "
-        "FROM loom.memory FINAL WHERE org = {o:String} AND namespace = {n:String} "
-        "AND memory_key = {k:String} AND tombstoned_at IS NULL",
-        parameters={"o": ORG, "n": NAMESPACE, "k": key},
-    ).result_rows
+
+    def stored_rows():
+        return ch_client.query(
+            "SELECT memory_id, org, namespace, agent, user_id, session_id, sensitivity "
+            "FROM loom.memory FINAL WHERE org = {o:String} AND namespace = {n:String} "
+            "AND memory_key = {k:String} AND tombstoned_at IS NULL",
+            parameters={"o": ORG, "n": NAMESPACE, "k": key},
+        ).result_rows
+
+    _wait(lambda: bool(stored_rows()))
+    stored = stored_rows()
     assert [tuple(map(str, row)) for row in stored] == [
         (got["memory_id"], ORG, NAMESPACE, "canary", "-", "-", level)
     ]

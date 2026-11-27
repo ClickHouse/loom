@@ -83,8 +83,7 @@ def test_mcp_reach_derives_from_the_tier_frozensets():
         assert {"mcp_atomic", "mcp_all"} <= op_reach(name), name
     for name in _MCP_HIDDEN_OPS:
         assert not (op_reach(name) & {"mcp_core", "mcp_atomic", "mcp_all"}), name
-    # the hidden operator sweep has no SDK wrapper either: the dashboard's pattern list is its one caller
-    assert op_reach("blacklist.sweep") == {"dashboard"}
+    assert op_reach("blacklist.sweep") == {"dashboard", "sdk_method"}
     assert OPERATIONS_BY_NAME["blacklist.sweep"].maturity == "experimental"
 
 
@@ -105,6 +104,28 @@ def test_manifest_matches_the_tree():
         assert list(kinds) == [k for k in STATIC_KINDS if k in kinds], "manifest order is canonical"
     text = render_manifest(derived)
     assert "GENERATED" in text and text.count('": (') == len(derived)
+
+
+def test_codegen_declarations_do_not_count_as_operator_examples(tmp_path):
+    generators = tmp_path / "scripts/codegen"
+    generators.mkdir(parents=True)
+    (generators / "manifest.py").write_text('OPS = ("ops.health",)\n')
+    operator = tmp_path / "scripts/inspect.py"
+    operator.write_text('post("/v1/memory.get")\n')
+    reach = derive_static_reach(tmp_path)
+    assert "ops.health" not in reach
+    assert reach["memory.get"] == ("sdk_example",)
+
+
+def test_rust_methods_count_as_sdk_reach_without_counting_policy_literals(tmp_path):
+    root = tmp_path / "sdk/rust/src"
+    root.mkdir(parents=True)
+    (root / "operations.rs").write_text(
+        'self.call("blacklist.sweep", &request, options).await;\n'
+        '// self.call("memory.get", &request, options).await;\n'
+        'const POLICY: &str = "ops.health";\n'
+    )
+    assert derive_static_reach(tmp_path) == {"blacklist.sweep": ("sdk_method",)}
 
 
 def test_scan_of_a_checkout_under_a_tests_directory_still_finds_reach(tmp_path):

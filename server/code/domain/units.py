@@ -9,12 +9,19 @@ quality feature: a tight, relevant context beats a 30K-token dump.
 
 from __future__ import annotations
 
+import ast
+import io
 import json
 import re
+import tokenize
+from itertools import islice
 from pathlib import PurePosixPath
 from typing import Any
 
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
+
+from server.code.domain.symbol_body import retained_source_lines
+from server.code.domain.symbol_documentation import symbol_description_preview
 
 # Characters per token by content kind, measured with o200k_base over 300 randomly
 # sampled chunks per kind from a ClickHouse index (cl100k within 1%): cpp 4.33, h 4.38,
@@ -90,6 +97,7 @@ _OPTIONAL_WHEN_EMPTY: frozenset[str] = frozenset(
         "recent_prs",
         "examples",
         "lessons",
+        "lessons_unread",
         "churn",
         "amp",
         "tested",
@@ -136,9 +144,9 @@ class CodeUnit(BaseModel):
     signature: str = ""
     body: str = ""  # whole unit, or "" when elided
     elided: bool = False
-    # sha256 of the unit's defining chunk in the index ("" when unknown). What
-    # a memory anchors to so "the code you describe was rewritten" is one
-    # comparison later, independent of whether the body was served.
+    # sha256 of the unit's defining retrieval chunk ("" when unknown), even when
+    # the body is elided. Large declarations can span several retrieval chunks.
+    # Memory-link freshness uses complete normalized declaration fingerprints.
     body_hash: str = ""
     description: str = ""
     tier: str = ""  # scip | treesitter | '' (chunks carry no tier)
@@ -147,6 +155,9 @@ class CodeUnit(BaseModel):
     recent_prs: list[dict[str, Any]] = Field(default_factory=list)
     examples: list[dict[str, Any]] = Field(default_factory=list)
     lessons: list[dict[str, Any]] = Field(default_factory=list)
+    # True when `lessons` was asked for but its read failed or ran past
+    # `code_enrich_timeout_s`: the symbol may have lessons this answer does not carry.
+    lessons_unread: bool = False
     # risk annotations + one-hop context (code.search fills these when
     # annotate=True; see code/app/risk.py for exact semantics — churn
     # is a floor bounded by PR-history coverage, tested means "a mapped
@@ -186,6 +197,53 @@ class CodeUnit(BaseModel):
         return f"{self.path}:{self.start_line}-{self.end_line}"
 
 
+_PYTHON_CLASS_HEADER = re.compile(r"(?m)^(?P<indent>[ \t]*)class[ \t]+(?P<name>\w+)\b")
+_PYTHON_CLASS_DOCSTRING = re.compile(
+    r"[^\n]*:[ \t]*\n(?P<indent>[ \t]+)(?P<quote>['\"])(?P=quote){2}"
+)
+
+
+def _python_class_without_doc_prefix(unit: CodeUnit) -> CodeUnit:
+    """Keep the skeleton from its class header when its docstring repeats the preface."""
+    if unit.body.startswith("# … continued from "):
+        return unit
+    header = _PYTHON_CLASS_HEADER.search(unit.body)
+    if header is None or header["name"] != unit.symbol.rsplit("::", 1)[-1]:
+        return unit
+    prefix = unit.body[: header.start()].removesuffix("\n")
+    if not prefix:
+        return unit
+    match = _PYTHON_CLASS_DOCSTRING.match(unit.body, header.end())
+    if (
+        match is None
+        or not match["indent"].startswith(header["indent"])
+        or match["indent"] == header["indent"]
+    ):
+        return unit
+    docstring, closing, _ = unit.body[match.end() :].partition(match["quote"] * 3)
+    if closing and docstring.strip("\"' \n").startswith(prefix):
+        return unit.model_copy(update={"body": unit.body[header.start() :]})
+    return unit
+
+
+def _without_repeated_context(unit: CodeUnit) -> CodeUnit:
+    """Keep retrieval context unless its entire text already occurs in the source."""
+    if unit.granularity != "unit" or unit.start_line < 1 or not unit.body:
+        return unit
+    if unit.kind == "class_skeleton" and unit.path.endswith((".py", ".pyi")):
+        return _python_class_without_doc_prefix(unit)
+    if unit.kind != "function":
+        return unit
+    lines = retained_source_lines(
+        {"content": unit.body, "start_line": unit.start_line, "end_line": unit.end_line}
+    )
+    if lines is None:
+        return unit
+    source = "".join(lines)
+    prefix = unit.body[: len(unit.body) - len(source)].strip()
+    return unit.model_copy(update={"body": source}) if prefix and prefix in source else unit
+
+
 def unit_from_chunk(row: dict[str, Any], *, score: float = 0.0) -> CodeUnit:
     return CodeUnit(
         unit_id=str(row.get("chunk_id") or ""),
@@ -204,12 +262,71 @@ _SCIP_PLACEHOLDER_SIG = re.compile(r"^\(scip:[0-9a-f]+\)$")
 
 
 def readable_signature(value: object) -> str:
-    """A signature a reader can use, or "". The compiler tier stores an overload hash as
-    its signature (`(scip:49f6e7a0…)`): an identity, not a signature. Served as-is, a
-    model reads the hash as the signature, fetches the body to find the real one, then
-    greps the checkout."""
+    """Display a signature without the compiler's overload identity."""
     sig = str(value or "")[:300]
     return "" if _SCIP_PLACEHOLDER_SIG.match(sig) else sig
+
+
+def symbol_signature(row: dict[str, Any], *, body: str = "") -> str:
+    """Display source parameters when the compiler identity supplies no signature."""
+    sig = readable_signature(row.get("signature"))
+    if not (
+        sig == "()"
+        and row.get("signature_tier", row.get("tier")) == "scip"
+        and row.get("kind") in {"function", "method"}
+        and str(row.get("path") or "").lower().endswith((".py", ".pyi"))
+    ):
+        return sig
+    name = str(row.get("qualified_name") or "").rsplit("::", 1)[-1]
+    parameters = _python_parameters(body, name) if body and name else ""
+    return parameters if readable_signature(parameters) == parameters else ""
+
+
+def _python_parameters(body: str, name: str) -> str:
+    # Read only the first declaration's header and keep the original parameter text.
+    source = io.StringIO(body)
+    tokens = (
+        token
+        for token in tokenize.generate_tokens(source.readline)
+        if token.type not in {tokenize.COMMENT, tokenize.NL, tokenize.INDENT}
+    )
+    try:
+        head = next(tokens)
+        while head.string == "@":
+            next(token for token in tokens if token.type == tokenize.NEWLINE)
+            head = next(tokens)
+        if head.string == "async":
+            head = next(tokens)
+        if head.string != "def" or next(tokens).string != name:
+            return ""
+
+        depth = 0
+        start = None
+        for token in tokens:
+            if token.type in {tokenize.NEWLINE, tokenize.ENDMARKER}:
+                break
+            if token.type != tokenize.OP:
+                continue
+            if token.string == "(" and depth == 0:
+                start = token.start
+            depth += int(token.string in "([{") - int(token.string in ")]}")
+            if start is not None and depth == 0:
+                if next(tokens).string not in {":", "->"}:
+                    break
+                start_line, start_col = start
+                end_line, end_col = token.end
+                source.seek(0)
+                lines = list(islice(source, start_line - 1, end_line))
+                end = sum(len(line) for line in lines[:-1]) + end_col
+                parameters = "".join(lines)[start_col:end]
+                statement = ast.parse("def _" + parameters + ": pass").body[0]
+                if isinstance(statement, ast.FunctionDef):
+                    return f"({ast.unparse(statement.args)})"
+                break
+    except (StopIteration, SyntaxError, tokenize.TokenError, ValueError, RecursionError):
+        # The retained source can use syntax newer than the server interpreter.
+        return ""
+    return ""
 
 
 def unit_from_symbol(row: dict[str, Any], *, body: str = "") -> CodeUnit:
@@ -220,17 +337,22 @@ def unit_from_symbol(row: dict[str, Any], *, body: str = "") -> CodeUnit:
         end_line=int(row.get("end_line") or 0),
         symbol=str(row.get("qualified_name") or ""),
         kind="symbol",
-        signature=readable_signature(row.get("signature")),
+        signature=symbol_signature(row, body=body),
         body=body,
-        description=str(row.get("doc_comment") or "")[:500],
+        description=symbol_description_preview(str(row.get("doc_comment") or "")),
         tier=str(row.get("tier") or ""),
     )
+
+
+def remaining_token_budget(token_budget: int, spent: int) -> int:
+    """Subtract overhead from a finite budget; keep zero as unlimited."""
+    return max(1, token_budget - spent) if token_budget else 0
 
 
 def budget_units(
     units: list[CodeUnit], token_budget: int, *, bodies: str = "auto"
 ) -> tuple[list[CodeUnit], int]:
-    """Two-pass budget fill. Returns (units, tokens_used).
+    """Two-pass budget fill; zero means unlimited. Returns (units, tokens_used).
 
     Pass 1 reserves HEAD room (signature + doc + pointer) for as many ranked units as
     fit, so every requested slot is represented at least elided. Pass 2 spends the
@@ -247,11 +369,14 @@ def budget_units(
     """
     # A head is the unit as its elided card would serve — pointer, next
     # hint, JSON envelope included — so the reservation is the wire cost.
-    heads = [estimate_unit_tokens(_card_of(u)) for u in units]
+    # Bodyless cards already carry the pointer the caller will receive.
+    if bodies != "none":
+        units = [_without_repeated_context(u) for u in units]
+    heads = [estimate_unit_tokens(_card_of(u) if u.body else u) for u in units]
     kept = 0
     reserved = 0
     for h in heads:
-        if reserved + h > token_budget:
+        if token_budget and reserved + h > token_budget:
             break
         reserved += h
         kept += 1
@@ -262,7 +387,7 @@ def budget_units(
         body_cost = estimate_unit_tokens(u) - _h if u.body else 0
         if not u.body:
             out.append(u)  # bodyless (symbol units): whole, not "elided"
-        elif bodies != "none" and used + body_cost <= token_budget:
+        elif bodies != "none" and (not token_budget or used + body_cost <= token_budget):
             out.append(u)
             used += body_cost
         else:

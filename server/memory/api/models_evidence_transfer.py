@@ -58,10 +58,8 @@ class MemoryExportEvidenceInput(BaseModel):
     # Rows per page (1–2000); `has_more` says whether another page follows.
     limit: int = Field(default=500, ge=1, le=2000)
     cursor: str = ""  # opaque keyset cursor from a previous page
-    # Also export the chunks and digests behind a 'high' row or whose text holds a high
-    # shape (a credential, card number, SSN or stated PIN), and the chunks stored without
-    # a vector (one may hold part of a key). Off: a bundle reaches a wider audience than
-    # the namespace's grants.
+    # Include high chunks and history-held digests. A digest still needs complete,
+    # current, eligible source proof; this flag never overrides that requirement.
     include_high: bool = False
 
 
@@ -89,8 +87,8 @@ class MemoryImportEvidenceInput(BaseModel):
     # one that reads as high is inserted without a vector, and a key cut between
     # two calls' chunks is not found.
     chunks: list[EvidenceChunk] = Field(default_factory=list, max_length=IMPORT_MAX_ITEMS)
-    # Session digests to re-embed and insert (≤256); empty summaries are skipped, and one
-    # whose text reads as high is inserted without a vector.
+    # Session digests to re-embed and insert (≤256); only exact extractive summaries
+    # with complete, currently eligible source proof are written.
     digests: list[EvidenceDigest] = Field(default_factory=list, max_length=IMPORT_MAX_ITEMS)
     # Stamped into memory_chunks.source_url when the chunk carries none.
     source_trace: str = Field(default="okf-import", max_length=512)
@@ -110,7 +108,7 @@ class MemoryImportEvidenceOutput(BaseModel):
     embedding_dim: int = 0
     # Chunks whose body did not hash to the content_sha256 they arrived with.
     edited: list[str] = Field(default_factory=list)
-    # Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse).
+    # Items not written: empty, unembeddable, refused, or missing eligible source proof.
     skipped: int = 0
     # Of the skipped, those the blacklist could not check: the request's values are too
     # long for its regexes; sent in a smaller request they are checked, unless one is

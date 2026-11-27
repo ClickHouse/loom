@@ -83,6 +83,8 @@ class _CH:
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         assert sequential_reads_active() or "select_sequential_consistency = 1" in sql
+        if "FROM loom.memory_refusals" in sql:
+            return []
         return [self.heads[tuple(k)] for k in params["keys"] if tuple(k) in self.heads]
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
@@ -477,6 +479,7 @@ async def test_batched_reemit_reads_and_inserts_once_per_batch(
 
     async def _insert(rows, *, ch=None):
         ch_.inserts.append(rows)
+        return list(rows)
 
     ch_ = ch
     monkeypatch.setattr(embeddings, "insert_embedding_rows", _insert)
@@ -771,8 +774,9 @@ def _real_embeddings(
 
     inserted: list[dict[str, Any]] = []
 
-    async def _insert(rows, *, ch=None) -> None:
+    async def _insert(rows, *, ch=None):
         inserted.extend(rows)
+        return list(rows)
 
     async def _none(*_a: Any, **_k: Any) -> int:
         return 0

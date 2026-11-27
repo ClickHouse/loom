@@ -25,9 +25,9 @@ class Definition:
 
 
 def current_definition() -> Definition:
-    provider = str(settings.assistant_provider) or "anthropic"
-    default = {"anthropic": "claude-haiku-4-5", "fake": "fake-echo-1"}.get(provider, "")
-    return Definition(provider, str(settings.assistant_model) or default)
+    provider = settings.assistant_provider
+    default_model = "fake-echo-1" if provider == "fake" else ""
+    return Definition(provider, settings.assistant_model or default_model)
 
 
 def configuration_error() -> str:
@@ -36,11 +36,13 @@ def configuration_error() -> str:
     if not settings.auth_actually_required():
         return "auth_off"
     definition = current_definition()
+    if not definition.provider:
+        return "provider_required"
     if not definition.model:
         return "model_required"
     if settings.assistant_answer_ceiling_usd <= 0:
         return "budget_required"
-    if not cost_accumulator.is_priced(definition.price_model):
+    if not cost_accumulator.is_priced_for(definition.price_model, embedding=False):
         return "model_price_unknown"
     if definition.provider != "fake" and not any(
         cost_accumulator.PRICE_PER_1K_TOKENS[definition.price_model]

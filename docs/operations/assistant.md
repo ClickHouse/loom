@@ -7,8 +7,8 @@ Changing configuration does not verify a provider or authorize a deployment.
 ## Configuration
 
 Set `LOOM_ASSISTANT_ENABLED=true`. Select `LOOM_ASSISTANT_PROVIDER` and
-`LOOM_ASSISTANT_MODEL` explicitly. Empty provider and model select Anthropic and
-`claude-haiku-4-5`; there is no fallback to the deployment's general LLM model.
+`LOOM_ASSISTANT_MODEL` explicitly. Paid answers require both settings. The `fake`
+provider defaults to `fake-echo-1` for offline verification.
 
 | Provider    | Credentials and route                                                                                                          |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -18,7 +18,10 @@ Set `LOOM_ASSISTANT_ENABLED=true`. Select `LOOM_ASSISTANT_PROVIDER` and
 | `local`     | Existing `LOOM_LOCAL_LLM_BASE_URL`, explicit model and verified price reference                                                |
 | `fake`      | No credentials, no model network; explicit offline verification only                                                           |
 
-For a route alias, set `LOOM_ASSISTANT_PRICE_MODEL` to its verified price-table model.
+For a route alias, set `LOOM_ASSISTANT_PRICE_MODEL` to the model that supplies its
+verified completion rate.
+When the assistant and the general LLM both use the `openai` provider, their shared
+API root must serve both Chat Completions and Responses.
 An unknown price or missing credential refuses an answer. A price reference records
 an estimate from the configured rate, not a provider invoice. A zero ceiling refuses
 calls. Model calls never send temperature by default and do not retry a paid 400 to
@@ -90,7 +93,8 @@ or latency benefit.
 
 ## Offline history conversion
 
-The input is one exported JSON object with `conversationId`, `user` and `messages`.
+Run the converter from the Loom source checkout for the serving build. Its input
+is one exported JSON object with `conversationId`, `user` and `messages`.
 Each message carries `messageId`, `parentMessageId`, `text` and either `role` or
 `isCreatedByUser`. Other archive formats need a separately verified adapter; this
 command does not claim to recover missing exports or arbitrary database contents.

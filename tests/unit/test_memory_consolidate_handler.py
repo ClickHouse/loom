@@ -463,6 +463,7 @@ def test_tombstone_embeddings_for_key_mirrors_every_column_and_sets_the_stamp() 
 
     async def fake_insert(rows, *, ch=None):
         inserted.extend(rows)
+        return list(rows)
 
     ts = datetime(2026, 9, 11, 12, 0, 0)
     with patch.object(embeddings, "insert_embedding_rows", new=fake_insert):

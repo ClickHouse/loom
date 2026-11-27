@@ -1,3 +1,9 @@
+---
+description: Hand work between AI agents with durable task inboxes, owner-controlled acceptance, claim leases, and a record of decisions and outcomes.
+seo:
+  title: Task inboxes and handoffs for AI agents
+---
+
 # Tasks, decisions and policies
 
 Three planes sit beside memory for coordination between agents. Every op is callable by name on any MCP listing;
@@ -18,7 +24,7 @@ trust change would let a writer earn its way past a gate by gaming the signal it
 
 Each agent has a durable queue. A poster can write into an inbox it cannot read. The inbox owner sets how far to trust
 each poster. A claimed task has one owner at a time. Agents pull their work; an optional signed webhook only says
-"pull now".
+"pull now". The inbox and task operations are [experimental](../reference/status.md#operations).
 
 ```mermaid
 sequenceDiagram
@@ -341,7 +347,7 @@ superseded in the record plane and does not keep the record.
   with `sweep=true` and `blacklist.sweep`. `decision.chain`, `decision.precedents` and `decision.outcome` stop
   serving it, and `memory.record.history` shows the last version with `status="tombstoned"`. Two retirements that
   race can each write a tombstoned version, so history may list the tombstone twice.
-- **After a retirement**: `memory.restore`, or `namespace.rollback` past the delete, revives the row but not the
+- **After a retirement**: a reversible automatic retirement can be restored, but this revives the row without the
   record; call `decision.record` again. A row moved with `keep_redirect=false` is no longer a decision: its new key
   has no record, and `decision.record` with the same category and scenario records it again under its derived key.
 - **Leaves the record active**: a delete of another identity's row; `memory.clear` and `namespace.rollback`, which
@@ -520,6 +526,25 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   files that did resolve. Pull request numbers and setting names are printed as unresolved in a dry run, for a human to
   add; a backticked snake_case name is looked up first and reported as a setting when the index does not define it. A
   name defined in several files is printed as unresolved, for a human to pick the file.
+- **Code discovery in a dry run**: a supported decision with no resolved or quoted file searches the selected
+  repository's code index using its document quotations, even when they contain no code identifiers. The report
+  shows up to three `candidate (unverified)` spans with live indexed excerpts, the document quote and the code
+  branch and commit. Suggestions stay outside `files` and create no memory-code links. Search similarity is not
+  evidence that a requirement is implemented. Inspect the spans and any relevant tests, callers or configuration;
+  record confirmed paths through `decision.record` after reviewing the complete decision body.
+
+  Discovery runs for at most eight unresolved decisions per preview, with a three-second bound per decision and
+  a 2000-character quotation query. Search uses the selected namespace only, without model-backed
+  retrieval legs or reranking. It does not copy document quotations into the code namespace's query traces or
+  cursor storage. It preserves search abstention; unavailable retrieval says `unavailable`, and partial,
+  stale, changing or ungrounded index evidence says `deferred`. Later decisions past the preview limit also say
+  `deferred`. Discovery also defers while a fetched revision is still being indexed, even if search has cached
+  fresh metadata. These discovery states do not change the extraction command's exit code or its exact-link behavior.
+  With `--repo`, discovery reads the repository's trunk as exact mention resolution does; without it, it reads the
+  document's namespace and needs a configured code index there. Applied extraction and native source synchronization
+  do not discover or persist inferred links. Run the preview again after the document or code changes; suggestions
+  are not saved or automatically verified.
+
 - **Reconcile**: the document says otherwise when the support check finds the key's stored decision no longer
   stated; the model's wording alone is no change. A decision still stated is recorded again only for its row fields,
   in its stored words. A row is frozen against re-extraction when it is pinned or attested in its current form

@@ -1,0 +1,6 @@
+{"id": "eval-01", "split": "evaluation", "question": "How long before a session do reservations close?", "answerable": true, "document": "notes.md", "section": "Reservation window", "evidence_substring": "two hours before the session begins"}
+{"id": "eval-02", "split": "evaluation", "question": "Are writes retried automatically?", "answerable": true, "document": "notes.md", "section": "Retry policy", "evidence_substring": "does not automatically retry a write"}
+{"id": "eval-03", "split": "evaluation", "question": "For how many days are synthetic activity reports retained?", "answerable": true, "document": "notes.md", "section": "Report retention", "evidence_substring": "for thirty days"}
+{"id": "eval-04", "split": "evaluation", "question": "Does the handout promise a support response time?", "answerable": true, "document": "notes.md", "section": "Support boundary", "evidence_substring": "does not promise a mentor, support response time"}
+{"id": "eval-05", "split": "evaluation", "question": "What is the maximum number of rooms in the service?", "answerable": false, "document": null, "section": null, "evidence_substring": null}
+{"id": "eval-06", "split": "evaluation", "question": "What encryption algorithm protects exports?", "answerable": false, "document": null, "section": null, "evidence_substring": null}

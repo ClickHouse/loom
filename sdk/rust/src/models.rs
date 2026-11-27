@@ -232,3 +232,65 @@ fn default_true() -> bool {
 fn default_source() -> String {
     "fact".into()
 }
+
+macro_rules! option_setter {
+    ($name:ident, $ty:ty) => {
+        pub fn $name(mut self, value: $ty) -> Self {
+            self.$name = Some(value);
+            self
+        }
+    };
+}
+
+macro_rules! string_setter {
+    ($name:ident) => {
+        pub fn $name(mut self, value: impl Into<String>) -> Self {
+            self.$name = Some(value.into());
+            self
+        }
+    };
+}
+
+macro_rules! tags_setter {
+    () => {
+        pub fn tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+            self.tags = Some(tags.into_iter().map(Into::into).collect());
+            self
+        }
+    };
+}
+
+impl SetRequest {
+    string_setter!(memory_type);
+    tags_setter!();
+    option_setter!(ttl_seconds, i64);
+    option_setter!(confidence, f64);
+    string_setter!(if_match_sha256);
+
+    pub async fn send(
+        self,
+        client: &crate::Client,
+        options: crate::CallOptions,
+    ) -> Result<crate::CallResult<SetResponse>, crate::CallFailure> {
+        client.set_with_options(self, options).await
+    }
+}
+
+impl SearchRequest {
+    option_setter!(top_k, u32);
+    tags_setter!();
+    string_setter!(memory_type);
+    string_setter!(search_mode);
+    string_setter!(agent_id);
+    string_setter!(namespace_scope);
+    string_setter!(user_id);
+    string_setter!(session_id);
+
+    pub async fn send(
+        self,
+        client: &crate::Client,
+        options: crate::CallOptions,
+    ) -> Result<crate::CallResult<SearchResponse>, crate::CallFailure> {
+        client.search_with_options(self, options).await
+    }
+}

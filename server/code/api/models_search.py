@@ -42,7 +42,10 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
     # symbol table first (`route` says which path answered). A long one (a pasted issue
     # body) is clipped to QUERY_MAX_CHARS, never refused: the search keeps its rarest
     # terms (code_search_query_max_tokens) whatever its length.
-    query: str = Field(min_length=1)
+    query: str = Field(
+        min_length=1,
+        description="Issue, task, behavior question or identifier to locate in indexed code.",
+    )
 
     @field_validator("query", mode="before")
     @classmethod
@@ -51,10 +54,9 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
 
     # At most this many results per page (1-25).
     top_k: int = Field(default=5, ge=1, le=25)
-    # Response budget in tokens; results are whole units, overflow elides.
-    # None = route-aware default: 3000 for hybrid retrieval, 1200 for a
-    # symbol-shaped query. Explicit values are honored unchanged.
-    token_budget: int | None = Field(default=None, ge=200, le=12000)
+    # Response budget in tokens; 0 = unlimited, omitted = LOOM_CODE_SEARCH_TOKEN_BUDGET
+    # (default 0). Whole unit bodies that exceed a finite budget are elided.
+    token_budget: int | None = Field(default=None, ge=0)
     # Keep only units whose path starts with this prefix; "" = the whole namespace. A prefix
     # outside the indexed prefixes abstains with `abstain_code=not_covered`.
     path_prefix: str = ""
@@ -63,7 +65,14 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
     # scans. The response discloses `as_of.page_offset`, `page_commit`, `page_stale`
     # (the index moved) and `page_fallback` when the pool row was gone and a re-search
     # was run. A cursor for another query, prefix or ranking setting is a 400.
-    cursor: str = Field(default="", max_length=1024)
+    cursor: str = Field(
+        default="",
+        max_length=1024,
+        description=(
+            "Pass `next_cursor` with the original search arguments "
+            "and omit it to start a new search."
+        ),
+    )
     # The caller's seen-set: unit ids not to serve again. Dropped from the
     # fused list before diversification on a computed search; skipped while
     # walking the pool on a continuation page.
@@ -89,7 +98,11 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
     # the budget is generous. "none": cards always — the survey mode; fetch
     # a body via code.symbol when one card wins.
     # None = the deployment default (settings.code_search_bodies_default).
-    bodies: Literal["auto", "none"] | None = None
+    bodies: Literal["auto", "none"] | None = Field(
+        default=None,
+        description="Source response mode: auto includes source, none returns pointers. "
+        "Omit to use the deployment default.",
+    )
     # Chunk-kind prior override: None = code_search_kind_prior; "default" /
     # "flat" pick a table, "structural" applies only the phrasing rule, "off" disables.
     kind_prior: Literal["off", "default", "flat", "structural"] | None = Field(
@@ -194,6 +207,9 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
 
 
 class CodeSearchOutput(_LessonsOut):
+    # File lessons omitted by symbol focus, a token budget, truncation or supersession.
+    lessons_left_out: int = 0
+
     @model_serializer(mode="wrap")
     def _drop_empty_fanout(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # fanout, legs_timed_out and epistemic are on the wire only when they
@@ -321,7 +337,7 @@ class CodeAskInput(_CodeIdentity):
     no_cache: bool = False
     # Retrieval context handed to synthesis, in tokens. None = the
     # deployment default (settings.code_ask_token_budget).
-    token_budget: int | None = Field(default=None, ge=200, le=12000)
+    token_budget: int | None = Field(default=None, ge=0)
 
 
 class CodeAskOutput(BaseModel):

@@ -49,17 +49,16 @@ def _bare_name(qualified: str) -> str:
 
 
 def prefer_scip_edges(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """When both tiers observed the same call, keep only the scip row.
-    Keyed on the call site plus the BARE names of both ends, NOT symbol_ids
-    or qualified names — the tiers hash signatures differently (parameter
-    text vs scip overload hash) and, for Go and file-local
-    C++, scope one definition differently (`a.b.util::Recv.Name` from the
-    parser, `example.com/a/b::Recv::Name` from the compiler), so ids and
-    qualified names for the same logical symbol diverge across tiers while
-    the site (path, line) and the bare names do not."""
+    """Prefer the compiler when the edge kind, source site and bare endpoint names agree.
 
-    def key(r: dict[str, Any]) -> tuple[str, str, str, int]:
+    The tiers can assign different IDs and scopes to the same definition. For example,
+    Go's parser can report `a.b.util::Recv.Name` for `example.com/a/b::Recv::Name`
+    in the compiler index.
+    """
+
+    def key(r: dict[str, Any]) -> tuple[str, str, str, str, int]:
         return (
+            str(r.get("edge_kind", "")),
             _bare_name(str(r["from_qualified_name"])),
             _bare_name(str(r["to_qualified_name"])),
             str(r["path"]),
@@ -164,15 +163,16 @@ def demote_member_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def collapse_outline_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Source-ordered outline rows, one per (qualified_name, start_line):
     the row with the widest extent wins the span, and `tier` is 'scip' when
-    ANY tier-scip row named the declaration at that line. Pure so the
-    handler tests can feed it two-tier fixtures."""
+    ANY tier-scip row named the declaration at that line. The signature
+    keeps its own tier so the formatter can distinguish a real empty
+    parameter list from a compiler placeholder."""
     best: dict[tuple[str, int], dict[str, Any]] = {}
     order: list[tuple[str, int]] = []
     for r in rows:
         key = (str(r.get("qualified_name") or ""), int(r.get("start_line") or 0))
         cur = best.get(key)
         if cur is None:
-            best[key] = dict(r)
+            best[key] = {**r, "signature_tier": r.get("tier")}
             order.append(key)
             continue
         if int(r.get("end_line") or 0) > int(cur.get("end_line") or 0):
@@ -180,10 +180,13 @@ def collapse_outline_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             tier = "scip" if "scip" in tiers else str(r.get("tier") or "")
             cur.update({k: v for k, v in r.items() if k != "tier"})
             cur["tier"] = tier
+            if "signature" in r:
+                cur["signature_tier"] = r.get("tier")
         elif str(r.get("tier")) == "scip":
             cur["tier"] = "scip"
             if not cur.get("signature") and r.get("signature"):
                 cur["signature"] = r["signature"]
+                cur["signature_tier"] = r.get("tier")
     # A class/struct row with no extent is a forward declaration, a `using`
     # alias or a compiler-only sighting (types_for_paths excludes the same
     # rows): it declares nothing a reader can open. Functions keep their
@@ -210,10 +213,15 @@ def _prefer_scip(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     parser span (end_line) is carried onto the surviving compiler row, whose
     own span is a single line. Without this, one real definition read as
     `ambiguous: true` to a bot that cannot supply further qualification."""
-    best: dict[tuple[str, str], dict[str, Any]] = {}
-    order: list[tuple[str, str]] = []
+    best: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str, str, str]] = []
     for r in rows:
-        key = (str(r["qualified_name"]), str(r["symbol_id"]))
+        key = (
+            str(r["qualified_name"]),
+            str(r["symbol_id"]),
+            str(r["path"]) if "extent_commit" in r else "",
+            str(r.get("extent_commit") or ""),
+        )
         if key not in best:
             best[key] = r
             order.append(key)
@@ -237,7 +245,11 @@ def _prefer_scip(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         t_start, t_end = int(t.get("start_line") or 0), int(t.get("end_line") or 0)
         for s in scip_rows:
-            if str(s.get("path")) != str(t.get("path")) or _bare(s) != _bare(t):
+            if (
+                s.get("extent_commit") != t.get("extent_commit")
+                or str(s.get("path")) != str(t.get("path"))
+                or _bare(s) != _bare(t)
+            ):
                 continue
             s_start = int(s.get("start_line") or 0)
             if s_start == t_start or (t_start <= s_start <= t_end):

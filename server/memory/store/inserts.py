@@ -4,7 +4,6 @@ and the full-row check the loom.memory one applies."""
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
@@ -42,6 +41,7 @@ async def insert_memory_versions(
     expected_heads: Mapping[IdentityKey, MemoryRow | None] | None = None,
     on_send: Callable[[], None] | None = None,
     on_inserted: Callable[[], None] | None = None,
+    refuse_values: bool = False,
 ) -> int:
     """The one loom.memory write: every row is checked against
     MEMORY_PERSISTED_COLS before the insert (see `check_memory_rows`), and
@@ -64,19 +64,26 @@ async def insert_memory_versions(
         admission = pg_memory.Admission(generations=dict(policy)) if policy else None
         try:
             if publish_now:
-                await pg_publish.commit_and_publish(rows, ch=ch, admission=admission)
+                await pg_publish.commit_and_publish(
+                    rows, ch=ch, admission=admission, refuse_values=refuse_values
+                )
             else:
-                await pg_publish.commit(rows, publisher_lease=False, admission=admission)
+                await pg_publish.commit(
+                    rows, publisher_lease=False, admission=admission, refuse_values=refuse_values
+                )
         except pg_memory.AdmissionMoved:
             raise pg_memory.AdmissionContendedError(
                 "the write policy changed while it was checked"
             ) from None
         return len(rows)
     ch = ch or _default_client()
+    from server.memory.store import refusals
     from server.memory.store.write_fence import checked_write
 
     guard = (
-        nullcontext() if pg.enabled() else checked_write(rows, expected_heads=expected_heads, ch=ch)
+        refusals.publication(ch, rows, committed=True)
+        if pg.enabled()
+        else checked_write(rows, expected_heads=expected_heads, ch=ch, refuse_values=refuse_values)
     )
     async with guard:
         if on_send is not None:
@@ -96,7 +103,7 @@ async def insert_embedding_rows(
     rows: list[dict[str, Any]],
     *,
     ch: _CHClient | None = None,
-) -> None:
+) -> list[dict[str, Any]]:
     """Insert N memory_embedding rows, committed.
 
     Synchronous because this is the row that makes a memory findable
@@ -104,14 +111,29 @@ async def insert_embedding_rows(
     fire-and-forget insert would let `memory.set` return before its memory
     can be found. The cost is tens of milliseconds per write.
 
-    Empty `rows` is a no-op.
+    Return the input rows whose publication or bounded orphan cleanup was acknowledged.
     """
     if not rows:
-        return
+        return []
     ch = ch or _default_client()
-    await ch.insert(
-        "loom.memory_embeddings",
-        rows,
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
-    pg_pipeline.record_insert("memory_embeddings", len(rows))
+    from server.memory.store.shared import repair_shared_embeddings
+
+    shared = [r for r in rows if r.get("scope") == "shared" and r.get("tombstoned_at") is None]
+    acknowledged = []
+    if shared:
+        acknowledged = await repair_shared_embeddings(shared, ch=ch)
+        rows = [r for r in rows if r not in shared]
+        if not rows:
+            return acknowledged
+    from server.memory.store import refusals
+
+    retired: list[dict[str, Any]] = []
+    async with refusals.publication(ch, rows, embeddings=True, retired=retired) as admitted:
+        if admitted:
+            await ch.insert(
+                "loom.memory_embeddings",
+                [dict(r) for r in admitted],
+                settings={"async_insert": 0, "wait_for_async_insert": 1},
+            )
+    pg_pipeline.record_insert("memory_embeddings", len(admitted))
+    return acknowledged + [dict(row) for row in admitted] + retired

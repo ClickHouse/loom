@@ -1,76 +1,53 @@
-"""The session digest's prompt and output budget, and the transcript cap
-behind `memory_session_digest_max_input_chars`."""
+"""Digest text is extractive, bounded and independent of model-generated prose."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from datetime import datetime
 from typing import Any
 
 import pytest
 
-from server.memory.app import session_summary as ss
+from server.memory.domain.summary_provenance import render_summary, source_text
+from tests.unit import test_session_summaries
+from tests.unit.test_memory_verify import _row
+
+writer = test_session_summaries.writer
 
 
-class _LLM:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str, int]] = []
-
-    async def complete(self, system: str, user: str, max_tokens: int = 0, **kw: Any):
-        self.calls.append((system, user, max_tokens))
-        return SimpleNamespace(
-            text="Events:\n- on 2024-03-11 the user ran a 5k", tokens_in=10, tokens_out=5
-        )
+def test_renderer_preserves_source_text_without_inventing_facts() -> None:
+    facts = ["Lives in Lisbon.", "Deployments use Tuesday and Thursday."]
+    assert render_summary(facts) == "Lives in Lisbon.\nDeployments use Tuesday and Thursday."
+    assert render_summary([]) == ""
 
 
-class _Emb:
-    model_name = "fake-embed"
-    dim = 2
-
-    async def embed(self, text: str) -> list[float]:
-        return [0.1, 0.2]
-
-    async def embed_many(self, texts: list[str]) -> list[list[float]]:
-        return [await self.embed(text) for text in texts]
-
-
-@pytest.fixture
-def env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    import server.llm.client as llm_client
-    from server.memory.app import bulk_set as _bulk_set_mod
-    from server.memory.app import session_summary as _session_summary_mod
-    from server.settings import settings
-
-    llm = _LLM()
-    monkeypatch.setattr(llm_client, "get_llm_client", lambda: llm)
-    monkeypatch.setattr(_bulk_set_mod, "get_embedder", lambda: _Emb())
-    monkeypatch.setattr(_session_summary_mod, "get_embedder", lambda: _Emb())
-    monkeypatch.setattr(settings, "memory_session_digest_max_input_chars", 3000)
-    return SimpleNamespace(llm=llm, settings=settings, monkeypatch=monkeypatch)
-
-
-def _msgs(n: int = 3, size: int = 100) -> list[dict[str, str]]:
-    return [{"role": "user", "content": ("x" * size)} for _ in range(n)]
-
-
-@pytest.mark.asyncio
-async def test_the_digest_is_dated_prose_under_its_budget(env) -> None:
-    draft = await ss._draft_session_summary(
-        SimpleNamespace(session_id="s"), _msgs(), "2024-03-11", operator_policy=""
+def test_structured_source_values_have_a_stable_rendering() -> None:
+    first = _row(value={"city": "Lisbon", "age": 30})
+    second = _row(value={"age": 30, "city": "Lisbon"})
+    now = datetime.now()
+    assert (
+        source_text(first, now=now)
+        == source_text(second, now=now)
+        == '{"age": 30, "city": "Lisbon"}'
     )
-    system, user, max_tokens = env.llm.calls[0]
-    assert system == ss._SESSION_SUMMARY_SYSTEM and max_tokens == 160
-    assert "Session date: 2024-03-11" in user
-    assert draft is not None and draft.embedding_model == "fake-embed"
 
 
-def test_transcript_cap_follows_the_setting(env) -> None:
-    long = _msgs(n=10, size=1000)  # ~10k chars
-    p = ss._build_session_summary_user_prompt(long, "2024-01-01")
-    assert len(p) < 3000 + 200
-    env.monkeypatch.setattr(env.settings, "memory_session_digest_max_input_chars", 12000)
-    p2 = ss._build_session_summary_user_prompt(long, "2024-01-01")
-    assert len(p2) > 9000
-    env.monkeypatch.setattr(env.settings, "memory_session_digest_max_input_chars", 0)
-    assert len(ss._build_session_summary_user_prompt(long, "2024-01-01")) < 3000 + 200, (
-        "0 = default"
-    )
+async def test_digest_generation_never_calls_a_model(writer: Any, monkeypatch: Any) -> None:
+    from server.memory.app.session_summary import _write_session_summary
+
+    def unexpected() -> Any:
+        raise AssertionError("a model could introduce text without a source")
+
+    monkeypatch.setattr("server.llm.client.get_llm_client", unexpected)
+    await _write_session_summary(writer.input, writer.state)
+    writer.ch.insert.assert_awaited_once()
+
+
+@pytest.mark.parametrize("basis", ["created_at", "temporal_anchor", "valid_at"])
+def test_a_source_cannot_lend_text_before_its_valid_time_lower_bound(basis):
+    from datetime import timedelta
+
+    now = datetime(2026, 1, 2)
+    source = _row(value="a later fact", created_at=now)
+    if basis != "created_at":
+        source = source.model_copy(update={basis: now, "created_at": now - timedelta(days=2)})
+    assert source_text(source, now=now, as_of=now - timedelta(days=1)) is None

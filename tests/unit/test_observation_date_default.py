@@ -5,10 +5,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from server.memory.domain.observation_date import resolve_observation_date
+
+
+@pytest.fixture(autouse=True)
+def _no_refused_intake(monkeypatch):
+    # Pipeline and projection cases; actual refusal admission is tested separately.
+    monkeypatch.setattr("server.memory.store.refusals.check_intake", AsyncMock())
 
 
 def test_caller_value_wins_and_is_trimmed() -> None:
@@ -62,7 +69,6 @@ async def test_set_from_messages_dates_the_facts_and_names_the_source(
     monkeypatch.setattr(mx, "_link_written_memories_to_evidence", _zero)
     monkeypatch.setattr(mx, "write_memory_chunks", _none)
     monkeypatch.setattr(mx, "_write_session_summary", _none)
-    monkeypatch.setattr(mx, "_draft_session_summary", _none)
     monkeypatch.setattr(mx, "record_input_projection_failure", _none)
     monkeypatch.setattr(_bulk_set_mod, "record_input_projection_failure", _none)
     monkeypatch.setattr(ont, "load_namespace_ontology", _cold)

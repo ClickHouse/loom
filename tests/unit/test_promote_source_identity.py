@@ -15,6 +15,7 @@ from server.memory.store import MemoryRow, shared
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_the_copy_names_the_row_it_was_read_from(monkeypatch: pytest.MonkeyPatch) -> None:
     """A lookup by `agent="*"` reads one row; the copy names that row's identity, by
     which an erasure finds it, not the wildcard."""
@@ -41,7 +42,14 @@ async def test_the_copy_names_the_row_it_was_read_from(monkeypatch: pytest.Monke
     async def _write(row: dict[str, Any]) -> None:
         rows.append(row)
 
+    async def sources(*args, **kwargs):
+        from server.memory.store.rows import identity_key
+
+        row = await _get()
+        return {identity_key(row): row}
+
     monkeypatch.setattr(memory_repo, "get_by_key", _get)
+    monkeypatch.setattr("server.memory.store.reads.memory_rows_by_identity_keys", sources)
     monkeypatch.setattr(promote, "get_embedder", lambda: None)
     monkeypatch.setattr(shared, "insert_shared_row", _write)
     await promote.handle_memory_promote(

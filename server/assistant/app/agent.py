@@ -44,7 +44,7 @@ def _reserve(state: State, size: int, model: str) -> float:
     output = settings.assistant_max_output_tokens
     if state.input_tokens + state.output_tokens + size + output > settings.assistant_max_tokens:
         raise AssistantUpstreamError("the answer exceeded its token budget")
-    if not cost_accumulator.is_priced(model):
+    if not cost_accumulator.is_priced_for(model, embedding=False):
         raise AssistantUpstreamError("the assistant model has no configured price")
     # UTF-8 bytes bound token count; reserve the highest cache-write multiplier.
     reservation = cost_accumulator.turn_cost_usd(

@@ -87,16 +87,21 @@ def _same_bytes_and_hash(written: str, stored: str, parsed: Any) -> None:
 class _CH:
     def __init__(self, routes: list[tuple[str, list[dict[str, Any]]]] | None = None) -> None:
         self.inserts: list[tuple[str, list[dict[str, Any]], dict[str, Any]]] = []
+        self.heads = {}
         self.routes = routes or []
         self.query_one_result: dict[str, Any] | None = None
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         self.inserts.append((table, [dict(r) for r in rows], settings or {}))
+        if table == "loom.memory":
+            self.heads.update({mr.identity_key(r): dict(r) for r in rows})
 
     async def query_one(self, *_: Any, **__: Any) -> dict[str, Any] | None:
         return self.query_one_result
 
     async def query_all(self, sql: str, params: Any = None, **_: Any) -> list[dict[str, Any]]:
+        if params and "keys" in params and "FROM loom.memory FINAL" in sql:
+            return [self.heads[k] for k in params["keys"] if k in self.heads]
         for needle, result in self.routes:
             if needle in sql:
                 return [dict(r) for r in result]
@@ -120,7 +125,15 @@ _EMB_ROW = {
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow) -> _CH:
-    ch = _CH(routes=[("FROM loom.memory_embeddings", [dict(_EMB_ROW)])])
+    ch = _CH(
+        routes=[
+            (
+                "FROM loom.memory_embeddings",
+                [dict(_EMB_ROW, content_sha256=existing.content_sha256)],
+            )
+        ]
+    )
+    ch.heads[mr.identity_key(existing)] = mr.build_memory_version_row(existing)
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
     monkeypatch.setattr(_restore_mod, "get_client", lambda: ch)

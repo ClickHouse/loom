@@ -160,15 +160,15 @@ async def repair_dim0_rows(
     if dry_run or not out:
         return len(out)
     ch = ch or _default_client()
-    await insert_embedding_rows(out, ch=ch)
+    admitted = await insert_embedding_rows(out, ch=ch)
     from server.memory.store.embeddings import retire_copies_under_unembedded_heads
 
     await retire_copies_under_unembedded_heads(out, ch=ch)
     # A row that was dim 0 was never counted, and its + 1 sits under the BM25 watermark.
     from server.memory.store.bm25_stats import index_late_rows
 
-    await index_late_rows(out, ch=ch)
-    return len(out)
+    await index_late_rows(admitted, ch=ch)
+    return len(admitted)
 
 
 async def drift_sample(

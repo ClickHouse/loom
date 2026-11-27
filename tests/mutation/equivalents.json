@@ -1,0 +1,16 @@
+{
+  "source_sha256": "ba3279c2f9b0505d2249c6ee56b70e9731377aead1d049d6742b3b16c1e52f43",
+  "mutmut_version": "3.8.1",
+  "equivalents": [
+    {
+      "name": "server.core.embedding_space.x_public_identity__mutmut_10",
+      "diff_sha256": "546944d80ac61aa7505607a1d51563b8cb2dee96565772c842d76adbad670318",
+      "reason": "For any string, the final chunk of rsplit at an at-sign is the suffix after the final at-sign whenever the split bound is positive or omitted. The returned identity is therefore unchanged for this target's bounded generated inputs. This does not classify unbounded allocation behavior."
+    },
+    {
+      "name": "server.core.embedding_space.x_public_identity__mutmut_13",
+      "diff_sha256": "6afa6ccd42e763e7c6ed8159e1ee6fcb456b2971ed296ee92d0109bad1dc2e29",
+      "reason": "For any string, the final chunk of rsplit at an at-sign is the suffix after the final at-sign whenever the split bound is positive or omitted. The returned identity is therefore unchanged for this target's bounded generated inputs. This does not classify unbounded allocation behavior."
+    }
+  ]
+}

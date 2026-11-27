@@ -21,6 +21,7 @@ class _Cfg:
         self.git_branch, self.github_token, self.classification = "main", "", "standard"
         self.git_proxy_identity = ""
         self.source, self.git_fetch_pr_heads = source, True
+        self.scip_producer = ""
         self.scip_extra_producers: tuple[str, ...] = ()
         self.scip_checkout_dir = ""
 
@@ -320,6 +321,75 @@ async def test_the_sweep_removes_what_no_active_entry_names(monkeypatch, tmp_pat
         "checkout-code-kept",
         "o__kept.git",
         "o__young.git",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_keeps_the_tier_checkouts_of_an_entry_naming_no_producer(
+    monkeypatch, tmp_path
+) -> None:
+    """An entry that names no producer runs the tiers its tree calls for, each in
+    `checkout_for(cfg, tier)`; the sweep names them all, for a registry row and for an
+    entry whose checkout sits under the root, and still removes a gone entry's."""
+    from server.code.store import index as store
+
+    root = tmp_path / "self"
+    monkeypatch.setattr(settings, "code_repos_root", str(root))
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    kept = (
+        "checkout-code-kept",
+        "checkout-code-kept.python",
+        "checkout-code-kept.typescript",
+        "checkout-code-cfg",
+        "checkout-code-cfg.python",
+        "checkout-code-cfg.typescript",
+    )
+    for name in (*kept, "checkout-code-gone.python"):
+        _old(root / name)
+
+    class _Repo:
+        async def registry_rows(self) -> list[dict[str, Any]]:
+            return [{"org": "o", "namespace": "code-kept", "repo": "o/kept", "active": True}]
+
+    cfg = _Cfg(str(root / "o__cfg.git"), "code-cfg")
+    cfg.scip_checkout_dir = str(root / "checkout-code-cfg")
+    cfg.scip_extra_producers = ("typescript",)
+    monkeypatch.setattr(store, "CodeRepo", _Repo)
+    _repos(monkeypatch, [cfg])
+    removed = {os.path.basename(p) for p in await mirrors.sweep()}
+    assert removed == {"checkout-code-gone.python"}
+    assert sorted(p.name for p in root.iterdir() if p.is_dir()) == sorted(kept)
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_removes_a_tier_checkout_an_explicit_entry_no_longer_names(
+    monkeypatch, tmp_path
+) -> None:
+    """An entry that names its producer runs that tier and its extras only, so the
+    old checkout of a tier dropped from the extras goes while the named ones stay."""
+    from server.code.store import index as store
+
+    root = tmp_path / "self"
+    monkeypatch.setattr(settings, "code_repos_root", str(root))
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    for name in ("checkout-code-go", "checkout-code-go.python", "checkout-code-go.typescript"):
+        _old(root / name)
+
+    class _Repo:
+        async def registry_rows(self) -> list[dict[str, Any]]:
+            return []
+
+    cfg = _Cfg(str(root / "o__go.git"), "code-go")
+    cfg.scip_producer = "go"
+    cfg.scip_checkout_dir = str(root / "checkout-code-go")
+    cfg.scip_extra_producers = ("python",)
+    monkeypatch.setattr(store, "CodeRepo", _Repo)
+    _repos(monkeypatch, [cfg])
+    removed = {os.path.basename(p) for p in await mirrors.sweep()}
+    assert removed == {"checkout-code-go.typescript"}
+    assert sorted(p.name for p in root.iterdir() if p.is_dir()) == [
+        "checkout-code-go",
+        "checkout-code-go.python",
     ]
 
 

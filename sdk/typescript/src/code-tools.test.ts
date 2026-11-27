@@ -59,8 +59,8 @@ describe("opt-in code tools", () => {
   });
 
   it.each([
-    ["symbol", "src.flask.blueprints::Blueprint::__init__", undefined, { token_budget: 2500 }],
-    ["search", "How are nested blueprints registered?", undefined, { top_k: 3, token_budget: 2500 }],
+    ["symbol", "src.flask.blueprints::Blueprint::__init__", undefined, {}],
+    ["search", "How are nested blueprints registered?", undefined, { top_k: 3 }],
     ["callers", "DB::Context::getSettingsRef", 2, { depth: 2, max_nodes: 20 }],
     ["impact", "std::vector<int>::push_back", 2, { depth: 2, per_hop_limit: 20 }],
   ])(

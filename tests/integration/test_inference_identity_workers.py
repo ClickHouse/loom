@@ -59,7 +59,13 @@ async def test_an_older_worker_reclaims_a_hold_when_its_lease_ends(
     assert response.status_code == 200, response.text
     assert response.json()["pending"] == 1
     monkeypatch.setattr(queue, "_now", lambda: datetime.now(UTC) - timedelta(seconds=1))
-    await queue.mark_held(claimed[0], reason="refused", seconds=0, ch=ch)
+    current = await ch.query_one(
+        f"SELECT {', '.join(queue.COLUMNS)} FROM loom.memory_extraction_queue FINAL "
+        "WHERE org={org:String} AND queue_id={qid:String}",
+        params={"org": org, "qid": claimed[0]["queue_id"]},
+    )
+    assert current is not None
+    await queue.mark_held(current, reason="refused", seconds=0, ch=ch)
     assert len(await ch.query_all(old_selection, params={"org": org})) == 1
 
 

@@ -74,7 +74,7 @@ def test_chart_contains_only_native_assistant_enablement() -> None:
     assert "librechat" not in helpers.lower()
 
 
-@pytest.mark.parametrize("broken", ["", "workload", "network", "enabled"])
+@pytest.mark.parametrize("broken", ["", "workload", "network", "enabled", "missing", "off"])
 def test_native_helm_gate_rejects_expanded_runtime_or_network(monkeypatch, broken):
     from scripts.gates import helm_assistant_isolation as gate
 
@@ -83,13 +83,21 @@ def test_native_helm_gate_rejects_expanded_runtime_or_network(monkeypatch, broke
     def render(overlay, *sets):
         calls.append((overlay, sets))
         enabled = "assistant.enabled=true" in sets
-        config = {"LOOM_ASSISTANT_ENABLED": "true" if enabled else "false"}
+        flag = "true" if enabled else "false"
         if enabled and broken == "enabled":
-            config["LOOM_ASSISTANT_ENABLED"] = "false"
+            flag = "false"
+        if not enabled and broken == "off":
+            flag = "true"
+        env = [] if broken == "missing" else [{"name": "LOOM_ASSISTANT_ENABLED", "value": flag}]
+        web = {
+            "kind": "Deployment",
+            "metadata": {"name": "loom", "labels": {"app.kubernetes.io/component": "web"}},
+            "spec": {"template": {"spec": {"containers": [{"name": "loom", "env": env}]}}},
+        }
         policy = {"kind": "NetworkPolicy", "metadata": {"name": "loom"}, "spec": {}}
         if enabled and broken == "network":
             policy["spec"]["ingress"] = [{}]
-        rows = [{"kind": "ConfigMap", "metadata": {"name": "loom"}, "data": config}, policy]
+        rows = [web, policy]
         if enabled and broken == "workload":
             rows.append({"kind": "Deployment", "metadata": {"name": "extra"}})
         return rows

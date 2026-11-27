@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -44,11 +45,16 @@ def test_home_namespace_prefers_the_callers_own() -> None:
 class _CH:
     def __init__(self) -> None:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
+        self.read_head = lambda: None
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         self.inserts.append((table, rows))
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        if params and "keys" in params:
+            head = self.read_head()
+            if head is not None and memory_repo.identity_key(head) in params["keys"]:
+                return [memory_repo.build_memory_version_row(head)]
         return []
 
     async def query_one(self, sql: str, params: Any = None) -> Any:
@@ -56,7 +62,7 @@ class _CH:
 
 
 def _row(agent: str, session_id: str) -> Any:
-    return SimpleNamespace(
+    return memory_repo.MemoryRow(
         org="clickhouse",
         namespace="jdoe",
         agent=agent,
@@ -66,12 +72,15 @@ def _row(agent: str, session_id: str) -> Any:
         memory_id="33333333-3333-3333-3333-333333333333",
         memory_type="semantic",
         value='"x"',
-        run_id="",
+        run_id="-",
         source_class="extracted",
         tags=[],
         entities=[],
         version=1,
-        locked=False,
+        confidence=1.0,
+        pinned=False,
+        expires_at=None,
+        created_at=datetime(2026, 1, 1),
     )
 
 
@@ -82,6 +91,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "row": _row("claude-code", "sess-65187490"),
         "ch": _CH(),
     }
+
+    state["ch"].read_head = lambda: state["row"]
 
     async def _get_by_key(identity: Any, key: str, **kw: Any) -> Any:
         state["lookups"].append((identity.agent, identity.user_id, identity.session_id, key))
@@ -115,22 +126,6 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(_restore_mod, "get_client", lambda: state["ch"])
     monkeypatch.setattr("server.memory.app.write.get_client", hm.get_client)
     monkeypatch.setattr("server.memory.app.update.get_client", hm.get_client)
-    monkeypatch.setattr(
-        memory_repo,
-        "build_memory_version_row",
-        lambda existing, **kw: {
-            "org": existing.org,
-            "namespace": existing.namespace,
-            "memory_key": existing.memory_key,
-            "agent": existing.agent,
-            "user_id": existing.user_id,
-            "session_id": existing.session_id,
-            **kw,
-        },
-    )
-    # The stub builder returns partial rows; the funnel's full-row check is
-    # pinned in test_rmt_write_is_typed.
-    monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
     monkeypatch.setattr(hm._lock, "assert_unlocked", lambda *a, **k: None)
     return state
 
@@ -153,7 +148,10 @@ def test_delete_looks_namespace_wide_after_an_exact_miss_and_tombstones_the_rows
     out = asyncio.run(_run())
     assert out.tombstoned is True and out.found is True
     assert world["lookups"][0][0] == "claude-desktop" and world["lookups"][1][0] == "*"
-    table, rows = world["ch"].inserts[0]
+    refused, fingerprints = world["ch"].inserts[0]
+    assert refused == "loom.memory_refusals" and fingerprints
+    assert all(len(row["digest"]) == 64 for row in fingerprints)
+    table, rows = next(item for item in world["ch"].inserts if item[0] == "loom.memory")
     assert table == "loom.memory"
     assert rows[0]["agent"] == "claude-code" and rows[0]["session_id"] == "sess-65187490"
 
@@ -378,3 +376,62 @@ def test_a_versioned_delete_checks_and_tombstones_under_the_key_lock(world, monk
     assert held == [
         ("clickhouse", "jdoe", "claude-code", "-", "sess-65187490", "user_home_location")
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope_name", ["namespace", "own_session"])
+async def test_wildcard_deletion_keeps_the_requested_user_and_session_ceiling(
+    world, monkeypatch, scope_name
+):
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory.api.models_crud import MemoryDeleteInput
+
+    world["row"] = world["row"].model_copy(update={"user_id": "alice"})
+    scopes = []
+    original = memory_repo.get_by_key
+
+    async def read(identity, key, **kwargs):
+        scopes.append(kwargs["scope"])
+        return await original(identity, key, **kwargs)
+
+    scope = ReadFilters(
+        scope_name,
+        "alice" if scope_name == "own_session" else None,
+        "sess-65187490" if scope_name == "own_session" else None,
+    )
+    monkeypatch.setattr(hm, "request_scope", lambda: scope)
+    monkeypatch.setattr(memory_repo, "get_by_key", read)
+    out = await hm.handle_memory_delete(
+        MemoryDeleteInput(
+            org="clickhouse",
+            namespace="jdoe",
+            agent="*",
+            user_id="alice",
+            memory_key="user_home_location",
+        )
+    )
+    assert out.tombstoned
+    assert scopes == [
+        ReadFilters(
+            "own_session" if scope_name == "own_session" else "own_user", "alice", scope.session_id
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_user_cannot_wildcard_delete_a_different_users_row(world, monkeypatch):
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory.api.models_crud import MemoryDeleteInput
+
+    monkeypatch.setattr(hm, "request_scope", lambda: ReadFilters("own_user", "bob", None))
+    out = await hm.handle_memory_delete(
+        MemoryDeleteInput(
+            org="clickhouse",
+            namespace="jdoe",
+            agent="*",
+            user_id="alice",
+            memory_key="user_home_location",
+        )
+    )
+    assert not out.found and not out.tombstoned
+    assert world["lookups"] == [] and world["ch"].inserts == []

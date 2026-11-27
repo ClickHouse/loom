@@ -18,13 +18,13 @@ _KEY = "sk-proj-" + "a" * 40
 
 
 class _CH:
+    def __init__(self, digests):
+        self.digests = digests
+
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         if "session_summaries" in sql:
-            return [
-                {"session_id": "s1", "summary_text": "a plain day", "derived_from": ["k"]},
-                {"session_id": "s2", "summary_text": "plain", "derived_from": ["vault"]},
-                {"session_id": "s3", "summary_text": f"the key is {_KEY}", "derived_from": []},
-            ]
+            return self.digests
+
         return [
             {"session_id": "s", "chunk_index": 0, "content": "plain talk", "embedding_dim": 2},
             {"session_id": "s", "chunk_index": 1, "content": "about the vault", "embedding_dim": 2},
@@ -39,15 +39,41 @@ class _CH:
 
 
 @pytest.fixture
-def evidence(monkeypatch: pytest.MonkeyPatch) -> list[list[dict[str, Any]]]:
+def evidence(monkeypatch: pytest.MonkeyPatch, no_blacklisted_values) -> list[list[dict[str, Any]]]:
     async def _links(_ch: Any, **_k: Any) -> dict[tuple[str, int], list[str]]:
         return {("s", 0): ["k"], ("s", 1): ["vault"], ("s", 2): [], ("s", 3): []}
 
     async def _high_keys(_org: str, _ns: str, keys: Any, **_k: Any) -> set[str]:
-        # `vault` had a high version, and has since been deleted
+        # `vault` had a high version; its current source is a plain fact.
         return {"vault"} & set(keys)
 
-    monkeypatch.setattr(evidence_transfer, "get_client", lambda: _CH())
+    from tests.unit.memory_store import seed_summary_sources
+
+    digests = [
+        {
+            "org": "o",
+            "namespace": "n",
+            "session_id": "s1",
+            "summary_text": "a plain day",
+            "derived_from": ["k"],
+        },
+        {
+            "org": "o",
+            "namespace": "n",
+            "session_id": "s2",
+            "summary_text": "plain",
+            "derived_from": ["vault"],
+        },
+        {
+            "org": "o",
+            "namespace": "n",
+            "session_id": "s3",
+            "summary_text": f"the key is {_KEY}",
+            "derived_from": ["credential"],
+        },
+    ]
+    seed_summary_sources(monkeypatch, digests)
+    monkeypatch.setattr(evidence_transfer, "get_client", lambda: _CH(digests))
     monkeypatch.setattr(chunk_links, "chunk_memory_keys", _links)
     monkeypatch.setattr(memory_repo, "high_keys", _high_keys)
     audits: list[list[dict[str, Any]]] = []
@@ -89,7 +115,7 @@ async def test_chunks_behind_a_high_key_holding_a_credential_or_unembedded_stay_
 async def test_digests_behind_a_high_key_or_holding_a_credential_stay_home(evidence) -> None:
     out = await evidence_transfer.handle_memory_export_evidence(_input("digests"))
     assert [d.session_id for d in out.digests] == ["s1"]
-    assert out.held_high == 2
+    assert out.held_high == 1
 
 
 @pytest.mark.asyncio
@@ -97,10 +123,9 @@ async def test_include_high_releases_held_digests_and_audits_each(evidence) -> N
     out = await evidence_transfer.handle_memory_export_evidence(
         _input("digests", include_high=True)
     )
-    assert [d.session_id for d in out.digests] == ["s1", "s2", "s3"] and out.held_high == 0
+    assert [d.session_id for d in out.digests] == ["s1", "s2"] and out.held_high == 0
     assert evidence == [
         [
             {"kind": "digests", "session_id": "s2", "memory_keys": ["vault"]},
-            {"kind": "digests", "session_id": "s3", "memory_keys": []},
         ]
     ]

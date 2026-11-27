@@ -36,7 +36,11 @@ class StubCH:
     async def query_all(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        if "FROM loom.memory" in sql:
+        if "FROM loom.memory FINAL" in sql and "PREWHERE (org, namespace" in sql:
+            from server.memory.store import identity_key
+
+            return [r for r in self.lookup_rows if identity_key(r) in (params or {})["keys"]]
+        if "FROM loom.memory " in sql:
             return self.lookup_rows
         return []
 

@@ -63,7 +63,7 @@ Each line is a rule; the skill named after it is the procedure (`.claude/skills/
 - **Look before you build**: search for the existing helper, setting or feature, and for an open PR doing the same work (`gh pr list --search <area>`).
 - **One task, one worktree from `origin/main`, its own ClickHouse.** The branch ref `main` and the git stash are shared by every worktree, so a linked worktree never checks out `main` and nobody uses `git stash` (a WIP commit instead). Tests and migrations run against a ClickHouse you started, never one you found listening (`loom-dev-setup`).
 - **Shared machine**: stop every server, container and background run you started before you report, and remove only what you created, by exact name, never by a prefix filter.
-- **Every gate the diff touches passes before the push**, fixed at the source, never by loosening the gate (`loom-pre-push`; what else a change must touch: `loom-change`).
+- **Run local format, lint, type checks and focused tests before the push**, fixing failures at the source. The full unit suite and other heavy checks run in CI; they are not mandatory local push gates (`loom-pre-push`; what else a change must touch: `loom-change`).
 - **A pull request** is one concern with a title that says what is now true, a public body from the template, signed-off commits, a fresh review at every push and a squash merge on green (`loom-ship-pr`, `loom-review`, `loom-address-review`). Issues: `loom-file-issue`.
 - **A release** is cut, soaked as a release candidate and checked from outside, and every step others see is the owner's to start (`loom-release`).
 - **Benchmarks run only on request**: they spend provider money and hours (`loom-bench`).

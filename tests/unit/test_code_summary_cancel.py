@@ -8,6 +8,7 @@ import asyncio
 import pytest
 
 from server.code.workers.summary import _run_cards
+from tests.unit.code_fixtures import repo_config
 
 
 @pytest.mark.parametrize("candidates", [3, 8])
@@ -37,8 +38,6 @@ async def test_one_repositorys_failure_does_not_skip_the_rest(monkeypatch) -> No
     """A read that raises before the per-file loop (live hashes, the budget
     check, the model client) does not end the pass for every repository after
     it; a cancellation still ends it."""
-    from types import SimpleNamespace
-
     import server.code.domain.index.repos as repos
     from server.code.workers import summary as w
     from server.workers import pass_context
@@ -46,7 +45,7 @@ async def test_one_repositorys_failure_does_not_skip_the_rest(monkeypatch) -> No
     monkeypatch.setattr(
         repos,
         "configured_repos",
-        lambda: [SimpleNamespace(org="o", namespace=n) for n in ("a", "b", "c")],
+        lambda: [repo_config(org="o", namespace=n) for n in ("a", "b", "c")],
     )
     seen: list[str] = []
 

@@ -13,7 +13,10 @@ from types import SimpleNamespace
 import pytest
 
 import server.memory.app.ops as ops
+from server.core.datetimes import naive_utc_now
+from server.core.hashing import sha256_value
 from server.memory.api.models_temporal import MemoryOutcomeInput
+from server.memory.store.rows import MemoryRow, _hydrate, build_memory_version_row, identity_key
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +63,21 @@ class _QuarantineCH(_StubCH):
     def __init__(self, ids):
         super().__init__([])
         self.ids = ids
+        self.heads = {}
+
+    def current(self):
+        heads = {
+            identity_key(h): build_memory_version_row(h)
+            for h in self.heads.values()
+            if h is not None
+        }
+        for table, rows in self.inserts:
+            if table == "loom.memory":
+                for row in rows:
+                    key = identity_key(row)
+                    if key not in heads or int(heads[key]["version"]) < int(row["version"]):
+                        heads[key] = row
+        return heads
 
     async def query_one(self, sql, params=None):
         if "event_type = 'rejection'" in sql:
@@ -70,7 +88,11 @@ class _QuarantineCH(_StubCH):
 
     async def query_all(self, sql, params=None):
         if "FROM loom.memory FINAL" in sql:
-            return [{"memory_id": mid} for mid in self.ids]
+            return [
+                r
+                for key, r in self.current().items()
+                if not params or "keys" not in params or key in params["keys"]
+            ]
         if "FROM loom.memory_embeddings FINAL" in sql:
             p = params or {}
             return [
@@ -86,6 +108,7 @@ class _QuarantineCH(_StubCH):
                     "embedding_dim": 2,
                     "status": "active",
                     "version": 2,  # copied at read + 1 since its memory row
+                    "content_sha256": sha256_value("session fact"),
                 }
                 for o, n, a, u, s, k in zip(
                     p["o"], p["n"], p["a"], p["u"], p["s"], p["k"], strict=True
@@ -95,7 +118,13 @@ class _QuarantineCH(_StubCH):
 
 
 def _session_row(session_id, lock_mode="", version=1):
-    return SimpleNamespace(
+    return MemoryRow(
+        value="session fact",
+        pinned=False,
+        confidence=1,
+        created_at=naive_utc_now(),
+        expires_at=None,
+        content_sha256=sha256_value("session fact"),
         org="o",
         namespace="n",
         agent="a",
@@ -121,6 +150,7 @@ def _wire_quarantine(monkeypatch, heads, outcome_reads=None):
     from server.settings import settings
 
     ch = _QuarantineCH(ids=list(heads))
+    ch.heads = heads
     first = outcome_reads or heads
 
     async def get_by_id(memory_id, **kw):
@@ -129,28 +159,17 @@ def _wire_quarantine(monkeypatch, heads, outcome_reads=None):
     async def get_first(memory_id, **kw):
         return first[memory_id]
 
-    def build(row, **overrides):
-        keys = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "status")
-        return {**{k: getattr(row, k) for k in keys}, "invalid_at": None, **overrides}
-
     monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr(memory_repo, "get_by_id", get_first)
     monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
-    monkeypatch.setattr(lifecycle, "build_memory_version_row", build)
 
     async def current_heads(keys, **kwargs):
-        columns = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
-        return {
-            tuple(getattr(head, c) for c in columns): head
-            for head in heads.values()
-            if tuple(getattr(head, c) for c in columns) in keys
-        }
+        return {key: _hydrate(row) for key, row in ch.current().items() if key in keys}
 
     monkeypatch.setattr(
         "server.memory.store.write_fence.memory_rows_by_identity_keys", current_heads
     )
-    monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
     return ch
 
 
@@ -194,8 +213,8 @@ async def test_a_locked_memory_is_not_quarantined(monkeypatch, mode):
 async def test_a_session_copy_never_quarantines_the_namespace_definition(monkeypatch):
     copy = _session_row("s1")
     shared = _session_row("-")
-    for row in (copy, shared):
-        row.agent, row.memory_type = "-", "definition"
+    copy = copy.model_copy(update={"agent": "-", "memory_type": "definition"})
+    shared = shared.model_copy(update={"agent": "-", "memory_type": "definition"})
     ch = _wire_quarantine(monkeypatch, {"mid-s1": copy, "mid--": shared})
 
     out = await ops.handle_memory_outcome(_negative())
@@ -207,8 +226,8 @@ async def test_a_session_copy_never_quarantines_the_namespace_definition(monkeyp
 async def test_rating_the_namespace_definition_quarantines_nothing(monkeypatch):
     shared = _session_row("-")
     copy = _session_row("s1")
-    for row in (copy, shared):
-        row.agent, row.memory_type = "-", "definition"
+    copy = copy.model_copy(update={"agent": "-", "memory_type": "definition"})
+    shared = shared.model_copy(update={"agent": "-", "memory_type": "definition"})
     ch = _wire_quarantine(monkeypatch, {"mid--": shared, "mid-s1": copy})
 
     out = await ops.handle_memory_outcome(

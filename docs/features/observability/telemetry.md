@@ -1,3 +1,9 @@
+---
+description: Trace Loom requests and workers with OpenTelemetry, configure OTLP exports, and correlate request spans with ClickHouse queries by request ID.
+seo:
+  title: OpenTelemetry for self-hosted AI agents
+---
+
 # Telemetry
 
 Loom reports on itself in three layers:
@@ -11,6 +17,129 @@ Loom reports on itself in three layers:
 All three share the request id. The [audit log](./audit.md) is a separate record of who
 changed what, with tamper evidence.
 
+## Self-hosted adoption
+
+Loom enables self-hosted adoption telemetry by default. It measures deployment and
+feature usage to inform product development. The server aggregates activity locally
+and sends one event per completed 12-hour UTC window.
+
+### Where telemetry is sent
+
+The background worker posts to
+`https://loom.clickhouse.com/api/v1/adoption`. The endpoint validates
+the report and acknowledges the installation UUID and window after writing to
+the analytics ClickHouse service. The warehouse deduplicates retries and expires
+reports 400 days after receipt.
+
+The worker derives a stable reporting UUID from the storage authority's deployment ID.
+Replicas sharing that authority report under one UUID. If the worker detail shows
+`missing_deployment_id` on a deployment that applies migrations manually, start the
+server once with `LOOM_BOOT_MIGRATE=true` to record its authority. Windows start at midnight
+and noon UTC. The worker allows an hour for ledger rows to arrive before reporting.
+It reports idle windows and retries an unsuccessful delivery while that window is
+still the most recent completed one. An unreachable collector does not interrupt
+the application.
+
+### What is sent
+
+| Columns                                                                                                                | Meaning                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`, `installation_id`, `day`                                                                             | Report format version, installation UUID and UTC usage date                                                                                                                             |
+| `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                           |
+| `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                            |
+| `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                  |
+| `user_domains`                                                                                                         | Up to 30 namespace contact domains with distinct contact counts and successful requests. Domain sharing is enabled by default. Restricted namespaces and private mirrors are excluded.  |
+| `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                             |
+| `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace. |
+| `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                 |
+| `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                        |
+| `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                |
+
+The report excludes private mirror events, benchmark traffic, background traffic, and
+unclassified routes. It contains no full email addresses, names, operation strings,
+actor identifiers, customer content, or credentials. Email domains come from contact
+addresses on active standard namespaces, including self-reported addresses from password
+signup. Verified companies enroll separately. A reporting installation with zero
+successful requests is idle for that window. A missing report leaves its activity unknown.
+
+### Can I disable telemetry?
+
+Set `LOOM_ADOPTION_TELEMETRY_ENABLED=false` on every server and worker replica.
+With a settings file, set `adoption_telemetry_enabled: false`. In the Helm chart, put
+that setting under `settingsFile`.
+
+Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false` on every server and worker replica
+to omit domains while sending aggregate usage. In a settings file, set
+`adoption_telemetry_share_domains: false`.
+
+### Adoption dashboard
+
+The [collector deployment guide](../../../deploy/telemetry/README.md) covers the
+warehouse and dashboard setup. The public [adoption page](https://loom.clickhouse.com/adoption)
+shows aggregate self-hosted usage and open-source distribution metrics. It also
+lists self-reported contact domain names with successful requests in the last
+90 complete UTC days. Only version 2 reports contribute names to the public
+list. Use the domain-sharing setting above to omit domains from your reports.
+`loom_adoption_windows` contains one report per
+`(installation_id, window_start)`. The daily rollup adds request counts and
+uses the peak half-day distinct count for each installation.
+
+Maintain enrollment records in the access-controlled `adoption_enrollments` table.
+The `loom_adoption_enrollments` view reads the latest record per installation.
+An enrolling operator can find the reporting UUID in the
+`adoption_telemetry` worker's detail at `/v1/admin/workers.status`. The warehouse uses these
+columns:
+
+| Column                                | Meaning                                                                                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `installation_id` (String)            | The reporting UUID the operator provides at enrollment                                                                                |
+| `company_id`, `company_name` (String) | Verified company account and display name when the operator opts in to attribution. Use empty strings for unattributed installations. |
+| `is_internal` (UInt8)                 | 1 for internal or test installations                                                                                                  |
+| `managed_stage` (UInt8)               | 0 for no request, 1 for requested, 2 for qualified, 3 for evaluating, 4 for committed                                                 |
+
+Track the managed stage from pilot requests and conversations with the company. A company
+can enroll several installations under one company ID. The Self-hosted tab shows
+reporting coverage, activity, feature usage, versions, weekly retention, and the
+number of verified companies with an active installation. Monthly and weekly
+activity count distinct installations with a successful request and sum
+successful requests. Lifecycle charts count arrivals, consecutive activity,
+returns after gaps, and absence of qualifying activity in completed periods.
+An installation that stops reporting can appear inactive. Domain lifecycle
+uses only attributed requests from deployments with domain sharing enabled.
+Choose a 30-, 90-, or 365-day lookback. Activity shows daily, weekly, or
+monthly buckets. Lifecycle thresholds apply to each selected week or month.
+Projected request volume uses the daily average when every completed day in
+the current period has data. Chart links carry the selection, and CSV exports
+contain aggregate values.
+
+The restricted `loom_adoption_top_domains_30d` view ranks the top 50 domains by
+attributed successful requests and includes the number of active installations
+and the sum of latest account counts across installations. A contact reported
+by several installations can contribute more than once. Company records, domain
+rankings, and pilot stages stay in the access-controlled warehouse.
+
+## Open-source adoption
+
+The OSS tab shows distribution metrics collected outside the Loom server. The
+site fetches repository and release counts from GitHub and daily SDK
+downloads from PyPI Stats and npm. Load other registry metrics into `oss_metrics`. The `loom_oss_metrics_daily` view returns one row per
+`(day, source, artifact, metric)`. Use a UTC `Date` for `day`, `String` for
+dimensions and `UInt64` for `value`. The collector snapshots GitHub stars and
+forks daily.
+
+| Source                                | Artifact                  | Metrics                                          |
+| ------------------------------------- | ------------------------- | ------------------------------------------------ |
+| GitHub repository API                 | `ClickHouse/loom`         | `stars`, `forks` snapshots                       |
+| GitHub releases API                   | `ClickHouse/loom`         | `release_asset_downloads_total` snapshots        |
+| Python Package Index download dataset | `clickhouse-loom`         | `sdk_downloads` per UTC day                      |
+| npm downloads API                     | `@clickhouse/loom`        | `sdk_downloads` per UTC day                      |
+| Container registry statistics         | `ghcr.io/clickhouse/loom` | `container_pulls_total` snapshots when available |
+
+For snapshot counters, use the date the source was read. For download increments,
+use the date the registry reports. Leave missing observations absent. Package
+downloads and container pulls count distribution activity, including automated
+builds and retries. Self-hosted reports measure activity after installation.
+
 ## The ledger
 
 `loom.agent_events` has one row per operation: `operation`, the identity columns (`org`,
@@ -20,6 +149,41 @@ changed what, with tamper evidence.
 `instance_label`, and an `args` map of bounded, redacted request and output fields. Worker
 passes write rows with `kind='worker'`. [Cost and usage](./cost-and-usage.md) is built on
 this table.
+
+Successful `code.*` answers also carry numeric content counts in `args`:
+
+| Ledger key                                                                                                  | Meaning                                                                                            |
+| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `out_source_bodies`                                                                                         | Nonempty definition bodies, including `related.definitions` on grep answers                        |
+| `out_source_windows`                                                                                        | Nonempty source windows in `code.read` replies                                                     |
+| `out_source_chars`                                                                                          | Characters in returned definition bodies and `code.read` source windows                            |
+| `out_elided_bodies`                                                                                         | Rows with `body_elided=true`, including an empty body                                              |
+| `out_lesson_rows`, `out_lesson_chars`                                                                       | Returned lesson rows and their excerpt character count                                             |
+| `out_lesson_fresh`, `out_lesson_moved`, `out_lesson_changed`, `out_lesson_unresolved`, `out_lesson_missing` | Lesson counts by code-link state                                                                   |
+| `out_lesson_unclassified`                                                                                   | Lessons with an absent or unrecognized code-link state                                             |
+| `out_lesson_rows_omitted`                                                                                   | Omitted lessons when the response discloses `lessons_left_out`                                     |
+| `out_grep_match_lines`                                                                                      | Lines in the primary `code.grep` match list, including zero for an empty list                      |
+| `out_grep_related_lines`                                                                                    | Lines in the separate `related.matches` list when a missing call expression returns related source |
+
+The same counts appear on the active span as `loom.response.code.<name>`, without
+the `out_` prefix, in both trace exporters. No source text, excerpts, paths or memory
+keys are added to spans. Counts describe the handler result before transport rendering;
+they do not prove that a client displayed or used it. Source counts exclude grep hit
+lines and examples. A repeated lesson counts on every answer that carries it.
+Characters are Unicode code points, not bytes or provider tokens. These counts have
+no effect on retrieval limits or response content.
+
+`response_tokens` estimates the serialized handler result as JSON characters divided
+by four. It measures a different quantity from source or lesson characters and can
+differ from the MCP-rendered response size. Neither measure is a provider invoice.
+A zero lesson count does not distinguish a disabled read, no matches, an inaccessible
+scope or an enrichment failure; use the request arguments and enrichment span as well.
+
+Code spans record exclusive stage milliseconds in `out_stage_ms` when the request
+has no response stage partition. The ledger includes spans after the retrieval
+handler's trace snapshot, including inline lesson reads. Concurrent spans can
+overlap. Use `latency_ms` for the elapsed request and read each stage as its own
+measurement. These ledger timings work with the trace exporter disabled.
 
 Each request row also carries its service-level columns:
 

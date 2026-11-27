@@ -82,6 +82,9 @@ def _proposal_row(key: str, status: str, conflict_with: list[str] | None = None)
 
 
 class _CH:
+    async def query_all(self, *args, **kwargs):
+        return []
+
     def __init__(self) -> None:
         self.inserts: list[list[dict[str, Any]]] = []
 

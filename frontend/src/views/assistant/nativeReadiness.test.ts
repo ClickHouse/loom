@@ -6,6 +6,7 @@ import { readAssistantCheck } from "./readiness";
 afterEach(() => vi.unstubAllGlobals());
 
 it.each([
+  "provider_required",
   "model_required",
   "budget_required",
   "model_price_unknown",

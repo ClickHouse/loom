@@ -4,13 +4,14 @@ lookup and the call graph around it, with the edge and candidate-site wire rows.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
     Field,
     PrivateAttr,
     SerializerFunctionWrapHandler,
+    StringConstraints,
     field_validator,
     model_serializer,
     model_validator,
@@ -30,8 +31,32 @@ from server.code.api.models_common import (
     _ResultLessons,
     _trim_namespaces,
 )
+from server.code.api.models_grep import GrepText
 from server.code.domain.units import CodeUnit
 from server.operations.base import MCP_HIDDEN
+
+EDIT_TEST_CONTEXT_LINES = 10
+# not a setting: the request schema and exact clue batching share this maximum.
+EDIT_CONTEXT_MAX_NAMES = 8
+_EditName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1024)]
+
+
+class CodeEditContextInput(_CodeIdentity, _ResultLessons):
+    name: str = Field(
+        default="",
+        description="Definition name, path:symbol, or path:line. File path with clues if known.",
+    )
+    clues: list[GrepText] = Field(
+        default_factory=list,
+        max_length=255,
+        description="Fragments for one target, or exact declaration fragments across files.",
+    )
+    names: list[_EditName] = Field(
+        default_factory=list,
+        max_length=EDIT_CONTEXT_MAX_NAMES,
+        description="Batch name, path:symbol or path:line. Replaces name and clues.",
+    )
+
 
 # ============================================================
 # code.symbol
@@ -39,34 +64,50 @@ from server.operations.base import MCP_HIDDEN
 
 
 class CodeSymbolInput(_CodeIdentity):
-    # bare, qualified, or partially qualified name — or `path:line`
+    # bare, qualified, or partially qualified name — or `path:line` / `path:symbol`
     # ("src/Foo.cpp:123"), which resolves to the innermost function
     # containing that line: a grep hit or review comment becomes the whole
     # function in one call.
-    name: str = ""
+    name: str = Field(
+        default="",
+        description="Definition name, path:line, or path:symbol. A filename constrains the lookup.",
+    )
     # An index symbol id (a definition's `unit_id`, an edge's `*_symbol_id`); when set it
     # wins over `name` and resolves exactly that definition.
     symbol_id: str = ""
-    # Read each definition's body; a 200+ line class ships its skeleton plus member
-    # outline instead. False = signature, doc and pointer only.
-    include_body: bool = True
+    # An unavailable complete body is disclosed with an outline or source pointer.
+    include_body: bool = Field(
+        default=True,
+        description="Include retained implementation source when available; "
+        "false returns metadata.",
+    )
     # Attach `recent_prs` (merged PRs over the definitions' paths) to the first definition.
     include_history: bool = True
     # Attach `examples` (call sites that use the symbol) to the first definition.
     include_examples: bool = True
+    test_examples_only: bool = Field(
+        default=False,
+        description="Restrict usage examples to indexed tests.",
+    )
+    example_context_lines: int = Field(
+        default=0,
+        ge=0,
+        le=20,
+        description="Retained source lines on each side of a usage example. Use 0 to omit text.",
+    )
     # Attach `lessons` to the first definition: the memories linked to the symbol from
     # `lesson_namespaces` (over MCP the caller's memory home by default) and the
     # repository's team namespace, each with its `code_state` (`fresh`, `moved`, or
     # `changed` when this branch's body differs from the one the memory was written
-    # against).
+    # against). `lessons_unread: true` when the read, or one matched member's, failed or ran
+    # past its bound; the lessons then served may be incomplete.
     include_lessons: bool = True
     # The memory namespaces whose linked memories `lessons` reads besides the repository's
     # team rules (over MCP the caller's memory home by default); one the caller cannot
     # read is skipped.
     lesson_namespaces: list[str] = Field(default_factory=list, max_length=4)
-    # Estimated-token budget for the answer; definitions past it are served elided
-    # (signature, doc, pointer), and the `uses_brief` block is paid out of it first.
-    token_budget: int = Field(default=2500, ge=200, le=12000)
+    # Estimated-token cap for definitions and `uses_brief`; 0 (default) is unlimited.
+    token_budget: int = Field(default=0, ge=0)
     # Definitions carry `fan_in` when the weekly stats are enabled; min_fan_in drops the
     # rest, sort_by='fan_in' puts the most-called definition of an overloaded/ambiguous
     # name first.
@@ -89,7 +130,10 @@ class CodeSymbolInput(_CodeIdentity):
     uses_limit: int = Field(default=50, ge=1, le=200)
     # Serve the compact `uses` block when the lookup resolves to one definition;
     # ignored when `uses` is true.
-    uses_brief: bool = False
+    uses_brief: bool = Field(
+        default=False,
+        description="Include a compact caller summary when one definition resolves.",
+    )
     # When several definitions match, rank them by the change at hand — the files in
     # `near_paths` (<= 20) or the merged PR's file list for `pr_number` from the ledger:
     # same file, same directory, co-change in code_pr_history, then path distance.
@@ -137,18 +181,58 @@ class CodeSymbolInput(_CodeIdentity):
         return self
 
 
+class CodeEditContextTarget(BaseModel):
+    name: str
+    status: Literal["resolved", "ambiguous", "dependency", "not_found"]
+    # Zero-based offsets into the shared response definitions, in resolver order.
+    definition_indices: list[int] = Field(default_factory=list)
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    resolved_by: str = ""
+    presence: list[dict[str, Any]] = Field(default_factory=list)
+    hierarchy: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    documented_in: list[dict[str, Any]] = Field(default_factory=list)
+    trace_run_id: str = ""
+
+
+class CodeEditReadSite(BaseModel):
+    path: str
+    symbol: str
+    line: int
+
+
+class CodeEditReadSource(BaseModel):
+    # A member resolved from the receiver's declared type, with retained source.
+    qualified_name: str
+    path: str
+    start_line: int
+    end_line: int
+    commit: str
+    body: str
+    sites: list[CodeEditReadSite]
+
+
 class CodeSymbolOutput(BaseModel):
     @model_serializer(mode="wrap")
     def _drop_empty_presence(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # presence / summary (and the other optional blocks) ride only when
         # their mode fired, so a plain lookup's payload carries none of them
-        return _drop_unfired_symbol_blocks(
+        data = _drop_unfired_symbol_blocks(
             _drop_unset_symbol_context(_drop_empty_presence_keys(handler(self)))
         )
+        if not data.get("lessons_left_out"):
+            data.pop("lessons_left_out", None)
+        if not data.get("edit_targets"):
+            data.pop("edit_targets", None)
+        if not data.get("read_sources"):
+            data.pop("read_sources", None)
+        return data
 
-    # The resolved definitions (at most 10), fitted to `token_budget`; empty when
-    # nothing resolved (see `candidates`) or on a presence answer.
+    # Up to 10 name matches, or the members matched by file clues, fitted to
+    # `token_budget`. Empty when only candidates or presence were found.
     definitions: list[CodeUnit]
+    # Whole linked lessons omitted to preserve definitions within an explicit request budget.
+    # Absent when none were omitted; the deployment lesson budget is applied separately.
+    lessons_left_out: int = 0
     # True when the served definitions carry more than one distinct name/signature pair.
     ambiguous: bool = False
     # For a class / interface / enum definition, its type hierarchy from the `inherits`
@@ -156,7 +240,7 @@ class CodeSymbolOutput(BaseModel):
     # [...]} of {symbol, kind, via (extends | implements), tier, confidence, path,
     # line}. Absent for functions and when the seed has no hierarchy edge.
     hierarchy: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
-    # When nothing resolved: cheap fuzzy candidates (names + paths only).
+    # Source pointers when nothing resolved, or other hits outside a file-clue target.
     candidates: list[dict[str, Any]] = Field(default_factory=list)
     # Estimated tokens of the answer: definitions, uses, cited documents, neighbours
     # and hierarchy blocks together.
@@ -172,7 +256,7 @@ class CodeSymbolOutput(BaseModel):
     # truncated, epistemic} or {count_floor, skipped: "hub", epistemic}; `uses_tokens`
     # is what it cost out of token_budget (0 and off the wire when no block was built).
     uses: list[dict[str, Any]] | dict[str, Any] = Field(default_factory=list)
-    # True when the `uses` list stopped at `uses_limit`.
+    # True when `uses_limit` shortened the list or the token cap withheld `uses_brief`.
     uses_truncated: bool = False
     # Estimated tokens the compact `uses` block cost out of `token_budget`.
     uses_tokens: int = 0
@@ -180,8 +264,9 @@ class CodeSymbolOutput(BaseModel):
     # — same_file | same_dir | co_change | path_distance | none. "" and off the wire
     # when no context was given.
     picked_by: str = ""
-    # `anonymous_namespace` | `tail` when an over-qualified name bound through
-    # symbol-form tolerance; "" and off the wire otherwise.
+    # Edit context reports `file_clues` or `repository_clues` for literal matches,
+    # and `file_argument` or `repository_argument` for recovery from a missing call expression.
+    # Empty for an exact symbol name.
     resolved_by: str = ""
     # The document sections that cite the definition (the Markdown lane's `reads` edges)
     # — section qualified name, path, line; at most five distinct sections, first by
@@ -204,6 +289,10 @@ class CodeSymbolOutput(BaseModel):
     # Presence summary: {present, absent, unknown} lists of namespaces; also filled
     # from the entry's `depends_on` namespaces when the name is not defined here.
     summary: dict[str, list[str]] = Field(default_factory=dict)
+    # Per-requested-name resolution for batched edit context only. Definitions are shared.
+    edit_targets: list[CodeEditContextTarget] = Field(default_factory=list)
+    # Edit context only. Cross-file source for indexed member reads and typed forwarding calls.
+    read_sources: list[CodeEditReadSource] | None = None
 
 
 # ============================================================
@@ -368,12 +457,13 @@ class CodeCallersOutput(_LessonsOut):
     # Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`;
     # when it is on, "" or how many changed files it did not fully read.
     overlay_note: str = ""
-    # How an over-qualified name bound when the exact form missed —
+    # How a read-side name spelling bound —
     # `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a
     # namespace the definition does not carry dropped; one definition fit), or
     # `registration` when a SQL-level name (`sumMap`, `arrayFold::executeImpl`) bound to
-    # the implementing class's methods through its registration statement. "" and off
-    # the wire for an exact hit.
+    # the implementing class's methods through its registration statement, or
+    # `python_module` for an import spelling of a retained Python name, or
+    # `file_symbol` for a name constrained by a filename. "" and off the wire for an exact hit.
     resolved_by: str = ""
     # A bare short name that resolves to many unrelated definitions (setColumns
     # on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the
@@ -550,8 +640,8 @@ class CodeImpactOutput(_LessonsOut):
     # True when `impacted_symbols` is a page of the radius (per_hop_limit /
     # offset sliced it, or the per-hop edge read hit its cap).
     truncated: bool = False
-    # `anonymous_namespace` | `tail` when the symbol shape's name bound through
-    # symbol-form tolerance; "" and off the wire otherwise.
+    # `anonymous_namespace` | `tail` | `python_module` | `registration` | `file_symbol` when a
+    # read-side name form bound; "" and off the wire for an exact hit.
     resolved_by: str = ""
     # Why the radius is empty, '' when it is not. Answers:
     # `no_indexed_paths` (the change names no path the symbol table holds

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
+from server.core.hashing import sha256_value  # noqa: E402
 from server.core.vectors.placeholders import placeholder  # noqa: E402
 from server.memory.workers.embedding import (  # noqa: E402
     EmbeddingWorkerConfig,
@@ -88,14 +89,19 @@ async def test_stub_inserted_directly_gets_embedded(
         """
         INSERT INTO loom.memory_embeddings
           (org, namespace, agent, user_id, session_id, memory_key,
-           memory_type, scope, content_excerpt, embedding_model,
+           memory_type, scope, content_excerpt, content_sha256, embedding_model,
            embedding_dim, embedding, memory_key_embedding, tombstoned_at, created_at)
         VALUES ({org:String}, {ns:String}, 'w', '-', '-', 'pending_k',
-                'semantic', 'private', 'clickhouse columnar speed',
+                'semantic', 'private', 'clickhouse columnar speed', {sha:FixedString(64)},
                 'fake-ngram-1024', 0, {ph:Array(BFloat16)}, {ph:Array(BFloat16)}, NULL,
                 now() - INTERVAL 1 MINUTE)
         """,
-        parameters={"org": ORG, "ns": ns, "ph": PLACEHOLDER},
+        parameters={
+            "org": ORG,
+            "ns": ns,
+            "ph": PLACEHOLDER,
+            "sha": sha256_value("clickhouse columnar speed"),
+        },
     )
     assert _embedding_dim(ch_client, ns, "pending_k") == 0  # stub
 
@@ -127,7 +133,6 @@ async def _seed_memory_row(ns: str, key: str, value: str) -> None:
     """The memory row an async-mode memory.set writes beside its stub: the worker
     fills only stubs whose head may keep a vector, and a stub with no head is an
     orphan."""
-    import hashlib
     import json
     from datetime import UTC, datetime
 
@@ -147,7 +152,7 @@ async def _seed_memory_row(ns: str, key: str, value: str) -> None:
             "memory_type": "semantic",
             "value": json.dumps(value),
             "value_json": "{}",
-            "content_sha256": hashlib.sha256(value.encode()).hexdigest(),
+            "content_sha256": sha256_value(value),
             "confidence": 1.0,
             "actor": "process:itest",
             "source_class": "asserted",
@@ -176,13 +181,18 @@ async def test_stub_invisible_to_search_until_embedded(
         """
         INSERT INTO loom.memory_embeddings
           (org, namespace, agent, user_id, session_id, memory_key,
-           memory_type, scope, content_excerpt, embedding_model,
+           memory_type, scope, content_excerpt, content_sha256, embedding_model,
            embedding_dim, embedding, memory_key_embedding, tombstoned_at, created_at)
         VALUES ({org:String}, {ns:String}, 'w', '-', '-', 'pending',
-                'semantic', 'private', 'distinctive query content here',
+                'semantic', 'private', 'distinctive query content here', {sha:FixedString(64)},
                 'fake-ngram-1024', 0, {ph:Array(BFloat16)}, {ph:Array(BFloat16)}, NULL, now())
         """,
-        parameters={"org": ORG, "ns": ns, "ph": PLACEHOLDER},
+        parameters={
+            "org": ORG,
+            "ns": ns,
+            "ph": PLACEHOLDER,
+            "sha": sha256_value("distinctive query content here"),
+        },
     )
 
     async with Agent(org=ORG, namespace=ns, agent="w", base_url=control_plane_url) as a:
@@ -257,11 +267,11 @@ async def test_worker_replacement_never_outranks_a_later_write(
             """
             INSERT INTO loom.memory_embeddings
               (org, namespace, agent, user_id, session_id, memory_key,
-               memory_type, scope, content_excerpt, embedding_model,
+               memory_type, scope, content_excerpt, content_sha256, embedding_model,
                embedding_dim, embedding, memory_key_embedding, tombstoned_at, created_at,
                version)
             VALUES ({org:String}, {ns:String}, 'w', '-', '-', 'fenced_k',
-                    'semantic', 'private', {text:String}, {model:String},
+                    'semantic', 'private', {text:String}, {sha:FixedString(64)}, {model:String},
                     0, {ph:Array(BFloat16)}, {ph:Array(BFloat16)}, NULL,
                     now() - INTERVAL 1 MINUTE, {v:UInt64})
             """,
@@ -269,6 +279,7 @@ async def test_worker_replacement_never_outranks_a_later_write(
                 "org": ORG,
                 "ns": ns,
                 "text": text,
+                "sha": sha256_value(text),
                 "model": model,
                 "v": version,
                 "ph": PLACEHOLDER,

@@ -64,7 +64,8 @@ fn omitted_response_fields_keep_wire_defaults() {
     assert!(hit.score_components.is_empty());
     assert_eq!(hit.resolved_from, None);
 
-    let search: SearchResponse = serde_json::from_value(json!({"results": []})).unwrap();
+    let search: SearchResponse =
+        serde_json::from_value(json!({"results": [], "embedding_model": "embed"})).unwrap();
     assert!(search.results.is_empty());
     assert!(search.namespaces_searched.is_empty());
     assert_eq!(search.candidates_total, 0);
@@ -73,6 +74,7 @@ fn omitted_response_fields_keep_wire_defaults() {
     assert_eq!(search.abstain_reason, "");
     assert_eq!(search.abstain_code, "");
     assert_eq!(search.retrieval_risk, "");
+    assert_eq!(search.term_leg, "");
     assert_eq!(search.reinforcement, None);
     assert_eq!(search.pending_extraction, 0);
     assert!(search.degraded.is_empty());
@@ -116,7 +118,7 @@ fn unknown_response_fields_preserve_explicit_values() {
     assert_eq!(memory.pinned, Some(false));
 
     let search: SearchResponse = serde_json::from_value(json!({
-        "results": [{
+        "embedding_model": "embed", "results": [{
             "memory_key": "key", "memory_type": "semantic", "content_excerpt": "fact",
             "distance": 0.1, "similarity": 0.9, "version": u64::MAX,
             "namespace": "ns", "tags": [], "future_field": "extra"
@@ -163,7 +165,10 @@ fn assert_required<T: DeserializeOwned>(payload: Value, fields: &[&str]) {
 fn required_response_fields_cannot_be_omitted() {
     assert_required::<SetResponse>(json!({"version": 1}), &["version"]);
     assert_required::<GetResponse>(json!({"found": false}), &["found"]);
-    assert_required::<SearchResponse>(json!({"results": []}), &["results"]);
+    assert_required::<SearchResponse>(
+        json!({"results": [], "embedding_model": "embed"}),
+        &["results"],
+    );
     assert_required::<SearchHit>(
         json!({
             "memory_key": "key", "memory_type": "semantic", "content_excerpt": "fact",
@@ -206,7 +211,7 @@ fn search_preserves_chunk_parent_attribution_and_decision_signals() {
     )
     .unwrap();
     let search: SearchResponse = serde_json::from_value(json!({
-        "results": [hit],
+        "embedding_model": "embed", "results": [hit],
         "abstain": true, "abstain_reason": "Weak evidence", "abstain_code": "below_threshold",
         "retrieval_risk": "abstain", "reinforcement": "not_credited (no_consumer)",
         "pending_extraction": 2, "degraded": ["rerank: input_order_kept (ReadTimeout)"],
@@ -305,7 +310,7 @@ fn optional_search_disclosures_distinguish_absence_from_false_and_zero() {
     assert_eq!(hit.pinned, Some(false));
     assert_eq!(hit.resolved_from.as_deref(), Some(""));
     let search: SearchResponse = serde_json::from_value(json!({
-        "results": [], "reinforcement": null
+        "embedding_model": "embed", "results": [], "reinforcement": null
     }))
     .unwrap();
     assert_eq!(search.reinforcement, None);

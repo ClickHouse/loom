@@ -1,3 +1,8 @@
+---
+seo:
+  title: Duplicate issues and regression candidates
+---
+
 # Issue duplicate checks and regression candidates for agents
 
 With `LOOM_TRACKER_ORG` set and a registered source, Loom lets agents check whether a bug is already reported and rank changes that may

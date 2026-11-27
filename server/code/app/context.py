@@ -108,6 +108,7 @@ async def handle_code_context_pack(input: CodeContextPackInput) -> CodeContextPa
             "The PR may not be indexed yet. Inspect its diff with code.impact "
             "or retry after indexing."
         )
+        context, _ = fit_pack_budget(context, input.token_budget)
         tokens = estimate_tokens(context)
         return CodeContextPackOutput(
             context=context,
@@ -136,6 +137,7 @@ async def handle_code_context_pack(input: CodeContextPackInput) -> CodeContextPa
     with code_span("context_pack.orientation"):
         map_text = await _render_map(repo, org, ns, "", input.token_budget)
     map_text = await _with_repo_docs(org, ns, map_text, input.token_budget)
+    map_text, _ = fit_pack_budget(map_text, input.token_budget)
     tokens = estimate_tokens(map_text)
     return CodeContextPackOutput(
         context=map_text,
@@ -179,13 +181,12 @@ async def _task_briefing(
 
 
 async def _with_repo_docs(org: str, ns: str, text: str, token_budget: int) -> str:
-    """The orientation pack names the repository's documents after the map, in what the budget
-    leaves (at most 300 tokens); the documents themselves stay in the knowledge plane."""
+    """Append repository document pointers within an optional total context cap."""
     from server.code.app.index.packs import estimate_tokens
-    from server.knowledge.app.repo_docs import DOCS_SECTION_MAX_TOKENS, docs_section, list_repo_docs
+    from server.knowledge.app.repo_docs import docs_section, list_repo_docs
 
-    room = min(DOCS_SECTION_MAX_TOKENS, int(token_budget) - estimate_tokens(text))
-    if room < 40:
+    room = max(1, token_budget - estimate_tokens(text)) if token_budget else 0
+    if room and room < 40:
         return text
     from server.knowledge.app import source_publication
 
@@ -250,7 +251,7 @@ async def _render_map(
 ) -> str:
 
     from server.code.app import fan_in as code_fan_in
-    from server.code.app.index.packs import estimate_tokens
+    from server.code.app.index.packs import estimate_tokens, fit_pack_budget
     from server.embedding.embedder import get_embedder
 
     key = (org, ns, module_prefix, token_budget)
@@ -269,7 +270,7 @@ async def _render_map(
     for entry in blend_map_entries(rows, callers, cards):
         lines.append(entry)
         text = "\n".join(lines)
-        if estimate_tokens(text) > token_budget:
+        if token_budget and estimate_tokens(text) > token_budget:
             lines.pop()
             break
     # Most-called symbols under the prefix: a symbol-level section from the weekly stats, tests
@@ -286,10 +287,10 @@ async def _render_map(
                 f"- `{h['qualified_name']}` — {int(h['fan_in_nontest'])} call sites in "
                 f"{int(h['caller_files'])} files ({h['path']})"
             )
-            if estimate_tokens("\n".join(lines)) > token_budget:
+            if token_budget and estimate_tokens("\n".join(lines)) > token_budget:
                 lines.pop()
                 break
-    text = "\n".join(lines)
+    text, _ = fit_pack_budget("\n".join(lines), token_budget)
     _MAP_CACHE.put(key, text)
     return text
 

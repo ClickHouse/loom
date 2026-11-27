@@ -177,7 +177,12 @@ async def test_memory_class_more_generous_than_knowledge_add(
     async with httpx.AsyncClient(
         base_url=control_plane_url, timeout=10.0, headers=_auth_headers()
     ) as c:
-        responses = await asyncio.gather(*[c.post("/v1/memory.set", json=body) for _ in range(15)])
+        responses = await asyncio.gather(
+            *[
+                c.post("/v1/memory.set", json={**body, "memory_key": f"k{i}", "value": i})
+                for i in range(15)
+            ]
+        )
     statuses = [r.status_code for r in responses]
     assert all(s == 200 for s in statuses), f"memory.set should not throttle at 15 reqs: {statuses}"
 

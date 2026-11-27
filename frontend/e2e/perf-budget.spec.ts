@@ -25,6 +25,13 @@ const LONG_TASK_BUDGET_MS = 2500;
 // 4x on a production build; the budget is generous for CI's slower runners and trips when
 // a closed dialog, a forced layout or a per-row formatter creeps back into every boot.
 const SHELL_LONG_TASK_BUDGET_MS = 1200;
+// Namespaces in your org with a full page of 200: the page draws 50 rows and "Show all 200".
+// At 4x CPU, drawing all 200 at once was a longest task of about 800 ms and 4,755 DOM nodes;
+// the first 50 take about 250 ms and 1,457 nodes. The task budget is twice that for CI's
+// slower runners and trips when the 200 rows mount at once again; the node budget is the
+// count plus about two nodes per drawn row.
+const SPACES_LONGEST_TASK_BUDGET_MS = 500;
+const SPACES_NODE_BUDGET = 1550;
 const CLS_BUDGET = 0.1;
 
 test("boot on /memories: LCP and layout shift within budget at 4x CPU, fonts preloaded, boot reads leave together", async ({
@@ -119,14 +126,16 @@ async function renderBudget(
   const shown = await page.locator("main").getByText(rowText).count();
   const nodes = await page.evaluate(() => document.querySelectorAll("*").length);
   const longTaskMs = await page.evaluate(() => window.__lt.reduce((a, b) => a + b, 0));
+  const longestTaskMs = await page.evaluate(() => Math.max(0, ...window.__lt));
   await cdp.detach();
   test
     .info()
     .annotations.push(
       { type: "dom_nodes", description: String(nodes) },
       { type: "long_task_ms", description: String(Math.round(longTaskMs)) },
+      { type: "longest_task_ms", description: String(Math.round(longestTaskMs)) },
     );
-  return { shown, nodes, longTaskMs, rows };
+  return { shown, nodes, longTaskMs, longestTaskMs, rows };
 }
 
 test("Memories with 100 rows: DOM nodes and long tasks within budget at 4x CPU", async ({ page }) => {
@@ -157,6 +166,21 @@ test("Library with 100 rows: DOM nodes and long tasks within budget at 4x CPU", 
     m.longTaskMs,
     `${Math.round(m.longTaskMs)} ms of long tasks over the ${LONG_TASK_BUDGET_MS} ms budget`,
   ).toBeLessThanOrEqual(LONG_TASK_BUDGET_MS);
+});
+
+test("Namespaces in your org with 200 rows: 50 drawn, longest task and DOM nodes within budget at 4x CPU", async ({
+  page,
+}) => {
+  await installApi(page, { browseRows: 200 });
+  const m = await renderBudget(page, "/spaces", "Namespaces in your org", /^team-\d{3}$/, 200);
+  expect(m.shown, "the first 50 rows are drawn, the rest behind Show all").toBe(50);
+  await expect(page.getByRole("button", { name: "Show all 200" })).toBeVisible();
+  await expect(page.getByText("Showing the first 200 namespaces", { exact: false })).toBeVisible();
+  expect(
+    m.longestTaskMs,
+    `longest task ${Math.round(m.longestTaskMs)} ms over the ${SPACES_LONGEST_TASK_BUDGET_MS} ms budget`,
+  ).toBeLessThanOrEqual(SPACES_LONGEST_TASK_BUDGET_MS);
+  expect(m.nodes, `${m.nodes} DOM nodes over the ${SPACES_NODE_BUDGET} budget`).toBeLessThanOrEqual(SPACES_NODE_BUDGET);
 });
 
 // Opening a memory card issues memory.get and nothing else until a section is opened.
@@ -225,9 +249,9 @@ test("the Memories search asks for memory legs only and aborts a stale search", 
   expect(calls.search[1]).toMatchObject({ query: "exporter lane", legs: ["memory"] });
 });
 
-// The Memories page asks for the twelve fields its cards read and the preview length they
-// show (CARD_VALUE_CHARS); the list answers nothing else.
-test("the Memories list asks for the twelve fields the page reads and a 320-character preview", async ({ page }) => {
+// The Memories page asks for the thirteen fields its cards and its Conflicted status read and
+// the preview length they show (CARD_VALUE_CHARS); the list answers nothing else.
+test("the Memories list asks for the thirteen fields the page reads and a 320-character preview", async ({ page }) => {
   const calls = await installApi(page, { memoryRows: 12 });
   await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-memory-key]").first()).toBeVisible();
@@ -236,10 +260,10 @@ test("the Memories list asks for the twelve fields the page reads and a 320-char
   expect(body.preview_chars, "preview_chars rides on the list request").toBe(320);
   const fields = stringArray(body.fields) ?? [];
   expect(fields.length > 0, "fields rides on the list request").toBe(true);
-  for (const f of ["memory_key", "value", "tags", "agent", "created_at", "pinned", "verification"]) {
+  for (const f of ["memory_key", "value", "tags", "agent", "created_at", "pinned", "verification", "status"]) {
     expect(fields, `the page asks for ${f}`).toContain(f);
   }
-  expect(fields.length, "twelve fields, no more").toBe(12);
+  expect(fields.length, "thirteen fields, no more").toBe(13);
   for (const f of [
     "entities",
     "source_trace",
@@ -249,7 +273,6 @@ test("the Memories list asks for the twelve fields the page reads and a 320-char
     "updated_at",
     "version",
     "expires_at",
-    "status",
     "value_truncated",
   ]) {
     expect(fields, `the page does not ask for ${f}`).not.toContain(f);
@@ -476,13 +499,16 @@ test("Audit log: typing and clearing the filter stay under the INP budget at 4x 
 test("Namespaces in your org: typing and clearing the search stay under the INP budget at 4x with 200 namespaces", async ({
   page,
 }) => {
-  await installApi(page, { browseRows: 200 });
+  const calls = await installApi(page, { browseRows: 200 });
   const cdp = await watchInteractions(page);
   await page.goto("/spaces", { waitUntil: "domcontentloaded" });
-  await expect(page.locator("main").getByText("team-199", { exact: true })).toBeVisible();
+  // The first 50 of the 200 are drawn.
+  await expect(page.locator("main").getByText("team-049", { exact: true })).toBeVisible();
   await page.waitForTimeout(2000);
   const box = page.getByLabel("Search namespaces");
   await worstInteraction(page, "type", () => typeInto(box, "team-1"));
+  // The page came back full, so the text went to the server.
+  expect(calls.browse.at(-1)).toMatchObject({ query: "team-1", limit: 200 });
   await worstInteraction(page, "clear", () => box.fill(""));
   await cdp.detach();
 });

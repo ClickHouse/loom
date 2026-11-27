@@ -266,6 +266,18 @@ def section_tokens(section: dict[str, Any]) -> int:
     return max(1, len(json.dumps(section, default=str, separators=(",", ":"))) // 4)
 
 
+def fit_section_budget(section: dict[str, Any], budget: int) -> dict[str, Any]:
+    """Keep a whole history section only when it fits; zero is unlimited."""
+    if not section:
+        return {}
+    fitted = {key: value for key, value in section.items() if key != "tokens"}
+    # Count the counter itself with enough digits for any value within the cap.
+    cost = section_tokens({**fitted, "tokens": budget or section_tokens(fitted)})
+    if budget and cost > budget:
+        return {}
+    return {**fitted, "tokens": cost}
+
+
 def anchor_paths(section: dict[str, Any], prefixes: list[str], *, max_files: int) -> list[str]:
     """Files the section's PRs touched, PR order then file order, under the
     prefixes (empty = every file), de-duplicated, at most `max_files`."""

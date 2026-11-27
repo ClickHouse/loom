@@ -114,6 +114,7 @@ class _CH:
         self.executes: list[tuple[str, dict[str, Any]]] = []
         self.query_alls: list[tuple[str, dict[str, Any]]] = []
         self.filter_rows = filter_rows or []
+        self.heads = {}
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserts.append((table, rows))
@@ -125,6 +126,10 @@ class _CH:
         self, sql: str, params: dict[str, Any] | None = None, **_: Any
     ) -> list[dict[str, Any]]:
         self.query_alls.append((sql, params or {}))
+        if "FROM loom.memory_refusals" in sql:
+            return []
+        if "FROM loom.memory FINAL" in sql and "keys" in (params or {}):
+            return [self.heads[key] for key in params["keys"] if key in self.heads]
         return self.filter_rows
 
     async def query_one(self, *_: Any, **__: Any) -> dict[str, Any] | None:
@@ -132,6 +137,9 @@ class _CH:
 
 
 def _stub(monkeypatch: pytest.MonkeyPatch, rows_by_key: dict[str, MemoryRow], ch: _CH) -> None:
+    from server.memory.store.rows import build_memory_version_row, identity_key
+
+    ch.heads = {identity_key(row): build_memory_version_row(row) for row in rows_by_key.values()}
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr("server.memory.app.handlers.get_client", lambda: ch)
     monkeypatch.setattr("server.memory.app.stack.get_client", lambda: ch)
@@ -174,8 +182,9 @@ async def test_enforcing_delete_goes_through_the_handler(monkeypatch: pytest.Mon
         )
     )
     assert out.applied == 1 and out.rows[0].status == "applied" and out.rows[0].version
-    table, rows = ch.inserts[0]
+    table, rows = next((table, rows) for table, rows in ch.inserts if table == "loom.memory")
     assert table == "loom.memory" and rows[0]["tombstoned_at"] is not None
+    assert ch.inserts[0][0] == "loom.memory_refusals"
 
 
 @pytest.mark.asyncio

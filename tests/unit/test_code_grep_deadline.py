@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -23,7 +25,9 @@ import pytest
 from server.code.app.ttl_cache import clear_all
 from server.code.domain import deadline as code_deadline
 from server.code.domain.index import grep_sql
+from server.code.domain.search_scope import SearchScope
 from server.settings import settings
+from tests.unit.clock_fake import ManualClock
 
 CONVERT_FIELD = """    if (!parsed)
         throw Exception(ErrorCodes::TYPE_MISMATCH, "Cannot convert string {} to type {}",
@@ -160,6 +164,66 @@ def test_no_deadline_in_files_and_message_mode_is_unbounded_too() -> None:
     assert all(bound is None for *_, bound in repo.calls + repo2.calls)
 
 
+def test_call_prefix_span_read_obeys_the_remaining_deadline() -> None:
+    exact = _chunk("src/a.py", 1, "run", "def run():\n    return process(row.value, 0)\n")
+    first_window = _chunk("src/b.py", 5, "other", "def other():\n    value = row.value\n")
+    first_window["symbol_ids"] = ["other-id"]
+    last_window = _chunk("src/b.py", 7, "other", "    return row.value\n")
+
+    class SlowSpans(_Repo):
+        async def grep_chunks(self, org, ns, pattern, *, regex=False, **kw):
+            if pattern == "row.value":
+                return [first_window, last_window]
+            return [exact]
+
+        async def symbol_spans_by_ids(self, org, ns, ids):
+            await asyncio.sleep(0.8)
+            return []
+
+    out, _ = _grep(
+        SlowSpans(),
+        pattern="process(row.value",
+        related_on_prefix=True,
+        deadline_ms=500,
+        include_body=False,
+    )
+    assert [hit["path"] for hit in out.matches] == ["src/a.py"]
+    assert out.related is None
+    assert out.partial and out.partial_reason == "related call prefix scan timed out"
+
+
+def test_dependency_deadline_keeps_exact_and_related_source() -> None:
+    clock = ManualClock(t=time.monotonic())
+    exact = _chunk("src/a.py", 1, "run", "def run():\n    return process(row.value, 0)\n")
+    related = _chunk("src/b.py", 1, "read", "def read():\n    return row.value\n")
+    for chunk in (exact, related):
+        chunk.update(indexed_commit="a" * 40, kind="function")
+
+    class SlowDependencies(_Repo):
+        async def grep_chunks(self, org, ns, pattern, **kw):
+            return [related] if pattern == "row.value" else [exact]
+
+        async def member_edges_at_locations(self, org, ns, sites, member):
+            clock.advance(1)
+            # Yield for the event loop to run the expired timer and deliver cancellation.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            return []
+
+    with patch.object(time, "monotonic", new=clock.monotonic):
+        out, _ = _grep(
+            SlowDependencies(),
+            pattern="process(row.value",
+            related_on_prefix=True,
+            include_dependencies=True,
+            include_body=False,
+            deadline_ms=500,
+        )
+    assert [hit["path"] for hit in out.matches] == ["src/a.py"]
+    assert out.related and out.related.matches and not out.related.dependencies
+    assert out.partial and "related definition lookup timed out" in out.partial_reason
+
+
 # --------------------------------------------------------------- the bound
 
 
@@ -232,6 +296,83 @@ def test_break_settings_ride_every_scan_builder() -> None:
 def test_broke_reads_a_wall_at_the_bound() -> None:
     assert code_deadline.broke(0.95, 1.0) and not code_deadline.broke(0.5, 1.0)
     assert not code_deadline.broke(10.0, None)
+
+
+@pytest.mark.parametrize("scan_partial", [False, True])
+async def test_cursor_keeps_scan_coverage_and_recovers_from_page_deadline(
+    monkeypatch: pytest.MonkeyPatch, scan_partial: bool
+) -> None:
+    from server.code.api.models_grep import CodeGrepInput
+    from server.code.app import grep, grep_source, read, search_cursor
+
+    revision = "a" * 40
+    paths = ["src/first.py", "src/second.py"]
+    matches = [{"path": path, "line": 2, "text": "target"} for path in paths]
+    chunks = [{**_chunk(path, 2, "", "target\n"), "indexed_commit": revision} for path in paths]
+    scan = grep._GrepLineScan(
+        chunks, matches, {(path, 2): revision for path in paths}, 2, False, "grep_literal", "", ""
+    )
+    cursor_pool: dict[str, Any] = {}
+    clock = ManualClock(t=10)
+    deadline = CodeGrepInput(pattern="target", context_lines=1, include_body=False, limit=1)
+    scan_reason = "scan stopped at the deadline"
+
+    async def scan_lines(*_, budget, **__):
+        if scan_partial:
+            budget.drop(scan_reason)
+        return scan
+
+    async def read_pool(*_):
+        return {"payload": json.loads(json.dumps(cursor_pool))}
+
+    async def fill_second_page(*args, **_):
+        ranges = args[3]
+        assert {result.path for result in ranges} == {paths[1]}
+        read._fill_ranges(b"before\ntarget\nafter\n", ranges, 1_024)
+
+    monkeypatch.setattr(code_deadline, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(grep, "_scan_grep_lines", scan_lines)
+    monkeypatch.setattr(grep, "_as_of_early", _as_of)
+    monkeypatch.setattr(grep, "index_as_of", _as_of)
+    monkeypatch.setattr(grep, "schedule_code_trace", lambda **_: None)
+    monkeypatch.setattr(grep, "_read_pool_settling", read_pool)
+    monkeypatch.setattr(grep_source, "fill_verified_ranges", fill_second_page)
+    monkeypatch.setattr(search_cursor, "enabled", lambda: True)
+    monkeypatch.setattr(search_cursor, "put_pool", lambda *args, **_: cursor_pool.update(args[3]))
+
+    scope = SearchScope()
+    first = await grep._grep_lines(
+        _Repo(),
+        "org",
+        "ns",
+        deadline,
+        route="grep",
+        started=9,
+        scope=scope,
+        line_re=None,
+        budget=code_deadline.Budget(200, started=9),
+    )
+    assert (
+        first.contexts_partial
+        and first.partial
+        and "context recovery skipped" in first.partial_reason
+    )
+    second, _, _ = await grep._serve_grep_page(
+        deadline.model_copy(update={"cursor": first.next_cursor, "deadline_ms": 200}),
+        "org",
+        "ns",
+        _Repo(),
+        "grep",
+        clock.monotonic(),
+        scope=scope,
+    )
+    assert (
+        cursor_pool["partial"] is scan_partial
+        and "context recovery" not in cursor_pool["partial_reason"]
+    )
+    assert second is not None and second.partial is scan_partial and not second.contexts_partial
+    assert (scan_reason in second.partial_reason) is scan_partial
+    assert second.contexts[0]["text"] == "before\ntarget\nafter\n"
 
 
 # --------------------------------------------------------------- message fallback

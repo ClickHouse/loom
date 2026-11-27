@@ -383,6 +383,7 @@ async def memory_rows_by_identity_keys(
     ch: _CHClient | None = None,
     sequential: bool = False,
     include_tombstoned: bool = False,
+    max_value_chars: int | None = None,
 ) -> dict[IdentityKey, MemoryRow]:
     """`get_by_key` for N exact identity keys, in statements whose keys each fit one form
     field (`query_all_sliced`): the same projection under FINAL, the full sort key in
@@ -393,19 +394,29 @@ async def memory_rows_by_identity_keys(
     if not keys:
         return {}
     if pg.enabled():
-        heads = await pg_memory.heads_by_keys(keys, include_tombstoned=include_tombstoned)
+        heads = await pg_memory.heads_by_keys(
+            keys, include_tombstoned=include_tombstoned, max_value_chars=max_value_chars
+        )
         return {k: _hydrate(h) for k, h in heads.items()}
     ch = ch or _default_client()
     # Bound a slice at a time: one parameter holds as many keys as a form field does.
+    where = []
+    if not include_tombstoned:
+        where.append("tombstoned_at IS NULL")
+    if max_value_chars is not None:
+        where.append(
+            "length(value) <= {value_cap:UInt64} AND "
+            "length(toString(value_json)) <= {value_cap:UInt64}"
+        )
     rows = await query_all_sliced(
         ch,
         f"""{_MEMORY_FINAL_PROJECTION}
         PREWHERE (org, namespace, agent, user_id, session_id, memory_key)
                  IN {{keys:{_IDENTITY_KEY_TUPLE}}}
-        {"" if include_tombstoned else "WHERE tombstoned_at IS NULL"}
+        {("WHERE " + " AND ".join(where)) if where else ""}
         {_SEQUENTIAL if sequential else ""}
         """,
-        {"keys": list(keys)},
+        {"keys": list(keys), "value_cap": max_value_chars},
         "keys",
     )
     return {identity_key(r): _hydrate(r) for r in rows}
@@ -1055,6 +1066,7 @@ async def list_by_namespace(
     scope: ReadFilters,
     memory_type: str | None = None,
     pinned_only: bool = False,
+    conflicted_only: bool = False,
     key_prefix: str | None = None,
     source_trace: str | None = None,
     tag_filter: TagFilter | None = None,
@@ -1078,6 +1090,7 @@ async def list_by_namespace(
     Filters:
       - memory_type: exact match (e.g. "preference", "procedural")
       - pinned_only: only rows where pinned=1
+      - conflicted_only: only rows whose status is 'conflicted'
       - key_prefix:  startsWith(memory_key, prefix) — for hierarchical key spaces
       - tag_filter:  its tags matched as its `match` says: any one or every one in
                      any case, or any one exactly as memory.search matches
@@ -1132,6 +1145,8 @@ async def list_by_namespace(
         params["mt"] = memory_type
     if pinned_only:
         where.append("pinned = 1")
+    if conflicted_only:
+        where.append("status = 'conflicted'")
     if key_prefix is not None:
         where.append("startsWith(memory_key, {prefix:String})")
         params["prefix"] = key_prefix
@@ -1358,6 +1373,7 @@ async def count_by_namespace(
     scope: ReadFilters,
     memory_type: str | None = None,
     pinned_only: bool = False,
+    conflicted_only: bool = False,
     key_prefix: str | None = None,
     source_trace: str | None = None,
     tag_filter: TagFilter | None = None,
@@ -1400,6 +1416,8 @@ async def count_by_namespace(
         params["mt"] = memory_type
     if pinned_only:
         where.append("pinned = 1")
+    if conflicted_only:
+        where.append("status = 'conflicted'")
     if key_prefix is not None:
         where.append("startsWith(memory_key, {prefix:String})")
         params["prefix"] = key_prefix

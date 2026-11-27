@@ -15,6 +15,17 @@ OPUS_IN, OPUS_OUT = cost.PRICE_PER_1K_TOKENS["claude-opus-4-8"]
 MINI_IN, MINI_OUT = cost.PRICE_PER_1K_TOKENS["gpt-4o-mini"]
 
 
+def test_haiku_default_is_priced_across_the_long_context_boundary() -> None:
+    assert cost.is_priced("claude-haiku-5-5")
+    assert cost.llm_cost_usd("claude-haiku-5-5", 100000, 1000) == pytest.approx(0.0105)
+    assert cost.llm_cost_usd("claude-haiku-5-5", 100001, 1000) == pytest.approx(0.0525005)
+    acc = cost.begin_op()
+    cost.report_llm("claude-haiku-5-5", 1, 1000, cache_read=100000)
+    assert acc.cost_usd == pytest.approx(0.0075005)
+    assert acc.llm_input_tokens == 100001
+    assert acc.by_model["claude-haiku-5-5"][3] == acc.cost_usd
+
+
 def test_cache_read_price_is_provider_specific() -> None:
     assert cost.cache_read_price_per_1k("claude-opus-4-8") == pytest.approx(OPUS_IN * 0.1)
     assert cost.cache_read_price_per_1k("gpt-4o-mini") == pytest.approx(MINI_IN * 0.5)
@@ -143,11 +154,12 @@ async def test_openai_client_passes_the_cached_share_to_the_ledger(
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     data = {
-        "choices": [{"message": {"content": "hi"}}],
+        "status": "completed",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
         "usage": {
-            "prompt_tokens": 21500,
-            "completion_tokens": 400,
-            "prompt_tokens_details": {"cached_tokens": 20000},
+            "input_tokens": 21500,
+            "output_tokens": 400,
+            "input_tokens_details": {"cached_tokens": 20000},
         },
     }
     monkeypatch.setattr(openai_mod, "_http_client", lambda: _StubHTTP(data))

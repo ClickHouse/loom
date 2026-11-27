@@ -383,7 +383,7 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
 
     coverage = coverage_fields(counts)
     candidates, warnings = await _index_quality(
-        repo, cfg, state, workers, git_head=git_head, fetch_overdue=fetch_overdue
+        repo, cfg, state, git_head=git_head, fetch_overdue=fetch_overdue
     )
 
     return CodeIndexStatusOutput(
@@ -433,7 +433,6 @@ async def _index_quality(
     repo: CodeRepo,
     cfg: Any,
     state: IndexState,
-    workers: dict[str, CodeWorkerStatus],
     *,
     git_head: str,
     fetch_overdue: bool,
@@ -460,9 +459,6 @@ async def _index_quality(
         if spec and not value(spec.watermark_key):
             names = ", ".join(spec.workers)
             warnings.append(f"{spec.tool} is available for this tree but has not run ({names}).")
-    failed = sorted(name for name, worker in workers.items() if worker.last_error)
-    if failed:
-        warnings.append("Index workers reporting errors: " + ", ".join(failed) + ".")
     return candidates, warnings
 
 

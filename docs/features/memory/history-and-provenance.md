@@ -1,3 +1,9 @@
+---
+description: Read earlier versions of a memory, see who wrote each version, and trace extracted facts to the turns that support them.
+seo:
+  title: Agent memory history and provenance
+---
+
 # History and provenance
 
 Every write to memory makes a new version; nothing is edited in place. Versions are kept
@@ -48,8 +54,8 @@ async with Agent(org="acme", namespace="support", agent="auditor") as agent:
         print(v["written_at"], v["actor"], v["source_class"], v["value"])
 ```
 
-A tombstone is a version too, so a delete shows in history and `memory.restore` can
-revive the key within 14 days. For point-in-time reads of current state, use `as_of` on
+A tombstone is a version too, so a delete shows in history. `memory.restore` can
+reverse an automatic tombstone within 14 days when no permanent refusal exists. For point-in-time reads of current state, use `as_of` on
 `memory.get`, `memory.search` and `memory.ask`
 ([validity time](./writing.md#validity-time-valid_at-and-valid_to)).
 
@@ -71,6 +77,10 @@ on every row from the token and the operation. The `source_class` values are in
 
 Search hits carry `source_class` and `verified`, which the optional trust term
 (`LOOM_MEMORY_SEARCH_TRUST_WEIGHT`) reads.
+
+The [knowledge factory walkthrough](../../use-cases/knowledge-factory.md#revise-the-lesson-and-verify-its-history)
+shows how to revise a saved lesson after its source changes and check the new
+citation alongside the old wording.
 
 ## Evidence: which turns a fact came from
 

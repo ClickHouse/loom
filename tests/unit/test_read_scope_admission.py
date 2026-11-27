@@ -614,17 +614,6 @@ async def test_deep_evidence_opens_only_the_scopes_links_turns_and_sessions() ->
     # The links come only from the memory rows the scope reaches.
     assert "memory_id IN (" in ch.calls[0][0]
     _bound_to_u1(ch)
-    ch = _CH()
-    await deep_evidence.fetch_session_turns(
-        org="o",
-        namespace="n",
-        session_ids=["sess-1"],
-        question="q",
-        max_chars_per_session=99,
-        max_chars_total=99,
-        ch=ch,
-    )
-    _bound_to_u1(ch)
 
 
 def _peer(mid: str, uid: str, *, pinned: bool = False) -> Any:

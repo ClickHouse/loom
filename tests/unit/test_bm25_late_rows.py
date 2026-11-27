@@ -174,7 +174,11 @@ async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeyp
 
     monkeypatch.setattr(memory_repo, "index_late_rows", _index)
     monkeypatch.setattr(memory_repo, "insert_memory_versions", _noop)
-    monkeypatch.setattr(memory_repo, "insert_embedding_rows", _noop)
+
+    async def _insert(rows: Any, **_: Any) -> Any:
+        return rows
+
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", _insert)
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _noop)
     state = _BulkWriteState()
     state.memory_rows.append({**_row(), "memory_type": "semantic", "sensitivity": "", "version": 1})
@@ -204,9 +208,10 @@ async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeyp
     async def _none(**_k: Any) -> list[Any]:
         return []
 
-    async def _insert(rows: Any, **_k: Any) -> None:
+    async def _insert(rows: Any, **_k: Any) -> Any:
         if rows:
             order.append("insert")
+        return rows
 
     async def _index_after(rows: Any, **_k: Any) -> int:
         order.append("index")
@@ -251,11 +256,11 @@ async def test_the_dim0_repair_and_reindex_index_their_late_rows(monkeypatch) ->
         handed.extend(r["memory_key"] for r in rows)
         return 0
 
-    async def _noop(*_a: Any, **_k: Any) -> Any:
-        return 0
+    async def _insert(rows: Any, **_k: Any) -> Any:
+        return rows
 
     monkeypatch.setattr(bm25_stats, "index_late_rows", _index)
-    monkeypatch.setattr(memory_repo, "insert_embedding_rows", _noop)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", _insert)
     await integrity.repair_dim0_rows(
         [{**_row(memory_key="dim0"), "embedding": [0.1, 0.2], "version": 1}], ch=object()
     )

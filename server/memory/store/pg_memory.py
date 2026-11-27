@@ -17,8 +17,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -639,10 +638,10 @@ def _cols(rows: Sequence[Mapping[str, Any]], *names: str) -> list[list[Any]]:
     return [[r[n] for r in rows] for n in names]
 
 
-async def _check_policy(conn: Any, admission: Admission, per_scope: Mapping[Any, int]) -> None:
+async def check_policy(conn: Any, generations: Mapping[tuple[str, str], int]) -> None:
     """Hold the admission's policy scopes shared to the commit, and refuse it
     (AdmissionMoved) when one moved since its capture."""
-    policy = sorted(s for s in admission.generations if s not in per_scope)
+    policy = sorted(generations)
     if policy:
         # Shared with every writer of the scope; `pg.bump_policy` takes it exclusively.
         # The read is its own statement, after the wait.
@@ -660,7 +659,7 @@ async def _check_policy(conn: Any, admission: Admission, per_scope: Mapping[Any,
             [s[1] for s in policy],
         )
         now = {(g["org"], g["scope"]): int(g["generation"]) for g in got}
-        moved = {s: now.get(s, 0) for s in policy if now.get(s, 0) != admission.generations[s]}
+        moved = {s: now.get(s, 0) for s in policy if now.get(s, 0) != generations[s]}
         if moved:
             raise AdmissionMoved(moved)
 
@@ -700,6 +699,7 @@ async def commit_versions(
     request_id: str = "",
     idempotency: tuple[str, str, int] | None = None,
     publisher_lease: bool = True,
+    refuse_values: bool = False,
 ) -> Committed:
     """Commit `rows` (full loom.memory version rows): heads, revisions with
     `audits[i]` (row i's hash-only loom.audit_log row), deliveries (`targets`: one
@@ -725,8 +725,13 @@ async def commit_versions(
     per_scope, scopes, heads, keys = _batch_indexes(stored)
     async with pg.transaction() as conn:
         await _bound_lock_waits(conn)
+        from server.memory.store import refusals
+
+        await refusals.lock_postgres(conn, stored, forgetting=refuse_values)
         if admission is not None:
-            await _check_policy(conn, admission, per_scope)
+            await check_policy(
+                conn, {s: g for s, g in admission.generations.items() if s not in per_scope}
+            )
         bumped = await conn.fetch(
             _BUMP, [s[0] for s in scopes], [s[1] for s in scopes], [per_scope[s] for s in scopes]
         )
@@ -735,6 +740,7 @@ async def commit_versions(
         # runs, and before the head recheck: an erased memory is a 404, not a moved head.
         await _refuse_stale_rows(conn, stored, admission)
         await _refuse_moved_sources(conn, scopes, admission)
+        await refusals.check_postgres(conn, stored)
         if admission is not None:
             moved = {
                 s: last[s] - per_scope[s]
@@ -755,6 +761,8 @@ async def commit_versions(
                 recheck(k, head)
             if _replaces_vectors(stored[heads[k]], head):
                 per_row[heads[k]] |= OLD_VECTORS
+        if refuse_values:
+            await refusals.record_postgres(conn, stored)
         seqs: list[tuple[str, str, int]] = []
         next_seq = {s: last[s] - per_scope[s] for s in scopes}
         for r in stored:
@@ -1618,7 +1626,11 @@ async def settled_head_versions(keys: Sequence[IdentityKey]) -> dict[IdentityKey
 
 
 async def heads_by_keys(
-    keys: Sequence[IdentityKey], *, include_tombstoned: bool = False, durable: bool = False
+    keys: Sequence[IdentityKey],
+    *,
+    include_tombstoned: bool = False,
+    durable: bool = False,
+    max_value_chars: int | None = None,
 ) -> dict[IdentityKey, dict[str, Any]]:
     """The heads, expired ones included, of exact keys (a deleted one too with
     `include_tombstoned`); a key with none is absent. `durable`: read for ClickHouse
@@ -1629,24 +1641,41 @@ async def heads_by_keys(
     sql = _HEADS_BY_KEYS
     if not include_tombstoned:
         sql += " WHERE c.row->>'tombstoned_at' IS NULL"
-    rows = await _read(sql, *_key_arrays(keys), durable=durable)
+    args = _key_arrays(keys)
+    if max_value_chars is not None:
+        sql += (" AND " if " WHERE " in sql else " WHERE ") + (
+            "length(coalesce(c.row->>'value','')) <= $7 AND "
+            "length(coalesce(c.row->>'value_json','{}')) <= $7"
+        )
+        bound: list[Any] = [*args, max_value_chars]
+    else:
+        bound = list(args)
+    rows = await _read(sql, *bound, durable=durable)
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
 
 
-@asynccontextmanager
-async def locked_source(source: MemoryRow) -> AsyncIterator[None]:
-    """Hold an unchanged durable source while its shared projection is published."""
-    key = identity_key(source)
-    durable = await heads_by_keys([key], include_tombstoned=True, durable=True)
-    if not unchanged(source, durable.get(key)):
-        raise AdmissionContendedError("The promotion's source changed")
-    async with pg.rolled_back() as conn:
-        await _bound_lock_waits(conn)
-        rows = await conn.fetch(_LOCK_HEADS, *_key_arrays([key]))
-        current = decode_row(rows[0]["row"]) if rows else None
-        if not unchanged(source, current):
-            raise AdmissionContendedError("The promotion's source changed")
-        yield
+async def heads_on_connection(
+    conn: Any,
+    keys: Sequence[IdentityKey],
+    *,
+    lock: bool = False,
+    max_value_chars: int | None = None,
+) -> dict[IdentityKey, dict[str, Any]]:
+    """Recheck heads while the caller holds scope locks on this connection."""
+    if not keys:
+        return {}
+    sql = _HEADS_BY_KEYS
+    args: list[Any] = list(_key_arrays(keys))
+    if max_value_chars is not None:
+        sql += (
+            " WHERE length(coalesce(c.row->>'value','')) <= $7 AND "
+            "length(coalesce(c.row->>'value_json','{}')) <= $7"
+        )
+        args.append(max_value_chars)
+    if lock:
+        sql += " " + _KEY_ORDER + " FOR UPDATE OF c"
+    rows = await conn.fetch(sql, *args)
+    return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
 
 
 async def heads_owing(

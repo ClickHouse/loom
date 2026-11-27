@@ -17,8 +17,10 @@ Which suite a test belongs in, what each suite needs to run, how tests skip when
 | Python SDK adapters whose framework is an extra | `sdk/python/tests/`                                                  | `uv`; installs each adapter extra in its own venv under `.venv-sdk-adapters/` | `make test-sdk-adapters`                                       | `sdk-python-adapters`                                          |
 | TypeScript SDK                                  | `sdk/typescript/`                                                    | Node                                                                          | `npm --prefix sdk/typescript run check`                        | `sdk-typescript`                                               |
 | Rust SDK                                        | `sdk/rust/`                                                          | Rust and Cargo                                                                | `cargo test --manifest-path sdk/rust/Cargo.toml`               | `sdk-rust`, Rust 1.84.1 and stable                             |
-| Go SDK                                          | `sdk/go/`                                                            | Go                                                                            | `cd sdk/go && go test ./...`                                   | none                                                           |
-| .NET SDK                                        | `sdk/dotnet/`                                                        | .NET 8 SDK                                                                    | `cd sdk/dotnet && dotnet test`                                 | none                                                           |
+| Go SDK                                          | `sdk/go/`                                                            | Go                                                                            | `cd sdk/go && go test ./...`                                   | `native SDK packages`: build, vet and race tests               |
+| .NET SDK                                        | `sdk/dotnet/`                                                        | .NET LTS SDK                                                                  | `cd sdk/dotnet && DOTNET_ROLL_FORWARD=Major dotnet test`       | `native SDK packages`: tests and installed package             |
+| Java SDK core                                   | `sdk/java/`                                                          | Java and Maven                                                                | `mvn -f sdk/java verify`                                       | `native SDK packages`: tests and jar consumer                  |
+| Ruby SDK                                        | `sdk/ruby/`                                                          | Ruby and Bundler                                                              | `cd sdk/ruby && bundle install && bundle exec rake test`       | `native SDK packages`: tests and installed gem                 |
 | Benchmarks and gates                            | `bench/*.py`, `make bench-*`                                         | a server with **real** providers                                              | [running benchmarks](../benchmarks/running.md)                 | never (the CI embedder is fake)                                |
 
 **Why benchmarks stay out of CI.** CI runs with `LOOM_EMBEDDING_MODEL=fake-ngram-1024`
@@ -48,6 +50,66 @@ or the embedder.
 Keep CI's system tools beside the locked Python environment. Release-script tests, for
 example, call `jq`. Record missing tools or an unsupported platform separately from a
 failure introduced by the diff.
+
+### Generated memory-domain checks
+
+`tests/unit/test_memory_domain_generated.py` uses the dev-only Hypothesis dependency
+for bounded checks over the real rollback and provenance helpers. Timestamp properties
+compare integer nanoseconds with a separate calendar-based oracle, including dates
+before the epoch, datetime boundaries, naive UTC and equivalent offset representations.
+The lifecycle state machine compares plans with versioned snapshots through writes,
+tombstones, hard-erased heads and rollbacks. Repeated keys vary agent, user and session
+identity. Caller declarations can lower provenance but cannot claim a server class.
+
+The generated examples are deterministic, the example database is disabled and failures
+print a minimized example with a replay blob. The lifecycle run has 35 examples of at
+most 25 steps; other properties have at most 60 examples. These checks require no service,
+provider, network call or account. Run only this module with the locked dev environment:
+
+```bash
+uv run --extra dev python -m unittest tests.unit.test_memory_domain_generated
+```
+
+Keep the failing example as an explicit regression. To replay a reported blob during a
+repair, use Hypothesis's printed `@reproduce_failure` decorator with the same locked
+Hypothesis version. The state machine receives already scoped rows: it tests identity
+preservation and erased-head safety, not transport authorization or database isolation.
+Those contracts still require the existing integration suites.
+
+### Native worker diagnostics
+
+The third unit part requests native worker diagnostics for local workers. Their interpreter,
+arguments, environment, parallelism, random seed, coverage and timeout settings stay
+the same. The launcher preserves normal exit codes and terminal signals separately.
+A bounded anonymous channel carries the terminal result independently of artifact
+storage; a failed diagnostic file write does not replace that result.
+GDB is a CI test tool; it is not a server dependency. The controlled transport check is
+`python -m tests.unit.test_native_worker --mechanism`.
+
+`-p tests._worker_status --native-worker-signatures` opts into this collection on Linux
+with GDB, a zero core-size limit and no piped core-dump handler. On the disposable
+GitHub-hosted Linux VM, the third unit part selects a nonpiped core pattern after
+checking the runner identity and absence of a job container. Each diagnostic command
+also restricts its own soft core-size limit to zero. Local and self-hosted runners
+receive no policy setup. A piped handler, unreadable core configuration, missing
+prerequisites or a tracing refusal stop startup. No tracing policy or capability
+changes are made. Each helper sets its own parent-death signal so
+forced launcher termination also stops its debugger and worker. Registrations never
+authorize controller signals to another process.
+
+A piped-handler refusal records a bounded kernel identity in the job log. The pytest
+wrapper also writes that record beside its worker status artifact. Custom kernel
+release suffixes are hashed. This metadata identifies a candidate build; it does not
+prove its dump behavior or authorize diagnostic execution.
+
+Session artifacts under `.pytest_cache/worker-status/` contain bounded native
+PCs, symbols, module identities and offsets for up to eight threads and 24 frames per
+thread. Up to eight observed fatal-signal stops are retained. A stop may be handled by
+the worker; the separate terminal result records whether it eventually exited or died
+from a signal. A bounded fault-thread summary also appears in the job log. Missing
+symbols or mappings remain unresolved. CI retains these sanitized records in its
+existing test artifacts. Raw debugger output is discarded; core dumps,
+arguments, locals, environment values and memory bytes are not collected.
 
 ## Integration tests
 
@@ -290,27 +352,27 @@ failure on one merge commit is never hidden by the next. Every action is pinned 
 commit SHA (its version in a comment), and the workflow grants its jobs read-only
 repository access (`permissions: contents: read`).
 
-| Job                    | Runs                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clickhouse`           | resolves the ClickHouse release `dev/clickhouse_release.sh` names, so `unit`, `schema-check` and `integration` test the same one                                                                                                                                                                                                                                                             |
-| `lint`                 | `ruff check`, `ruff format --check`, the `--check` of `sdk_py_gen.py`, `sdk_py_client_gen.py`, `sdk_py_admin_gen.py`, `agent_plugin_sync.py`, `settings_reference.py`, `settings_schema.py`, `docs_reference.py` and `op_reach_census.py`, `mypy --strict` on the SDK, the mypy ratchet, the function-length and secret gates                                                                |
-| `unit`                 | `pytest tests/unit` in six parts (`LOOM_TEST_SHARD`), each on its own runner, in random order on every core with coverage                                                                                                                                                                                                                                                                    |
-| `unit-coverage`        | the parts' coverage combined (floor 40%) and the per-module floors, then `pytest bench` and the generic integration sample (`integrations/generic/test.sh`); its `shard-weights` artifact is the run's seconds per unit file, to commit as `tests/shard_weights.json` when the parts drift apart                                                                                             |
-| `sandbox`              | the hostile repository-job sandbox suite under real bubblewrap, where a skip fails (`LOOM_TEST_REQUIRE_SANDBOX=1`)                                                                                                                                                                                                                                                                           |
-| `schema-check`         | a fresh ClickHouse (`dev/ci_start_clickhouse.sh`), every migration, the strict dry run, `make schema-check`                                                                                                                                                                                                                                                                                  |
-| `ts-typecheck`         | the dashboard build (`tsc -b` + Vite) and its bundle budget (`npm run budget`)                                                                                                                                                                                                                                                                                                               |
-| `format`               | Biome, Prettier, Taplo and shfmt checks at pinned versions, and Biome's accessibility lint on `frontend/src`                                                                                                                                                                                                                                                                                 |
-| `helm`                 | `helm lint --strict` and kubeconform on every overlay, kubeconform on `deploy/okf-sync/cronjob.yaml`, the values the chart must refuse, and `scripts/gates/helm_extractor_isolation.py`, `helm_metadata_egress.py` and `helm_assistant_isolation.py`                                                                                                                                         |
-| `agent-plugins`        | `node --test` for the plugin hooks and the grep shim, the Cursor hook sample (`integrations/cursor/test.sh`), a parse check of every hook, library and `bin/` helper script of both plugins and the shim, and a check that the grep shim's entry points are executable                                                                                                                       |
-| `frontend-vitest`      | vitest (unit, component, axe), in parts on separate runners                                                                                                                                                                                                                                                                                                                                  |
-| `frontend-e2e`         | Playwright, in parts on separate runners                                                                                                                                                                                                                                                                                                                                                     |
-| `integration`          | parts, each with its own ClickHouse, migrations, reference extractor and booted server (fake providers, workers off): the numbered parts split `pytest tests/integration` (`LOOM_TEST_SHARD`), the isolation gates part the provider staging tests, the auth-on gates and `pytest tests/analyzer`                                                                                            |
-| `integration-postgres` | the memory, knowledge, isolation, idempotency, erasure and restored-id suites and the auth-on gates against a server with `LOOM_STORAGE_AUTHORITY=postgres`, on Postgres 16 and 18 with a synchronous standby ([Postgres](../operations/postgres.md))                                                                                                                                        |
-| `mixed-version`        | `scripts/gates/mixed_version.py`: builds N-1 and N side by side on one ClickHouse, N-1 being `HEAD~1`: on a pull request the first parent of its merge commit, the branch it targets as the merge was made, and on a push the previous commit                                                                                                                                                |
-| `sdk-typescript`       | `sdk_ts_gen.py --check`, `npm run check` (lint, types, version, README examples, tests), `npm run check:dist`                                                                                                                                                                                                                                                                                |
-| `sdk-rust`             | dependency resolution with Rust-version fallback, `cargo fmt --check`, `cargo test --locked` (response, HTTP contract and documentation tests), `cargo clippy --locked --all-targets -- -D warnings`, `cargo doc --locked --no-deps` with warnings refused, `cargo package --locked` and packaged license verification; Rust 1.84.1 and stable                                               |
-| `sdk-python-adapters`  | `make test-sdk-adapters`: for each adapter whose framework is an SDK extra, in a venv of its own with that framework, outside `uv.lock`, its tests and `mypy --strict` on its module and on the adapters that need no extra (`__init__.py`, `langgraph.py`, `strands.py`); on Python 3.12, and on 3.11 with every direct requirement (the SDK's own, the extra's, pytest) at its lower bound |
-| `sdk-python-package`   | builds the SDK wheel with uv, installs it into a clean venv and runs `scripts/gates/sdk_wheel_smoke.py`, on Python 3.11, 3.12 and 3.14, plus 3.11 and 3.14 with every declared dependency at its lower bound                                                                                                                                                                                 |
+| Job                    | Runs                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clickhouse`           | resolves the ClickHouse release `dev/clickhouse_release.sh` names, so `unit`, `schema-check` and `integration` test the same one                                                                                                                                                                                                                                                                                            |
+| `lint`                 | `ruff check`, `ruff format --check`, the `--check` of `sdk_py_gen.py`, `sdk_py_client_gen.py`, `sdk_py_admin_gen.py`, `agent_plugin_sync.py`, `settings_reference.py`, `settings_schema.py`, `docs_reference.py` and `op_reach_census.py`, `mypy --strict` on the SDK, the mypy ratchet, the function-length and secret gates                                                                                               |
+| `unit`                 | `pytest tests/unit` in six parts (`LOOM_TEST_SHARD`), each on its own runner, in random order on every core with coverage                                                                                                                                                                                                                                                                                                   |
+| `unit-coverage`        | the parts' coverage combined (floor 40%) and the per-module floors, then `pytest bench` and the generic integration sample (`integrations/generic/test.sh`); its `shard-weights` artifact is the run's seconds per unit file, to commit as `tests/shard_weights.json` when the parts drift apart                                                                                                                            |
+| `sandbox`              | the hostile repository-job sandbox suite under real bubblewrap, where a skip fails (`LOOM_TEST_REQUIRE_SANDBOX=1`)                                                                                                                                                                                                                                                                                                          |
+| `schema-check`         | a fresh ClickHouse (`dev/ci_start_clickhouse.sh`), every migration, the strict dry run, `make schema-check`                                                                                                                                                                                                                                                                                                                 |
+| `ts-typecheck`         | the dashboard build (`tsc -b` + Vite) and its bundle budget (`npm run budget`)                                                                                                                                                                                                                                                                                                                                              |
+| `format`               | Biome, Prettier, Taplo and shfmt checks at pinned versions, and Biome's accessibility lint on `frontend/src`                                                                                                                                                                                                                                                                                                                |
+| `helm`                 | `helm lint --strict` and kubeconform on every overlay, kubeconform on `deploy/okf-sync/cronjob.yaml`, the values the chart must refuse, and `scripts/gates/helm_extractor_isolation.py`, `helm_metadata_egress.py` and `helm_assistant_isolation.py`                                                                                                                                                                        |
+| `agent-plugins`        | `node --test` for the plugin hooks and the grep shim, the Cursor hook sample (`integrations/cursor/test.sh`), a parse check of every hook, library and `bin/` helper script of both plugins and the shim, and a check that the grep shim's entry points are executable                                                                                                                                                      |
+| `frontend-vitest`      | vitest (unit, component, axe), in parts on separate runners                                                                                                                                                                                                                                                                                                                                                                 |
+| `frontend-e2e`         | Playwright, in parts on separate runners                                                                                                                                                                                                                                                                                                                                                                                    |
+| `integration`          | parts, each with its own ClickHouse, migrations, reference extractor and booted server (fake providers, workers off): the numbered parts split `pytest tests/integration` (`LOOM_TEST_SHARD`), the isolation gates part the provider staging tests, the auth-on gates and `pytest tests/analyzer`                                                                                                                           |
+| `integration-postgres` | separate storage and authenticated-isolation profiles on Postgres 16 and 18 with a synchronous standby and `LOOM_STORAGE_AUTHORITY=postgres`. Storage covers memory, knowledge, idempotency, erasure, restored ids and durability, followed by whole-database restore drills. Isolation covers the auth-on gates. Each profile uses its own stores and keeps the one-hour job limit ([Postgres](../operations/postgres.md)) |
+| `mixed-version`        | `scripts/gates/mixed_version.py`: builds N-1 and N side by side on one ClickHouse, N-1 being `HEAD~1`: on a pull request the first parent of its merge commit, the branch it targets as the merge was made, and on a push the previous commit                                                                                                                                                                               |
+| `sdk-typescript`       | `sdk_ts_gen.py --check`, `npm run check` (lint, types, version, README examples, tests), `npm run check:dist`                                                                                                                                                                                                                                                                                                               |
+| `sdk-rust`             | dependency resolution with Rust-version fallback, `cargo fmt --check`, `cargo test --locked` (response, HTTP contract and documentation tests), `cargo clippy --locked --all-targets -- -D warnings`, `cargo doc --locked --no-deps` with warnings refused, `cargo package --locked` and packaged license verification; Rust 1.84.1 and stable                                                                              |
+| `sdk-python-adapters`  | `make test-sdk-adapters`: for each adapter whose framework is an SDK extra, in a venv of its own with that framework, outside `uv.lock`, its tests and `mypy --strict` on its module and on the adapters that need no extra (`__init__.py`, `langgraph.py`, `strands.py`); on Python 3.12, and on 3.11 with every direct requirement (the SDK's own, the extra's, pytest) at its lower bound                                |
+| `sdk-python-package`   | builds the SDK wheel with uv, installs it into a clean venv and runs `scripts/gates/sdk_wheel_smoke.py`, on Python 3.11, 3.12 and 3.14, plus 3.11 and 3.14 with every declared dependency at its lower bound                                                                                                                                                                                                                |
 
 `.github/workflows/plugin-platforms.yml` runs when a change touches `integrations/`, a
 plugin marketplace, `.gitattributes` or the workflow itself: the plugin and grep-shim
@@ -339,12 +401,125 @@ itself, and on every push to `main`, so a broken link or anchor fails the
 `docs site / build` check. It publishes the site to GitHub Pages from `main` only while the
 repository variable `DOCS_SITE_ENABLED` is `true`.
 
-A pull request stacked on another branch gets no checks until it is retargeted to `main` or
-a `release/X.Y` line, and a pull request with a merge conflict gets none either: "no checks
-reported" after a push usually means one of the two.
+Retarget a stacked pull request to `main` or a `release/X.Y` line before pushing its next
+real change or required rebase. Editing the base alone does not trigger the default
+`pull_request` activities: `opened`, `synchronize` or `reopened`. A merge conflict prevents
+those PR checks from starting. Inspect mergeability when no checks follow a push.
 
 ## Related
 
 - [Local development](./local-development.md), [code generation](./code-generation.md),
   [migrations](./migrations.md)
 - [Benchmarks methodology](../benchmarks/methodology.md)
+
+## Native SDK package checks
+
+The `native SDK packages` workflow runs the Go, Java core, .NET and Ruby SDK suites
+on pull requests, main pushes and a weekly schedule. Each job requires executed tests
+and writes their count to its summary. The Go job builds, vets and runs the HTTP tests
+with the race detector. The other jobs build their package and load or compile an
+independent consumer outside the source tree. Java adapter modules have their own
+requirements and are not part of the core job.
+
+The Go job also runs the pinned vulnerability analyzer on production packages under
+the selected Linux toolchain. Before scanning the SDK, it requires detection of a
+known vulnerable call and its absence after that dependency is fixed in a temporary
+control module. No control program is executed or added to the SDK dependencies.
+The scan covers known reachable calls for that build; reflection, other build tags
+and other supported Go versions need separate qualification.
+
+The .NET job builds the unchanged target assembly and runs it on the supported LTS
+runtime with explicit major-version roll-forward. Its isolated installation verifies
+the selected SDK and runtime, without using preinstalled runner versions. This does not qualify the older
+runtime or change the package target. Toolchains are selected in the workflow;
+checks do not certify every SDK's declared minimum version or a published registry
+package. Tests use their existing handler fakes or owned loopback servers. They need
+no running Loom, database, provider credentials or paid service.
+
+Pull requests have read-only tokens. A separate trusted-main job can create a failure
+task for each SDK and append a comment when its success/failure state changes. A new
+run alone does not add a comment. It executes no checked-out project code, publishes
+no raw failure text and links to the native logs. Closed decisions and human-edited
+bodies remain intact. Keep the task identity in its title or body; removing both
+markers removes its association with the check. Security-sensitive reports use
+[the private reporting route](../../SECURITY.md).
+
+The publisher permits forty API calls, ten issue pages and fewer than a hundred
+comments per task, with a five-minute job limit. It refuses exhausted pagination or
+comment history instead of guessing a prior state. At most four tasks or status
+comments can be written in one run. These bounds can defer diagnosis until the
+publisher's own error is resolved; a successful SDK check does not close an issue
+automatically.
+
+## Workflow audit reporting
+
+The workflow security findings workflow runs a bounded audit on pull requests, main
+and release-branch pushes, and a weekly schedule. Pull-request jobs have read-only
+contents access. Findings appear in the job summary and the escaped report log.
+
+The scanner is pinned with a verified archive checksum. It checks workflow and
+dependency-update configuration with the auditor persona, strict collection, no
+configuration overrides and no ignored findings. Its offline mode disables scanner
+network-context lookups; the job itself runs on GitHub. That mode does not establish
+remote action identity, branch protection or every repository security setting.
+
+The audit is report only. Findings do not make its exit status fail; scanner, collection
+and reporting errors do. A green audit is not evidence that the repository has no
+vulnerabilities. Ordinary repository checks still gate each change.
+
+### Automatic maintenance tasks
+
+Trusted main pushes and the weekly schedule automatically reconcile maintenance issues.
+No manual triage or dispatch is required. The job uses its own trusted checkout and a
+fresh scan. It publishes only when the audited commit is still the default-branch head. Its token
+has contents read and issues write permissions. Pull-request jobs receive no issue
+write permission.
+
+Only low or informational observations from these maintenance rules can become public
+issues:
+
+| Rule                       | Task                                                          |
+| -------------------------- | ------------------------------------------------------------- |
+| `anonymous-definition`     | Name workflow and job definitions to clarify audit locations. |
+| `superfluous-actions`      | Review an action that duplicates a runner tool.               |
+| `undocumented-permissions` | Explain why an explicit permission is needed.                 |
+
+Other rules and higher severity observations remain in the complete audit and are sent
+by a separate trusted job to the existing code scanning view. That job has contents
+read and security-events write permissions, without issue write access. The public
+issue selector is not a scanner ignore or a claim that other findings are harmless.
+Security-sensitive reports follow [the security policy](../../SECURITY.md); automation does not
+send emails, publish exploit payloads or promise a bounty.
+
+Issue snapshots include up to a hundred recent comment timeline entries per task. The
+reporter reduces the page or comment window when the response exceeds its byte limit. It
+defers a task if its last automated status is outside that window. If an edit removes
+the only saved status, the reporter waits until a scan confirms the finding is absent.
+Status follows comment creation time, with its full numeric identifier breaking ties;
+a human edit to an older status cannot make it the latest automated state. Each task has a stable rule-and-path fingerprint. Line shifts, commit hashes and new
+run links do not create another task or status comment. A changed observation count
+or determination adds one status comment; absence and later reappearance also update
+the latest status. Titles and issue bodies are never rewritten, issues are never
+closed or reopened automatically, and an existing closed decision is preserved.
+The complete identity fingerprint is retained in the title and body, including when a
+finding disappears. Keep one marker when editing a managed task.
+Removing both markers removes its association with the audit.
+
+Publication uses one trusted concurrency group without canceling a running trusted
+workflow. A newer pending main run can replace an older pending run; the remaining run
+reconciles its complete current report. Each execution permits at most ten issue or
+comment writes and forty API calls. The client stops starting requests after three
+minutes; individual socket operations have ten-second timeouts, and each job has a
+five-minute limit. Responses are bounded. Deferred work is counted in the job summary
+and reconsidered automatically on the next trusted run. API refusals and incomplete
+pagination fail the job; there is no retry or alternate credential.
+
+### Audit qualification
+
+Focused controls use an in-memory API to check deduplication, status transitions,
+human edits, closed decisions, sensitive metadata exclusion, failure propagation,
+write deferral and the trusted event/permission boundaries. They do not prove a live
+token grant or native scheduler execution. The first merged trusted run must verify
+actual issue and code scanning publication. Standard public runners and public-repository
+code scanning use GitHub's included services; this workflow adds no app, account,
+paid runner or provider.

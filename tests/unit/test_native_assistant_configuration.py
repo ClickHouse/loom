@@ -41,10 +41,13 @@ def configured(monkeypatch):
     [
         ("disabled", "not_configured"),
         ("auth_off", "auth_off"),
+        ("legacy_enablement", "provider_required"),
         ("model_missing", "model_required"),
+        ("anthropic_model_missing", "model_required"),
         ("budget_zero", "budget_required"),
         ("model_unpriced", "model_price_unknown"),
         ("alias_unpriced", "model_price_unknown"),
+        ("embedding_only_price", "model_price_unknown"),
         ("real_provider_free_price", "model_price_unknown"),
         ("key_missing", "provider_key_missing"),
         ("bedrock_region_missing", "bedrock_configuration_missing"),
@@ -60,8 +63,13 @@ def test_configuration_refuses_before_admission_reads(configured, monkeypatch, c
         monkeypatch.setattr(settings, "assistant_enabled", False)
     elif condition == "auth_off":
         monkeypatch.setattr(type(settings), "auth_actually_required", lambda _: False)
+    elif condition == "legacy_enablement":
+        monkeypatch.setattr(settings, "assistant_provider", "")
+        monkeypatch.setattr(settings, "assistant_model", "")
     elif condition == "model_missing":
         monkeypatch.setattr(settings, "assistant_provider", "openai")
+        monkeypatch.setattr(settings, "assistant_model", "")
+    elif condition == "anthropic_model_missing":
         monkeypatch.setattr(settings, "assistant_model", "")
     elif condition == "budget_zero":
         monkeypatch.setattr(settings, "assistant_answer_ceiling_usd", 0)
@@ -69,6 +77,8 @@ def test_configuration_refuses_before_admission_reads(configured, monkeypatch, c
         monkeypatch.setattr(settings, "assistant_model", "unpriced-route")
     elif condition == "alias_unpriced":
         monkeypatch.setattr(settings, "assistant_price_model", "unpriced-alias")
+    elif condition == "embedding_only_price":
+        monkeypatch.setattr(settings, "assistant_price_model", "text-embedding-3-small")
     elif condition == "real_provider_free_price":
         monkeypatch.setattr(settings, "assistant_price_model", "fake-echo-1")
     elif condition == "key_missing":

@@ -299,7 +299,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like c
 | `overlay_head_sha` | `str` | The PR head commit whose post-image was parsed; "" when there is no overlay. |
 | `overlay_added` | `int` | How many functions the PR adds in its parsed files. |
 | `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or how many changed files it did not fully read. |
-| `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
+| `resolved_by` | `str` | How a read-side name spelling bound — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a SQL-level name (`sumMap`… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
 | `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits"}. |
@@ -316,7 +316,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like c
 
 ## `code.callers`
 
-Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved where available; `edge_kinds: ['inherits']` narrows the walk to what implements or extends a type.
+Find callers before editing shared code.
 
 `POST /v1/code.callers` · MCP `loom_code_callers` · role `viewer` · read
 
@@ -353,7 +353,7 @@ Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved
 | `overlay_head_sha` | `str` | The PR head commit whose post-image was parsed; "" when there is no overlay. |
 | `overlay_added` | `int` | How many functions the PR adds in its parsed files. |
 | `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or how many changed files it did not fully read. |
-| `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
+| `resolved_by` | `str` | How a read-side name spelling bound — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a SQL-level name (`sumMap`… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
 | `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits"}. |
@@ -385,7 +385,7 @@ Briefing at the START of a task, instead of exploring file by file.
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `pr_number` | `int` | `0` | Indexed merged PR -> precomputed pack; 0 -> orientation map; unknown PR -> explicit abstention. ge=0 because a negative number would reach ClickHouse as a UInt32 bind and surface as a 500. |
 | `task` | `str` | `''` | The change about to be made ("add a new tracker op"). |
-| `token_budget` | `int` | `2500` | Token budget for `context` (200..8000): a precomputed pack is cut to it, a task briefing or orientation map is built within it. |
+| `token_budget` | `int` | `0` | Estimated-token cap on context; 0 (default) is unlimited. |
 | `sections` | `list[Literal['symbols', 'co_change', 'tests', 'reviews', 'prs', 'qa', 'files']]` | *(computed)* | Precomputed packs only. |
 
 | Output field | Type | Meaning |
@@ -575,6 +575,48 @@ Is this already tested?
 | `measured` | `dict[str, Any]` | Imported execution evidence, {} when none exists: measured, executed, paths, hits, commit (empty for mixed commits), commits, index_commit, run_current, files (per-path commit, indexed_commit, symbol_commits, freshness), freshness… |
 | `trace_run_id` | `str` | Id of this call's row in `loom.code_search_trace`. |
 
+## `code.edit_context`
+
+Read source, tests, and notes.
+
+`POST /v1/code.edit_context` · MCP `loom_code_edit_context` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `include_lessons` | `bool` | `True` | Attach `lessons`: the memories about the answer's top files (for code.context_pack, a `task` briefing's only). |
+| `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces `lessons` reads besides the repository's team rules (over MCP the caller's memory home, filled in); one the caller cannot read is skipped. |
+| `org` | `str` | `''` | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | `''` | The namespace the op reads or writes. |
+| `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
+| `name` | `str` | `''` | Definition name, path:symbol, or path:line. |
+| `clues` | `list[str]` | *(computed)* | Fragments for one target, or exact declaration fragments across files. |
+| `names` | `list[str]` | *(computed)* | Batch name, path:symbol or path:line. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `definitions` | `list[CodeUnit]` | Up to 10 name matches, or the members matched by file clues, fitted to `token_budget`. |
+| `lessons_left_out` | `int` | Whole linked lessons omitted to preserve definitions within an explicit request budget. |
+| `ambiguous` | `bool` | True when the served definitions carry more than one distinct name/signature pair. |
+| `hierarchy` | `dict[str, list[dict[str, Any]]]` | For a class / interface / enum definition, its type hierarchy from the `inherits` edges of both tiers, folded by qualified name: {"supertypes": [...], "subtypes": [...]} of {symbol, kind, via (extends \| implements), tier, confidence, path… |
+| `candidates` | `list[dict[str, Any]]` | Source pointers when nothing resolved, or other hits outside a file-clue target. |
+| `tokens_returned` | `int` | Estimated tokens of the answer: definitions, uses, cited documents, neighbours and hierarchy blocks together. |
+| `trace_run_id` | `str` | Id of this call's trace row; pass it to `code.outcome`. |
+| `uses` | `list[dict[str, Any]] \| dict[str, Any]` | uses=true: {path, line, text, scope, scope_start_line, scope_end_line, kind} per line mentioning the symbol's bare name, path/line ordered, the definition span(s) excluded. |
+| `uses_truncated` | `bool` | True when `uses_limit` shortened the list or the token cap withheld `uses_brief`. |
+| `uses_tokens` | `int` | Estimated tokens the compact `uses` block cost out of `token_budget`. |
+| `picked_by` | `str` | Which context key ranked the definitions when `near_paths` / `pr_number` was given — same_file \| same_dir \| co_change \| path_distance \| none. "" and off the wire when no context was given. |
+| `resolved_by` | `str` | Edit context reports `file_clues` or `repository_clues` for literal matches, and `file_argument` or `repository_argument` for recovery from a missing call expression. |
+| `documented_in` | `list[dict[str, Any]]` | The document sections that cite the definition (the Markdown lane's `reads` edges) — section qualified name, path, line; at most five distinct sections, first by confidence. |
+| `neighbours` | `list[dict[str, Any]]` | The neighbours graph block on the definitions (one entry per definition anchor); empty unless `neighbours` ran. |
+| `anchors` | `int` | How many definitions the `neighbours` block was built for; 0 when it is off. |
+| `neighbour_tokens` | `int` | Estimated tokens the `neighbours` block cost (counted in `tokens_returned`). |
+| `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
+| `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
+| `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Edit context only. |
+
 ## `code.enclosing`
 
 Batched `path:line` -> enclosing function.
@@ -583,19 +625,23 @@ Batched `path:line` -> enclosing function.
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `include_lessons` | `bool` | `True` | Attach `lessons`: the memories about the answer's top files (for code.context_pack, a `task` briefing's only). |
+| `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces `lessons` reads besides the repository's team rules (over MCP the caller's memory home, filled in); one the caller cannot read is skipped. |
 | `org` | `str` | `''` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | `''` | The namespace the op reads or writes. |
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `locations` | `list[str]` | required | "src/Foo.cpp:123" — repo-relative path, 1-based line. |
-| `include_body` | `bool` | `False` | include_body: ship the enclosing function's whole body with each resolved location, so a grep hit becomes the function it sits in without a follow-up code.symbol or a file read (most index answers are otherwise followed by a read of the… |
-| `token_budget` | `int` | `4000` | With `include_body`: token budget for the bodies (200..12000); bodies past it ship elided. |
-| `neighbours` | `bool \| None` | `None` | neighbours: a graph evidence block per distinct enclosing function: up to neighbour_k callers, callees (compiler tier preferred, symbols outside the repo dropped, parser guesses below 0.8 confidence dropped) and mapped tests, the module… |
-| `neighbour_k` | `int` | `5` | With `neighbours`: at most this many callers and callees per function (1..20). |
+| `locations` | `list[str]` | required | Repo-relative path:line locations to resolve together. |
+| `include_body` | `bool` | `False` | Include retained enclosing source per location; default false. |
+| `token_budget` | `int` | `0` | Estimated tokens for body content; zero is unlimited (default). |
+| `neighbours` | `bool \| None` | `None` | Attach callers, callees and mapped tests per function; default off. |
+| `neighbour_k` | `int` | `5` | Maximum callers and callees per function; default five. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `results` | `list[dict[str, Any]]` | one entry per input location, input order preserved: {path, line, symbol, symbol_id, qualified_name, signature, tier, kind, start_line, end_line} kind is "function" / "method" / "fixture" for a line inside a function body; "class"… |
 | `resolved` | `int` | Locations that landed inside a function, type, or document section. |
 | `paths_indexed` | `int` | distinct input paths that have any symbol rows |
@@ -704,24 +750,33 @@ Which CI build first carried this commit?
 
 ## `code.grep`
 
-Exact-match lookup over the indexed corpus.
+Literal or regex search of indexed source with enclosing symbols and coverage.
 
 `POST /v1/code.grep` · MCP `loom_code_grep` · role `viewer` · read
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `include_lessons` | `bool` | `True` | Include linked lessons (default true) or set false when you already have the relevant notes. |
+| `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces `lessons` reads besides the repository's team rules (over MCP the caller's memory home, filled in); one the caller cannot read is skipped. |
 | `org` | `str` | `''` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | `''` | The namespace the op reads or writes. |
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `pattern` | `str` | required | The text to find: a literal substring, or an RE2 expression with `regex`. |
-| `regex` | `bool` | `False` | True reads `pattern` as RE2; an invalid expression is a 422. |
+| `pattern` | `str \| list[str]` | required | Literal text, a list of alternatives, or one RE2 expression with regex=true. |
+| `prioritize_patterns` | `bool` | `False` | For a literal list, give distinct patterns a first-page slot before repeat hits (default true on coding connections). |
+| `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
+| `related_on_miss` | `bool` | `False` | Recover a missing call's qualified argument in a literal or batch, or one member spelling in malformed call alternatives (default true on coding connections). |
+| `related_on_prefix` | `bool` | `False` | Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. |
+| `include_dependencies` | `bool` | `False` | Include verified argument definitions, helpers, or forwarding call targets. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
+| `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
+| `prefer_complete_context` | `bool` | `False` | Use the same excerpt width to complete a short declaration. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
-| `cursor` | `str` | `''` | Continuation (matches mode): the `next_cursor` of an earlier response to this pattern; the next page of matching lines is one point read of what the first call extracted. |
+| `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |
 | `mode` | `Literal['matches', 'files', 'presence', 'message']` | `'matches'` | matches: up to `limit` matching LINES with text + enclosing scope. files: up to `limit` matching FILES (path, matching chunk count, first line) and no line text — the coverage question ("which files mention X?") that a 20-line cap cannot… |
+| `include_body` | `bool` | *(computed)* | Return full enclosing bodies by default in matches mode. |
 | `limit` | `int \| None` | `None` | Default depends on mode: 20 lines, or the 500-file ceiling — a files answer capped at 20 reads like a complete coverage answer to a caller that did not know to send a limit. matches mode is clamped to 200 lines. |
 | `path_globs` | `list[str]` | *(computed)* | File filters, rg `-g` / `-t` style: keep paths matching any glob, drop paths matching any exclude, restrict to a language's extension set. |
 | `exclude_globs` | `list[str]` | *(computed)* | Drop paths matching any of these rg-style globs. |
@@ -733,7 +788,15 @@ Exact-match lookup over the indexed corpus.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `matches` | `list[dict[str, Any]]` | {path, line, text, scope, scope_start_line, scope_end_line} per matching LINE, path/line ordered. scope_* is the span of the enclosing unit named by `scope` (0/0 when the line sits in no unit) — enough to decide whether to fetch the body… |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
+| `matches` | `list[dict[str, Any]]` | {path, line, text, scope, scope_start_line, scope_end_line} per matching LINE, path/line ordered except when prioritize_patterns gives different literals first-page slots. scope_* is the span of the enclosing unit named by `scope` (0/0… |
+| `related` | `RelatedGrepEvidence \| None` | Related source for a qualified argument or member, separate from literal matches. |
+| `contexts` | `list[dict[str, Any]]` | Exact retained source windows for this page, with inclusive line bounds. |
+| `contexts_partial` | `bool` |  |
+| `definitions` | `list[dict[str, Any]]` | include_body: distinct enclosing units, in hit order; `lines` names the matching lines each definition covers. |
+| `definitions_partial` | `bool` |  |
+| `definitions_note` | `str` |  |
 | `next_cursor` | `str` | Continuation: cursor for the next page of matching lines, "" when the extracted set is exhausted. has_more mirrors it. |
 | `has_more` | `bool` | True when `next_cursor` is set. |
 | `files` | `list[dict[str, Any]]` | mode=files: {path, chunks, first_line} per matching file, path ordered. |
@@ -835,7 +898,7 @@ Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius.
 | `causes` | `list[str]` | Why `epistemic` is `lower_bound`, from the set above; empty when it is `exact`. |
 | `by_hop_counts` | `dict[int, int]` | Distinct symbols reached per hop BEFORE any slicing: {1: n, 2: m}. |
 | `truncated` | `bool` | True when `impacted_symbols` is a page of the radius (per_hop_limit / offset sliced it, or the per-hop edge read hit its cap). |
-| `resolved_by` | `str` | `anonymous_namespace` \| `tail` when the symbol shape's name bound through symbol-form tolerance; "" and off the wire otherwise. |
+| `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` \| `file_symbol` when a read-side name form bound; "" and off the wire for an exact hit. |
 | `verdict` | `str` | Why the radius is empty, '' when it is not. |
 | `paths_seen` | `list[dict[str, str]]` | Diff shape: every path the request named, with its class — `test` \| `doc` \| `config` \| `unindexed` (outside the indexed prefixes, or a source path the index holds no file row for) \| `src` — so the verdict is actionable without re-deriving… |
 | `overlay` | `bool` | On the wire only when `pr_number` was given — see CodeCallersOutput. |
@@ -922,7 +985,7 @@ Health of the code index: indexed head commit, compiler-tier commit, row counts,
 | `symbol_stats_at` | `str` | The newest fan-in pass stamp (ISO-8601 UTC); '' when the pass has not written the table. |
 | `unit_risk_rows` | `int` | The precomputed risk table for this namespace — live rows and the newest stamp (ISO 8601, UTC), so an operator sees the weekly leg's progress and a resumed pass's remainder. 0 / "" = no row written (every served unit is read live). |
 | `unit_risk_at` | `str` | The newest risk-table stamp (ISO-8601 UTC); '' when no row is written. |
-| `chunks_total` | `int` | Live chunks, those carrying a vector, and their ratio (0..1; reference fixtures unembedded by design are outside the denominator). |
+| `chunks_total` | `int` | Live chunks, those carrying a vector, and their ratio (0..1; rows unembedded by design, reference fixtures and `embed_exclude` paths, are outside the denominator). |
 | `chunks_embedded` | `int` | Live chunks that carry an embedding vector. |
 | `embedding_coverage` | `float` | Embedded share of the embeddable chunks (0..1); 1.0 when the counts do not carry it. |
 
@@ -939,7 +1002,7 @@ PageRank-ordered orientation map of the indexed repository with per-file summary
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `token_budget` | `int` | `1000` | Token budget for the map (200..4000); entries past it are dropped. |
+| `token_budget` | `int` | `0` | Estimated-token cap on map entries; 0 (default) is unlimited. |
 | `module_prefix` | `str` | `''` | Only modules and hubs under this repo-relative prefix; '' = the whole repository. |
 
 | Output field | Type | Meaning |
@@ -991,7 +1054,7 @@ Tell loom what you did with a code answer, by its trace_run_id: 'used_in_answer'
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `path` | `str` | required | repo-relative path ("src/Foo.cpp"); a leading ./ is tolerated |
 | `kinds` | `list[str]` | *(computed)* | Declaration kinds to list (`function`, `class`, `job`, …); the default covers every kind the symbol table records for code, SQL tests, build files and data models. |
-| `token_budget` | `int` | `1500` | Whole-row budgeted: an entry ships complete (signature included) or not at all; the first elided entry names its own code.symbol call. |
+| `token_budget` | `int` | `0` | Estimated-token cap on whole outline entries; 0 (default) is unlimited. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1072,6 +1135,34 @@ A PR draft asks whether a PR like it already exists.
 | `legs` | `dict[str, Any]` | rows read per leg, or "unavailable: <reason>" |
 | `draft` | `dict[str, Any]` | what the draft became: title_tokens, paths, symbols, issues |
 | `trace_run_id` | `str` | Id of this call's trace row; pass it to `code.outcome`. |
+
+## `code.read`
+
+Read inclusive, one-based indexed lines.
+
+`POST /v1/code.read` · MCP `loom_code_read` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `include_lessons` | `bool` | `True` | Attach `lessons`: the memories about the answer's top files (for code.context_pack, a `task` briefing's only). |
+| `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces `lessons` reads besides the repository's team rules (over MCP the caller's memory home, filled in); one the caller cannot read is skipped. |
+| `org` | `str` | `''` | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | `''` | The namespace the op reads or writes. |
+| `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
+| `ranges` | `list[str] \| list[CodeReadRangeInput \| str]` | *(computed)* | Batch of inclusive one-based ranges as path:start-end strings or objects with path, start_line, and optional end_line. |
+| `path` | `str \| None` | `None` | Repository-relative file for a single range. |
+| `start_line` | `int \| None` | `None` | First line of a single range, one-based. |
+| `end_line` | `int \| None` | `None` | Inclusive last line, defaulting to start_line. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
+| `results` | `list[CodeReadRange]` |  |
+| `as_of` | `dict[str, Any]` |  |
+| `trace_run_id` | `str` | Joins this read to the code trace and request ledger. |
 
 ## `code.recent_commits`
 
@@ -1347,8 +1438,8 @@ A merged PR's review brief: the point read of what the ingest built at merge —
 | `pr_number` | `int` | `0` | The PR to brief; 0 = find it by `merge_sha`. |
 | `merge_sha` | `str` | `''` | The PR's merge commit (hex, up to 40 chars); '' = find it by `pr_number`. |
 | `sections` | `list[Literal['paths', 'symbols', 'tests', 'settings', 'history', 'blame', 'qa', 'risk', 'do_not_flag', 'rationale']]` | *(computed)* | Serve only these of the tier's sections; empty = every section the tier carries. |
-| `tier` | `Literal['trivial', 'standard', 'full']` | `'standard'` | Which sections and default budget: trivial (paths, symbols), standard (+ tests, settings, history, risk, rationale) or full (+ blame, qa). |
-| `token_budget` | `int` | `0` | Token budget for the served sections; 0 = the tier's (700 / 2,500 / 4,000). |
+| `tier` | `Literal['trivial', 'standard', 'full']` | `'standard'` | Which sections: trivial (paths, symbols), standard (+ tests, settings, history, risk, rationale) or full (+ blame, qa). |
+| `token_budget` | `int` | `0` | Estimated-token cap on served sections; 0 (default) is unlimited. |
 | `store` | `bool` | `True` | Whether a brief this call builds on a miss is stored for the next reader (the default). |
 | `open` | `bool` | `False` | The PR is OPEN — brief its head (`refs/pull/N/head` on the mirror) diffed against its merge-base with the indexed branch, with the post-image overlay on the impact read (added functions are seeds). |
 
@@ -1430,7 +1521,7 @@ Report the progress of a SCIP upload batch: parts received and apply status.
 
 ## `code.search`
 
-Search the shared code index of this repository (fresh to the last merged PR).
+Find implementations by question, behavior or identifier using `query`.
 
 `POST /v1/code.search` · MCP `loom_code_search` · role `viewer` · read
 
@@ -1443,16 +1534,16 @@ Search the shared code index of this repository (fresh to the last merged PR).
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `query` | `str` | required | The question, identifier or phrase to search for; a symbol-shaped query tries the symbol table first (`route` says which path answered). |
+| `query` | `str` | required | Issue, task, behavior question or identifier to locate in indexed code. |
 | `top_k` | `int` | `5` | At most this many results per page (1-25). |
-| `token_budget` | `int \| None` | `None` | Response budget in tokens; results are whole units, overflow elides. |
+| `token_budget` | `int \| None` | `None` | Response budget in tokens; 0 = unlimited, omitted = LOOM_CODE_SEARCH_TOKEN_BUDGET (default 0). |
 | `path_prefix` | `str` | `''` | Keep only units whose path starts with this prefix; "" = the whole namespace. |
-| `cursor` | `str` | `''` | Continuation: the `next_cursor` of an earlier response to this query. |
+| `cursor` | `str` | `''` | Pass `next_cursor` with the original search arguments and omit it to start a new search. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set: unit ids not to serve again. |
 | `rerank` | `str` | `''` | Reranker over the fused pool: "" = the deployment default (LOOM_CODE_SEARCH_RERANK_DEFAULT, for prose questions of its kinds), "none" = off for this request, "builtin:openai" / "builtin:cohere", or the name of an endpoint in… |
 | `expand` | `bool` | `False` | Vocabulary bridge: one LLM hop proposes codebase identifiers for the lexical leg (natural-language wording often misses the implementing subsystem's vocabulary). |
 | `annotate` | `bool` | `True` | Risk annotations + one-hop callee context per result (churn/amp/tested/ callees on each unit). |
-| `bodies` | `Literal['auto', 'none'] \| None` | `None` | "auto" (default): granularity scales with budget-per-slot — cards when the budget can't fit any body (~<200 tok/slot), whole units in the normal range, and top hits expand toward their WHOLE FILE when the budget is generous. "none": cards… |
+| `bodies` | `Literal['auto', 'none'] \| None` | `None` | Source response mode: auto includes source, none returns pointers. |
 | `kind_prior` | `Literal['off', 'default', 'flat', 'structural'] \| None` | `None` | Chunk-kind prior override: None = code_search_kind_prior; "default" / "flat" pick a table, "structural" applies only the phrasing rule, "off" disables. |
 | `pr_leg_before` | `datetime \| None` | `None` | Only PRs merged strictly before this instant may vote — the time-travel pin a bench mined from merged PRs needs so the fix PR cannot vote for its own files. |
 | `embedding_model` | `str` | `''` | Bench-only override of the embedding_model label the legs read: "" = the deployment embedder's model name. |
@@ -1476,7 +1567,7 @@ Search the shared code index of this repository (fresh to the last merged PR).
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
-| `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
+| `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
 | `results` | `list[CodeUnit]` | The ranked units served on this page, cut to top_k and the token budget; empty on an abstain with no pool or a not-covered path. |
 | `route` | `str` | symbol_exact \| hybrid \| symbol_miss_hybrid |
 | `next_cursor` | `str` | Continuation: opaque cursor for the next page of the ranked pool, "" when nothing ranked remains past this page (symbol routes issue none). has_more mirrors it. |
@@ -1536,7 +1627,7 @@ One ClickHouse setting, the four places that define it: its declaration and tier
 
 ## `code.symbol`
 
-Exact symbol lookup: definition, signature, doc comment, and body of a function/class/enum by (qualified) name — compiler-grade where available (tier='scip'), resolved across C++ overloads…
+Find an exact definition by name or path:line.
 
 `POST /v1/code.symbol` · MCP `loom_code_symbol` · role `viewer` · read
 
@@ -1547,19 +1638,21 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `name` | `str` | `''` | bare, qualified, or partially qualified name — or `path:line` ("src/Foo.cpp:123"), which resolves to the innermost function containing that line: a grep hit or review comment becomes the whole function in one call. |
+| `name` | `str` | `''` | Definition name, path:line, or path:symbol. |
 | `symbol_id` | `str` | `''` | An index symbol id (a definition's `unit_id`, an edge's `*_symbol_id`); when set it wins over `name` and resolves exactly that definition. |
-| `include_body` | `bool` | `True` | Read each definition's body; a 200+ line class ships its skeleton plus member outline instead. |
+| `include_body` | `bool` | `True` | Include retained implementation source when available; false returns metadata. |
 | `include_history` | `bool` | `True` | Attach `recent_prs` (merged PRs over the definitions' paths) to the first definition. |
 | `include_examples` | `bool` | `True` | Attach `examples` (call sites that use the symbol) to the first definition. |
+| `test_examples_only` | `bool` | `False` | Restrict usage examples to indexed tests. |
+| `example_context_lines` | `int` | `0` | Retained source lines on each side of a usage example. |
 | `include_lessons` | `bool` | `True` | Attach `lessons` to the first definition: the memories linked to the symbol from `lesson_namespaces` (over MCP the caller's memory home by default) and the repository's team namespace, each with its `code_state` (`fresh`, `moved`, or… |
 | `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces whose linked memories `lessons` reads besides the repository's team rules (over MCP the caller's memory home by default); one the caller cannot read is skipped. |
-| `token_budget` | `int` | `2500` | Estimated-token budget for the answer; definitions past it are served elided (signature, doc, pointer), and the `uses_brief` block is paid out of it first. |
+| `token_budget` | `int` | `0` | Estimated-token cap for definitions and `uses_brief`; 0 (default) is unlimited. |
 | `min_fan_in` | `int` | `0` | Definitions carry `fan_in` when the weekly stats are enabled; min_fan_in drops the rest, sort_by='fan_in' puts the most-called definition of an overloaded/ambiguous name first. |
 | `sort_by` | `Literal['score', 'fan_in']` | `'score'` | `score` keeps the resolver's order; `fan_in` puts the most-called definition first. |
 | `uses` | `bool \| None` | `None` | `uses=true` returns the definition AND the lines that mention its bare name — what a separate code.grep on the name would return, read beside the definition from the same chunk index — minus the definition's own span(s). |
 | `uses_limit` | `int` | `50` | At most this many `uses` lines (1–200) when `uses` is true. |
-| `uses_brief` | `bool` | `False` | Serve the compact `uses` block when the lookup resolves to one definition; ignored when `uses` is true. |
+| `uses_brief` | `bool` | `False` | Include a compact caller summary when one definition resolves. |
 | `near_paths` | `list[str]` | *(computed)* | When several definitions match, rank them by the change at hand — the files in `near_paths` (<= 20) or the merged PR's file list for `pr_number` from the ledger: same file, same directory, co-change in code_pr_history, then path distance. |
 | `pr_number` | `int` | `0` | A merged PR whose file list (from the PR ledger) ranks several matching definitions; 0 = no PR ranking. |
 | `namespaces` | `list[str]` | *(computed)* | Presence on several namespaces: `presence: true` runs the resolve once per entry of `namespaces` (at most 8; `namespace`, when set and absent, leads the list; unset list = the addressed namespace alone), concurrently under… |
@@ -1569,23 +1662,26 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `definitions` | `list[CodeUnit]` | The resolved definitions (at most 10), fitted to `token_budget`; empty when nothing resolved (see `candidates`) or on a presence answer. |
+| `definitions` | `list[CodeUnit]` | Up to 10 name matches, or the members matched by file clues, fitted to `token_budget`. |
+| `lessons_left_out` | `int` | Whole linked lessons omitted to preserve definitions within an explicit request budget. |
 | `ambiguous` | `bool` | True when the served definitions carry more than one distinct name/signature pair. |
 | `hierarchy` | `dict[str, list[dict[str, Any]]]` | For a class / interface / enum definition, its type hierarchy from the `inherits` edges of both tiers, folded by qualified name: {"supertypes": [...], "subtypes": [...]} of {symbol, kind, via (extends \| implements), tier, confidence, path… |
-| `candidates` | `list[dict[str, Any]]` | When nothing resolved: cheap fuzzy candidates (names + paths only). |
+| `candidates` | `list[dict[str, Any]]` | Source pointers when nothing resolved, or other hits outside a file-clue target. |
 | `tokens_returned` | `int` | Estimated tokens of the answer: definitions, uses, cited documents, neighbours and hierarchy blocks together. |
 | `trace_run_id` | `str` | Id of this call's trace row; pass it to `code.outcome`. |
 | `uses` | `list[dict[str, Any]] \| dict[str, Any]` | uses=true: {path, line, text, scope, scope_start_line, scope_end_line, kind} per line mentioning the symbol's bare name, path/line ordered, the definition span(s) excluded. |
-| `uses_truncated` | `bool` | True when the `uses` list stopped at `uses_limit`. |
+| `uses_truncated` | `bool` | True when `uses_limit` shortened the list or the token cap withheld `uses_brief`. |
 | `uses_tokens` | `int` | Estimated tokens the compact `uses` block cost out of `token_budget`. |
 | `picked_by` | `str` | Which context key ranked the definitions when `near_paths` / `pr_number` was given — same_file \| same_dir \| co_change \| path_distance \| none. "" and off the wire when no context was given. |
-| `resolved_by` | `str` | `anonymous_namespace` \| `tail` when an over-qualified name bound through symbol-form tolerance; "" and off the wire otherwise. |
+| `resolved_by` | `str` | Edit context reports `file_clues` or `repository_clues` for literal matches, and `file_argument` or `repository_argument` for recovery from a missing call expression. |
 | `documented_in` | `list[dict[str, Any]]` | The document sections that cite the definition (the Markdown lane's `reads` edges) — section qualified name, path, line; at most five distinct sections, first by confidence. |
 | `neighbours` | `list[dict[str, Any]]` | The neighbours graph block on the definitions (one entry per definition anchor); empty unless `neighbours` ran. |
 | `anchors` | `int` | How many definitions the `neighbours` block was built for; 0 when it is off. |
 | `neighbour_tokens` | `int` | Estimated tokens the `neighbours` block cost (counted in `tokens_returned`). |
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
+| `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Edit context only. |
 
 ## `code.symbol_history`
 
@@ -1731,7 +1827,7 @@ Paste a stack trace / backtrace; get each frame resolved to its definition in on
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `trace` | `str` | required | The stack trace or backtrace text; qualified `a::b` names and C/C++ `dir/file.cpp:N` locations are read as frames (`std::`, `boost::`, `absl::`, `__*` frames skipped). |
 | `max_frames` | `int` | `15` | Resolve at most this many distinct frames, in trace order (1..40). |
-| `token_budget` | `int` | `3000` | Token budget for `definitions` (200..12000); units past it are dropped. |
+| `token_budget` | `int` | `0` | Estimated-token cap on definitions; 0 (default) is unlimited. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

@@ -133,7 +133,7 @@ names its providers explicitly (the local embedder and the fake LLM).
 
 ```dotenv
 LOOM_LLM_PROVIDER=anthropic
-LOOM_LLM_MODEL=claude-haiku-4-5
+LOOM_LLM_MODEL=claude-sonnet-5-5
 ANTHROPIC_API_KEY=<your Anthropic API key>
 LOOM_REQUIRE_REAL_PROVIDERS=true
 ```
@@ -335,14 +335,17 @@ setting names the same model.
 
 ### Through an inference gateway
 
-An OpenAI-compatible proxy or inference gateway can serve Loom's chat-completions
-requests. Select the provider and a model the gateway serves, as well as its API root
-and key; a key alone does not change an explicitly configured fake provider:
+Select the provider and a model the gateway serves, then configure its API root
+and key. For general LLM calls, the `openai` provider uses the Responses API at
+`<root>/responses`. Use the [`local` provider](#a-model-server-on-your-machine-no-api-key)
+for general LLM calls to a gateway that only serves Chat Completions. The
+[native assistant](../operations/assistant.md#configuration) has its own provider
+and model settings. Its `openai` route uses Chat Completions.
 
 ```dotenv
 LOOM_LLM_PROVIDER=openai
 LOOM_LLM_MODEL=<gateway-model-id>
-LOOM_OPENAI_BASE_URL=https://gateway.example/v1   # chat and OpenAI embeddings
+LOOM_OPENAI_BASE_URL=https://gateway.example/v1   # <root>/responses and <root>/embeddings
 LOOM_ANTHROPIC_BASE_URL=https://gateway.example   # Messages: <root>/v1/messages
 OPENAI_API_KEY=<the key the gateway issued for Loom>
 ```

@@ -17,6 +17,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.error_summary import error_summary
 from server.core.errors import BackendUnavailableError, LoomServerError
+from server.core.hashing import served_content_sha256
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     MemoryRestoreInput,
@@ -619,7 +620,7 @@ async def _restore_embedding_mirror(
             entities=list(existing.entities or []),
             # Carried forward so restore doesn't zero them under FINAL.
             files=list(getattr(existing, "files", None) or []),
-            content_sha256=str(getattr(existing, "content_sha256", "") or ""),
+            content_sha256=served_content_sha256(existing.value),
             concepts=list(getattr(existing, "concepts", None) or []),
             status=str(existing.status or "active"),
             temporal_anchor=existing.temporal_anchor,
@@ -637,20 +638,19 @@ async def _restore_embedding_mirror(
             mentioned_at=existing.mentioned_at,
             source_resource_id=existing.source_resource_id or "",
         )
-        await ch.insert(
-            "loom.memory_embeddings",
-            [restore_emb_row],
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
-        )
+        from server.memory.store import insert_embedding_rows
+
+        await insert_embedding_rows([restore_emb_row], ch=ch)
 
 
 async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutput:
-    """Undo a delete, or an automatic retirement.
+    """Reverse an automatic tombstone or supersession when consent permits it.
 
-    A delete within the 14-day grace window: copy the tombstoned row forward with a
-    higher version and tombstoned_at=NULL so RMT collapses the pair live, on both
-    loom.memory and loom.memory_embeddings. A tombstone past the 14-day TTL returns
-    expired=True.
+    Within the 14-day grace window, a restorable tombstone is copied forward with
+    a higher version and tombstoned_at=NULL on memory and its search mirror.
+    An older tombstone answers expired=True. Explicit deletion or clearing leaves
+    permanent refusal, so its content cannot be republished.
+
 
     A retired (`superseded`) row is served again by `_restore_superseded`, whose two
     preconditions hold it to the retirement on screen: `if_superseded_by` (still

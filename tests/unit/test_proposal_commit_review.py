@@ -163,6 +163,8 @@ async def test_native_commit_checks_decoded_review_state_before_publishing(monke
 
     class Conn:
         async def fetch(self, sql, *args):
+            if "loom.memory_refusals" in sql:
+                return []
             if "loom.memory_current c" in sql:
                 return [{**head, "row": head}]
             return [{"org": source.org, "scope": source.namespace, "generation": 5}]

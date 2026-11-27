@@ -680,9 +680,6 @@ class ClickHouseSettings(BaseModel):
     ch_cluster: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]*$")] = "default"
     # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
     ch_secure: bool | None = None
-    # Additional trusted writer HTTP origins for analyst setup policy observations.
-    # Uses the configured service credentials; missing or duplicate writers refuse.
-    ch_analysis_observer_urls: list[str] = Field(default_factory=list, max_length=32)
     # Append `sql:<shape12> <first 200 chars>` of each statement to its
     # `log_comment` ("<op> <request_id>"), so query_log rows group by shape.
     # A statement that carries a secret, or one run as the analyst, gets its
@@ -886,8 +883,8 @@ class CodeSettings(BaseModel):
     code_test_gate_run_templates: Annotated[str, JsonArray] = ""
 
     # Retrieval context (tokens) code.ask hands to synthesis when the caller
-    # passes no token_budget.
-    code_ask_token_budget: int = 4000
+    # passes no token_budget; 0 means unlimited.
+    code_ask_token_budget: int = Field(default=0, ge=0)
     # The code.ask answer cache's hit cosine. 0 = the per-embedding-model table
     # in code/app/answers_entry.py; a value in (0, 1] pins one threshold for
     # every model.
@@ -928,11 +925,14 @@ class CodeSettings(BaseModel):
     # Whether the code ops that return files carry `lessons`, the readable memories about
     # their top files.
     code_result_lessons: Annotated[bool, LIVE] = True
-    # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at
-    # 4 characters a token.
-    code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=250, ge=50, le=2000)
+    # Estimated-token cap on file or symbol `lessons`, counted on serialized rows at
+    # 4 characters a token; 0 means unlimited. Rows are whole or left out.
+    code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=0, ge=0)
     # How many of an answer's files, in rank order, its `lessons` are read for.
     code_result_lessons_paths: Annotated[int, LIVE] = Field(default=3, ge=1, le=10)
+    # Maximum metadata rows per read when reordering source results by linked lessons.
+    # If a read exceeds this bound, the source results keep their original order.
+    code_result_path_hint_rows: Annotated[int, LIVE] = Field(default=512, ge=1, le=2**32 - 2)
     # --- repository access ---
     # True lets every authenticated principal of the org read every configured
     # code namespace (right for public or org-internal repos); false leaves reads
@@ -1083,6 +1083,10 @@ class CodeSettings(BaseModel):
     code_git_fetch_pr_heads: bool = True
     # Max PR heads fetched per shared mirror per ingest pass.
     code_git_pr_head_batch: int = 200
+    # PEM bundle git verifies https remotes with, in place of its default roots (a server
+    # under a private authority); under /etc/ssl, which the job sandbox mounts.
+    # code_git_proxy_ca_file takes its place through the proxy. Empty = default roots.
+    code_git_ca_file: str = ""
     # The code index's network git (clone, fetch, ls-remote, submodule update) through
     # an operator's forward proxy (code/app/index/git_proxy.py). With the proxy set, such
     # a git job connects through it or is refused: never directly.
@@ -1463,7 +1467,7 @@ class CodeSettings(BaseModel):
     code_embed_recovery_batch: int = 100
     # Share of embeddable chunks that must carry a vector before a repo is
     # `ready`; below it code.search says "lexical only". Poisoned rows count
-    # against it; fixtures unembedded by design do not.
+    # against it; rows unembedded by design (reference fixtures, `code_embed_exclude`) do not.
     code_ready_embed_coverage: float = 0.95
     # --- ingest limits and denylist -------------------------------------------
     # Files above this size are recorded (index_error) and not chunked.
@@ -1476,6 +1480,9 @@ class CodeSettings(BaseModel):
     code_ingest_denylist_builtin: bool = False
     # CSV of path globs never indexed (the scalar entry's `exclude`).
     code_ingest_exclude: str = ""
+    # CSV of path globs indexed but never described or embedded (the scalar entry's
+    # `embed_exclude`; not self-service entries); chunks already written keep their state.
+    code_embed_exclude: str = ""
     # Name of the repo-local ignore file whose patterns are never indexed.
     code_ingest_ignore_file: str = ".loomignore"
     # --- reconciliation and re-chunking ---------------------------------------
@@ -1663,6 +1670,9 @@ class CodeSettings(BaseModel):
     # code.search `bodies` when the request omits it: "auto" fills bodies into
     # the budget; "none" serves handles only.
     code_search_bodies_default: Literal["auto", "none"] = "auto"
+    # code.search response budget in tokens when the request omits token_budget;
+    # 0 = unlimited. An explicit request budget overrides this default.
+    code_search_token_budget: int = Field(default=0, ge=0)
     # Memoise served code.search responses per (org, namespace, request shape)
     # in loom.code_search_memo and replay within the TTL (route "+memo");
     # `fresh=true` bypasses it.
@@ -1914,6 +1924,12 @@ class CodeSettings(BaseModel):
     code_egress_connect_timeout_s: Annotated[float, LIVE] = Field(default=15.0, gt=0)
     # Seconds one enrichment of a code result may take before it is left empty.
     code_enrich_timeout_s: Annotated[float, LIVE] = Field(default=0.5, gt=0)
+    # Incoming call sites read before ranking usage examples. The coverage lookup
+    # accepts up to 50 paths.
+    code_enrich_example_candidate_limit: int = Field(default=50, ge=1, le=50)
+    # Indirect test callers ranked as backups. The edge query reads up to twice
+    # this many call sites, within its 60-site work limit.
+    code_enrich_indirect_test_caller_limit: int = Field(default=30, ge=1, le=30)
     # A full pass waits this long for a delta on its entry (past any delta's harness
     # timeout).
     code_entry_lock_wait_s: Annotated[float, LIVE] = Field(default=4 * 3600.0, gt=0)
@@ -1986,8 +2002,8 @@ class CodeSettings(BaseModel):
     code_review_brief_rationale_paths: Annotated[int, LIVE] = Field(default=10, ge=1, le=50)
     # Decision and constraint rows the `rationale` section serves.
     code_review_brief_rationale_rows: Annotated[int, LIVE] = Field(default=8, ge=1, le=50)
-    # The `rationale` section's own token budget; its first row is served even past it.
-    code_review_brief_rationale_tokens: Annotated[int, LIVE] = Field(default=250, ge=50)
+    # The `rationale` section's own token budget; 0 means unlimited.
+    code_review_brief_rationale_tokens: Annotated[int, LIVE] = Field(default=0, ge=0)
 
 
 # ===== Context ================================================================
@@ -2690,9 +2706,9 @@ class McpSettings(BaseModel):
     # "full" (+ outputSchema) or "compact" (first paragraph, argument tree).
     # Per request: `?schema_profile=`.
     mcp_schema_profile: Annotated[Literal["standard", "full", "compact"], CaseFolded] = "standard"
-    # Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad.
-    # Empty leaves loading to the host; set names to keep selected tools upfront.
-    mcp_always_load_tools: str = ""
+    # "auto" loads source lookups upfront for the coding toolset. A comma-separated
+    # list overrides the toolset defaults. Empty leaves loading to the host.
+    mcp_always_load_tools: str = "auto"
     # Seconds without a tool call after which the mcp_session_run_sweep worker
     # closes an MCP session's implicit run (one per token and `Mcp-Session-Id`,
     # begun on the first run-scoped tool call); with no background workers
@@ -2786,9 +2802,13 @@ class MemorySettings(BaseModel):
     # memory.list rows per call for a token below writer on the namespace; it
     # pages with `offset` (wire cap stays 1000). 0 = no viewer cap.
     memory_list_viewer_limit: int = 100
-    # Transcript characters the session-digest call reads (~4 chars a token);
-    # 0 = the built-in 3000.
+    # Characters of complete source facts included in an extractive session digest;
+    # 0 = the built-in 3000. Facts are never clipped to fit.
     memory_session_digest_max_input_chars: int = 3000
+    # Raw digest candidates per query while filling listing, outline and export rows.
+    memory_digest_listing_page_size: int = Field(default=256, ge=1, le=2000)
+    # Queries allowed to find enough proven digests; exhaustion answers BACKEND_UNAVAILABLE.
+    memory_digest_listing_max_pages: int = Field(default=256, ge=1)
     # content_excerpt ceiling for answer-bearing facts (question_topic set)
     # when memory_capture_structured_answers is on, so an enumerated answer
     # is not clipped mid-list; every other fact keeps EXCERPT_LIMIT (1,200 chars).
@@ -3517,12 +3537,10 @@ class MemoryAskSettings(BaseModel):
     # question's own grounding rows. 0 = off.
     memory_ask_code_hop_symbols: Annotated[int, LIVE] = 4
     # Token budget of the code.symbol read that grounds a code-entity question in the
-    # code plane.
-    memory_ask_code_symbol_token_budget: Annotated[int, LIVE] = Field(default=400, ge=200, le=12000)
-    # Token budget of the code.search read that grounds a code-entity question.
-    memory_ask_code_search_token_budget: Annotated[int, LIVE] = Field(
-        default=1400, ge=200, le=12000
-    )
+    # code plane; 0 means unlimited.
+    memory_ask_code_symbol_token_budget: Annotated[int, LIVE] = Field(default=0, ge=0)
+    # Token budget of the grounding code.search read; 0 means unlimited.
+    memory_ask_code_search_token_budget: Annotated[int, LIVE] = Field(default=0, ge=0)
 
     # For each PR the query or grounding references, inject its authoritative
     # code_pr_history record (author, merged_at, title) as a high-trust grounding fact; the
@@ -4100,15 +4118,14 @@ class ModelSettings(BaseModel):
     # --- defaults ---------------------------------------------------------------
     # The deployment's LLM: memory extraction, rerank and every job whose own model
     # setting (the other *_model settings) is left "". Empty takes the resolved
-    # provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1).
+    # provider's default model (gpt-6-luna / claude-sonnet-5-5 / qwen2.5:3b / fake-echo-1).
     llm_model: str = ""
-    # The assistant's model. Empty selects claude-haiku-4-5 on Anthropic or
-    # fake-echo-1 on the explicit fake route; every other provider requires a model.
+    # The assistant's model, required for real providers. The fake route defaults to fake-echo-1.
     assistant_model: str = ""
     # Price-table model used for assistant route aliases (for example a Bedrock
     # inference profile). Empty uses assistant_model. The operator verifies its rate.
     assistant_price_model: str = ""
-    # Native streaming provider. Empty selects Anthropic; no fallback is used.
+    # Native streaming provider. Empty disables native model admission.
     assistant_provider: Literal["", "anthropic", "openai", "bedrock", "local", "fake"] = ""
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
@@ -4122,6 +4139,9 @@ class ModelSettings(BaseModel):
     # Where `local` models live (relative: under the working directory), one directory per
     # alias and revision; a missing file is fetched there. The image sets it by env.
     local_embedding_model_dir: str = "var/models"
+    # Texts per local ONNX inference batch; smaller values reduce peak memory.
+    # Every input is still embedded, in order; this does not limit input count or length.
+    local_embedding_batch_size: int = Field(default=16, ge=1)
 
     # --- memory -----------------------------------------------------------------
     # memory.ask synthesis (the strong tier when the cascade is on).
@@ -4421,6 +4441,13 @@ class ObservabilitySettings(BaseModel):
     # every pass.
     worker_ledger_rows: bool = True
 
+    # Self-hosted adoption reports. Set false to stop all adoption reporting.
+    adoption_telemetry_enabled: bool = True
+    # Share namespace contact domains and counts in adoption reports. Set false to omit them.
+    adoption_telemetry_share_domains: bool = True
+    # Seconds between adoption checks and retries. A report covers 12 hours.
+    adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
+
     # Master switch for OTel emission. `init_otel()` also refuses under pytest
     # regardless: server/main.py calls it at import, and a test run must never
     # ship rows into production observability tables.
@@ -4451,7 +4478,7 @@ class ObservabilitySettings(BaseModel):
     # "off" records none (the default; consent is given, not withdrawn); "query" only
     # the legs whose prompt is the user's own search text (hyde, query_rewrite,
     # enrichment, …); "all" also the legs carrying retrieved memories or conversation
-    # turns (inline_rerank, iterative_judge, extract, session_summary, …).
+    # turns (inline_rerank, iterative_judge, extract, …).
     # A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒
     # all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token
     # counts, cost, latency and quality scores are never gated.
@@ -4749,8 +4776,8 @@ class ProviderSettings(ModelSettings):
     embedding_retry_attempts: Annotated[int, LIVE] = Field(default=3, ge=1)
     # Longest backoff, in seconds, between two attempts of an embedding call.
     embedding_retry_max_wait_s: Annotated[float, LIVE] = Field(default=10.0, ge=0)
-    # OpenAI's API root, for chat and embeddings: point it at an
-    # OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
+    # OpenAI's API root, for the Responses API (<root>/responses) and embeddings:
+    # point it at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
     openai_base_url: str = "https://api.openai.com/v1"
     # Anthropic's API root (the Messages API is <root>/v1/messages): point it at
     # a gateway in front of Anthropic. Off the default, the key also goes as a
@@ -5121,7 +5148,7 @@ class ProviderSettings(ModelSettings):
 
     # Reasoning effort sent to OpenAI models. "" = the lowest the model accepts
     # (learned from its refusals, see server/llm/traits.py); set to pin one value
-    # for every call.
+    # for every call, raised to that lowest; a refused pin above it sends no effort.
     llm_openai_reasoning_effort: str = ""
     # Thinking effort sent to Claude models as `output_config.effort`: "low" |
     # "medium" | "high"; "" = send none (the model's own default). A model that
@@ -6221,6 +6248,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "code.outcome": 150,
     # one symbol-table read served by the path bloom index + as_of
     "code.outline": 300,
+    "code.read": 800,
     # the verify(reaches) BFS (depth<=4) plus one keyed read of the
     # guards of every hop and, on a miss, one namespace probe
     "code.path_guards": 1500,
@@ -6252,6 +6280,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # one excerpt read, one grep count — gathered
     "code.setting_facts": 1200,
     "code.symbol": 250,
+    "code.edit_context": 250,
     # symbol resolve + two loom reads gathered + items + up to three
     # bounded tracker reads (300 ms each, two gathered)
     "code.symbol_history": 1800,
@@ -6801,8 +6830,6 @@ LLM_MAX_TOKENS: dict[str, int] = {
     # session.brief: one window's revision (about 600-1,500 tokens); a cut-off answer is
     # salvaged key by key.
     "session_brief_revision": 3000,
-    # The session summary: one to three dated sentences.
-    "session_summary": 160,
     # memory.ask: the judge of an answer against its evidence.
     "ask_consistency": 200,
     # memory.ask: the split of a question into sub-questions.

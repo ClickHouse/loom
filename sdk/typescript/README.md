@@ -1,6 +1,6 @@
 # @clickhouse/loom — TypeScript SDK
 
-Typed client for [ClickHouse Loom](https://clickhouse.github.io/loom/), a self-hosted server that gives AI agents shared long-term memory, document search and a code index. Every wire operation the server declares is a typed method here; the types are generated from the server's operation registry, so what the deployment serves is what the SDK types.
+Typed client for [ClickHouse Loom](https://loom.clickhouse.com/docs/), a self-hosted server that gives AI agents shared long-term memory, document search and a code index. Every wire operation the server declares is a typed method here; the types are generated from the server's operation registry, so what the deployment serves is what the SDK types.
 
 ```bash
 npm install @clickhouse/loom
@@ -439,7 +439,7 @@ const result = await tools.execute("loom_code_lookup", {
 The model selects `symbol`, `search`, `callers` or `impact`; the application fixes scope
 and request budgets. Code results fit the configured cap as valid JSON with explicit
 whole-body or row omissions. Honor abstention, ambiguity, citations and graph lower
-bounds. See the [code tools guide](https://clickhouse.github.io/loom/guides/code-tools/)
+bounds. See the [code tools guide](https://loom.clickhouse.com/docs/guides/code-tools/)
 and [`examples/code-lookup`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/code-lookup/).
 
 ## Probe before you rely

@@ -63,10 +63,90 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         version="1.3.1",
         name="mcp_always_load_tools",
         old="code.search,code.symbol",
-        new="",
+        new="search.query,code.search,code.symbol,loom_op",
         why=(
-            "Leave tool loading to the host so sessions do not need unused code schemas "
-            "upfront. Set an explicit operation list to request eager loading."
+            "Expose search and operation discovery without a preliminary tool lookup; "
+            "other schemas stay under client discovery. An explicit list selects entrypoints, "
+            "and an empty value leaves loading to the host."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_ask_token_budget",
+        old=4000,
+        new=0,
+        why=(
+            "Return selected retrieval context without an implicit token cap; "
+            "positive values opt in to a cap."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_result_lessons_tokens",
+        old=250,
+        new=0,
+        why=(
+            "Return selected retrieval context without an implicit token cap; "
+            "positive values opt in to a cap."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="memory_ask_code_symbol_token_budget",
+        old=400,
+        new=0,
+        why=(
+            "Return selected retrieval context without an implicit token cap; "
+            "positive values opt in to a cap."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="memory_ask_code_search_token_budget",
+        old=1400,
+        new=0,
+        why=(
+            "Return selected retrieval context without an implicit token cap; "
+            "positive values opt in to a cap."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_review_brief_rationale_tokens",
+        old=250,
+        new=0,
+        why="Return selected review rationale without an implicit token cap.",
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="mcp_always_load_tools",
+        old="search.query,code.search,code.symbol,loom_op",
+        new="search.query,code.search,code.symbol,code.grep,loom_op",
+        why=(
+            "Make literal code search callable without a preliminary tool lookup. "
+            "An explicit list still replaces the defaults; an empty value leaves "
+            "loading to the host."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="mcp_always_load_tools",
+        old="search.query,code.search,code.symbol,code.grep,loom_op",
+        new="auto",
+        why=(
+            "Keep source lookups upfront on the coding toolset. General search and the "
+            "dispatcher are available through discovery. Other toolsets retain their "
+            "entrypoints. Explicit lists and empty values retain their meaning."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="adoption_telemetry_share_domains",
+        old=False,
+        new=True,
+        why=(
+            "Include namespace contact domains and aggregate counts in adoption reports. "
+            "Deployments can disable domain sharing while continuing to send usage totals."
         ),
     ),
 )

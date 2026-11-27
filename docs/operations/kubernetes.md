@@ -1,3 +1,9 @@
+---
+description: Deploy Loom on Kubernetes with its Helm chart, connect the pods to ClickHouse, and configure ingress and worker replicas.
+seo:
+  title: Self-host AI agent memory on Kubernetes
+---
+
 # Kubernetes
 
 `deploy/helm/loom` runs Loom as [N identical replicas](./replicas.md) on Kubernetes: one
@@ -468,9 +474,8 @@ clients to it. A client in the cluster that calls the Service by URL, such as
 `deploy/okf-sync/cronjob.yaml` (`PRIVATE_URL`), switches to `https://` and trusts the CA
 that issued the certificate. For the `loom` CLI, `SSL_CERT_FILE` names that CA and
 replaces the system roots, so set it on the command that calls the Service only, or point
-it at a bundle of the system roots and the CA. The assistant calls the port
-over plain HTTP, so the chart refuses `assistant.enabled` with `tls.secretName`. The hop
-from Loom to the release's extractor (`extractor.enabled`) stays plain HTTP. Keep
+it at a bundle of the system roots and the CA. The hop from Loom to the release's
+extractor (`extractor.enabled`) stays plain HTTP. Keep
 `tls.minVersion` at `"1.2"` unless every client of the port, the balancer included,
 speaks TLS 1.3. `helm test` calls the Service over HTTPS without verifying the
 certificate.

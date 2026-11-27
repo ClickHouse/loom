@@ -39,6 +39,7 @@ _TEST_FILE_RE = re.compile(
     r"|[^/]+\.(test|spec)\.(ts|js|tsx|jsx|mjs|cjs)|[^/]*Tests?\.(java|kt|cs|swift|php)"
     r"|gtest_[^/]+\.(cpp|cc)|[^/]+-test\.(cpp|cc))$"  # `-test.cpp`
 )
+TEST_PATH_PATTERN = f"(?:{_TEST_DIR_RE.pattern}|{_TEST_FILE_RE.pattern})"
 
 
 def is_test_path(path: str) -> bool:

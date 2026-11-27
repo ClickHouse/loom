@@ -231,17 +231,27 @@ def test_paid_runner_remains_main_only_with_finite_cumulative_default() -> None:
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.load((root / ".github/workflows/i18n.yml").read_text(), Loader=yaml.BaseLoader)
     assert "pull_request" not in workflow["on"]
-    assert workflow["on"]["workflow_run"]["branches"] == ["i18n/update"]
+    assert set(workflow["on"]) == {"push", "schedule", "workflow_dispatch"}
+    assert workflow["on"]["schedule"] == [{"cron": "37 */6 * * *"}, {"cron": "11,26,41,56 * * * *"}]
+    assert workflow["concurrency"]["group"] == "${{ github.workflow }}"
+    assert workflow["concurrency"]["cancel-in-progress"] == "false"
+    assert workflow["concurrency"]["queue"] == "max"
     update = workflow["jobs"]["update"]
     assert update["env"]["LOOM_I18N_BATCH_LANGUAGES"] == "${{ inputs.languages }}"
     assert "github.ref == 'refs/heads/main'" in update["if"]
     assert update["environment"] == "i18n"
-    assert "workflow_run" not in update["if"]
-    assert workflow["jobs"]["finalize"]["runs-on"] == "ubuntu-latest"
-    assert "environment" not in workflow["jobs"]["finalize"]
-    assert workflow["jobs"]["finalize"]["steps"][0]["with"]["ref"] == "main"
+    assert update["needs"] == "finalize"
+    assert "!cancelled()" in update["if"]
+    finalize = workflow["jobs"]["finalize"]
+    assert "github.event.schedule == '37 */6 * * *'" in update["if"]
+    assert finalize["if"] == "github.ref == 'refs/heads/main' && github.event_name == 'schedule'"
+    assert finalize["runs-on"] == "ubuntu-latest"
+    assert "environment" not in finalize
+    assert finalize["steps"][0]["with"]["ref"] == "main"
     steps = update["steps"]
-    assert steps[0]["with"]["ref"] == "${{ github.sha }}"
+    assert steps[0]["with"]["ref"] == "main"
+    assert steps[0]["with"]["persist-credentials"] == "false"
+    assert all("GITHUB_PATH" not in step.get("run", "") for step in steps)
     paid = next(step for step in steps if step.get("id") == "translate")
     assert paid["env"]["LOOM_I18N_TOTAL_USD"] == "${{ vars.LOOM_I18N_TOTAL_USD || '0' }}"
 

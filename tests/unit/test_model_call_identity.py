@@ -240,9 +240,10 @@ class _Recorder:
         return httpx.Response(200, json=self.body, request=httpx.Request("POST", url))
 
 
-_CHAT = {
-    "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
-    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+_RESPONSE = {
+    "status": "completed",
+    "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
+    "usage": {"input_tokens": 1, "output_tokens": 1},
 }
 _MESSAGES = {
     "content": [{"type": "text", "text": "hi"}],
@@ -260,7 +261,7 @@ def test_openai_chat_carries_the_identity(directory, monkeypatch) -> None:
     from server.llm import openai as chat_mod
 
     _as(AGENT)
-    chat = _Recorder(_CHAT)
+    chat = _Recorder(_RESPONSE)
     monkeypatch.setattr(chat_mod, "_http_client", lambda: chat)
     asyncio.run(chat_mod.OpenAILLMClient(model="gpt-4o-mini", api_key="k").complete("s", "u"))
     assert _carries(chat.calls[0]["headers"])
@@ -602,7 +603,7 @@ def test_a_loom_command_bills_its_namespaces_agent_and_one_naming_none_is_refuse
 ) -> None:
     import argparse
 
-    from server.cli import app
+    from server.cli import dispatch
 
     seen: list[dict[str, str]] = []
 
@@ -610,11 +611,13 @@ def test_a_loom_command_bills_its_namespaces_agent_and_one_naming_none_is_refuse
         seen.append(_sent())
         return 0
 
-    app._dispatch(argparse.Namespace(cmd="import", org="acme", namespace=AGENT_NS, func=command))
+    dispatch._dispatch(
+        argparse.Namespace(cmd="import", org="acme", namespace=AGENT_NS, func=command)
+    )
     assert seen[0]["X-Agent"] == "agent-7"  # the agent whose namespace it writes into
     with pytest.raises(customer.Unattributed, match="--namespace"):
         # --org alone: no agent to name, and never the gateway's default agent
-        app._dispatch(argparse.Namespace(cmd="import", org="acme", func=command))
+        dispatch._dispatch(argparse.Namespace(cmd="import", org="acme", func=command))
     assert len(seen) == 1  # the refused call returned nothing
 
 
@@ -623,7 +626,7 @@ def test_a_deployment_call_inside_a_loom_command_is_never_refused(directory) -> 
     deployment's own calls (`customer.system()`): no namespace is needed for them."""
     import argparse
 
-    from server.cli import app
+    from server.cli import dispatch
 
     seen: list[dict[str, str]] = []
 
@@ -633,5 +636,5 @@ def test_a_deployment_call_inside_a_loom_command_is_never_refused(directory) -> 
         return 0
 
     for org in ("", "acme"):
-        app._dispatch(argparse.Namespace(cmd="recalibrate", org=org, func=command))
+        dispatch._dispatch(argparse.Namespace(cmd="recalibrate", org=org, func=command))
     assert len(seen) == 2 and not any("X-Agent" in h for h in seen)

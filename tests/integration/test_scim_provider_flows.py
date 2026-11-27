@@ -78,7 +78,7 @@ def test_okta_spec_test(scim_server) -> None:
 
     # Deactivated by a path-less replace (Okta OIN) or a full PUT (Okta AIW).
     off = _patch(base, user["id"], {"op": "replace", "value": {"active": False}})
-    assert off.status_code == 200 and off.json()["active"] is False
+    assert off.status_code == 200 and off.json()["active"] is False, off.text
     on = _scim(base, "PUT", f"/Users/{user['id']}", json={**okta, "active": True})
     assert on.status_code == 200 and on.json()["active"] is True
     assert _scim(base, "GET", "/Groups", params={"startIndex": "1", "count": "100"}).json() == {
@@ -131,7 +131,7 @@ def test_entra_provisioning_and_validator(scim_server) -> None:
     )
     assert edits.status_code == 200, edits.text
     off = _patch(base, uid, {"op": "Replace", "path": "active", "value": "False"})
-    assert off.status_code == 200 and off.json()["active"] is False
+    assert off.status_code == 200 and off.json()["active"] is False, off.text
     assert _scim(base, "GET", f"/Users/{uid}").json()["active"] is False  # still listed
     # The aadOptscim062020 dialect: a path-less replace with dotted keys.
     on = _patch(
