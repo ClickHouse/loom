@@ -180,11 +180,11 @@ function clip(text, max) {
   return s.length <= max ? s : s.slice(0, max - 14).trimEnd() + "\n…[truncated]";
 }
 
-/** UTF-8 bytes of the text in a turn. An image placeholder (blockText) is a
- *  line of its own and a pointer, not text, so it is not counted. */
+/** UTF-8 bytes of the text in a turn. A line that is an image placeholder
+ *  (blockText) is a pointer, not text, so it is not counted. */
 function textBytes(content) {
   const lines = String(content || "").split("\n");
-  return Buffer.byteLength(lines.filter((l) => !/^\[image: [^\]]*\]$/.test(l)).join("\n"));
+  return Buffer.byteLength(lines.filter((l) => !/^\[image: .*\]$/.test(l)).join("\n"));
 }
 
 /** Body for memory.set_from_messages at SessionEnd, or null when the session

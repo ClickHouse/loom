@@ -92,6 +92,7 @@ test("a session with under 40 bytes of user and assistant text is not sent", () 
     null,
   );
   assert.equal(body("ok?\n[image: image/png]\n[image: image/png https://example.com/a.png]", "ok"), null);
+  assert.equal(body("ok?\n[image: image/png http://[::1]/a.png]", "ok"), null);
   assert.equal(body("x".repeat(37) + "\n[image: image/png]", "y"), null);
   assert.ok(body("x".repeat(39) + "\n[image: image/png]", "y").messages[0].content.endsWith("[image: image/png]"));
 });
