@@ -162,9 +162,9 @@ WITH toDate(now('UTC')) AS today_utc
 SELECT
     range_days,
     arrayJoin(multiIf(
-        daily.day = today_utc, ['live'],
-        daily.day >= today_utc - range_days, ['current', 'live'],
-        ['previous']
+        daily.day = today_utc, ['current'],
+        daily.day >= today_utc - range_days, ['current', 'current_complete'],
+        ['previous_complete']
     )) AS comparison,
     uniqExactIf(daily.day, daily.day < today_utc) AS days_reported,
     max(daily.day) AS last_reported,

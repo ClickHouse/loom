@@ -41,6 +41,7 @@ def test_public_adoption_query_includes_completed_windows_from_today() -> None:
             'instance String, days_ago Int16, version UInt8, domain String, request_count UInt64',
             ('present', 1, 2, 'active.example', 1),
             ('duplicate', 2, 2, 'active.example', 2),
+            ('previous', 31, 2, 'previous.example', 3),
             ('boundary', 90, 2, 'boundary.example', 1),
             ('expired', 91, 2, 'old.example', 1),
             ('today', 0, 2, 'today.example', 5),
@@ -54,17 +55,24 @@ def test_public_adoption_query_includes_completed_windows_from_today() -> None:
 
     [report] = run(setup, (telemetry / "public-adoption.sql").read_text())
 
-    assert report["domains"] == ["active.example", "boundary.example", "today.example"]
+    assert report["domains"] == [
+        "active.example",
+        "boundary.example",
+        "previous.example",
+        "today.example",
+    ]
     totals = {
         row["comparison"]: row
         for row in map(json.loads, report["totals"])
         if row["range_days"] == 30
     }
-    assert totals["current"]["memory_requests"] == 4
-    assert totals["current"]["last_reported"] == "2026-11-26"
-    assert totals["live"]["memory_requests"] == 9
-    assert totals["live"]["last_reported"] == "2026-11-27"
-    assert totals["live"]["days_reported"] == totals["current"]["days_reported"] == 2
+    assert set(totals) == {"current", "current_complete", "previous_complete"}
+    assert totals["current"]["memory_requests"] == 9
+    assert totals["current"]["last_reported"] == "2026-11-27"
+    assert totals["current_complete"]["memory_requests"] == 4
+    assert totals["current_complete"]["last_reported"] == "2026-11-26"
+    assert totals["current"]["days_reported"] == totals["current_complete"]["days_reported"] == 2
+    assert totals["previous_complete"]["memory_requests"] == 3
 
 
 async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.MonkeyPatch) -> None:
