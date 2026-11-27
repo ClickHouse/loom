@@ -326,8 +326,9 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
 # What every `code_unlinked_*` check reads (`code_unlinked.unlinked`).
 _UNLINKED_READ = (
     f"Only the {code_unlinked.SCANNED} served memories last written are read (all under "
-    "`keys` when given), and only in an org that indexes a repository. A word of the "
-    "prose counts as a name only beside `files`."
+    "`keys` when given), and only in an org that indexes a repository. A raw tool "
+    "observation is never linked and is not read; a word of the prose counts as a name "
+    "only beside `files`."
 )
 
 # Each check's contract (`RuleContract`). The version goes up when the

@@ -80,7 +80,7 @@ class _World:
             lambda org, ns, t: next((tags[x] for x in t if x in tags), ""),
         )
         monkeypatch.setattr(code_unlinked, "readable_namespaces", readable)
-        monkeypatch.setattr(code_unlinked.store, "served_of_namespace", served)
+        monkeypatch.setattr(code_unlinked.store, "linkable_of_namespace", served)
         monkeypatch.setattr(code_unlinked.store, "link_states", link_states)
         monkeypatch.setattr(code_unlinked.link_pass.code, "link_cursor", cursor)
 
@@ -204,9 +204,10 @@ async def test_the_served_memories_of_a_namespace_are_read_last_written_first() 
         _memory_row("conflicted", "conflicted", 25),
         _memory_row("retired", "superseded", 40),
         _memory_row("deleted", "active", 50, gone=True),
+        _memory_row("obs:tool-1", "active", 70),  # a raw tool observation: never linked
         _memory_row("elsewhere", "active", 60).replace("'ns'", "'other'"),
     )
-    got = await store.served_of_namespace("o", "ns", limit=10, ch=ch)
+    got = await store.linkable_of_namespace("o", "ns", limit=10, ch=ch)
     assert [(m["memory_key"], m["version"]) for m in got] == [
         ("new", 30),
         ("conflicted", 25),
@@ -215,9 +216,9 @@ async def test_the_served_memories_of_a_namespace_are_read_last_written_first() 
     assert got[0]["files"] == ["src/new.py"] and got[0]["tags"] == ["repo:a"]
     assert {"namespace", "agent", "user_id", "session_id", "mid", "value", "sha"} <= set(got[0])
     assert [
-        m["memory_key"] for m in await store.served_of_namespace("o", "ns", limit=1, ch=ch)
+        m["memory_key"] for m in await store.linkable_of_namespace("o", "ns", limit=1, ch=ch)
     ] == ["new"]
-    scoped = await store.served_of_namespace("o", "ns", ["old", "retired"], limit=10, ch=ch)
+    scoped = await store.linkable_of_namespace("o", "ns", ["old", "retired"], limit=10, ch=ch)
     assert [m["memory_key"] for m in scoped] == ["old"]
 
 

@@ -75,7 +75,8 @@ async def unlinked(
     org: str, namespace: str, keys: Sequence[str] | None = None
 ) -> dict[str, list[dict[str, str]]]:
     """Cause -> the namespace's served memories that name code and hold no link made
-    from them as they are now, the last written first: each with its memory_key and
+    from them as they are now (a raw tool observation is never linked, and is not
+    read), the last written first: each with its memory_key and
     memory_id and, under `pending`, what it `waits_for` (`index`: its repository's first
     index or a file that does not parse; `trunk`: a qualified name trunk does not define
     yet; `link_pass`: the pass to read it). Read of the memories under `keys` when given,
@@ -87,7 +88,7 @@ async def unlinked(
         return out  # the org indexes no repository: no memory of it could be linked
     heads = [
         h
-        for h in await store.served_of_namespace(org, namespace, keys, limit=SCANNED)
+        for h in await store.linkable_of_namespace(org, namespace, keys, limit=SCANNED)
         if _names_code(h)
     ]
     if not heads:

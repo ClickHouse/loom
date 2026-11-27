@@ -580,7 +580,8 @@ counts the served memories that name code (a backticked or qualified name, a cal
 | `code_unlinked_pending`          | waits for its link; each sample says what it `waits_for`: `link_pass` (the worker has not read this write), `index` (no index yet, or a file that does not parse) or `trunk` (a qualified name trunk does not define yet). |
 
 The counts are of the 2,000 served memories last written (all under `keys` when given),
-and only in an org that indexes a repository. How far each repository's links trail its
+and only in an org that indexes a repository; a raw tool observation, which is never
+linked, is not counted. How far each repository's links trail its
 index is a gauge, and a health warning when it lasts
 ([monitoring](../operations/monitoring.md#what-to-alert-on)).
 

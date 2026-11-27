@@ -887,7 +887,7 @@ async def stale_of_served(
     )
 
 
-async def served_of_namespace(
+async def linkable_of_namespace(
     org: str,
     namespace: str,
     memory_keys: Sequence[str] | None = None,
@@ -895,9 +895,10 @@ async def served_of_namespace(
     limit: int,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Up to `limit` of the namespace's served memories (those under `memory_keys` when
-    given), the last written first: each one's identity, `mid`, value, tags, files, `sha`
-    and version."""
+    """Up to `limit` of the namespace's served memories the link pass may link (no raw
+    tool observation: a key that starts `obs:`), those under `memory_keys` when given,
+    the last written first: each one's identity, `mid`, value, tags, files, `sha` and
+    version."""
     keys = "AND memory_key IN {mks:Array(String)} " if memory_keys is not None else ""
     return await (ch or _default_client()).query_all(
         "SELECT namespace, agent, user_id, session_id, memory_key, "
@@ -905,7 +906,7 @@ async def served_of_namespace(
         "toString(content_sha256) AS sha, version "
         "FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} "
         f"{keys}AND tombstoned_at IS NULL AND status IN ('active', 'conflicted') "
-        "ORDER BY version DESC LIMIT {lim:UInt32}",
+        "AND NOT startsWith(memory_key, 'obs:') ORDER BY version DESC LIMIT {lim:UInt32}",
         params={"org": org, "ns": namespace, "mks": list(memory_keys or []), "lim": int(limit)},
     )
 

@@ -643,7 +643,7 @@ async def _link_pages(ch: RecordingCH, c: dict[str, Any]) -> None:
 async def _unlinked_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.store import code_links
 
-    await code_links.served_of_namespace(ORG, NS, ["k"] if c["scoped"] else None, limit=5, ch=ch)
+    await code_links.linkable_of_namespace(ORG, NS, ["k"] if c["scoped"] else None, limit=5, ch=ch)
     await code_links.code_namespaces([(ORG, "code-a")] if c["scoped"] else None, ch=ch)
     await code_links.link_states(ORG, NS, ["00000000-0000-0000-0000-000000000001"], ch=ch)
 
