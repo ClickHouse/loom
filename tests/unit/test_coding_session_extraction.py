@@ -181,6 +181,8 @@ async def test_only_a_session_capture_is_verified_by_the_codebase_rules(
         "The function `register` is in src/flask/blueprints.py.",
         "The test `test_empty_header` is in tests/test_http.py.",
         "The test helper `make_client` is in tests/conftest.py.",
+        "The `make_client` test helper is in tests/conftest.py.",
+        "The `test_empty_header` test is in tests/test_http.py.",
     ],
 )
 def test_a_fact_that_is_one_code_location_is_not_durable(text: str) -> None:
@@ -202,6 +204,8 @@ def test_a_fact_that_is_one_code_location_is_not_durable(text: str) -> None:
         "`_default`'s tests are in tests/test_json.py.",
         "The tests that cover `_default` live in tests/test_json.py.",
         "`_default`'s unit tests are in tests/test_json.py.",
+        "`_default` tests are in tests/test_json.py.",
+        "The `_default` unit tests live in tests/test_json.py.",
         "The handler lives in server/x.py and takes the key lock before it reads.",
     ],
 )

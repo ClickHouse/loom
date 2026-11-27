@@ -166,11 +166,15 @@ _SOURCE_EXT = r"\.(?:py|ts|tsx|js|mjs|go|rs|cpp|h|hpp)\b"
 # run of slashes is not read to its end from every slash.
 _SUBJECT_END = rf"[.;!?]\s|/[\w./-]{{0,200}}{_SOURCE_EXT}"
 _LOCATION_SUBJECT = rf"(?:(?!{_SUBJECT_END})[^,`])*"
-# The same around a backticked name, unless it names that name's tests ("tests
-# for `name`", "`name`'s tests"): which test constrains a definition is a
-# relation, not a location.
+_IS_AT = r"\b(?:is|are|lives|live|sits) (?:in|at) "
+# The same around a backticked name, unless the subject is that name's tests
+# ("tests for `name`", "`name`'s tests", "the `name` unit tests"): which test
+# constrains a definition is a relation, not a location. With no possessive,
+# only a plural right after the name is its tests: "the `name` test" and "the
+# `name` test helper" can be the name itself, which is a location.
 _BEFORE_NAME = rf"(?:(?!{_SUBJECT_END}|\btests? (?:for|of|that)\b)[^,`])*"
-_AFTER_NAME = rf"(?!['’]s (?:\w+ )?tests?\b){_LOCATION_SUBJECT}"
+_TESTS_OF_NAME = rf"['’]s (?:\w+ )?tests?\b|(?: [\w-]+){{0,2}} test(?:s| cases) {_IS_AT}"
+_AFTER_NAME = rf"(?!{_TESTS_OF_NAME}){_LOCATION_SUBJECT}"
 
 # --- the session's own tool actions, credited to someone ----
 # Checked last, so an earlier rule keeps naming the class it names. One-shot
@@ -265,8 +269,7 @@ _SESSION_ACTION = [
         # before it: a claim relating several definitions may say where one of
         # them is and is the verifier's to judge
         rf"^(?:{_LOCATION_SUBJECT}|{_BEFORE_NAME}`{_LOCATION_SUBJECT}`{_AFTER_NAME})"
-        r"\b(is|are|lives|live|sits) (in|at) "
-        rf"`?(server|src|lib|tests?|integrations|frontend|sdk)/[\w./-]+{_SOURCE_EXT}`?[.!]?$",
+        rf"{_IS_AT}`?(server|src|lib|tests?|integrations|frontend|sdk)/[\w./-]+{_SOURCE_EXT}`?[.!]?$",
     )
 ]
 
