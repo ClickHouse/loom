@@ -25,12 +25,15 @@ async function cleanup(store: LoomStore, root: string) {
 
 // One call to the Python LoomStore over the same Loom identity; prints JSON.
 const PYTHON_SIDE = `
-import json, sys
+import json
+import os
+import sys
+
 from loom import Agent
 from loom.integrations.langgraph import LoomStore
 
 cfg = json.loads(sys.argv[1])
-agent = Agent(cfg["org"], cfg["namespace"], cfg["agent"], base_url=cfg["base_url"], api_key=cfg["api_key"])
+agent = Agent(cfg["org"], cfg["namespace"], cfg["agent"], base_url=cfg["base_url"], api_key=os.environ["LOOM_API_KEY"])
 store = LoomStore(agent)
 ns = tuple(cfg["ns"])
 try:
@@ -116,7 +119,6 @@ describe.skipIf(!baseUrl || !apiKey)("LangGraph.js LoomStore on live Loom", () =
             namespace,
             agent: agentName,
             base_url: baseUrl,
-            api_key: apiKey,
             ns,
           }),
         ],
