@@ -99,7 +99,12 @@ def _fail(op_name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 def test_memory_apply_names_the_nested_key_and_shows_the_corrected_call() -> None:
     msg, data = _fail(
         "memory.apply",
-        {"target": {"memory_keys": ["test/x/a", "test/x/b"]}, "action": "expire", "reason": "r"},
+        {
+            "target": {"memory_keys": ["test/x/a", "test/x/b"]},
+            "action": "expire",
+            "reason": "Retire obsolete examples",
+            "expire": {"ttl_seconds": 60},
+        },
     )
     assert "target must name exactly one of keys | filter | search" in msg
     assert "'target.memory_keys' — did you mean 'target.keys'?" in msg
@@ -108,6 +113,15 @@ def test_memory_apply_names_the_nested_key_and_shows_the_corrected_call() -> Non
     assert "org" not in data["example"]  # identity stays with the server's defaults
     assert data["errors"] and data["unknown"] == {"target.memory_keys": "target.keys"}
     assert len(msg) < 600  # ~150 tokens
+
+
+def test_a_key_correction_with_another_validation_error_omits_the_example() -> None:
+    msg, data = _fail(
+        "memory.apply", {"target": {"memory_keys": ["test/x/a"]}, "action": "expire", "reason": "r"}
+    )
+    assert "'target.memory_keys' — did you mean 'target.keys'?" in msg
+    assert "example:" not in msg
+    assert "example" not in data
 
 
 def test_working_memory_append_names_addition() -> None:
@@ -120,6 +134,22 @@ def test_working_memory_append_names_addition() -> None:
 def test_a_missing_required_arg_gets_a_placeholder() -> None:
     _, data = _fail("tracker.flaky", {})
     assert data["example"] == {"test_name": "…"}
+
+
+@pytest.mark.parametrize(
+    ("op", "arguments", "field"),
+    [
+        ("code.read", {"path": "src/api.py", "ranges": [[1, 110], [255, 362]]}, "ranges"),
+        ("code.grep", {"pattern": "def route", "context_lines": "25"}, "context_lines"),
+    ],
+)
+def test_the_example_does_not_repeat_a_rejected_value(
+    op: str, arguments: dict[str, Any], field: str
+) -> None:
+    message, detail = _fail(op, arguments)
+    assert field in message
+    assert "example:" not in message
+    assert "example" not in detail
 
 
 def test_hidden_and_identity_fields_are_never_named() -> None:
@@ -167,10 +197,11 @@ def test_validation_failure_is_a_tool_result_the_model_reads(
     result = resp["result"]
     assert result["isError"] is True and not ran
     text = result["content"][0]["text"]
-    assert (
-        "addition: Field required" in text and 'example: {"separator": 3, "addition": "…"}' in text
-    )
+    assert "addition: Field required" in text
+    assert "separator:" in text
+    assert "example:" not in text
     assert result["structuredContent"]["errors"]
+    assert "example" not in result["structuredContent"]
 
 
 def test_a_refused_write_names_its_args(monkeypatch: pytest.MonkeyPatch) -> None:

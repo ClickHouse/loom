@@ -8,8 +8,8 @@ model, which then reads Loom's source or guesses field names for a few turns.
 carries instead: each field error (loc, type, msg), every unknown key with the
 field it most likely meant (nested models too: `target.memory_keys` →
 `target.keys`), the op's required and optional args, and one example call —
-the caller's own arguments with those keys renamed and any missing required
-arg filled with a placeholder.
+an argument template for missing fields or a validated correction for
+misspelled keys.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from server.core.errors import ValidationError as LoomValidationError
 from server.transport.arg_check import IDENTITY_KEYS, TRANSPORT_KEYS, did_you_mean, unknown_args
@@ -140,6 +140,25 @@ def example(model: type[BaseModel], arguments: Any, near: dict[str, str | None])
     return {k: _short(v) for k, v in call.items()}
 
 
+def _retry_example(
+    model: type[BaseModel],
+    arguments: Any,
+    near: dict[str, str | None],
+    errors: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if all(e.get("type") == "missing" for e in errors):
+        return example(model, arguments, near)
+    if not isinstance(arguments, dict) or not any(near.values()):
+        return None
+    call = example(model, arguments, near)
+    identity = {k: v for k, v in arguments.items() if k in IDENTITY_KEYS}
+    try:
+        model.model_validate({**identity, **call})
+    except ValidationError:
+        return None
+    return call
+
+
 def _error_line(e: dict[str, Any]) -> str:
     loc = ".".join(str(p) for p in e.get("loc") or ()) or "arguments"
     msg = str(e.get("msg") or "").removeprefix("Value error, ")
@@ -153,7 +172,7 @@ def feedback(op: Any, arguments: Any, errors: list[dict[str, Any]]) -> tuple[str
     model = op.input_model
     near = guesses(model, arguments)
     req, opt = required_args(model), optional_args(model)
-    call = example(model, arguments, near)
+    call = _retry_example(model, arguments, near, errors)
     lines = [f"{op.name}: invalid arguments."]
     lines += [_error_line(e) for e in errors[:_MAX_ERRORS]]
     if len(errors) > _MAX_ERRORS:
@@ -164,9 +183,6 @@ def feedback(op: Any, arguments: Any, errors: list[dict[str, Any]]) -> tuple[str
     if opt:
         more = f" (+{len(opt) - _MAX_OPTIONAL})" if len(opt) > _MAX_OPTIONAL else ""
         lines.append("optional: " + ", ".join(opt[:_MAX_OPTIONAL]) + more)
-    shown = json.dumps(call, ensure_ascii=False, default=str)
-    if len(shown) <= _MAX_EXAMPLE_CHARS:
-        lines.append(f"example: {shown}")
     data = {
         # HTTP's code for the same request (a 422 `detail.code`).
         "code": LoomValidationError.code,
@@ -176,8 +192,12 @@ def feedback(op: Any, arguments: Any, errors: list[dict[str, Any]]) -> tuple[str
         "required": req,
         "optional": opt,
         "unknown": near,
-        "example": call,
     }
+    if call is not None:
+        shown = json.dumps(call, ensure_ascii=False, default=str)
+        if len(shown) <= _MAX_EXAMPLE_CHARS:
+            lines.append(f"example: {shown}")
+        data["example"] = call
     return "\n".join(lines), data
 
 
