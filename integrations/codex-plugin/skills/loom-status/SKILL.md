@@ -3,7 +3,7 @@ name: loom-status
 description: >
   Use when Loom seems quiet or wrong: a loom tool answers "unauthenticated",
   "not available" or an empty result for something the user says was saved;
-  no session-start primer where memory was saved; the user asks "is loom working",
+  the session-start primer did not appear; the user asks "is loom working",
   "why didn't it remember", "is my token ok", or a Loom hook says
   `Executable not found in $PATH: "node"` or `node: not found`, or prints a
   `loom:` line about Node.js 18+.

@@ -6,8 +6,10 @@
 // profile, relevant memories, procedures, recent runs), plus the checkout's
 // line (its code namespace and memory tag), the task inbox line, the recording
 // line where the toolset lists the conversation tools, and first-session
-// notices. A session with none of these prints nothing: the host re-reads the
-// primer on every request. Before any of it the hook saves the token
+// notices. The checkout's line is always there (outside an indexed checkout it
+// says why no index was looked up), so a start that prints nothing is a fault
+// (no token, no answer from the server) unless LOOM_CODE_MAP is off and nothing
+// else has text. Before any of it the hook saves the token
 // it was given for the MCP header helper (lib/plugin-options.mjs) and, with no
 // credential at all, signs the machine up (lib/first-session.mjs).
 //
@@ -40,6 +42,7 @@ import {
   checkoutDir,
   codeArbitration,
   codeScopeLine,
+  headerBinds,
   indexStatusBody,
   instructionsRouteCode,
   localFirstBlock,
@@ -50,7 +53,7 @@ import {
   staleMirrorLine,
   startPackBody,
 } from "../lib/session-start.mjs";
-import { checkoutRemotes, lookupIndexedRepo } from "../lib/repo-scope.mjs";
+import { checkoutRemotes, lookupIndexedRepo, readCache, scopeKey } from "../lib/repo-scope.mjs";
 import {
   listsConversationTools,
   readRecording,
@@ -150,10 +153,18 @@ async function main() {
       codeBlock,
       lines: [taskLine, briefsLine, collectionsText],
       recordingLine: conversationTools ? recordingPrimerLine(recording, scope.namespace) : "",
-      ownEntry: ownsMcpEntry(),
+      bound: entryBound(checkoutDir(payload)),
     }),
   );
   scheduleExit(0);
+}
+
+/** Whether a header binds the plugin's own entry to the repository of the
+ *  checkout at `cwd`: read from the cache the code block's lookup filled, which
+ *  is where that entry's helper reads the header from. */
+function entryBound(cwd) {
+  const key = scopeKey(gitToplevel(cwd));
+  return ownsMcpEntry() && Boolean(key) && headerBinds(readCache(key));
 }
 
 /** The Record conversations switch for this scope: the flusher's cached

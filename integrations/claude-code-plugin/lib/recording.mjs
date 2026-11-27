@@ -20,6 +20,7 @@
 
 import os from "node:os";
 import { readJsonFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
+import { toolsetParts } from "./toolset.mjs";
 
 export const RECORDING_TTL_MS = 10 * 60 * 1000;
 
@@ -64,10 +65,7 @@ export function recordingFromNamespace(body) {
  *  `all` does. A model that cannot see them needs no line telling it to leave
  *  them alone, and the primer then asks the server nothing about the switch. */
 export function listsConversationTools(toolset) {
-  return String(toolset || "")
-    .toLowerCase()
-    .split(/[+ ,]+/)
-    .includes("all");
+  return toolsetParts(toolset).includes("all");
 }
 
 /** The primer's conversation line for a known or unknown switch. */

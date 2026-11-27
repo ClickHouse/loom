@@ -221,9 +221,10 @@ when needed.
 Other toolsets, a union such as `coding+tracker` included, request upfront
 loading for `loom_code_search`, `loom_code_grep`, `loom_code_symbol`,
 `loom_search` and `loom_op` where listed. The published plugin's entry names
-`schema_profile=plugin`: every tool of the toolset in the compact shapes, so a
-session loads two code tools up front and finds the others, the memory tools
-among them, through tool search.
+`schema_profile=plugin`: every tool of the toolset in the compact shapes. On
+its default `coding` toolset a session loads two code tools up front and finds
+the others, the memory tools among them, through tool search; any other value
+of the plugin's `toolset` option loads the five tools above, where listed.
 
 `LOOM_MCP_ALWAYS_LOAD_TOOLS=auto` selects the defaults above. Supply a comma-separated
 list of operations such as `code.symbol` or synthetic tool names such as `loom_op`
@@ -234,10 +235,11 @@ MCP connections receive routing for the available Loom capabilities, including
 memory, documents, code, issues, tasks and records. Prefer a fitting listed tool;
 use `loom_op` help to discover an unlisted operation. The assistant toolset has
 only its listed read tools. This guidance does not depend on plugin hooks.
-The plugin's own connection gets one paragraph instead, because its hooks say
-the rest when it applies: the checkout's code namespace at session start, the
-Loom call in place of a local read they refuse, a file's memories before an
-edit and recalled memories beside the prompt.
+On a toolset with a `coding` part the plugin's own connection gets one
+paragraph instead, because its hooks say the rest when it applies: the
+checkout's code namespace at session start, the Loom call in place of a local
+read they refuse, a file's memories before an edit and recalled memories beside
+the prompt. On `all`, `core` or `tracker` it gets the routing above.
 A first-step memory pack requires a default memory namespace; code tools use
 the supplied code scope. Instructions guide tool choice and do not prove a
 lookup occurred.
@@ -625,8 +627,9 @@ the Grep tool and the Bash tool respectively.
 
 Start with `/loom:loom-status`; it names the cause in one line. It runs its checks with
 `sh`: on Windows without Git Bash, run `node <plugin root>/bin/loom-client-status.mjs`
-instead. A session start that prints nothing is no fault on its own: the primer is
-empty when there is no indexed checkout, saved memory or notice to show.
+instead. The session start always prints the checkout's line (outside an indexed
+checkout it says why no index was looked up), so a start that prints nothing is a
+fault unless `LOOM_INJECT_CONTEXT=false` or `LOOM_CODE_MAP=false` is set.
 
 | Symptom                                                      | Cause                                              | Fix                                                                                                                                                                                                                |
 | ------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -634,7 +637,7 @@ empty when there is no indexed checkout, saved memory or notice to show.
 | every hook error quotes `[stdin]:1`, a `SyntaxError`         | Claude Code older than 2.1.139 drops `args`        | update Claude Code                                                                                                                                                                                                 |
 | hooks fail and nothing is captured, though Node is installed | the first `node` on that `PATH` is older than 18   | put Node.js 18+ first on that `PATH`, or run the `loom-status` skill; restart                                                                                                                                      |
 | MCP server "needs authentication"                            | no Node for the header helper, or no token found   | the `loom-status` skill names which                                                                                                                                                                                |
-| nothing captured, and no primer where memory was saved       | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                                                                                                                                                                         |
+| no primer, nothing captured                                  | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                                                                                                                                                                         |
 | tools answer, captures do not                                | the token is viewer-only on the write namespace    | mint a writer token                                                                                                                                                                                                |
 | Conversations page empty                                     | conversation logging is off for the namespace      | the **Record conversations** switch on the dashboard's Conversations page, or `conversation.set_logging`                                                                                                           |
 | a hook added in a new release never fires                    | the installed plugin is older than the server      | `claude plugin update loom@loom`                                                                                                                                                                                   |

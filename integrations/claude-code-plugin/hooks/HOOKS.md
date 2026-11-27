@@ -123,15 +123,21 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   `LOOM_SESSION_BRIEF_PRIMER=on`); the collections line
   (`LOOM_COLLECTIONS_LINE=off`); the recording line, which states the
   owner's Record conversations switch; and a once-a-day notice when
-  ~/.claude.json also mounts the same server. A session with none of these
-  prints nothing.
+  ~/.claude.json also mounts the same server. Outside an indexed checkout the
+  code line says why no index was looked up (no checkout, no remote, not
+  indexed, no answer in time), so the hook prints nothing only with
+  `LOOM_CODE_MAP=false` and no other part to show.
 - **loom-session-start, the plugin's own MCP entry.** Claude Code runs its
   plugin's hooks with CLAUDE_PLUGIN_ROOT, and that plugin mounts its own MCP
-  entry: its helper binds loom_code_* calls to the checkout's repository, its
-  URL names the `plugin` profile and its toolset is the `toolset` option. On a
+  entry: its helper binds loom_code_* calls to the checkout's repository when
+  the checkout resolved to an indexed one, its URL names the `plugin` profile
+  and its toolset is the `toolset` option. On a
   toolset with a `coding` part (the default) that profile's startup
   instructions say how to route a lookup, so the checkout is one line (the
-  code namespace, the fetch time of a stalled mirror, the memory tag). Any
+  code namespace, the fetch time of a stalled mirror, the memory tag). The
+  server adds the tag to a save only on a bound connection, so the line only
+  names the tag there; in a checkout with no indexed repository, or with
+  `LOOM_MCP_CODE_SCOPE=off`, it is the full repository tag line. Any
   other toolset (`all`, `core`, `tracker`) gets the server's general rules,
   which route no code lookup, so its primer keeps the arbitration rules under
   the short scope line. The recording line is printed only when the toolset

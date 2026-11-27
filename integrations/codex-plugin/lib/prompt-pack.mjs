@@ -190,9 +190,9 @@ export function searchBody(repo, prompt, { topK = 3, token } = {}) {
 
 /** Gate on the index's own verdict, not on the caller's optimism: the answer
  *  it labels low-risk (`retrieval_risk`, banded by the deployment's own
- *  settings), or `minConfidence` when the caller names one. Pointers from an
- *  answer the index rates a medium or high risk missed the file to change more
- *  often than they named it, and the model re-reads them on every later request. */
+ *  settings), or `minConfidence` when the caller names one. The model re-reads
+ *  the pointers on every later request, so an answer the index itself rates a
+ *  medium or high risk sends none. */
 export function accept(res, minConfidence = null) {
   if (!res || res.abstain) return false;
   if (!Array.isArray(res.results) || !res.results.length) return false;
