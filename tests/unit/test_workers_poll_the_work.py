@@ -193,6 +193,16 @@ class _FakeCodeRepo:
     def tombstone_of(table, live_row):
         return _RealCodeRepo.tombstone_of(table, live_row)
 
+    async def refresh_coverage(self, org, ns, *, must_land=False):
+        self.calls.append(("coverage", ns))
+
+    async def refresh_table_counts(self, org, ns, *, must_land=False):
+        self.calls.append(("table_counts", ns))
+
+    async def published_chunks_behind(self, org, ns):
+        self.calls.append(("published_chunks_behind", ns))
+        return False
+
 
 class _Embedder:
     model_name = "fake-ngram-8"
@@ -249,6 +259,7 @@ def cer(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "code_embed_recovery_full_scan_seconds", 1800)
     monkeypatch.setattr(w, "_watermark", {})
     monkeypatch.setattr(w, "_full_scan_at", 0.0)
+    monkeypatch.setattr(w, "_unpublished", set())
     return w
 
 
@@ -265,9 +276,12 @@ async def test_an_idle_pass_is_one_scan_per_table_over_every_repo_and_marks_idle
         assert pass_context.current().idle is True
     finally:
         pass_context.clear()
-    assert [c[0] for c in repo.calls] == ["keys", "keys"], repo.calls
-    assert {c[1] for c in repo.calls} == {"code_chunks", "code_summaries"}
+    assert [c[0] for c in repo.calls[:2]] == ["keys", "keys"], repo.calls
+    assert {c[1] for c in repo.calls[:2]} == {"code_chunks", "code_summaries"}
     assert result.idle and result.rows_written == 0 and result.scans == 2 and result.full_scan
+    # A full-scan pass checks each namespace's published rows once; they match, so
+    # nothing is republished.
+    assert repo.calls[2:] == [("published_chunks_behind", ns) for ns in ("n1", "n2", "n3")]
 
 
 async def test_a_pass_that_only_met_stale_stub_versions_is_not_idle(

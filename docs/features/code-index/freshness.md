@@ -55,6 +55,13 @@ status ops report the mirror's age:
   fix: not failing, and not in `as_of.failing_tiers`.
 - `code.repos` rows carry `searchable`: `embedding_coverage` has reached
   `LOOM_CODE_READY_EMBED_COVERAGE`.
+- The chunk counts and coverage are republished by an ingest pass that indexed a
+  commit, and by the first `code_embed_recovery` pass that finds no stub left in
+  a namespace it wrote vectors to, whatever other namespaces still have to embed;
+  a long backlog in one namespace shows at its end. A pass that scanned from zero
+  (the first after a restart, then every
+  `LOOM_CODE_EMBED_RECOVERY_FULL_SCAN_SECONDS`) also has recovery republish a
+  namespace whose published counts or coverage trail its chunks.
 
 `compiler_tiers` has one card per tier the entry runs (`producer`, `tool`, `label`,
 `commit`, `lag`, `workers`). `code.index_status` answers compactly over MCP and whenever
