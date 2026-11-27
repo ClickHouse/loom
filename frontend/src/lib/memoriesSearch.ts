@@ -3,7 +3,8 @@
 // holds the query (memory.list `contains`, newest first), then the ranked hits they do
 // not already hold.
 
-import { listMemories, type Identity, type SearchHit } from "../api";
+import { listMemories, storedToken, type Identity, type SearchHit } from "../api";
+import { tokenReadScope } from "../views/assistant/tokenScope";
 import { SENTINEL_AGENTS } from "./format";
 
 /** Keyword matches a search shows ahead of the ranked hits (a viewer's list page is 100). */
@@ -27,9 +28,16 @@ export async function resolveSearchWriter(
   if (!agent || SENTINEL_AGENTS.has(agent) || agent === "_shared" || hit.memory_key.startsWith("chunk:")) return;
   if (namesWriter(hit)) return hit;
 
+  // A token that narrows reads is refused the `*` wildcard (`resolve_read_filters`): send the
+  // pinned user, and give up when no user (or, for an own-session token, no session) is known.
+  const scope = tokenReadScope(storedToken());
+  const uid = user_id || scope?.readUserId || (scope?.readScope ? "" : "*");
+  const sid = session_id || (scope?.readScope === "own_session" ? "" : "*");
+  if (!uid || !sid) return;
+
   const namespace = hit.namespace || identity.namespace;
   const page = await listMemories(
-    { ...identity, namespace, user_id: user_id || "*", session_id: session_id || "*" },
+    { ...identity, namespace, user_id: uid, session_id: sid },
     KEYWORD_PAGE,
     { agent, prefix: hit.memory_key, include_profile: true, fields: ["agent", "user_id", "session_id"], signal },
   ).catch(() => null);
