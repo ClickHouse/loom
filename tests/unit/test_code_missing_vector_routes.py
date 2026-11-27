@@ -261,8 +261,9 @@ def test_continuations_keep_the_configured_model_when_initialization_fails(
         pool=pool,
         calibration={},
     )
+    scope_digest = search_cursor.search_scope_digest(build_scope())
     cursor = search_cursor.encode(
-        kind="s", run_id="run", offset=1, params=params, indexed_commit="c" * 40
+        kind="s", run_id=f"run.{scope_digest}", offset=1, params=params, indexed_commit="c" * 40
     )
 
     async def stored(*args: Any) -> Any:
