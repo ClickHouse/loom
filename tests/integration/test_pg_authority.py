@@ -511,6 +511,21 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
     """Twenty writes to as many namespaces, made at once, share the publication batch's
     inserts into loom.memory rather than making a part each, and every one is
     published."""
+    from server.core import pg
+    from server.core.ch import get_client, set_query_tag
+    from server.memory.app.pg_delivery import deliver_namespace
+
+    async def deliveries_settled() -> bool:
+        pending = await pg_conn.fetch(
+            "SELECT namespace, lease_until < now() AS due "
+            "FROM loom.memory_deliveries WHERE org = $1 AND NOT settled",
+            org,
+        )
+        for delivery in pending:
+            if delivery["due"]:
+                await deliver_namespace(org, delivery["namespace"])
+        return not pending
+
     tag = uuid.uuid4().hex[:8]
     namespaces = [f"pg-{tag}-{i}" for i in range(20)]
     started = ch_client.query("SELECT toUnixTimestamp64Micro(now64(6))").result_rows[0][0]
@@ -521,7 +536,15 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
         )
     )
     assert [r.status_code for r in answers] == [200] * 20, [r.text for r in answers]
-    await _published(pg_conn, org)
+    # CI disables the delivery worker. Give expired leases the same scoped recovery.
+    set_query_tag("test.pg_batch.recover")
+    ch = get_client()
+    await ch.connect()
+    try:
+        await eventually(deliveries_settled, description="the batch's deliveries settled")
+    finally:
+        await ch.disconnect()
+        await pg.close_pool()
     rows = ch_client.query(
         "SELECT count() FROM loom.memory FINAL WHERE org = {o:String} "
         "AND namespace IN {ns:Array(String)}",
@@ -530,15 +553,17 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
     ).result_rows[0][0]
     assert rows == 20
     ch_client.command("SYSTEM FLUSH LOGS")
-    # The flushes' own inserts, by their query tag: one each, not one per write.
-    flushes = ch_client.query(
-        "SELECT count() FROM system.query_log WHERE type = 'QueryFinish' "
+    # Count memory rows per part so writes to materialized views cannot inflate the count.
+    flushes, largest_part = ch_client.query(
+        "SELECT uniqExact(query_id), max(rows) FROM system.part_log "
+        "WHERE database = 'loom' AND table = 'memory' AND event_type = 'NewPart' "
+        "AND query_id IN (SELECT query_id FROM system.query_log WHERE type = 'QueryFinish' "
         "AND query_kind = 'Insert' AND has(tables, 'loom.memory') "
         "AND startsWith(log_comment, 'pg_batch.flush') "
-        "AND query_start_time_microseconds >= fromUnixTimestamp64Micro({t:Int64})",
+        "AND query_start_time_microseconds >= fromUnixTimestamp64Micro({t:Int64}))",
         parameters={"t": started},
-    ).result_rows[0][0]
-    assert 0 < flushes < 20, flushes
+    ).result_rows[0]
+    assert 0 < flushes < 20 and largest_part > 1, (flushes, largest_part)
 
 
 async def test_a_write_is_the_postgres_head_and_its_clickhouse_rows(
