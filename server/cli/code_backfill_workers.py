@@ -292,8 +292,7 @@ async def _until_closed[T](conn: Connection, work: Coroutine[Any, Any, T], numbe
         nonlocal closed
         # Once: a closed pipe stays readable, and the batch's unwind must not spin on it.
         loop.remove_reader(conn.fileno())
-        if task.cancelling() == 0:  # a signal already unwinding the batch keeps its exit
-            closed = cancel_for_shutdown(task)
+        closed = cancel_for_shutdown(task)
 
     loop.add_reader(conn.fileno(), _on_readable)
     try:

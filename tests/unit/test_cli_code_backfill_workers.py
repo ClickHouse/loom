@@ -578,6 +578,44 @@ async def test_a_sigterm_after_the_parent_pipe_closes_lets_the_batch_flush(
     assert flushed
 
 
+async def test_parent_pipe_close_stops_a_batch_during_timeout_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    from collections.abc import Callable
+
+    from server.cli._proc import cancel_on_sigterm
+
+    loop = asyncio.get_running_loop()
+    add_reader = loop.add_reader
+    pipe_seen = asyncio.Event()
+    reader, writer = multiprocessing.Pipe()
+
+    def _watch_pipe(fd: int, callback: Callable[[], None]) -> None:
+        def _on_readable() -> None:
+            callback()
+            pipe_seen.set()
+
+        add_reader(fd, _on_readable)
+
+    monkeypatch.setattr(loop, "add_reader", _watch_pipe)
+
+    async def _batch() -> None:
+        try:
+            async with asyncio.timeout(0):
+                try:
+                    await asyncio.Future()
+                finally:
+                    writer.close()
+                    await pipe_seen.wait()
+        except TimeoutError:
+            return  # the timeout alone lets the worker continue
+
+    with reader, writer, pytest.raises(SystemExit, match="run stopped during its batch"):
+        await cancel_on_sigterm(pool._until_closed(reader, _batch(), 1))
+    assert pipe_seen.is_set()
+
+
 def test_the_edge_pass_in_a_worker_resolves_imports_to_files_another_worker_wrote(
     tmp_path: Path,
 ) -> None:
