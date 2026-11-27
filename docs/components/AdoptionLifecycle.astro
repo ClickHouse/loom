@@ -9,10 +9,10 @@ interface Props {
 
 const { title, grain, rows } = Astro.props;
 const series = [
-  { key: "retained", label: "Retained", color: "#ffcc00" },
-  { key: "new", label: "New", color: "#a5d6a7" },
-  { key: "reactivated", label: "Reactivated", color: "#9ebaff" },
-  { key: "inactive", label: "Became inactive", color: "#f29d83" },
+  { key: "retained", label: "Retained", color: "var(--accent)" },
+  { key: "new", label: "New", color: "var(--click-alert-color-text-success)" },
+  { key: "reactivated", label: "Reactivated", color: "var(--click-alert-color-text-info)" },
+  { key: "inactive", label: "Became inactive", color: "var(--click-alert-color-text-warning)" },
 ] as const;
 const maximum = Math.max(1, ...rows.map((row) => series.reduce((total, { key }) => total + row[key], 0)));
 const start = rows.at(0)?.bucket;
@@ -35,7 +35,7 @@ const number = new Intl.NumberFormat("en-US");
     <div class="dates" aria-hidden="true"><span>{start}</span><span>{end}</span></div>
     <details>
       <summary>{title}</summary>
-      <div class="table-scroll">
+      <div class="table-scroll" tabindex="0" role="region" aria-label={title}>
       <table>
         <thead><tr><th scope="col">Period start (UTC)</th>{series.map(({ label }) => <th scope="col">{label}</th>)}</tr></thead>
         <tbody>{rows.map((row) => (

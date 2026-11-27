@@ -1313,6 +1313,8 @@
  "vector_codes_state_probe_seconds": 60,
  "vector_search_quantized_codes": true,
  "vector_search_quantized_fetch_multiplier": 3.0,
+ "vertex_location": "",
+ "vertex_project": "",
  "web_workers": 1,
  "worker_backoff_base_s": 1.0,
  "worker_backoff_cap_s": 60.0,

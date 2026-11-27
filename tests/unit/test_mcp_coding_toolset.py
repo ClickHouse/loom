@@ -11,10 +11,19 @@ Hermetic: `_caller_default_context` (which can hit ClickHouse) is patched."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+import server.transport.mcp as mcp
 import server.transport.mcp_call as mcp_call
+from server.code.domain.scope import reset_code_scope, set_code_scope
+from server.insights.app.mentor import named_for_caller
 from server.operations.capabilities import capability_snapshot
 from server.operations.reach import catalogue_facets
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
@@ -418,6 +427,227 @@ def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None
     assert {"include_body", "context_lines"} <= grep["inputSchema"]["properties"].keys()
     if profile != "compact":
         assert "loom_code_edit_context for a known definition" in grep["description"]
+
+
+@contextmanager
+def _bound() -> Iterator[None]:
+    """A connection whose header names a repository."""
+    scope = set_code_scope("acme/code-repo")
+    try:
+        yield
+    finally:
+        reset_code_scope(scope)
+
+
+def _bound_listing(toolset: str, profile: str) -> list[dict]:
+    with _bound():
+        return asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset=toolset))
+
+
+def test_a_bound_compact_coding_connection_lists_the_code_tools_alone(monkeypatch) -> None:
+    default = Settings.model_fields["mcp_always_load_tools"].get_default()
+    monkeypatch.setattr(settings, "mcp_always_load_tools", default)
+    tools = {tool["name"]: tool for tool in _bound_listing("coding", "compact")}
+    coding = [op for op in mt.listed_ops("coding") if op.name.startswith("code.")]
+    assert list(tools) == [op.mcp_tool_name for op in coding]
+    assert {"loom_code_read", "loom_code_search", "loom_code_callers"} <= tools.keys()
+    flagged = {name for name, tool in tools.items() if tool.get("_meta")}
+    assert flagged == {"loom_code_edit_context", "loom_code_grep"}
+    grep = tools["loom_code_grep"]["inputSchema"]
+    unbound = asyncio.run(mt._tools_descriptor(schema_profile="compact", toolset="coding"))
+    compact = next(t for t in unbound if t["name"] == "loom_code_grep")["inputSchema"]
+    # the binding fills `namespace`, only a presence check across repositories takes
+    # `namespaces`, and `path_globs` expresses the two path filters
+    left_out = {"namespace", "namespaces", "path_prefix", "langs"}
+    assert set(grep["properties"]) == set(compact["properties"]) - left_out
+    assert left_out <= set(compact["properties"])
+    # a reply's `next_cursor` and the description's `mode=files` name listed arguments
+    assert {"cursor", "mode", "path_globs", "exclude_globs", "case_sensitive"} <= set(
+        grep["properties"]
+    )
+    assert "mode=files" in tools["loom_code_grep"]["description"]
+    assert grep["required"] == ["pattern"]
+    assert grep["properties"]["context_lines"]["type"] == "integer"
+    # the call still takes every argument the listing leaves out
+    assert left_out <= OPERATIONS_BY_NAME["code.grep"].input_model.model_fields.keys()
+    assert not mt.code_only_listing("coding", "compact")
+    # an explicit list marks the tools this listing carries and adds none
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "loom_op,memory.set,code.callers")
+    explicit = _bound_listing("coding", "compact")
+    assert [tool["name"] for tool in explicit] == list(tools)
+    assert [tool["name"] for tool in explicit if tool.get("_meta")] == ["loom_code_callers"]
+
+
+def test_a_reply_on_the_listing_of_code_tools_alone_names_no_tool_it_leaves_out() -> None:
+    text = "Save with memory.set, inspect with memory.related, read callers with code.callers."
+    listed = "Save with loom_memory_set, inspect with memory.related (via loom_op)"
+    with _bound():
+        assert mt.listed_tool_names("coding", "compact") == {
+            tool["name"] for tool in _bound_listing("coding", "compact")
+        }
+        with mt.hint_naming("coding", "compact") as name:
+            assert name(text) == (
+                "Save with memory.set, inspect with memory.related, "
+                "read callers with loom_code_callers."
+            )
+        for toolset, profile in (("coding", "standard"), ("coding+tracker", "compact")):
+            assert mt.mentor_namer(toolset, profile)(text).startswith(listed)
+        # what a hidden op's refusal offers instead follows the same listing
+        hidden = mcp_op.hidden_refusal("memory.bulk_set", "coding", "compact")
+        assert hidden and hidden["instead"].startswith("call memory.set once per fact")
+        hidden = mcp_op.hidden_refusal("memory.bulk_set", "coding", "standard")
+        assert hidden and hidden["instead"].startswith("call loom_memory_set once per fact")
+        # and so does the refusal `loom_op` answers for that op
+        call = {
+            "method": "tools/call",
+            "params": {"name": "loom_op", "arguments": {"op": "memory.bulk_set"}},
+        }
+        for profile, named in (("compact", "memory.set"), ("standard", "loom_memory_set")):
+            _, reply = mcp_op.route(call, toolset="coding", auth=None, schema_profile=profile)
+            assert reply and reply["result"]["structuredContent"]["instead"].startswith(
+                f"call {named} once per fact"
+            )
+    assert mt.mentor_namer("coding", "compact")(text).startswith(listed)
+
+
+def test_a_compact_deployment_default_keeps_every_tool_on_a_bound_connection(monkeypatch) -> None:
+    """The URL names no profile, so the client did not ask for the code tools alone."""
+    monkeypatch.setattr(settings, "mcp_schema_profile", "compact")
+    unbound = asyncio.run(mt._tools_descriptor(toolset="coding"))
+    names = {tool["name"] for tool in unbound}
+    assert {"loom_op", "loom_search", "loom_memory_set", "loom_context_pack"} <= names
+    text = "Save with memory.set."
+    with _bound():
+        assert asyncio.run(mt._tools_descriptor(toolset="coding")) == unbound
+        assert not mt.code_only_listing("coding", None)
+        assert not mt.code_only_listing("coding", "bogus")  # an unknown value is the default
+        assert mt.code_only_listing("coding", "compact")
+        assert mt.listed_tool_names("coding") == names
+        assert mt.name_ops_for_toolset(text, "coding") == "Save with loom_memory_set."
+        assert mt.name_ops_for_toolset(text, "coding", "compact") == text
+        # the toolset may be the deployment's default: the URL then names the profile alone
+        monkeypatch.setattr(settings, "mcp_toolset", "core")
+        assert not mt.code_only_listing(None, "COMPACT")
+        monkeypatch.setattr(settings, "mcp_toolset", "coding")
+        assert mt.code_only_listing(None, "COMPACT")
+        assert mt.listed_tool_names(None, "compact") == mt.listed_tool_names("coding", "compact")
+        assert asyncio.run(mt._tools_descriptor()) == unbound
+    grep = next(t for t in unbound if t["name"] == "loom_code_grep")["inputSchema"]
+    assert {"namespace", "path_prefix"} <= grep["properties"].keys()
+
+
+def test_a_tool_the_listing_of_code_tools_alone_leaves_out_stays_callable(monkeypatch) -> None:
+    """`loom_op`, a memory write and grep's unlisted arguments run on a `coding`
+    connection bound to a repository whose URL asks for the compact profile."""
+    seen: dict[str, Any] = {}
+    hint = "Save with memory.set, read callers with code.callers."
+
+    def stub(tool: str) -> None:
+        op = mcp_call.TOOLS_BY_NAME[tool]
+
+        async def handler(inp: Any) -> Any:
+            seen[op.name] = inp
+            seen["hint"] = named_for_caller(hint)
+            return op.output_model.model_construct()
+
+        monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, tool, dataclasses.replace(op, handler=handler))
+
+    async def defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return {"org": "acme", "namespace": "home", "agent": "claude-code"}
+
+    async def admitted(req_id: Any, op: Any, auth: Any) -> None:
+        return None
+
+    async def no_repo_tag(org: str, namespace: str) -> str:
+        return ""
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    monkeypatch.setattr(mcp_call, "_caller_defaults", defaults)
+    monkeypatch.setattr(mcp_call, "_session_content_refusal", admitted)
+    monkeypatch.setattr(mcp_call, "session_repo_tag", no_repo_tag)
+    stub("loom_code_grep")
+    stub("loom_memory_set")
+    app = FastAPI()
+    mcp.attach(app)
+    client = TestClient(app)
+
+    def post(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        reply = client.post(
+            "/mcp?toolset=coding&schema_profile=compact",
+            headers={"X-Loom-Code-Scope": "acme/code-repo"},
+            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+        )
+        result: dict[str, Any] = reply.json()["result"]
+        return result
+
+    def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = post("tools/call", {"name": name, "arguments": arguments})
+        assert not result.get("isError"), result
+        return result
+
+    listed = {tool["name"] for tool in post("tools/list", {})["tools"]}
+    assert "loom_code_grep" in listed
+    assert not listed & {"loom_op", "loom_memory_set", "loom_activate"}
+    call(
+        "loom_code_grep", {"pattern": "needle", "mode": "files", "cursor": "next", "langs": ["py"]}
+    )
+    grep = seen.pop("code.grep")
+    assert (grep.namespace, grep.mode, grep.cursor, grep.langs) == (
+        "code-repo",
+        "files",
+        "next",
+        ["py"],
+    )
+    # a mentor hint the handler renders names only what this listing carries
+    assert seen.pop("hint") == "Save with memory.set, read callers with loom_code_callers."
+    fact = {"memory_key": "repo/decision/listing", "value": "kept"}
+    call("loom_memory_set", fact)
+    assert seen.pop("memory.set").memory_key == fact["memory_key"]
+    call("loom_op", {"op": "memory.set", "arguments": fact})
+    assert seen.pop("memory.set").namespace == "home"
+    help_rows = call("loom_op", {"op": "help", "query": "memory.set"})["structuredContent"]
+    assert help_rows["ops"][0]["op"] == "memory.set"
+    # the activation primer is this connection's routing: it names no tool left out
+    primer = call("loom_activate", {})["structuredContent"]["primer"]
+    assert "`loom_code_grep`" in primer
+    for absent in ("loom_op", "loom_search", "loom_memory", "loom_context_pack"):
+        assert absent not in primer, absent
+    # the `loom` prompt and `loom://primer`, asked for by name, carry the same text
+    prompt = post("prompts/get", {"name": "loom"})["messages"][0]["content"]["text"]
+    resource = post("resources/read", {"uri": "loom://primer"})["contents"][0]["text"]
+    assert prompt == resource == primer
+    # a hidden op, called by its tool name or through `loom_op`, is refused in this
+    # listing's names
+    for name, arguments in (("loom_memory_bulk_set", {}), ("loom_op", {"op": "memory.bulk_set"})):
+        refused = post("tools/call", {"name": name, "arguments": arguments})
+        assert refused["isError"]
+        assert refused["structuredContent"]["instead"].startswith("call memory.set once per fact")
+
+
+@pytest.mark.parametrize(
+    ("toolset", "profile"),
+    [
+        ("coding", "standard"),
+        ("coding", "full"),
+        ("coding+tracker", "compact"),
+        ("core", "compact"),
+    ],
+)
+def test_a_bound_connection_on_another_listing_keeps_its_tools(toolset, profile) -> None:
+    unbound = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset=toolset))
+    assert _bound_listing(toolset, profile) == unbound
+    assert {"loom_op", "loom_search"} <= {tool["name"] for tool in unbound}
+
+
+def test_edit_context_says_when_to_use_it_without_ordering() -> None:
+    for profile in ("standard", "compact"):
+        tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
+        text = next(t["description"] for t in tools if t["name"] == "loom_code_edit_context")
+        assert text == (
+            "Before editing, read source, tests and notes. "
+            "Batch exact `names` or declaration `clues`."
+        )
+        assert "first" not in text.lower()
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding+tracker"])

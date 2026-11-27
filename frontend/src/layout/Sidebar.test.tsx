@@ -247,9 +247,9 @@ describe("the admin list on every width", () => {
     render(<MobileNav />);
     await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
     const sheet = await screen.findByRole("dialog", { name: "More" });
-    const admin = within(sheet).getByRole("navigation", { name: "Admin" });
-    expect(hrefs(admin)).toEqual(sidebar);
-    expect(within(admin).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    const admin = within(sheet).getAllByRole("navigation", { name: /^(Review|Observe|Access|Deployment)$/ });
+    expect(admin.flatMap(hrefs)).toEqual(sidebar);
+    expect(within(sheet).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
   });
 
   it("keeps the sheet's Review queue past the badge cache's minute: the sheet reads the store", async () => {
@@ -262,7 +262,7 @@ describe("the admin list on every width", () => {
     render(<MobileNav />);
     await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
     const sheet = await screen.findByRole("dialog", { name: "More" });
-    const admin = within(sheet).getByRole("navigation", { name: "Admin" });
+    const admin = within(sheet).getByRole("navigation", { name: "Review" });
     expect(within(admin).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
   });
 
@@ -286,7 +286,7 @@ describe("the admin list on every width", () => {
     render(<MobileNav />);
     await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
     const sheet = await screen.findByRole("dialog", { name: "More" });
-    const admin = () => within(sheet).getByRole("navigation", { name: "Admin" });
+    const admin = () => within(sheet).getByRole("navigation", { name: "Review" });
     expect(within(admin()).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
     act(() => useStore.setState({ identity: { org: "dev", namespace: "team-b", agent: "loom-ui" } }));
     expect(within(admin()).queryByRole("link", { name: /Review queue/ })).toBeNull();
@@ -314,7 +314,7 @@ describe("the admin list on every width", () => {
     render(<MobileNav />);
     await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
     const sheet = await screen.findByRole("dialog", { name: "More" });
-    const admin = within(sheet).getByRole("navigation", { name: "Admin" });
+    const admin = within(sheet).getByRole("navigation", { name: "Observe" });
     const usage = within(admin).getByRole("link", { name: /Usage/ });
     expect(within(usage).getByRole("img", { name: "Attention required" })).toBeInTheDocument();
     expect(within(admin).getByRole("link", { name: /Agents/ })).toHaveTextContent("2");

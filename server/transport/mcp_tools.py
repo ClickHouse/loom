@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator, Set
 from contextlib import contextmanager
 from typing import Any, get_args
 
+from server.code.domain.scope import current_code_scope
 from server.memory.api.models_loom_search import SearchInput
 from server.memory.app.loom_search.answer_first import withheld_note
 from server.memory.app.loom_search.tracker_leg import tracker_text_lines
@@ -92,8 +93,9 @@ def _name_ops_in_fields(schema: Any, listed: Set[str], *, writes: bool) -> Any:
     return out
 
 
-# The hand-written tools every listing but `assistant` carries; the builder
-# below makes one descriptor for each.
+# The hand-written tools of every listing but `assistant` and the listing of
+# code tools alone (which leaves them callable by name); the builder below makes
+# one descriptor for each.
 SYNTHETIC_TOOL_NAMES = frozenset(
     {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}
 )
@@ -397,21 +399,23 @@ def _curated_description(toolset: str, op_name: str) -> str | None:
     return tiered or _TOOL_DESCRIPTIONS.get(op_name)
 
 
-def listed_tool_names(toolset: str | None) -> set[str]:
-    """The tool names a `tools/list` on ``toolset`` shows."""
+def listed_tool_names(toolset: str | None, schema_profile: str | None = None) -> set[str]:
+    """The tool names a `tools/list` on ``toolset`` shows. ``schema_profile`` is
+    the URL's own value, as `code_only_listing` reads it."""
     from server.settings import settings
 
     resolved = resolve_toolset(toolset, settings.mcp_toolset)
-    return _tool_names(listed_ops(resolved), resolved)
+    return _listing(resolved, code_only=code_only_listing(resolved, schema_profile))[1]
 
 
-def name_ops_for_toolset(text: str, toolset: str | None) -> str:
-    """``text`` naming each op as a `tools/list` on ``toolset`` does."""
-    return name_ops_for_listing(text, listed_tool_names(toolset), writes=routes_writes(toolset))
+def name_ops_for_toolset(text: str, toolset: str | None, schema_profile: str | None = None) -> str:
+    """``text`` naming each op as the connection's `tools/list` does."""
+    listed = listed_tool_names(toolset, schema_profile)
+    return name_ops_for_listing(text, listed, writes=routes_writes(toolset))
 
 
-def mentor_namer(toolset: str | None) -> Callable[[str], str]:
-    """Names a stored mentor hint as ``toolset``'s listing does, working the listing
+def mentor_namer(toolset: str | None, schema_profile: str | None = None) -> Callable[[str], str]:
+    """Names a stored mentor hint as the connection's listing does, working the listing
     out on first use. The core-listing note goes: the listing marks an op it leaves
     out itself."""
     from server.insights.app.mentor_rules import without_listing_note
@@ -421,20 +425,22 @@ def mentor_namer(toolset: str | None) -> Callable[[str], str]:
     def name(text: str) -> str:
         nonlocal listing
         if listing is None:
-            listing = (listed_tool_names(toolset), routes_writes(toolset))
+            listing = (listed_tool_names(toolset, schema_profile), routes_writes(toolset))
         return name_ops_for_listing(without_listing_note(text), listing[0], writes=listing[1])
 
     return name
 
 
 @contextmanager
-def hint_naming(toolset: str | None) -> Iterator[Callable[[str], str]]:
+def hint_naming(
+    toolset: str | None, schema_profile: str | None = None
+) -> Iterator[Callable[[str], str]]:
     """Sets `mentor.hint_namer` for one tool call, so the mentor text the handler
-    renders names ops as ``toolset``'s listing does; yields the namer for the
+    renders names ops as the connection's listing does; yields the namer for the
     call's own hint."""
     from server.insights.app.mentor import hint_namer
 
-    namer = mentor_namer(toolset)
+    namer = mentor_namer(toolset, schema_profile)
     token = hint_namer.set(namer)
     try:
         yield namer
@@ -450,6 +456,16 @@ def _tool_names(ops: list[Operation], resolved: str) -> set[str]:
     """``ops``' tool names plus the synthetic ones, on a resolved toolset."""
     names = {op.mcp_tool_name for op in ops}
     return names if is_assistant(resolved) else names | SYNTHETIC_TOOL_NAMES
+
+
+def _listing(resolved: str, *, code_only: bool) -> tuple[list[Operation], set[str]]:
+    """The registry ops a `tools/list` on a resolved toolset describes, and every
+    tool name it shows. ``code_only`` is the connection's `code_only_listing`."""
+    ops = listed_ops(resolved)
+    if code_only:
+        ops = [op for op in ops if op.name.startswith("code.")]
+        return ops, {op.mcp_tool_name for op in ops}
+    return ops, _tool_names(ops, resolved)
 
 
 def listed_ops(toolset: str | None) -> list[Operation]:
@@ -531,6 +547,38 @@ _COMPACT_CODING_GREP_OMITTED_ARGS = {
     "neighbour_k",
     "deadline_ms",
 }
+# The listing of code tools alone also leaves out `namespace`, which the bound
+# repository fills, `namespaces`, which only a presence check across several
+# repositories takes, and the path filters `path_globs` expresses. The call
+# accepts the full set.
+_CODE_ONLY_GREP_OMITTED_ARGS = _COMPACT_CODING_GREP_OMITTED_ARGS | {
+    "namespace",
+    "namespaces",
+    "path_prefix",
+    "langs",
+}
+
+
+def code_only_listing(toolset: str | None, schema_profile: str | None) -> bool:
+    """Whether this connection lists the code tools alone: a `coding` connection
+    bound to a repository whose URL asks for the compact profile. ``schema_profile``
+    is the URL's own value: a compact profile that is only the deployment's default
+    keeps every tool listed, since the client did not ask for the narrower listing.
+    Every other tool stays callable by name."""
+    return lists_follow_code_scope(toolset, schema_profile) and current_code_scope() is not None
+
+
+def lists_follow_code_scope(toolset: str | None, schema_profile: str | None) -> bool:
+    """Whether this connection's lists depend on the repository header: a `coding`
+    connection whose URL asks for the compact profile lists the code tools alone
+    when bound and every tool when not. The header is the request's, so no shared
+    cache may keep either answer."""
+    from server.settings import settings
+
+    return (
+        resolve_toolset(toolset, settings.mcp_toolset) == "coding"
+        and str(schema_profile or "").lower() == "compact"
+    )
 
 
 async def _tools_descriptor(
@@ -543,8 +591,9 @@ async def _tools_descriptor(
     (`name_ops_for_listing`; every schema field description the profile sends
     too). The caller's default-workspace context is delivered once via the
     `initialize` `instructions` field, not duplicated per tool; descriptors
-    are caller-independent. ``toolset`` is the per-request ``?toolset=``
-    override.
+    do not vary by caller, except on a `coding` connection whose URL asks for the
+    compact profile, where they follow the request's repository header
+    (`code_only_listing`). ``toolset`` is the per-request ``?toolset=`` override.
     """
     from server.settings import settings
     from server.transport.mcp_schemas import apply_schema_profile, resolve_schema_profile
@@ -552,8 +601,8 @@ async def _tools_descriptor(
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
     profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
     descriptors: list[dict[str, Any]] = []
-    ops = listed_ops(toolset)
-    listed = _tool_names(ops, toolset)
+    code_only = code_only_listing(toolset, schema_profile)
+    ops, listed = _listing(toolset, code_only=code_only)
     writes = routes_writes(toolset)
     for op in ops:
         custom = _curated_description(toolset, op.name)
@@ -591,7 +640,10 @@ async def _tools_descriptor(
             )
             input_schema = _with_identity(input_schema, op)
         if profile == "compact" and toolset == "coding" and op.name == "code.grep":
-            input_schema = _without(input_schema, _COMPACT_CODING_GREP_OMITTED_ARGS)
+            input_schema = _without(
+                input_schema,
+                _CODE_ONLY_GREP_OMITTED_ARGS if code_only else _COMPACT_CODING_GREP_OMITTED_ARGS,
+            )
             # JSON Schema numeric bounds do not constrain a string alternative.
             input_schema["properties"]["context_lines"]["type"] = "integer"
         if defaults := mcp_argument_defaults(op.name, toolset):
@@ -607,7 +659,7 @@ async def _tools_descriptor(
             "outputSchema": _shape_schema(model_schema(op.output_model)),
         }
         descriptors.append(descriptor)
-    if not is_assistant(toolset):
+    if not is_assistant(toolset) and not code_only:
         descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
     _with_loading_hints(
         descriptors, _upfront_tools(settings.mcp_always_load_tools, toolset, profile)

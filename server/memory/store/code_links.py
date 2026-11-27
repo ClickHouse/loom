@@ -482,16 +482,47 @@ async def stale_fingerprints(
 
 
 async def pending(
-    org: str, code_namespace: str, *, days: int, ch: _CHClient | None = None
-) -> list[PendingLink]:
-    """The namespace's pending names (and `*` markers of memories written before its
-    first index), each with `expired` (older than `days`)."""
+    org: str,
+    code_namespace: str,
+    *,
+    days: int,
+    after: tuple[int, str] | None,
+    before: int,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> tuple[list[PendingLink], tuple[int, str] | None]:
+    """Read pending names and pre-index markers from the current scan cycle."""
+    since = ""
+    params: dict[str, Any] = {
+        "org": org,
+        "cns": code_namespace,
+        "days": int(days),
+        "before": before,
+        "lim": int(limit),
+    }
+    if after:
+        since = "AND (version, scan_digest) > ({after_version:UInt64}, {after_digest:String}) "
+        params.update(after_version=after[0], after_digest=after[1])
+    # Relinking can give several rows one version. Break ties without persisting
+    # the original link key in a cursor that can outlive the memory.
     rows = await (ch or _default_client()).query_all(
-        f"SELECT *, checked_at < now() - INTERVAL {{days:UInt32}} DAY AS expired {_LIVE} "
-        "AND org = {org:String} AND code_namespace = {cns:String} AND state = 'pending'",
-        params={"org": org, "cns": code_namespace, "days": int(days)},
+        "SELECT *, checked_at < toDateTime(fromUnixTimestamp64Nano(toInt64({before:UInt64}))) "
+        "- INTERVAL {days:UInt32} DAY AS expired, "
+        "hex(sipHash128(path, qualified_name, namespace, memory_id)) AS scan_digest "
+        f"{_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
+        "AND state = 'pending' AND version < {before:UInt64} "
+        f"{since}ORDER BY version, scan_digest LIMIT {{lim:UInt32}} "
+        "SETTINGS optimize_move_to_prewhere_if_final = 0",
+        params=params,
     )
-    return cast(list[PendingLink], _links(rows))
+    nxt = (
+        (int(rows[-1]["version"]), str(rows[-1]["scan_digest"]))
+        if len(rows) == int(limit)
+        else None
+    )
+    for row in rows:
+        row.pop("scan_digest")
+    return cast(list[PendingLink], _links(rows)), nxt
 
 
 async def lost(

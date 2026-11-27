@@ -16,6 +16,12 @@ module ClickHouse
       attr_accessor :retry_policy
       # Seconds one call may spend waiting out 429 answers; 0 raises the first one.
       attr_accessor :rate_limit_max_wait
+      # Where calls are logged: any object with debug, info, warn and error (a ::Logger,
+      # Rails.logger). nil, the default, logs nothing. See Logging.
+      attr_accessor :logger
+      # :debug, :info, :warn, :error or :off (or a Python level name); nil reads
+      # LOOM_LOG_LEVEL, else :warn.
+      attr_accessor :log_level
 
       def initialize
         @open_timeout = 10

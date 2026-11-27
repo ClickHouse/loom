@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { loadAdoption } from "./adoption-data.mjs";
+import { createAdoptionReader } from "./adoption-data.mjs";
 import { summarizeOss } from "./adoption-view.mjs";
 
 test("calls the saved aggregate endpoint and reports monthly coverage and missing data", async (t) => {
   const queried = [];
+  const registries = [];
   t.mock.method(globalThis, "fetch", async (input, init) => {
     const url = new URL(input);
     if (url.hostname === "queries.clickhouse.cloud") {
@@ -32,6 +33,7 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
         ],
       });
     }
+    registries.push(url.hostname);
     assert.equal(init.headers, undefined);
     if (url.hostname === "github.com") {
       return new Response('<span class="label">Total downloads</span><h3 title="1869">1.87K</h3>');
@@ -49,7 +51,7 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
     }
     return new Response(null, { status: 502 });
   });
-  const result = await loadAdoption(
+  const read = createAdoptionReader(
     {
       LOOM_ADOPTION_QUERY_ENDPOINT_URL:
         "https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001?format=CSV",
@@ -58,6 +60,14 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
     },
     new Date("2026-11-10T08:00:00Z"),
   );
+  const selfHosted = await read("self-hosted");
+  assert.deepEqual(selfHosted.selfHosted.domains, ["company.example", "other.example"]);
+  assert.deepEqual(selfHosted.openSource, []);
+  assert.deepEqual(registries, []);
+
+  const published = read("oss");
+  assert.equal(read("oss"), published);
+  const result = await published;
 
   assert.deepEqual(queried, ["https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001?format=JSON"]);
   assert.deepEqual(result.selfHosted.domains, ["company.example", "other.example"]);
@@ -88,7 +98,7 @@ test("keeps Query API credentials off unrecognized endpoint URLs", async (t) => 
     requests.push([new URL(input).hostname, init.headers?.Authorization]);
     return new Response(null, { status: 502 });
   });
-  const result = await loadAdoption(
+  const read = createAdoptionReader(
     {
       LOOM_ADOPTION_QUERY_ENDPOINT_URL: "https://external.example/run/00000000-0000-0000-0000-000000000001",
       LOOM_ADOPTION_QUERY_KEY_ID: "fixture-id",
@@ -96,6 +106,7 @@ test("keeps Query API credentials off unrecognized endpoint URLs", async (t) => 
     },
     new Date("2026-11-10T08:00:00Z"),
   );
+  const result = await read("oss");
   assert.ok(requests.every(([host, authorization]) => host !== "external.example" && authorization === undefined));
   assert.equal(result.selfHosted.totals, undefined);
   assert.equal(result.selfHosted.domains, null);

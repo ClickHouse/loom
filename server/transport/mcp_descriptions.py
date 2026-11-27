@@ -1440,7 +1440,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "omitted qualification or SQL registration. `documented_in` lists citing sections."
     ),
     "code.edit_context": (
-        "Read source, tests, and notes. Batch exact `names` or declaration `clues`."
+        "Before editing, read source, tests and notes. Batch exact `names` or declaration `clues`."
     ),
     "code.backport_gap": (
         "Which release branches still carry the bug a merged fix removed, "

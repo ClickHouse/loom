@@ -10,7 +10,7 @@ from server.assistant.app import agent, runtime, service
 from server.core.errors import AssistantUnavailableError
 from server.llm import agent as models
 from server.observability import cost_accumulator
-from server.settings import settings
+from server.settings import Settings, settings
 
 
 @pytest.fixture
@@ -34,6 +34,59 @@ def configured(monkeypatch):
         "find_spec",
         lambda name: object() if name == "botocore" else find_spec(name),
     )
+
+
+@pytest.mark.parametrize("model", ("gemini-3.1-flash-lite", "vertex:gemini-3.1-flash-lite"))
+def test_vertex_assistant_uses_its_own_provider_and_a_priced_model(configured, monkeypatch, model):
+    loaded = Settings(
+        _env_file=None,
+        llm_provider="fake",
+        assistant_enabled=True,
+        assistant_provider="vertex",
+        assistant_model=model,
+        assistant_answer_ceiling_usd=0.03,
+        vertex_project="test-project",
+        vertex_location="global",
+    )
+    monkeypatch.setattr(service, "settings", loaded)
+    assert loaded.llm_provider == "fake"
+    assert service.assistant_state() == (True, "")
+    definition = service.current_definition()
+    assert definition.model == definition.price_model == "vertex:gemini-3.1-flash-lite"
+    assert cost_accumulator.turn_cost_usd(
+        definition.price_model, input_tokens=1000, cache_read_tokens=1000, output_tokens=1000
+    ) == pytest.approx(0.000275 + 0.0000275 + 0.00165)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("assistant_model", "", "LOOM_ASSISTANT_MODEL"),
+        ("assistant_model", "claude-sonnet", "Gemini model ID"),
+        ("vertex_project", "", "LOOM_VERTEX_PROJECT and LOOM_VERTEX_LOCATION"),
+        ("vertex_project", "https://example.com", "LOOM_VERTEX_PROJECT must name"),
+        ("vertex_location", "", "LOOM_VERTEX_PROJECT and LOOM_VERTEX_LOCATION"),
+        ("vertex_location", "europe-west4/inject", "LOOM_VERTEX_LOCATION must be"),
+    ],
+)
+def test_vertex_assistant_validates_its_route_at_settings_load(field, value, error):
+    route = {
+        "assistant_model": "gemini-3.1-flash-lite",
+        "vertex_project": "test-project",
+        "vertex_location": "global",
+    }
+    route[field] = value
+    with pytest.raises(ValueError, match=error):
+        Settings(_env_file=None, llm_provider="fake", assistant_provider="vertex", **route)
+
+
+@pytest.mark.parametrize("policy", ("required", "keyless"))
+def test_vertex_assistant_requires_a_direct_route(configured, monkeypatch, policy):
+    monkeypatch.setattr(settings, "assistant_provider", "vertex")
+    monkeypatch.setattr(settings, "assistant_model", "vertex:gemini-3.1-flash-lite")
+    monkeypatch.setattr(type(settings), "gateway_required", lambda _: policy == "required")
+    monkeypatch.setattr(service.gateway, "keyless", lambda: policy == "keyless")
+    assert service.assistant_state() == (False, "vertex_requires_direct_route")
 
 
 @pytest.mark.parametrize(

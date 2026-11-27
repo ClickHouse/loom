@@ -207,10 +207,11 @@ export function Health() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <PageHeader title="Health" tab={HEALTH_TABS[open]} />
-        <p className="text-sm text-text-muted max-w-2xl">
-          How Loom's workers, extraction and this namespace's memories are doing, and the repairs your role allows.
-        </p>
+        <PageHeader
+          title="Health"
+          tab={HEALTH_TABS[open]}
+          description="Check workers, extraction, and namespace health, and run repairs your role allows."
+        />
       </div>
       <AssistantHealthRow />
       <Tabs value={open} onValueChange={(v) => setTab(v as HealthTab)}>
