@@ -141,6 +141,15 @@ def test_a_successor_is_named_only_on_corroborated_evidence(after: str, state: s
         # a small definition with its text under an unrelated name: not it by the name
         # rule, but its shape is the same, so it may be
         (_KEPT + "\n\ndef warm_up(data):\n    return sorted(data, key=len)[:10]\n", True, False),
+        # the same with an edit: its text is close, and an unrelated name rules nothing out
+        (_KEPT + "\n\ndef warm_up(data):\n    return sorted(data, key=len)[:20]\n", True, False),
+        # a new name declared twice, a stub before the close text: every declaration counts
+        (
+            _KEPT + "\n\ndef warm_up(data):\n    raise NotImplementedError\n\n\n"
+            "def warm_up(data):\n    return sorted(data, key=len)[:20]\n",
+            True,
+            False,
+        ),
     ],
 )
 def test_new_definitions_that_are_not_close_leave_the_old_one_unmatched(

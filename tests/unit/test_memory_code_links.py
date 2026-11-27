@@ -2739,6 +2739,21 @@ _TWO_CLOSE = (
             "fresh",
             [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")],
         ),
+        # one new definition there has a close text under an unrelated name: it may be it
+        (
+            _ROWS.replace("fetch_rows", "warm_up").replace("append(i)", "append(i + 1)"),
+            {"pkg/b.py": _EDITED},
+            "fresh",
+            [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")],
+        ),
+        # the close text is the second declaration of a new name, after a stub
+        (
+            "def warm_up(n):\n    raise NotImplementedError\n\n\n"
+            + _ROWS.replace("fetch_rows", "warm_up").replace("append(i)", "append(i + 1)"),
+            {"pkg/b.py": _EDITED},
+            "fresh",
+            [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")],
+        ),
         # deleted beside the export list, its name nowhere else: unsure, as before
         (_EXPORTS, {}, "fresh", [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]),
         # its name is new in another module over an unrelated text: unsure
