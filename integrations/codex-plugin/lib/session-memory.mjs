@@ -15,7 +15,7 @@ const MAX_TOTAL_CHARS = 120000; // the whole payload's message text
 const MIN_TURNS = 2; // one prompt and one reply, or nothing to remember
 // A session with less user and assistant text than this is not sent: the
 // extraction call's fixed prompt outweighs what it can yield. UTF-8 bytes, not
-// characters, so a one-sentence rule in Japanese or Chinese is still sent.
+// string units, so Japanese or Chinese text is not counted at a third of its size.
 const MIN_TEXT_BYTES = 40;
 // What the session's own Loom tool calls said and heard.
 const ECHO_MAX_VALUES = 80; // strings handed to the extractor
@@ -180,6 +180,13 @@ function clip(text, max) {
   return s.length <= max ? s : s.slice(0, max - 14).trimEnd() + "\n…[truncated]";
 }
 
+/** UTF-8 bytes of the text in a turn. An image placeholder (blockText) is a
+ *  line of its own and a pointer, not text, so it is not counted. */
+function textBytes(content) {
+  const lines = String(content || "").split("\n");
+  return Buffer.byteLength(lines.filter((l) => !/^\[image: [^\]]*\]$/.test(l)).join("\n"));
+}
+
 /** Body for memory.set_from_messages at SessionEnd, or null when the session
  *  holds fewer than MIN_TURNS real turns, no user prompt, or under
  *  MIN_TEXT_BYTES of user and assistant text. The tail of the
@@ -194,7 +201,7 @@ export function sessionMemoryBody(scope, payload, turns, opts = {}) {
   let tail = (turns || []).slice(-maxTurns);
   if (!tail.some((t) => t.role === "user") || tail.length < MIN_TURNS) return null;
   const said = tail.filter((t) => t.role === "user" || t.role === "assistant");
-  if (said.reduce((n, t) => n + Buffer.byteLength(String(t.content || "")), 0) < MIN_TEXT_BYTES) return null;
+  if (said.reduce((n, t) => n + textBytes(t.content), 0) < MIN_TEXT_BYTES) return null;
   // Bound the total from the newest turn backwards: drop the oldest turns
   // until the payload fits, never the latest.
   // Redact each captured turn (transcript or journal) before it is clipped and sent.

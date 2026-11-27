@@ -85,11 +85,15 @@ test("a session with under 40 bytes of user and assistant text is not sent", () 
   assert.equal(body("Use pnpm here, never npm.", "Understood: pnpm for installs.").messages.length, 2);
   // 38 characters, 100 bytes.
   assert.equal(body("今後このリポジトリではnpmではなくpnpmを使ってください。", "了解しました。").messages.length, 2);
-  // A tool's image placeholder is not text the user or the assistant wrote.
+  // An image placeholder is not text the user or the assistant wrote, whether a
+  // tool's turn or a pasted image's line. A body that is sent keeps it.
   assert.equal(
     body("what is this?", "A red bar.", { role: "tool", content: "[image: 1 image result returned by a tool]" }),
     null,
   );
+  assert.equal(body("ok?\n[image: image/png]\n[image: image/png https://example.com/a.png]", "ok"), null);
+  assert.equal(body("x".repeat(37) + "\n[image: image/png]", "y"), null);
+  assert.ok(body("x".repeat(39) + "\n[image: image/png]", "y").messages[0].content.endsWith("[image: image/png]"));
 });
 
 test("transcriptTurns keeps the pointer to a pasted image and to an image a tool returned", () => {
