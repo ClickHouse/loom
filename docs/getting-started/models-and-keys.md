@@ -729,14 +729,20 @@ that endpoint. Check its request errors and exercise retrieval.
 
 After checking configuration, use the [end-to-end smoke](../operations/monitoring.md#smoke-test)
 with fresh authorized input. For the search request, use `curl --include` and omit the
-`jq` pipe so you can read `X-Trace-Id`. Find a successful
-[`embed.provider` span](../features/observability/telemetry.md#traces-and-logs) on that
-trace for the intended provider and model. A search hit or a successful span alone
+`jq` pipe so you can read `X-Trace-Id`. For providers that emit embedding spans, find a
+successful [`embed.provider` span](../features/observability/telemetry.md#traces-and-logs)
+on that trace for the intended provider and model. A search hit or a successful span alone
 does not prove a provider call: Loom may have served the embedding from its cache.
 Look for a call indicator such as `langfuse.observation.type=embedding` (an Embedding
 observation in Langfuse). For this single-query probe, `loom.embed.cache_misses=1`
 indicates a miss in the instrumented embedding cache. If the trace lacks evidence of
 a provider call, leave the call unverified.
+
+The `compatible` adapter does not emit `embed.provider`. Instead, check the endpoint's
+request logs for a successful embedding request for the configured model during the
+fresh probe. Use an isolated probe window so you can distinguish its request from
+other traffic without logging the input. If you cannot attribute an endpoint request
+to the probe, leave the call unverified.
 
 To check the LLM, use
 [repository Q&A](../guides/repository-questions.md) on a readable indexed namespace with

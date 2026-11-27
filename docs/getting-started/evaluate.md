@@ -214,8 +214,12 @@ organization and namespace with values the token can read:
 export PYTHONPATH=$PWD
 .venv/bin/python bench/acceptance/code_agent.py \
   --base-url http://localhost:7777 --token-file /path/to/token \
-  --org <org> --namespace <code-namespace>
+  --org <org> --namespace <code-namespace> --no-outcomes
 ```
+
+`--no-outcomes` keeps the harness from posting feedback based on the labels. Otherwise
+that feedback can influence later rankings. Enable it only in an isolated evaluation
+of the feedback loop.
 
 The built-in fixture targets ClickHouse and is useful for checking a deployment. For a
 product decision, replace or extend it with your labelled questions and compare the same

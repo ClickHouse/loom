@@ -173,9 +173,10 @@ curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/namespace.validate" \
   --data '{"org":"example","namespace":"team-context","keys":["design/retry-tests"]}'
 ```
 
-Inspect `code_links_stale` findings and any skipped checks. A report with unavailable
-evidence is not a freshness proof. Review the current source and revise the same memory
-key when the decision changes;
+Inspect `code_links_stale` findings and any skipped checks. The report omits repositories
+the token cannot read without marking the check skipped. A zero count covers only
+readable repositories; unavailable evidence does not prove freshness. Review the
+current source and revise the same memory key when the decision changes;
 [history and provenance](../features/memory/history-and-provenance.md) retain the prior
 versions. A code change alone does not authorize rewriting the decision.
 

@@ -85,11 +85,13 @@ it cannot retrieve those citations. [Index freshness](../features/code-index/fre
 | Design assistant | `code.impact` for a proposed symbol change and [linked team decisions](../use-cases/memory-linked-to-code.md) | Affected definitions, test mappings and lessons with their freshness state |
 | Team chatbot     | `code.ask` for a cited answer, or `code.search` for the application's own reader                              | Source ranges supporting each claim, or an explicit abstention             |
 
-When a chatbot replies in a shared channel, restrict retrieval to repositories that
-both the questioner and every reader of the reply can access. The host must check
-the destination audience; the questioner's token does not authorize disclosure to
-other readers. If the host cannot verify the shared scope, do not answer there from
-private sources. Use a private reply with separate authorization or abstain. See
+When a chatbot replies in a shared channel, every evidence source must be readable by
+both the questioner and every reader of the reply. That includes repositories and
+any memory namespaces available to `code.ask` synthesis. Checking the repository
+alone is not enough, even for a fresh answer. If the host cannot verify the scope of
+all synthesis inputs, retrieve only from explicitly authorized sources and synthesize
+in the host using only that evidence. If the host cannot establish that scope either,
+reply privately with separate authorization or abstain. See
 [audience-scoped retrieval](audience-scoped-retrieval.md) for the host-side pattern.
 
 The answer concerns the indexed branch, not an uncommitted local checkout. Check

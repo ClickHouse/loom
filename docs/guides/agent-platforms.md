@@ -57,6 +57,7 @@ async def main() -> None:
         result = await agent.call(
             "memory.search",
             agent="*",
+            namespace_scope="this",
             query="Which checks are required before a change?",
             top_k=3,
         )
@@ -69,8 +70,9 @@ asyncio.run(main())
 This application call runs without asking a model to select a tool. Inspect the returned
 hits or `abstain` before adding evidence to the prompt; an abstention is an expected
 outcome when no memory qualifies. Authentication or transport errors need their own
-handling. `agent="*"` searches across writers within the token's permitted scope;
-it does not widen namespace or user access. The [memory operation reference](../reference/operations/memory.md#memorysearch)
+handling. `namespace_scope="this"` limits the search to `team-context` regardless of
+the deployment default. `agent="*"` searches across writers there without widening
+user access. The [memory operation reference](../reference/operations/memory.md#memorysearch)
 defines the response. Use `call_with_meta` when recording the request ID and timings
 ([request correlation](../features/integrations/index.md#joining-a-request-across-systems)).
 
