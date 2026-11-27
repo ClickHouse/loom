@@ -3039,7 +3039,7 @@ async def test_a_file_link_is_dropped_once_the_pending_name_of_its_memory_is_lin
     src = "def dump(o):\n    return str(o)\n"
     commits = {"c1": src, "c2": src + "\n\ndef dump_delta(o):\n    return o.total_seconds()\n"}
     memory = _row("m1", value=json.dumps(claim), files=[path])
-    # the pass links the pending name the merge defines before it reads the file link
+    # the pending name has its definition link: read beside it, the file link goes
     link = {"org": "o", "code_namespace": "code-a", "memory_id": "m1", "path": path}
     resolved = _full(link | {"qualified_name": name, "anchored_path": path, "anchored_name": name})
     files, row = _file_link_world(monkeypatch, memory, commits, linked=[resolved])
@@ -3048,6 +3048,34 @@ async def test_a_file_link_is_dropped_once_the_pending_name_of_its_memory_is_lin
     assert dropped.row == row and dropped.link is None
     written = await _moves_written(monkeypatch, [dropped])
     assert [(r["qualified_name"], r["tombstoned_at"] is None) for r in written] == [("", False)]
+
+
+@pytest.mark.asyncio
+async def test_a_pending_name_that_resolves_drops_the_file_link_beside_it(monkeypatch) -> None:
+    from server.code.domain.anchor import Link
+
+    # its page may be read passes after the merge commit was followed: whenever the
+    # name resolves, the memory's link to the file its definition is in goes
+    link = {"org": "o", "code_namespace": "code-a", "memory_id": "m1", "path": "pkg/mod.py"}
+    beside = _full(link)
+    kept = [
+        _full(link | {"path": "pkg/other.py"}),
+        _full(link | {"qualified_name": "pkg.mod::dump"}),
+        _full(link | {"code_namespace": "code-b"}),
+    ]
+    read: list[list[str]] = []
+
+    async def for_memories(org, ids):
+        read.append(ids)
+        return [beside, *kept]
+
+    monkeypatch.setattr(code_links.store, "for_memories", for_memories)
+    pending = _full(link | {"path": "", "qualified_name": "pkg.mod.dump_delta"})
+    resolved = code_link_recheck.Move(pending, Link("pkg/mod.py", "pkg.mod::dump_delta", "h"))
+    drops = await code_link_recheck._file_links_beside("o", "code-a", [resolved])
+    assert [(m.row, m.link) for m in drops] == [(beside, None)]
+    assert await code_link_recheck._file_links_beside("o", "code-a", []) == []
+    assert read == [["m1"]]  # nothing resolved: nothing read
 
 
 @pytest.mark.asyncio

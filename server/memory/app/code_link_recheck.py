@@ -593,10 +593,27 @@ async def _recheck_pending(
         limit=int(settings.memory_code_links_batch),
     )
     moves = await _resolve_pending(org, cns, head, files, result, rows)
+    moves += await _file_links_beside(org, cns, moves)
     await _write_moves(await _current_moves(org, moves), head)
     result.rechecked += len(moves)
     if nxt != after:
         await cursor.write({"before": before, "after": list(nxt)} if nxt else {})
+
+
+async def _file_links_beside(org: str, cns: str, moves: list[Move]) -> list[Move]:
+    """The drops of the file links beside the definitions `moves` link: a memory's link
+    to a file goes once it has one to a definition in that file."""
+    at = {(m.row["memory_id"], m.link.path) for m in moves if m.link}
+    if not at:
+        return []
+    rows = await store.for_memories(org, sorted({mid for mid, _ in at}))
+    return [
+        Move(a, None)
+        for a in rows
+        if a["code_namespace"] == cns
+        and not a["qualified_name"]
+        and (a["memory_id"], a["path"]) in at
+    ]
 
 
 def _pending_definitions(
