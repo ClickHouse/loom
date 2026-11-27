@@ -339,7 +339,7 @@
   opacity: 1;
 }
 
-:root[data-theme="dark"] .prose pre.astro-code span[style*="--shiki-dark:"] {
+:root:not([data-theme="light"]) .prose pre.astro-code span[style*="--shiki-dark:"] {
   color: color-mix(in srgb, var(--shiki-dark) 76%, var(--blume-foreground));
 }
 
