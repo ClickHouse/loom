@@ -3,11 +3,13 @@ name: loom-memory
 description: >
   Use when you are about to write something to Loom, when the user states,
   decides or corrects a fact, and at the END of any substantial task before
-  you report done. Covers durable memory versus scratchpad, writing a fact a
-  future session can trust, reading what Loom hands back, and the end-of-task
-  memory review. NOT for code questions (loom-code), and NOT for "is this
-  already reported?" / duplicate or bisect checks (call loom_search or
-  loom_tracker_duplicate_check directly).
+  you report done. Decides what is durable memory versus scratchpad, how to
+  write a fact so a future session can trust it, how to read what Loom hands
+  back (persisted or not, conflict, abstain, verified or stale), and how to
+  run the end-of-task memory review. NOT for code questions (loom-code),
+  NOT for "is this already reported?" / duplicate or bisect checks (call
+  loom_search or loom_tracker_duplicate_check directly — nothing to read first)
+  and NOT for filing loom defects (improve-loom-for-my-repo).
 ---
 
 # loom-memory — write facts a future session can trust

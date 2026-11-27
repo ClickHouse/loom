@@ -209,11 +209,13 @@ show whether the task needed those tools. `--allowedTools` controls permission a
 cannot restore a tool omitted from `--tools`. See [Claude Code tool search](https://code.claude.com/docs/en/mcp#configure-tool-search).
 
 In the `coding` toolset the server requests upfront loading for
-`loom_code_edit_context` and `loom_code_grep`. Clients can discover the other
-code tools, general search (`loom_search`) and the dispatcher (`loom_op`) when
-needed. Other toolsets request upfront loading for `loom_code_search`,
-`loom_code_grep`, `loom_code_symbol`, `loom_search` and `loom_op` where listed. The
-published plugin uses the same MCP loading metadata.
+`loom_code_edit_context` and `loom_code_grep`, and for `loom_code_symbol`
+outside the compact schema profile. Clients can discover the other code tools,
+general search (`loom_search`) and the dispatcher (`loom_op`) when needed.
+Other toolsets, a union such as `coding+tracker` included, request upfront
+loading for `loom_code_search`, `loom_code_grep`, `loom_code_symbol`,
+`loom_search` and `loom_op` where listed. The published plugin uses the same
+MCP loading metadata.
 
 `LOOM_MCP_ALWAYS_LOAD_TOOLS=auto` selects the defaults above. Supply a comma-separated
 list of operations such as `code.symbol` or synthetic tool names such as `loom_op`
