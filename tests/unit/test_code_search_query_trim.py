@@ -117,15 +117,16 @@ def test_select_terms_keeps_identifiers_and_repeated_words_before_the_others() -
     }
     keep = frozenset({"parsequotakey", "newname"})
     said = {"paginator": 3, "pages": 2, "the": 9, "model": 4, "or": 5}
-    # first-seen order. Never a function word (`the`, `or`), however often it is said,
-    # nor a word most chunks hold (`model`); a number and a name the corpus lacks only
-    # where room is left
+    # first-seen order. Never a function word (`the`, `or`), however often it is said;
+    # a word many chunks hold (`model`), a number and a name the corpus lacks only where
+    # room is left
     assert _select(tokens, df, keep=keep, said=said) == [
-        *("hi", "team", "looking", "paginator", "reports", "pages"),
+        *("hi", "team", "looking", "paginator", "reports", "pages", "model"),
         *("culprit", "1064", "unknownword", "parsequotakey", "newname"),
     ]
     # the words take half the list: the repeated ones first, wherever they stand, then
-    # the others in reading order; the identifiers take the rest
+    # the others in reading order, a common one after them however often it is said;
+    # the identifiers take the rest
     assert _select(tokens, df, 8, keep=keep, said=said) == [
         *("hi", "team", "paginator", "pages", "parsequotakey", "newname"),
     ]
@@ -138,9 +139,13 @@ def test_select_terms_keeps_identifiers_and_repeated_words_before_the_others() -
     dfs = {"open": 50, "call_command": 530, "max_length": 2700, "check_filterable": 5}
     ids = frozenset(many[1:])
     assert _select(many, dfs, 3, keep=ids) == ["open", "call_command", "check_filterable"]
-    # a caller's own terms are always kept, the commonest included, and go first
+    # a caller's own terms are no words to filter: the commonest is asked for while
+    # there is room, and past the cap they go after the identifiers, the rarest first
     own = frozenset({"model", "or"})
-    assert _select(tokens, df, 3, keep=keep, said=said, own=own) == ["paginator", "model", "or"]
+    assert {"model", "or"} <= set(_select(tokens, df, keep=keep, said=said, own=own))
+    assert _select(tokens, df, 3, keep=keep, said=said, own=own) == [
+        *("paginator", "parsequotakey", "or"),
+    ]
     # the cap is never exceeded
     assert len(_select(tokens, df, 1, keep=keep, said=said)) == 1
 
@@ -166,6 +171,21 @@ def test_the_subject_is_kept_whatever_the_question_opens_with() -> None:
         df = dict.fromkeys(p.all_tokens, 40)
         kept = _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said, own=p.own)
         assert _SUBJECT <= set(kept), opening
+
+
+def test_a_common_word_is_asked_for_when_no_other_word_is_left() -> None:
+    p = qt.plan(_PROSE, None, 48, {})
+    # five chunks: every word the namespace knows is in more than one chunk in eight
+    df = dict.fromkeys(p.all_tokens, 2)
+    kept = qt.select_terms(p.all_tokens, df, 5, p.cap, keep=p.keep, said=p.said)
+    assert len(kept) == 16 and _SUBJECT <= set(kept)
+    # a large namespace where every word of the question is common
+    df = dict.fromkeys(p.all_tokens, 30_000)
+    assert _SUBJECT <= set(_select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said))
+    # a common word waits for the others: sixteen rarer ones take the share
+    df = dict.fromkeys(p.all_tokens, 40) | dict.fromkeys(_SUBJECT, 30_000)
+    kept = _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said)
+    assert len(kept) == 16 and _SUBJECT.isdisjoint(kept)
 
 
 def test_a_question_of_addresses_numbers_and_hashes_still_has_terms() -> None:
@@ -249,10 +269,12 @@ def test_plan_over_the_cap_cleans_counts_and_bounds() -> None:
     # a greeting or a line break moves no count
     broken = qt.plan("Hi,\n\n" + _ISSUE.replace(". ", ".\n"), None, 32, {})
     assert broken.said == p.said | {"hi": 1} and broken.keep == p.keep
-    # a caller's own terms are named apart: they are always kept
-    extra = qt.plan(_ISSUE, ["retry", "QuotaKey"], 32, {})
-    assert extra.own == {"retry", "quotakey", "quota", "key"}
-    assert extra.all_tokens[-2:] == ["retry", "quotakey"]
+    # a caller's own terms are named apart, and none is stripped: one shaped like a
+    # hash is a term too
+    extra = qt.plan(_ISSUE, ["retry", "QuotaKey", "2eed554c3fd75dae"], 32, {})
+    assert {"retry", "quotakey", "quota", "key", "2eed554c3fd75dae"} <= extra.own
+    assert extra.own <= set(extra.all_tokens) and extra.keep == p.keep | {"quotakey"}
+    assert extra.all_tokens[len(p.all_tokens) :][:3] == ["retry", "quotakey", "2eed554c3fd75dae"]
     assert work == {
         "query_trimmed_tokens_in": p.tokens_in,
         "query_trimmed_boilerplate_lines_dropped": 6,
@@ -421,6 +443,21 @@ def test_a_greeting_before_a_prose_question_does_not_cost_its_subject() -> None:
     assert _SUBJECT <= set(repo.scan_tokens)
     assert {"the", "of", "have", "been", "what"}.isdisjoint(repo.scan_tokens)
     assert len(repo.scan_tokens) == 16  # no identifier: the words' share, no more
+
+
+def test_proposed_terms_do_not_cost_a_long_question_its_own_identifiers() -> None:
+    question = _PROSE + " I think get_search_results in ChangeList.get_queryset goes wrong."
+    proposed = "QuerySet SqlCompiler execute_sql SelectRelated DistinctOn PageCount".split()
+    tokens = code_tokens(question + " " + " ".join(proposed))
+    common = {"query": 90_000, "select": 60_000, "set": 120_000, "on": 200_000}
+    repo = _Repo(dict.fromkeys(tokens, 40) | common)
+    _run(repo, question, _Emb(), extra_terms=proposed)
+    scan = set(repo.scan_tokens)
+    # what the question spells and what the caller proposes are both asked for, whole
+    assert {"get_search_results", "changelist", "get_queryset"} <= scan
+    assert {t.lower() for t in proposed} <= scan
+    # the pieces of the proposed names take the slots that are left, the rarest first
+    assert len(scan) == 32 and {"compiler", "related"} <= scan and common.keys().isdisjoint(scan)
 
 
 def test_the_setting_drives_the_trim_and_zero_turns_it_off() -> None:

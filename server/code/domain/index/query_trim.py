@@ -15,17 +15,20 @@ This module is the plan for such a question, pure and unit-testable:
   not a line — and counts what it removed.
 * `strip_non_terms` removes what names no subject before the tokenizer splits it:
   URLs and hashes.
-* `select_terms` keeps the whole forms of the identifiers (camel / snake / `a::b`)
-  and, for `WORD_SHARE` of the list, the words: those the question says more than
-  once first, then the others, each in reading order. An English function word and
-  a word that more than `COMMON_SHARE` of the chunks hold are not words to keep. A
-  bare number, and a lexeme the corpus does not contain (df 0 admits no row and
-  scores nothing), fill a slot only when nothing better is left.
+* `select_terms` keeps, for at most `WORD_SHARE` of the list, the words: those the
+  question says more than once first, then the others, each in reading order. The
+  whole forms of the identifiers (camel / snake / `a::b`) take the rest, then the
+  other lexemes of the terms a caller added, the rarest when there are more than
+  fit. An English function word is not a word to keep. A word that more than
+  `COMMON_SHARE` of the chunks hold, a bare number, and a lexeme the corpus does not
+  contain (df 0 admits no row and scores nothing) fill a slot only when nothing
+  better is left.
 * the vector leg embeds the first `EMBED_MAX_WORDS` words of the cleaned
   text instead of the raw body.
 
 Known limits: a subject the question states once, as a plain word, after its word
-share is already taken is not asked for; the function words are English.
+share is already taken is not asked for, nor is one that more than `COMMON_SHARE` of
+the chunks hold when other words fill the share; the function words are English.
 
 Nothing here runs for a question whose tokenizer output fits the cap: the
 plan's `lexical_query`, `embed_text` and `tokens` are then the raw inputs,
@@ -60,11 +63,13 @@ BOILERPLATE_HEADINGS: tuple[str, ...] = (
 
 # The lexical leg's list is bounded at 32 lexemes; the trim chooses WHICH, never widens.
 LEXICAL_TOKEN_CAP = 32
-# Words take at most this share of the list and identifiers the rest, so that neither
-# kind crowds the other out.
+# Words take at most this share of the list, also when the identifiers leave slots
+# free: a word said once is as often prose as subject, and each one adds the chunks
+# that hold it to the pool. The identifiers take the rest; more than fit are cut to
+# the rarest.
 WORD_SHARE = 0.5
-# A word that more of the chunks hold than this ranks nothing and opens the gate to
-# most of the namespace.
+# A word that more of the chunks hold than this ranks little and opens the gate to
+# that share of the namespace: it is asked for after every other word.
 COMMON_SHARE = 1 / 8
 # The vector leg embeds at most this many whitespace words of the cleaned text (~2,000
 # characters of prose: the request cap for `query`).
@@ -171,35 +176,32 @@ def select_terms(
     said: dict[str, int],
     own: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """At most `k` tokens for the lexical gate, in their first-seen order: the caller's
-    own terms (`own`), the identifier forms (`keep`) and, for `WORD_SHARE` of `k`, the
-    words: those `said` more than once first, then the others, each in reading order;
-    never a function word or one more than `COMMON_SHARE` of `n_chunks` chunks hold.
-    Past `k` the caller's terms go first, then the words, then the identifiers, the
-    rarest by document frequency first. A bare number and an unknown token (df 0) rank
-    after everything the corpus knows."""
+    """At most `k` tokens for the lexical gate, in their first-seen order: the
+    identifier forms (`keep`), the caller's own terms (`own`) and, for `WORD_SHARE` of
+    `k`, the words: those `said` more than once first, then the others, each in reading
+    order; never a function word. Past `k` the words go first, then the identifiers,
+    then the other lexemes of the caller's terms, the rarest by document frequency
+    first. A word more than `COMMON_SHARE` of `n_chunks` chunks hold ranks after the
+    other words; a bare number and an unknown token (df 0) rank after everything the
+    corpus knows."""
     k = max(int(k), 1)
     position = {t: i for i, t in enumerate(tokens)}
 
     def unknown(t: str) -> bool:
         return df.get(t, 0) <= 0 or t.isdigit()
 
-    words = [
-        t
-        for t in tokens
-        if t not in keep
-        and t not in own
-        and t not in _FUNCTION_WORDS
-        and df.get(t, 0) <= n_chunks * COMMON_SHARE
-    ]
-    words.sort(key=lambda t: (unknown(t), said.get(t, 0) < 2, position[t]))
+    def common(t: str) -> bool:
+        return df.get(t, 0) > n_chunks * COMMON_SHARE
+
+    named = keep | own
+    words = [t for t in tokens if t not in named and t not in _FUNCTION_WORDS]
+    words.sort(key=lambda t: (unknown(t), common(t), said.get(t, 0) < 2, position[t]))
     kept_words = set(words[: max(int(k * WORD_SHARE), 1)])
 
-    def rank(t: str) -> tuple[bool, int, bool, int, int]:
-        tier = 0 if t in own else 1 if t in kept_words else 2
-        return (unknown(t), tier, t not in keep, df.get(t, 0), position[t])
+    def rank(t: str) -> tuple[bool, bool, bool, int, int]:
+        return (unknown(t), t not in kept_words, t not in keep, df.get(t, 0), position[t])
 
-    eligible = [t for t in tokens if t in own or t in kept_words or t in keep]
+    eligible = [t for t in tokens if t in kept_words or t in named]
     chosen = set(sorted(eligible, key=rank)[:k])
     return [t for t in tokens if t in chosen]
 
@@ -219,8 +221,10 @@ def plan(
     boilerplate, its vector text is the cleaned first page, and its lexical
     gate will take at most `min(max_tokens, LEXICAL_TOKEN_CAP)` tokens once the
     corpus statistics arrive (select_terms): its identifiers and its words, those
-    it repeats first. `extra_terms` are a caller's own choice of terms: they are
-    always kept. `work` receives the disclosure counters only when the trim is active."""
+    it repeats first. `extra_terms` are a caller's own choice of terms, not words of
+    the question: none is stripped or filtered, and what is not an identifier's whole
+    form among them is asked for after the identifiers. `work` receives the disclosure
+    counters only when the trim is active."""
     lexical_query = query if not extra_terms else query + " " + " ".join(extra_terms)
     raw_tokens = code_tokens(lexical_query)
     cap = int(max_tokens)
@@ -228,11 +232,11 @@ def plan(
         return TrimPlan(lexical_query, query, raw_tokens[:LEXICAL_TOKEN_CAP])
     cleaned_q, dropped = strip_boilerplate(query)
     extra = " ".join(extra_terms or ())
-    text = cleaned_q if not extra else cleaned_q + " " + extra
-    cleaned_lex = strip_non_terms(text)
+    stripped = strip_non_terms(cleaned_q)
+    cleaned_lex = stripped if not extra else stripped + " " + extra
     all_tokens = code_tokens(cleaned_lex)
     if not all_tokens:  # only addresses and hashes: they are all the question says
-        cleaned_lex, all_tokens = text, code_tokens(text)
+        cleaned_lex, all_tokens = cleaned_q, code_tokens(cleaned_q)
     work["query_trimmed_tokens_in"] = len(raw_tokens)
     work["query_trimmed_boilerplate_lines_dropped"] = dropped
     return TrimPlan(
