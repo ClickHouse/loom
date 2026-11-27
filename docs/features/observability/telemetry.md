@@ -101,7 +101,7 @@ self-hosted summary includes today's completed reporting windows. The directory
 shows contact domains from version 2 and 3 reports with attributed successful requests
 in the public directory's lookback period and orders names by those requests. The
 one-year view uses the 90-day directory. Domain activity sharing adds successful
-requests, active installations, active accounts, serving processes, the latest
+requests, active installations, active users, serving processes, the latest
 reported Loom version, and first retained and latest activity dates for each domain.
 Those details use reports from installations that opted in to sharing domain activity.
 Use the domain-sharing setting above to omit domains from your reports.
