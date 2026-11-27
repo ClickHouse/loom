@@ -46,8 +46,8 @@ toolchain.
 application's dependencies. The crate name is `clickhouse-loom`; Rust imports it
 as `clickhouse_loom`.
 
-Runtime deps: reqwest with Rustls and HTTP/2, serde, serde_json, Tokio, rand, uuid,
-httpdate, log and derive_more.
+The repository build uses reqwest with Rustls and HTTP/2. It also depends on
+serde, serde_json, Tokio, rand, uuid, httpdate, log and derive_more.
 
 ## Use
 
@@ -399,10 +399,10 @@ and a cumulative `X-Loom-Retry-Count` starting at 0.
 A final transport failure may follow a committed write. An independent call
 generates a different idempotency key; read the result before submitting it again.
 `Client` is `Clone`, `Send` and `Sync`. Clones share the HTTP connection pool
-and rate state and can make concurrent calls. An `https` address negotiates
-HTTP/2 with the server over ALPN and falls back to HTTP/1.1; a plain `http`
-address speaks HTTP/1.1. Dropping a call future or applying
-an external timeout stops requests, retry sleeps and pacing sleeps in that future.
+and rate state and can make concurrent calls. When built from this repository,
+the SDK negotiates HTTP/2 over ALPN for `https` connections and falls back to
+HTTP/1.1. Plain `http` uses HTTP/1.1. Dropping a call future or applying an
+external timeout stops requests, retry sleeps and pacing sleeps in that future.
 There are no detached retry tasks. Cancellation does not roll back a write or
 guarantee the server stops processing it.
 
@@ -444,8 +444,9 @@ The server validates fields and authorizes every operation.
 
 ## Routes outside the op registry
 
-`request` and `request_json` reach the routes the registry does not hold, such
-as `/v1/whoami`, `/v1/me/service_accounts.create` and `/v1/knowledge.upload`:
+The SDK built from this repository provides `request` and `request_json` for
+routes outside the registry, such as `/v1/whoami`,
+`/v1/me/service_accounts.create` and `/v1/knowledge.upload`:
 
 ```rust
 use clickhouse_loom::RouteRequest;
