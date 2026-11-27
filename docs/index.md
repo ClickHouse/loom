@@ -2,7 +2,7 @@
 seo:
   description: Install Loom, connect agents to shared memory, and find guides for deploying and operating Loom.
   title: Agent memory and code search documentation
-mode: center
+mode: wide
 pagination: false
 ---
 
@@ -13,87 +13,67 @@ Give agents access to shared memory, cited documents, and indexed code through M
 [Install Loom](getting-started/quickstart.md)
 [Try the playground](https://loom.clickhouse.com/playground/source-change)
 
+<div class="docs-fragment-anchors" aria-hidden="true">
+  <a id="1-getting-started"></a>
+  <a id="2-install-and-run-the-server"></a>
+  <a id="3-connect-agents"></a>
+  <a id="4-sdk-and-api"></a>
+</div>
+
 ## Start here
 
-- [Set up Loom](getting-started/overview.md)
-  Choose a deployment and connect your first coding agent.
-- [Build with Loom](getting-started/first-agent.md)
-  Write and recall a memory from an agent you build.
-- [Evaluate Loom](getting-started/evaluate.md)
-  Test recall, access, and code lookup with your own workload.
-- [Operate Loom](operations/index.md)
-  Deploy for a team and plan access, backups, and upgrades.
+- [Connect a coding agent](getting-started/connect-a-coding-agent.md)
+  Share project context across agent sessions.
+- [Build with the SDKs](getting-started/first-agent.md)
+  Write and recall a memory from your own agent.
+- [Configure models](getting-started/models-and-keys.md)
+  Choose the models for retrieval and generation.
+- [Deploy for a team](operations/deployment.md)
+  Choose a deployment and set up access for your team.
+
+<div class="docs-fragment-anchors" aria-hidden="true">
+  <a id="5-namespaces-access-and-the-memory-model"></a>
+  <a id="guides"></a>
+  <a id="features"></a>
+  <a id="6-code-index"></a>
+</div>
+
+## Browse the docs
+
+- [Guides](guides/index.md)
+  Configure access, investigate agent runs, and connect tools.
+- [Features](features/index.md)
+  Explore memory, documents, code, work records, and audit controls.
+- [Reference](reference/index.md)
+  Find SDKs, HTTP and MCP operations, CLI commands, and settings.
+- [Operations](operations/index.md)
+  Monitor, upgrade, and recover a Loom deployment.
 
 ## Use cases
 
-See how teams use [shared agent memory](use-cases/agent-memory.md),
-[document search and RAG](use-cases/document-search.md), and
-[code intelligence](use-cases/code-intelligence.md). Browse [all use cases](use-cases/index.md)
-or [casos de uso en español](https://loom.clickhouse.com/docs/es/use-cases).
+See how Loom supports [shared agent memory](use-cases/agent-memory.md),
+[document search with citations](use-cases/document-search.md), and
+[code intelligence](use-cases/code-intelligence.md). Browse the
+[use-case library](use-cases/index.md) or [casos de uso en español](https://loom.clickhouse.com/docs/es/use-cases).
 
-![The dashboard's Library: a search for a refund rule answered by cited passages](assets/screenshots/document-search.webp)
+<div class="docs-fragment-anchors" aria-hidden="true">
+  <a id="architecture"></a>
+  <a id="benchmarks"></a>
+  <a id="development"></a>
+</div>
 
-[Video demonstration of a cited answer](assets/screenshots/clip-assistant-answer.webm)
+## Evaluate and contribute
 
-## 1. Getting started
+[Check whether Loom fits](getting-started/overview.md), [evaluate it with your workload](getting-started/evaluate.md),
+or read the [architecture](architecture/system-overview.md) and [benchmark results](benchmarks/results.md).
+Contributors can start with the [repository guide](development/repository-guide.md).
 
-Check [what Loom includes](getting-started/whats-included.md), run the
-[quickstart](getting-started/quickstart.md), and [configure models and API keys](getting-started/models-and-keys.md).
+<div class="docs-fragment-anchors" aria-hidden="true">
+  <a id="also"></a>
+</div>
 
-## 2. Install and run the server
+## Find a quick answer
 
-Choose a [deployment](operations/deployment.md), configure [single sign-on](operations/sso.md),
-and use the [operations guides](operations/index.md) to run Loom day to day.
-
-## 3. Connect agents
-
-[Connect a coding agent](getting-started/connect-a-coding-agent.md) or choose an
-[integration](features/integrations/index.md) for your editor, MCP client, or framework.
-
-## 4. SDK and API
-
-Find client libraries, commands, and wire contracts in the [reference](reference/index.md).
-
-## 5. Namespaces, access and the memory model
-
-Read how Loom scopes [identities and namespaces](concepts/identities-and-namespaces.md),
-stores [agent memory](concepts/memory.md), and [ranks retrieval results](concepts/retrieval-and-ranking.md).
-Use [tokens and grants](guides/tokens-and-grants.md) to set access.
-
-## Guides
-
-Use the [guides](guides/index.md) for tasks such as connecting an agent, comparing memory
-setups, and tracing a long run.
-
-## Features
-
-The [features index](features/index.md) covers memory, documents, code, work records,
-and access and audit controls.
-
-## 6. Code index
-
-Start with the [code-index overview](features/code-index/overview.md), add a
-[repository](features/code-index/repositories.md), and check its
-[indexing status](features/code-index/freshness.md).
-
-## Architecture
-
-Read the [system overview](architecture/system-overview.md),
-[storage authority](architecture/storage-authority.md), and [security model](architecture/security.md)
-to understand how Loom fits into a deployment.
-
-## Benchmarks
-
-Read the [methodology](benchmarks/methodology.md), inspect the [results](benchmarks/results.md),
-and [reproduce the evaluations](benchmarks/running.md).
-
-## Development
-
-Contributors can start with the [repository guide](development/repository-guide.md),
-[local development](development/local-development.md), and [testing](development/testing.md).
-
-## Also
-
-Find a definition in the [glossary](glossary.md) or a short answer in the [FAQ](faq.md).
+Look up a term in the [glossary](glossary.md) or an answer in the [FAQ](faq.md).
 Agents can use the [documentation index](../llms.txt) or the
 [combined Markdown](https://loom.clickhouse.com/docs/llms-full.txt).

@@ -1,4 +1,6 @@
 ---
+import { Link } from "@clickhouse/click-ui/Link";
+import { Separator } from "@clickhouse/click-ui/Separator";
 import loomLogo from "../public/loom.svg?raw";
 import { documentationOverview } from "./documentation-link";
 import { frameCopy } from "./site-frame-copy";
@@ -17,12 +19,12 @@ const current = Astro.url.pathname.replace(/\/$/, "") === overview.href;
 ---
 
 <div class="docs-brand">
-  <a class="brand-home" href={href} aria-label="ClickHouse Loom" lang="en" dir="ltr">
+  <Link className="brand-home" href={href} aria-label="ClickHouse Loom" lang="en" dir="ltr" weight="semibold">
     <span class="brand-mark" aria-hidden="true" set:html={loomLogo} />
     <span><span class="brand-publisher">ClickHouse </span><strong>Loom</strong></span>
-  </a>
-  <span class="brand-divider" aria-hidden="true"></span>
-  <a class="docs-overview" href={overview.href} hreflang={overview.hreflang} aria-current={current ? "page" : undefined}>{frameCopy[locale].docs}</a>
+  </Link>
+  <Separator className="brand-divider" decorative orientation="vertical" size="sm" />
+  <Link className="docs-overview" href={overview.href} hrefLang={overview.hreflang} aria-current={current ? "page" : undefined} size="sm">{frameCopy[locale].docs}</Link>
 </div>
 
 <style>
@@ -34,27 +36,28 @@ const current = Astro.url.pathname.replace(/\/$/, "") === overview.href;
     white-space: nowrap;
   }
 
-  .brand-home, .docs-overview {
+  .docs-brand :global(.brand-home), .docs-brand :global(.docs-overview) {
     display: inline-flex;
     align-items: center;
     min-height: 2.75rem;
   }
 
-  .brand-home {
+  .docs-brand :global(.brand-home) {
     gap: 0.45rem;
     min-width: 0;
     color: var(--blume-foreground);
     font-size: 1.0625rem;
     font-weight: 560;
     letter-spacing: -0.025em;
+    text-decoration: none;
   }
 
-  .brand-home strong { font-weight: 730; }
-  .brand-home > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+  .docs-brand :global(.brand-home strong) { font-weight: 730; }
+  .docs-brand :global(.brand-home span:last-child) { overflow: hidden; text-overflow: ellipsis; }
   .brand-mark, .brand-mark :global(svg) { display: block; width: 1.75rem; height: 1.75rem; }
-  .brand-mark, .brand-divider, .docs-overview { flex-shrink: 0; }
-  .brand-divider { width: 1px; height: 1rem; background: var(--blume-border); }
-  .docs-overview { color: var(--blume-muted-foreground); font-size: 0.875rem; }
-  .docs-overview:is(:hover, [aria-current="page"]) { color: var(--blume-foreground); }
+  .brand-mark, .docs-brand :global(.brand-divider), .docs-brand :global(.docs-overview) { flex-shrink: 0; }
+  .docs-brand :global(.brand-divider) { block-size: 1rem; }
+  .docs-brand :global(.docs-overview:not(:hover, [aria-current="page"])) { color: var(--click-global-color-text-muted); }
+  .docs-brand :global(.docs-overview[aria-current="page"]) { color: var(--click-global-color-text-default); }
   @media (max-width: 34rem) { .brand-publisher { display: none; } }
 </style>
