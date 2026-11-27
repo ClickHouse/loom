@@ -30,6 +30,9 @@ from server.memory.domain.extraction_prompts import (
     DURABILITY_VERIFIER_PROMPT_VERSION as VERIFIER_PROMPT_VERSION,
 )
 from server.memory.domain.extraction_prompts import (
+    DURABILITY_VERIFIER_SESSION_PROMPT as VERIFIER_SESSION_PROMPT,
+)
+from server.memory.domain.extraction_prompts import (
     DURABILITY_VERIFIER_SYSTEM_PROMPT as VERIFIER_SYSTEM_PROMPT,
 )
 from server.settings import settings
@@ -37,6 +40,7 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 __all__ = [
     "VERIFIER_PROMPT_VERSION",
+    "VERIFIER_SESSION_PROMPT",
     "VERIFIER_SYSTEM_PROMPT",
     "decide",
     "parse_verdicts",
@@ -208,12 +212,13 @@ async def _ask(
     client: Any,
     facts: list[dict[str, Any]],
     timeout_s: float,
-    context: CaptureContext | None = None,
+    context: CaptureContext | None,
+    system: str,
 ) -> Verdicts:
     try:
         result = await asyncio.wait_for(
             client.complete(
-                system=VERIFIER_SYSTEM_PROMPT,
+                system=system,
                 user=_user_prompt(facts, context),
                 max_tokens=90 * len(facts) + 400,
                 response_format={"type": "json_object"},
@@ -244,19 +249,24 @@ async def verify(
     *,
     timeout_s: float = 45.0,
     context: CaptureContext | None = None,
+    session_capture: bool = False,
 ) -> VerifyResult:
     """Judge `facts` with every client in `clients` (the first is primary).
     A dropped fact carries `_verify` (the reason) and, when folded,
-    `_duplicate_of` (the key of the fact that carries its claim)."""
+    `_duplicate_of` (the key of the fact that carries its claim). A plugin's
+    `session_capture` is also judged by the codebase rules."""
     if len(facts) < 1 or not clients:
         return VerifyResult(kept=list(facts), dropped=[])
+    system = VERIFIER_SESSION_PROMPT if session_capture else VERIFIER_SYSTEM_PROMPT
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
     t_in = t_out = 0
     answered = False
     for start in range(0, len(facts), settings.memory_durability_verifier_max_facts_per_call):
         chunk = facts[start : start + settings.memory_durability_verifier_max_facts_per_call]
-        answers = list(await asyncio.gather(*(_ask(c, chunk, timeout_s, context) for c in clients)))
+        answers = list(
+            await asyncio.gather(*(_ask(c, chunk, timeout_s, context, system) for c in clients))
+        )
         t_in += sum(a.tokens_in for a in answers)
         t_out += sum(a.tokens_out for a in answers)
         answered = answered or answers[0].ok

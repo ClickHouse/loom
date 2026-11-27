@@ -1977,6 +1977,77 @@ about the user ("The user wants answers in French."). An "about": "agent"
 entry is not stored as a memory; do not also emit the rule as a normal fact.
 """
 
+
+# Appended to the extraction base prompt of a coding plugin's session
+# capture. The rules above are written for conversations: their code rule asks
+# for the concrete diff and a `File.cpp:123` location. Under them alone a coding
+# session yields its own edits, which exist only in a working tree, and one
+# line-numbered location per lookup, which the code index answers. A later
+# session reuses what the code is, across definitions.
+CODING_SESSION_ANCHOR = "CODING SESSION — REUSABLE CODEBASE KNOWLEDGE ONLY"
+_CODING_SESSION_PROMPT_BLOCK = f"""\
+==============================================================
+{CODING_SESSION_ANCHOR}
+==============================================================
+
+The messages are one AI coding session in a repository. Later sessions in
+the same repository search this memory so that they do not have to read
+the same code again. What the USER states about themselves, their setup,
+their standing rules, preferences and decisions is extracted as above.
+For everything about the code and the work, the rules in this section
+REPLACE "Code / engineering facts", "Assistant-stated facts",
+"Enumerations and lists" and any rule above that captures an assistant
+answer whole. Expect few facts: most sessions hold zero to five.
+
+EXTRACT, each as ONE claim that is true of the code and stands alone:
+  • how a behaviour is reached: the path from an entry point to the
+    definition that does the work, when it crosses definitions or files.
+    One claim for the whole path, never one fact per hop;
+  • a relation between definitions in different files that reading one
+    of them does not show: what has to change together, what overrides
+    what, which definition a name really resolves to;
+  • an invariant, constraint or pitfall the session ran into, with its
+    reason: a check that already exists, a test or a configuration that
+    makes the obvious change fail, an order that matters;
+  • which test constrains a definition, when that shaped the work;
+  • the cause of a bug or a surprising behaviour: how the code as it
+    was BEFORE this session's edits produces it.
+Write each claim in the present tense with the code as its subject,
+never "the assistant found" or "the user asked". Name every definition in
+backticks next to the file that holds it (`Router.resolve` in
+src/app/router.py), with the names and paths the messages give. Leave
+line numbers out: they move, and the name finds the place.
+
+DO NOT EXTRACT:
+  • what this session changed or added: an edit, a new option, branch or
+    test, a docstring or changelog line ("X now does Y", "added Z", "X
+    has a new …", "the fix was …"). Until it is committed it exists only
+    in this working tree; from then on the commit history records it.
+    When the change rests on something durable (why the old code behaved
+    as it did, a constraint the change had to respect, the places that
+    have to change together), extract THAT as a claim about the code and
+    leave the change out of it;
+  • the task, the request, progress, test or command results, what was
+    or was not run, hook or tool messages, instructions that hold for
+    this session only;
+  • what one lookup answers: where a single name is defined, what one
+    function's own text says, a file's contents, a list of names;
+  • one claim twice, or one claim split across facts.
+
+Example. [assistant] "The crash came from `parse_header` in
+http/parse.py returning None for an empty value, which `Request.__init__`
+in http/request.py indexes without a check. I made `parse_header` return
+an empty tuple and added `test_empty_header`."
+  NOT facts: "`parse_header` now returns an empty tuple", "`test_empty_header`
+  was added" (this session's edits).
+  ONE fact: "`Request.__init__` in http/request.py indexes the result of
+  `parse_header` in http/parse.py without a None check, so a None from
+  `parse_header` crashes request construction."
+
+{{"facts": []}} is the right answer for a session that established nothing
+reusable about the code and in which the user stated nothing durable.
+"""
+
 _JUDGE_SYSTEM_PROMPT = """You judge extracted memorable facts against
 the source messages they were extracted from.
 
@@ -2049,6 +2120,16 @@ careful re-examination there is genuinely nothing memorable, return
 {"facts": []} — but only after looking carefully.
 """
 
+# The retry of a coding session, whose rules decide what a fact is: the addendum
+# above would end the prompt by asking for every value those rules leave out.
+_CODING_SESSION_RETRY_ADDENDUM = """
+
+The previous reply held no usable fact: it was not the JSON object of the
+OUTPUT SCHEMA, or none of its facts was an object with a "key" and a
+"value". Answer again in that schema, under the same rules. {"facts": []}
+is still the right answer for a session with nothing to extract.
+"""
+
 
 # A SMALL input (one decision, one preference — the shape an
 # agent's tool call sends) does not need the 49 schema anchors written for
@@ -2114,9 +2195,18 @@ def compact_extraction_prompt(prompt: str, keep: frozenset[str] = _COMPACT_EXAMP
 # LLM decides real vs junk. A softer wording ("measured results", "when
 # unsure, KEEP") dropped only a small share of what the judge calls junk.
 # Part B is the same-claim folds.
-DURABILITY_VERIFIER_PROMPT_VERSION = "durability-verifier-v1"
+DURABILITY_VERIFIER_PROMPT_VERSION = "durability-verifier-v2"
 
-DURABILITY_VERIFIER_SYSTEM_PROMPT = """You review facts that an extractor pulled from one AI coding session (Claude Code, Codex) before they are stored in a long-term memory that future sessions search.
+# The extractor's coding-session rule, judged again for a session capture: an
+# edit the session made reads as a fact about the codebase, and is one only
+# once it is committed.
+_VERIFIER_CODEBASE_RULES = """Facts about the codebase. KEEP what a later session in the same repository could reuse instead of reading the code again: how a behaviour is reached across definitions or files, a relation between definitions that reading one of them does not show, an invariant, constraint or pitfall with its reason, which test constrains a definition, the cause of a bug in the code as it was. Such a fact is kept whoever worked it out and from however many lookups. DROP a fact that reports what this session edited or added ("X now does Y", "added a test", "X has a new option", a docstring or changelog line): until the edit is committed it exists in one working tree, and afterwards the commit history records it. DROP a fact one lookup answers: where a single name is defined, what one function's own text says, a line number, a list of names.
+
+"""
+
+
+def _durability_verifier_prompt(codebase_rules: str = "", codebase_kept: str = "") -> str:
+    return f"""You review facts that an extractor pulled from one AI coding session (Claude Code, Codex) before they are stored in a long-term memory that future sessions search.
 
 Do two things.
 
@@ -2124,11 +2214,19 @@ A. For each fact, decide KEEP or DROP.
 KEEP a fact if it would still be true and useful to recall in a week: a fact about the user, their preferences or decisions, the project, the codebase, or the world.
 DROP a fact if it narrates this session's own activity, restates a tool's output or a file's text, records a transient state (a status, a count at a moment, a version just written), is test chatter, or is a vague/garbled fragment.
 
-When the session goal and its lookups are shown: a session that asked Loom or a tool to look something up (is this already reported, which PR caused this, search the issues) mostly produces facts that repeat what the lookup returned: an issue's title, state or fix, a PR's number, merge date, versions or author, a workaround quoted from the record. DROP those; the tracker and the code index already hold them. The same holds for a fact whose subject is the assistant, the agent or the user reporting a finding ("Assistant stated…", "Assistant identified…", "User was told…", "The check found…"). KEEP only what the lookup could not have supplied: what the user decided, prefers or said about their own setup, deployment or plans.
+{codebase_rules}When the session goal and its lookups are shown: a session that asked Loom or a tool to look something up (is this already reported, which PR caused this, search the issues) mostly produces facts that repeat what the lookup returned: an issue's title, state or fix, a PR's number, merge date, versions or author, a workaround quoted from the record. DROP those; the tracker and the code index already hold them. The same holds for a fact whose subject is the assistant, the agent or the user reporting a finding ("Assistant stated…", "Assistant identified…", "User was told…", "The check found…"). KEEP only what the lookup could not have supplied: what the user decided, prefers or said about their own setup, deployment or plans{codebase_kept}.
 
 B. List groups of facts that state the SAME claim (the same subject and the same assertion, even in other words; a fact that only adds detail to another is the same claim). Facts that are merely about the same topic are NOT a group. For each group give the number of the most complete member. Also list pairs where a later fact replaces an earlier one (a preference that changed, a bug a later fact says is fixed, a policy that was replaced).
 
 Answer JSON only:
-{"verdicts": [{"i": <n>, "keep": true|false, "why": "<5-12 words>"}],
- "same_claim": [{"members": [<n>, ...], "best": <n>}],
- "superseded": [{"old": <n>, "new": <n>}]}"""
+{{"verdicts": [{{"i": <n>, "keep": true|false, "why": "<5-12 words>"}}],
+ "same_claim": [{{"members": [<n>, ...], "best": <n>}}],
+ "superseded": [{{"old": <n>, "new": <n>}}]}}"""
+
+
+# A trajectory replay's facts are tool actions written under their own
+# instructions, so only a session capture is judged by the codebase rules.
+DURABILITY_VERIFIER_SYSTEM_PROMPT = _durability_verifier_prompt()
+DURABILITY_VERIFIER_SESSION_PROMPT = _durability_verifier_prompt(
+    _VERIFIER_CODEBASE_RULES, ", and a codebase fact of the kind kept above"
+)

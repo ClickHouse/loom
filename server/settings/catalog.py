@@ -2167,10 +2167,10 @@ class ExtractionSettings(BaseModel):
     # The coverage sweep reads its listed turns and sentences in groups of this
     # many items, one concurrent call each (more recall for more tokens). 0 = one call.
     memory_extract_coverage_sweep_batch_items: Annotated[int, LIVE] = 0
-    # A coding capture keeps the coverage sweep's density / uncovered
+    # A trajectory replay keeps the coverage sweep's density / uncovered
     # auto-gates only with at least this many user turns (on short sessions the
-    # sweep's output is mostly junk). 0 = always keep. An explicit namespace /
-    # per-call switch wins either way.
+    # sweep's output is mostly junk); a plugin's session capture never takes them.
+    # 0 = always keep. An explicit namespace / per-call switch wins either way.
     memory_extract_coding_sweep_min_user_turns: Annotated[int, LIVE] = 4
 
     # --- size segments ---

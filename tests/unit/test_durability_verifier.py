@@ -14,6 +14,7 @@ from server.llm.client import LLMResult
 from server.memory.app import durability_verifier as dv
 from server.memory.app import pipeline as mp
 from server.memory.app import pipeline_state as pipeline_state
+from server.memory.app.trajectory_notes import TRAJECTORY_EXTRACTION_INSTRUCTIONS
 from server.memory.domain import durable_facts as df
 from server.settings import settings
 
@@ -316,7 +317,7 @@ def test_real_facts_keep_passing(text: str) -> None:
     assert df.non_durable_class({"value": text}) is None
 
 
-# --- the coverage sweep in a one-shot coding session ------------------------------
+# --- the coverage sweep in a coding capture ---------------------------------------
 
 
 def _extract_spy(seen: list[dict]):
@@ -344,7 +345,7 @@ def _turns(n_user: int) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_a_one_shot_coding_capture_skips_the_auto_sweep(
+async def test_a_session_capture_and_a_short_replay_skip_the_auto_sweep(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: list[dict] = []
@@ -354,20 +355,28 @@ async def test_a_one_shot_coding_capture_skips_the_auto_sweep(
         return None
 
     monkeypatch.setattr("server.memory.app.coverage_sweep_gate.resolve", _none)
-    for tags, n in (
-        (["source:claude-code"], 1),
-        (["source:codex"], 3),
-        (["source:claude-code"], 4),
-        ([], 1),
+    for tags, instructions, n in (
+        (["source:claude-code"], "", 1),
+        (["source:codex"], "", 4),
+        (["from_observation"], TRAJECTORY_EXTRACTION_INSTRUCTIONS, 3),
+        (["from_observation"], TRAJECTORY_EXTRACTION_INSTRUCTIONS, 4),
+        ([], "", 1),
     ):
         st = pipeline_state.WorkflowState(
-            org="o", namespace="n", agent="a", session_id="s", messages=_turns(n), extra_tags=tags
+            org="o",
+            namespace="n",
+            agent="a",
+            session_id="s",
+            messages=_turns(n),
+            extra_tags=tags,
+            extraction_instructions=instructions,
         )
         await mp._REGISTRY["loom.llm_extract"](st, {})
     assert seen == [
         {"sweep": False, "source": "coding"},
+        {"sweep": False, "source": "coding"},  # a session capture of any length
         {"sweep": False, "source": "coding"},
-        {"sweep": None, "source": ""},  # a working session keeps the auto gates
+        {"sweep": None, "source": ""},  # a longer replay keeps the auto gates
         {"sweep": None, "source": ""},  # a personal chat is untouched
     ]
 

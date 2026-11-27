@@ -228,15 +228,16 @@ async def _step_llm_extract(
         if state.coverage_sweep is not None
         else await _resolve_sweep(state.org, state.namespace)
     )
-    # In a one-shot coding session (a lookup, a test run) the
-    # statement-dense reply is a report of tool results; the density/uncovered
-    # auto-gates (tuned on multi-session conversations) fire on it and re-read that
-    # report. A working session keeps the sweep. An explicit namespace/per-call switch still wins.
+    # The density/uncovered auto-gates are tuned on multi-session conversations.
+    # A session capture never takes them: under its coding-session rules a turn
+    # without a fact is the answer, and the sweep's prompt carries none of those
+    # rules. In a short trajectory replay (a lookup, a test run) the
+    # statement-dense turn is a report of tool results; a longer replay keeps the
+    # sweep. An explicit namespace/per-call switch still wins.
     min_turns = int(settings.memory_extract_coding_sweep_min_user_turns)
-    coding_off = (
-        sweep_override is None
-        and _is_coding_capture(state)
-        and _user_turns(state.messages) < min_turns
+    coding_off = sweep_override is None and (
+        _is_session_capture(state)
+        or (_is_coding_capture(state) and _user_turns(state.messages) < min_turns)
     )
     sweep_override = False if coding_off else sweep_override
 
@@ -265,6 +266,7 @@ async def _step_llm_extract(
             # segment of a long transcript keeps the full prompt.
             compact_prompt=_use_compact_prompt(state.messages),
             agent_learnings=_agent_learnings_on(state),
+            coding_session=_is_session_capture(state),
         )
 
     if len(segments) == 1:
@@ -588,12 +590,18 @@ async def _step_drop_activity_narration(
 _CODING_SOURCES = ("source:claude-code", "source:codex", "source:cursor")
 
 
+def _is_session_capture(state: WorkflowState) -> bool:
+    """A coding plugin's capture of a session's own turns (not a trajectory replay,
+    whose turns are tool actions read under their own instructions)."""
+    return any(str(t).lower().startswith(_CODING_SOURCES) for t in (state.extra_tags or []))
+
+
 def _is_coding_capture(state: WorkflowState) -> bool:
     from server.memory.app.trajectory_notes import TRAJECTORY_EXTRACTION_INSTRUCTIONS
 
     if TRAJECTORY_EXTRACTION_INSTRUCTIONS in (state.extraction_instructions or ""):
         return True
-    return any(str(t).lower().startswith(_CODING_SOURCES) for t in (state.extra_tags or []))
+    return _is_session_capture(state)
 
 
 def _agent_learnings_on(state: WorkflowState) -> bool:
@@ -695,6 +703,7 @@ async def _step_verify_durable(
         timeout_s=float(settings.memory_extract_verify_timeout_s),
         # The goal and what the lookups returned
         context=durability_verifier.capture_context(state.messages, state.session_values),
+        session_capture=_is_session_capture(state),
     )
     state.extracted_facts = [
         {k: v for k, v in f.items() if not k.startswith("_")} for f in result.kept
