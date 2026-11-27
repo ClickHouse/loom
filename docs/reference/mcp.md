@@ -34,8 +34,8 @@ Compact coding connections describe the common source workflows in the
 startup instructions. Find the other tools through discovery. When the `coding`
 toolset is bound to a repository, the primer uses the task context pack for
 prior decisions or procedures beyond the lessons returned with indexed source.
-The listing of code tools alone, described next, has no discovery tool and no
-task context pack.
+The listing of code tools alone, described next, lists neither `loom_op` nor
+`loom_context_pack`.
 
 A `coding` connection bound to a repository lists the code tools alone when its
 URL carries `schema_profile=compact`. A compact profile that comes only from
