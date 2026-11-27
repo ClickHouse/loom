@@ -1,8 +1,56 @@
 import { daysBefore } from "./adoption-view.mjs";
 
 const datasets = ["totals", "versions", "retention", "activity", "lifecycle", "oss"];
+const grains = ["day", "week", "month"];
+const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const queryApiOrigin = "https://queries.clickhouse.cloud";
 const queryApiPath = /^\/run\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
+const isDay = (value) => typeof value === "string" && datePattern.test(value) && Number.isFinite(Date.parse(value));
+
+function decodeGrowth(encoded) {
+  if (!Array.isArray(encoded)) return null;
+  try {
+    const rows = encoded.map((json) => {
+      const { grain, period, period_end, first_active, cumulative_active } = JSON.parse(json);
+      return { grain, period, period_end, first_active, cumulative_active };
+    });
+    return rows.every(
+      ({ grain, period, period_end, first_active, cumulative_active }) =>
+        grains.includes(grain) &&
+        isDay(period) &&
+        isDay(period_end) &&
+        period < period_end &&
+        isCount(first_active) &&
+        isCount(cumulative_active) &&
+        cumulative_active >= first_active,
+    )
+      ? rows.sort((left, right) => left.period.localeCompare(right.period))
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function decodeDomainDirectories(encoded) {
+  if (!Array.isArray(encoded)) return null;
+  try {
+    const directories = {};
+    for (const json of encoded) {
+      const { range_days, domains } = JSON.parse(json);
+      if (
+        ![30, 90].includes(range_days) ||
+        !Array.isArray(domains) ||
+        !domains.every((domain) => typeof domain === "string")
+      )
+        return null;
+      directories[range_days] = [...new Set(domains)];
+    }
+    return directories;
+  } catch {
+    return null;
+  }
+}
 
 async function readSource(url, options, decode = (response) => response.json()) {
   try {
@@ -43,7 +91,11 @@ async function loadWarehouse(env) {
     try {
       const aggregates = Object.fromEntries(datasets.map((name) => [name, row[name].map((json) => JSON.parse(json))]));
       const domains = Array.isArray(row.domains) ? row.domains.filter((domain) => typeof domain === "string") : null;
-      return { ...aggregates, domains };
+      const domainDirectories = decodeDomainDirectories(row.domain_directories);
+      const growth = decodeGrowth(row.growth);
+      const days = growth?.filter(({ grain }) => grain === "day").map(({ period }) => period);
+      const growthCoverage = days?.length ? { first_day: days[0], last_day: days.at(-1) } : null;
+      return { ...aggregates, domains, domainDirectories, growth, growthCoverage };
     } catch {
       console.warn("Adoption Query API returned invalid data.");
       return {};
@@ -75,13 +127,16 @@ function readRegistryMetrics(today) {
     readSource("https://pypistats.org/api/packages/clickhouse-loom/overall?mirrors=false"),
     readSource(`https://api.npmjs.org/downloads/range/${firstDay}:${yesterday}/@clickhouse/loom`),
     readSource(`https://api.npmjs.org/downloads/range/${historyStart}:${daysBefore(firstDay, 1)}/@clickhouse/loom`),
+    readSource("https://crates.io/api/v1/crates/clickhouse-loom/downloads", {
+      headers: { "User-Agent": "ClickHouse Loom Adoption (https://github.com/ClickHouse/loom)" },
+    }),
     containerPulls(),
   ]);
 }
 
 async function loadOpenSource(warehouse, today, readRegistries) {
   const historyStart = daysBefore(today, 730);
-  const [aggregates, [repository, releases, python, npm, olderNpm, pulls]] = await Promise.all([
+  const [aggregates, [repository, releases, python, npm, olderNpm, rust, pulls]] = await Promise.all([
     warehouse,
     readRegistries(today),
   ]);
@@ -101,6 +156,15 @@ async function loadOpenSource(warehouse, today, readRegistries) {
       .filter(({ category }) => category === "without_mirrors")
       .map(({ date, downloads }) => ({ day: date, downloads })),
   );
+  const rustDays = new Map();
+  if (Array.isArray(rust?.version_downloads) && Array.isArray(rust.meta?.extra_downloads)) {
+    // Recent versions have individual rows. The registry sums all older versions by day.
+    for (const row of [...rust.version_downloads, ...rust.meta.extra_downloads]) {
+      if (isDay(row?.date) && isCount(row.downloads)) {
+        rustDays.set(row.date, (rustDays.get(row.date) ?? 0) + row.downloads);
+      }
+    }
+  }
   const releaseDownloads =
     Array.isArray(releases) && releases.length < 100
       ? releases.flatMap(({ assets }) => assets ?? []).reduce((total, asset) => total + asset.download_count, 0)
@@ -144,6 +208,8 @@ async function loadOpenSource(warehouse, today, readRegistries) {
     {
       id: "pypi",
       artifact: "clickhouse-loom",
+      sdkName: "Python SDK",
+      packageUrl: "https://pypi.org/project/clickhouse-loom/",
       label: "Python SDK downloads",
       source: "PyPI",
       ...downloads(pythonDays, "pypi"),
@@ -151,9 +217,23 @@ async function loadOpenSource(warehouse, today, readRegistries) {
     {
       id: "npm",
       artifact: "@clickhouse/loom",
+      sdkName: "TypeScript SDK",
+      packageUrl: "https://www.npmjs.com/package/@clickhouse/loom",
       label: "TypeScript SDK downloads",
       source: "npm",
       ...downloads(npmDays, "npm"),
+    },
+    {
+      id: "crates",
+      artifact: "clickhouse-loom",
+      sdkName: "Rust SDK",
+      packageUrl: "https://crates.io/crates/clickhouse-loom",
+      label: "Rust SDK downloads",
+      source: "crates.io",
+      ...downloads(
+        Array.from(rustDays, ([day, value]) => ({ day, value })),
+        "crates.io",
+      ),
     },
     {
       id: "releases",
@@ -168,25 +248,26 @@ async function loadOpenSource(warehouse, today, readRegistries) {
 export function createAdoptionReader(env, now, readRegistries = readRegistryMetrics) {
   const today = now.toISOString().slice(0, 10);
   const warehouse = loadWarehouse(env);
-  const selfHosted = warehouse.then(({ totals, versions, retention, activity, lifecycle, domains, oss }) => {
-    const archivedStars = oss
-      ?.filter(({ source, metric, value }) => source === "github" && metric === "stars" && Number.isFinite(value))
-      .sort((left, right) => right.day.localeCompare(left.day))
-      .at(0);
-    return {
+  const selfHosted = warehouse.then(
+    ({ totals, versions, retention, activity, lifecycle, domains, domainDirectories, growth, growthCoverage }) => ({
       today,
-      archivedStars,
+      warehouseAvailable:
+        Array.isArray(totals) &&
+        (Array.isArray(domains) || (Array.isArray(domainDirectories?.[30]) && Array.isArray(domainDirectories?.[90]))),
       selfHosted: {
         totals,
         versions,
         retention,
         activity: activity ?? [],
         lifecycle: lifecycle ?? [],
+        growth: growth ?? null,
+        growthCoverage: growthCoverage ?? null,
         domains: domains ?? null,
+        domainDirectories: domainDirectories ?? null,
       },
       openSource: [],
-    };
-  });
+    }),
+  );
   let withOpenSource;
   return (tab) => {
     if (tab === "self-hosted") return selfHosted;
@@ -219,8 +300,8 @@ export function loadPublishedAdoption(tab) {
     const read = createAdoptionReader(process.env, new Date(now), readPublishedRegistries);
     const refresh = { expires: Infinity, read };
     read("self-hosted").then(
-      ({ selfHosted }) => {
-        refresh.expires = Date.now() + (selfHosted.domains === null ? retryTtlMs : warehouseTtlMs);
+      ({ warehouseAvailable }) => {
+        refresh.expires = Date.now() + (warehouseAvailable ? warehouseTtlMs : retryTtlMs);
       },
       () => {
         refresh.expires = Date.now() + retryTtlMs;

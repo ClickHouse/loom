@@ -1,0 +1,184 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import { InputElement, InputWrapper } from "@clickhouse/click-ui/InputWrapper";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Table } from "@clickhouse/click-ui/Table";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
+
+interface Props {
+  domains: string[] | null;
+  rankedDomains: string[] | null;
+  days: number;
+  filterHref: string;
+}
+
+const { domains, rankedDomains, days, filterHref } = Astro.props;
+const pageSize = 12;
+const queryLimit = 253;
+const anchor = "#reported-contact-domains";
+const params = Astro.url.searchParams;
+const query = (params.get("domain_q") ?? "").trim().slice(0, queryLimit);
+const normalizedQuery = query.toLowerCase();
+const canSort = rankedDomains !== null && rankedDomains.length > 1;
+const alphabetical = canSort && params.get("domain_sort") === "name";
+const legacyDomains = days === 90 ? domains : null;
+const published =
+  rankedDomains?.map((domain, index) => ({ domain, rank: index + 1 })) ??
+  legacyDomains?.map((domain) => ({ domain, rank: null })) ??
+  null;
+const matching = published?.filter(({ domain }) => domain.toLowerCase().includes(normalizedQuery)) ?? [];
+if (alphabetical) matching.sort((left, right) => left.domain.localeCompare(right.domain, "en-US"));
+const lastPage = Math.max(1, Math.ceil(matching.length / pageSize));
+const requestedPage = Number(params.get("domain_page"));
+const page = Number.isInteger(requestedPage) ? Math.max(1, Math.min(lastPage, requestedPage)) : 1;
+const offset = (page - 1) * pageSize;
+const visible = matching.slice(offset, offset + pageSize);
+const route = new URL(filterHref, Astro.url);
+const number = new Intl.NumberFormat("en-US");
+const visibleCount =
+  visible.length > 1 ? number.formatRange(offset + 1, offset + visible.length) : number.format(offset + 1);
+const tableHeaders = [
+  ...(rankedDomains !== null
+    ? [
+        {
+          label: "Rank",
+          scope: "col",
+          width: "80",
+          "aria-label": "Usage rank",
+          "aria-sort": alphabetical ? undefined : ("ascending" as const),
+        },
+      ]
+    : []),
+  {
+    label: "Contact domain",
+    scope: "col",
+    overflowMode: "wrap" as const,
+    "aria-sort": alphabetical || rankedDomains === null ? ("ascending" as const) : undefined,
+  },
+];
+
+function directoryHref(nextPage: number, byName = alphabetical, search = query) {
+  const next = new URLSearchParams(route.search);
+  if (search) next.set("domain_q", search);
+  if (byName && canSort) next.set("domain_sort", "name");
+  if (nextPage > 1) next.set("domain_page", String(nextPage));
+  const serialized = next.toString();
+  return `${route.pathname}${serialized ? `?${serialized}` : ""}${anchor}`;
+}
+---
+
+<section class="directory" id="reported-contact-domains" aria-labelledby="domains-title">
+  <div class="directory-heading">
+    <Title type="h2" size="lg" id="domains-title">Reported contact domains</Title>
+    <Text size="sm" color="muted">
+      Namespace contact domains with an attributed successful request in the last {days} complete UTC days or in a completed reporting window today.
+      The directory covers installations that share contact domains and excludes enrolled internal and test installations.
+    </Text>
+  </div>
+
+  {published === null ? (
+    <Text size="sm" color="muted">Domain data is unavailable for this period.</Text>
+  ) : published.length === 0 ? (
+    <Text size="sm" color="muted">No reported domains met the publication criteria.</Text>
+  ) : (
+    <Panel className="directory-panel" orientation="vertical" alignItems="start" padding="lg" gap="md" hasBorder fillWidth>
+      <div class="directory-controls">
+        <form class="directory-search" method="get" action={`${route.pathname}${anchor}`} role="search" aria-label="Reported contact domains">
+          {Array.from(route.searchParams, ([name, value]) => <input type="hidden" name={name} value={value} />)}
+          {alphabetical && <input type="hidden" name="domain_sort" value="name" />}
+          <div class="search-field">
+            <InputWrapper id="adoption-domain-search" label="Find a domain" orientation="vertical">
+              <InputElement id="adoption-domain-search" name="domain_q" type="search" defaultValue={query} maxLength={queryLimit} spellCheck={false} autoComplete="off" autoCapitalize="off" enterKeyHint="search" />
+            </InputWrapper>
+          </div>
+          <Button type="secondary" htmlType="submit" label="Search" />
+          {query && <Link href={directoryHref(1, alphabetical, "")} size="sm">Clear search</Link>}
+        </form>
+        {canSort && <nav class="directory-order" aria-label="Domain sort order">
+          <Link href={directoryHref(1, false)} size="sm" aria-current={!alphabetical ? "true" : undefined}>By usage</Link>
+          <Link href={directoryHref(1, true)} size="sm" aria-current={alphabetical ? "true" : undefined}>A–Z</Link>
+        </nav>}
+      </div>
+      <Text className="directory-count" size="sm" color="muted">
+        {query
+          ? matching.length > 0
+            ? `${visibleCount} of ${number.format(matching.length)} matching ${matching.length === 1 ? "domain" : "domains"}`
+            : "No domains match your search."
+          : `${visibleCount} of ${number.format(published.length)} published ${published.length === 1 ? "domain" : "domains"}`}
+        {rankedDomains !== null && matching.length > 0 && " · Rank reflects attributed successful requests"}
+      </Text>
+      {visible.length > 0 && <Table
+        aria-label="Published contact domains"
+        mobileLayout="scroll"
+        size="sm"
+        headers={tableHeaders}
+        rows={visible.map(({ domain, rank }) => ({
+          id: domain,
+          items: [
+            ...(rank !== null ? [{ label: number.format(rank), className: "domain-rank" }] : []),
+            { label: domain, dir: "ltr" },
+          ],
+        }))}
+      />}
+      {lastPage > 1 && <nav class="directory-pagination" aria-label="Domain pages">
+        <Text size="sm" color="muted">Page {number.format(page)} of {number.format(lastPage)}</Text>
+        <div class="page-links">
+          {page > 1 && <Link className="previous-page" href={directoryHref(page - 1)} size="sm" icon="chevron-left">Previous</Link>}
+          {page < lastPage && <Link href={directoryHref(page + 1)} size="sm" icon="chevron-right">Next</Link>}
+        </div>
+      </nav>}
+    </Panel>
+  )}
+</section>
+
+<style>
+  .directory {
+    margin-block-start: clamp(1.7rem, 4vw, 3.1rem);
+    padding-block-start: clamp(1.3rem, 2.4vw, 2rem);
+    border-block-start: 1px solid var(--line);
+    scroll-margin-block-start: 4.5rem;
+    min-inline-size: 0;
+  }
+  .directory-heading { margin-block-end: 0.9rem; }
+  .directory-heading :global(h2) { font-size: clamp(1.5rem, 2.5vw, 2.15rem); }
+  .directory-heading :global(p) { max-inline-size: 78ch; margin-block-start: 0.3rem; }
+  .directory :global(.directory-panel) { min-inline-size: 0; }
+  .directory-controls, .directory-search, .directory-order, .directory-pagination, .page-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    align-items: center;
+  }
+  .directory-controls, .directory-pagination { inline-size: 100%; justify-content: space-between; }
+  .directory-controls, .directory-search { align-items: end; }
+  .directory-search { flex: 0 1 34rem; min-inline-size: 0; }
+  .search-field { flex: 1 1 8.5rem; min-inline-size: 0; }
+  .search-field :global(input) { min-inline-size: 0; min-block-size: 2.75rem; }
+  .directory-search :global(button) { min-block-size: 2.75rem; }
+  .directory-search :global(a), .directory-order :global(a), .page-links :global(a) {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 2.75rem;
+  }
+  .directory-order { gap: 0.3rem; }
+  .directory-order :global(a) {
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--muted);
+    padding-inline: 0.65rem;
+    text-decoration: none;
+  }
+  .directory-order :global(a[aria-current]) {
+    border-color: var(--line);
+    background: var(--surface-raised);
+    color: var(--click-global-color-text-default);
+  }
+  .directory :global(.directory-count), .directory :global(.domain-rank) { font-variant-numeric: tabular-nums; }
+  .directory-pagination {
+    border-block-start: 1px solid var(--line);
+    padding-block-start: 0.25rem;
+  }
+  .page-links :global(.previous-page) { flex-direction: row-reverse; }
+</style>

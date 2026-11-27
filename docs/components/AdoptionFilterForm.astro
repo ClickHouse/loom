@@ -6,13 +6,12 @@ import AdoptionFilters from "./AdoptionFilters.mjs";
 interface Props {
   fields: { name: string; label: string; value: string | number; options: { value: string; label: string }[] }[];
   days: number;
-  active: boolean;
 }
 
-const { fields, days, active } = Astro.props;
+const { fields, days } = Astro.props;
 ---
 
-<details class="advanced" open={active}>
+<details class="advanced" open>
   <summary>Chart settings <Icon aria-hidden="true" className="settings-chevron" name="chevron-down" size="xs" /></summary>
   <form id="adoption-filters" method="get" action="/adoption#installation-activity" class="filters" aria-label="Chart settings" data-adoption-filters hidden>
     <input type="hidden" name="days" value={days} />
@@ -83,7 +82,7 @@ const { fields, days, active } = Astro.props;
     font: inherit;
   }
   @media (max-width: 34rem) {
-    .filters { display: grid; grid-template-columns: minmax(0, 1fr); }
+    .filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .filters > button { justify-self: start; }
   }
 </style>
