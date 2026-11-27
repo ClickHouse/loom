@@ -804,6 +804,26 @@ def test_prefer_scip_edges_folds_the_tiers_differing_spellings() -> None:
     ]
 
 
+def test_prefer_scip_edges_preserves_distinct_relations_at_one_site() -> None:
+    compiler = {
+        "tier": "scip",
+        "edge_kind": "calls",
+        "path": "src/requests.py",
+        "line": 18,
+        "from_qualified_name": "requests::dispatch",
+        "to_qualified_name": "request::Request::blueprints",
+    }
+    parser_call = {**compiler, "tier": "treesitter"}
+    parser_read = {**parser_call, "edge_kind": "reads"}
+    compiler_read = {**compiler, "edge_kind": "reads"}
+
+    assert prefer_scip_edges([compiler, parser_call, parser_read]) == [compiler, parser_read]
+    assert prefer_scip_edges([compiler_read, parser_read, parser_call]) == [
+        compiler_read,
+        parser_call,
+    ]
+
+
 def test_a_compact_uses_block_can_be_withheld_by_an_explicit_token_cap():
     limited = _run(_FakeRepo(ONE), name="DB::Foo::bar", token_budget=1)
     assert limited.tokens_returned <= 1
