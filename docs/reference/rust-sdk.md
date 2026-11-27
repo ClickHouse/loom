@@ -18,15 +18,18 @@ crates.io installation. The SDK source supports Rust 1.84+, but resolved
 dependencies can require a newer toolchain. The library leaves dependency locking
 to the application; commit your application's `Cargo.lock`.
 
-Use [docs.rs](https://docs.rs/clickhouse-loom) to check the API and transport
-features of your installed crate version. This page describes the SDK in the
-repository, including changes that may not be in a published crate. The SDK
-has its own version in the
+The published `0.1.1` crate does not enable HTTP/2 by default. Its async and
+blocking clients do not have `request` or `request_json`. Use
+[docs.rs](https://docs.rs/clickhouse-loom) to check the API for the version you
+installed.
+
+The SDK in this repository offers both direct route methods and negotiates
+HTTP/2 over ALPN for HTTPS connections, with a fallback to HTTP/1.1. Plain HTTP
+uses HTTP/1.1. To use these features, follow the
+[source installation instructions](https://github.com/ClickHouse/loom/tree/main/sdk/rust#install).
+The SDK has its own version in the
 [crate manifest](https://github.com/ClickHouse/loom/blob/main/sdk/rust/Cargo.toml).
 See the [operation reference](operations.md) for the server's current contracts.
-
-When built from this repository, the client negotiates HTTP/2 over ALPN for
-HTTPS connections, with a fallback to HTTP/1.1. Plain HTTP uses HTTP/1.1.
 
 ## Save and read memory
 
