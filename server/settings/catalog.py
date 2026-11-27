@@ -2681,13 +2681,15 @@ class McpSettings(BaseModel):
     # Which tools `tools/list` shows when a connection names no `?toolset=` (a request that
     # names one gets that one instead). Rosters are the frozensets in
     # server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on
-    # "assistant"); on every toolset but "assistant" this is visibility only and every op
-    # stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes
-    # read ops only.
+    # "assistant", nor where "coding" lists the code tools alone); on every toolset but
+    # "assistant" this is visibility only and every op stays callable by name over MCP and
+    # /v1/*, except that loom_op on "readonly" routes read ops only.
     #   "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
     #                 mcp_code_tools is on).
     #   "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it
-    #                 per request with `?toolset=coding`.
+    #                 per request with `?toolset=coding`. A connection bound to a
+    #                 repository lists the code tools alone when its URL carries
+    #                 `schema_profile=compact`.
     #   "tracker", "tasks" — the tracker plane and the task inbox rosters.
     #   "atomic"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS),
     #                 policy-shaped descriptions.

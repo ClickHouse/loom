@@ -252,7 +252,8 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   tools never runs a state change unprompted. They are hints; the role check at
   call time is the boundary.
 
-Three synthetic tools are listed on every toolset but `assistant`:
+Three synthetic tools are listed on every toolset but `assistant`, except on the
+listing of code tools alone ([Endpoint](#endpoint)), where they stay callable by name:
 
 | Tool            | Does                                                                                                                                                                                                                 |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
