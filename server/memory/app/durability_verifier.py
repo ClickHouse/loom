@@ -147,7 +147,7 @@ def _user_prompt(
 
 def _int(x: Any, n: int) -> int | None:
     try:
-        i = int(x.lstrip("Ss") if isinstance(x, str) else x)  # "S2" names stored fact 2
+        i = int(x)
     except (TypeError, ValueError):
         return None
     return i if 0 <= i < n else None
@@ -190,7 +190,8 @@ def parse_verdicts(text: str, n: int, n_stored: int = 0) -> Verdicts:
     for r in payload.get("stored") or []:
         if not isinstance(r, dict):
             continue
-        i, at = _int(r.get("i"), n), _int(r.get("s"), n_stored)
+        s = r.get("s")  # "S2" names stored fact 2; no extracted fact has such a label
+        i, at = _int(r.get("i"), n), _int(s.lstrip("Ss") if isinstance(s, str) else s, n_stored)
         if i is not None and at is not None:
             out.stored.setdefault(i, at)
     out.ok = True

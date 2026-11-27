@@ -695,14 +695,14 @@ async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) 
     capture's repository, any session: what an earlier session may already have stored
     of this capture's claims. One embed call for the capture, and the reads bounded like
     the conflict checks of the write that follows. None under `append_only`, where
-    every write is its own event. Fail-open: with none, every fact goes on to the
-    write."""
+    every write is its own event, or under a policy that could not be read. Fail-open:
+    with none, every fact goes on to the write."""
     import server.memory.store as memory_repo
     from server.embedding import get_embedder
     from server.memory.app.handlers import nearest_existing_rows
     from server.memory.domain.conflicts import APPEND_ONLY_POLICY
 
-    if await _conflict_policy(state) == APPEND_ONLY_POLICY:
+    if await _conflict_policy(state) in (APPEND_ONLY_POLICY, ""):
         return []
     identity = memory_repo.Identity(
         org=state.org,

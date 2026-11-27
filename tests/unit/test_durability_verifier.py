@@ -166,6 +166,17 @@ def test_parsing_reads_the_stored_restatements_in_range() -> None:
     v = dv.parse_verdicts(text, 3, 2)
     assert v.ok and v.stored == {0: 1, 2: 0}  # stored 4 and fact 9 are not shown; first wins
     assert dv.parse_verdicts(text, 3).stored == {}  # no stored memory shown: none named
+    # An S label names a stored fact and nothing else: as a fact number it is no answer.
+    text = json.dumps(
+        {
+            "verdicts": [],
+            "same_claim": [{"members": [0, "S1"], "best": "S1"}],
+            "superseded": [{"old": "S0", "new": 1}],
+            "stored": [{"i": "S0", "s": 1}],
+        }
+    )
+    v = dv.parse_verdicts(text, 3, 2)
+    assert v.ok and not v.folds and not v.stored
 
 
 @pytest.mark.asyncio
@@ -311,7 +322,8 @@ class _StoredWorld:
         return [SimpleNamespace(memory_key=r.memory_key) for r in found[: q.top_k]]
 
     async def by_keys(self, identity, keys, **kw):
-        return [r for r in self.rows if r.memory_key in keys]
+        # One row per key, the last listed: the store's newest in any session.
+        return list({r.memory_key: r for r in self.rows if r.memory_key in keys}.values())
 
     async def record(self, **kw):
         self.events.append(
@@ -360,12 +372,28 @@ async def test_a_fact_an_earlier_session_stored_is_not_written_again(
 
 
 @pytest.mark.asyncio
-async def test_an_append_only_namespace_keeps_every_restatement(
+async def test_a_key_another_repository_holds_newer_is_not_shown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    world = _StoredWorld(
-        monkeypatch, [_row("m1", "The list now has an entry.", [])], policy="append_only"
+    # Two sessions hold one key, each for its own repository; the newer row is the other's.
+    mine = _row("k", "The list now has an entry.", ["repo:r1"])
+    other = SimpleNamespace(memory_key="k", memory_id="id-other", value="x", tags=["repo:r2"])
+    world = _StoredWorld(monkeypatch, [mine, other])
+    client = _Scripted({**_answer(n=3), "stored": [{"i": 0, "s": 0}]})
+    monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
+    st = await mp._REGISTRY["loom.verify_durable"](
+        _state(["source:claude-code", "repo:r1"], _RESTATED), {}
     )
+    assert len(st.extracted_facts) == 3 and world.searches and not world.events
+    assert "<<memory" not in client.calls[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["append_only", ""])  # "": the policy read failed
+async def test_an_append_only_or_unread_policy_keeps_every_restatement(
+    monkeypatch: pytest.MonkeyPatch, policy: str
+) -> None:
+    world = _StoredWorld(monkeypatch, [_row("m1", "The list now has an entry.", [])], policy=policy)
     client = _Scripted({**_answer(n=3), "stored": [{"i": 0, "s": 0}]})
     monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
     st = await mp._REGISTRY["loom.verify_durable"](_state(["source:claude-code"], _RESTATED), {})

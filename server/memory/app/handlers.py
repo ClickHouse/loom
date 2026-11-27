@@ -189,8 +189,14 @@ async def nearest_existing_rows(
     )
     by_key = {r.memory_key: r for r in rows}
     found = [by_key.get(h.memory_key) for h in hits]
-    # A row whose value reads as high, whatever its label, is not shown to the model.
-    return [r for r in found if r is not None and not value_reads_high(r.value)]
+    # The read takes a key's newest row in any session, which may carry none of `tags`
+    # where the hit did. A row whose value reads as high, whatever its label, is not
+    # shown to the model.
+    return [
+        r
+        for r in found
+        if r is not None and (not tags or set(tags) & set(r.tags)) and not value_reads_high(r.value)
+    ]
 
 
 def split_chunk_key(memory_key: str) -> tuple[str, int | None]:

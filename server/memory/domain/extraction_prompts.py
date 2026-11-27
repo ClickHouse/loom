@@ -2113,8 +2113,8 @@ def compact_extraction_prompt(prompt: str, keep: frozenset[str] = _COMPACT_EXAMP
 # facts (memory/app/durability_verifier.py). Part A is the judge's rubric: the
 # LLM decides real vs junk. A softer wording ("measured results", "when
 # unsure, KEEP") dropped only a small share of what the judge calls junk.
-# Part B is the same-claim folds.
-DURABILITY_VERIFIER_PROMPT_VERSION = "durability-verifier-v1"
+# Part B is the same-claim folds. Part C is the facts a stored memory already states.
+DURABILITY_VERIFIER_PROMPT_VERSION = "durability-verifier-v2"
 
 DURABILITY_VERIFIER_SYSTEM_PROMPT = """You review facts that an extractor pulled from one AI coding session (Claude Code, Codex) before they are stored in a long-term memory that future sessions search.
 
