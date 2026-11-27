@@ -2,9 +2,8 @@
 
 This page covers how to configure repositories, enable the code index workers and keep
 the index current; the code index runs once an operator configures a repository. The
-`code_ingest` poller and the compiler-tier workers are on by default;
-`code_embed_recovery`, `code_pr_history`, `code_graph_stats`, `code_summary` and
-`code_scip_apply` are off until enabled. What the `code.*` operations answer is in the
+`code_ingest` poller is on by default; the [workers reference](../reference/workers.md)
+lists every worker's default. What the `code.*` operations answer is in the
 [code index overview](../features/code-index/overview.md); how the index is built is in
 [code index architecture](../architecture/code-index-architecture.md).
 
@@ -804,10 +803,13 @@ sandbox. `seccomp=unconfined` and `apparmor=unconfined` also work where the host
 restrict user namespaces, but they drop the whole profile.
 
 **Without the sandbox** Loom probes once per process, logs a warning and reports
-`repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. A server with no repository
-configured and no `LOOM_CODE_SANDBOX_REQUIRED` does not probe until someone adds one from
-the page, so its health says nothing of the sandbox until then. With
-`LOOM_CODE_SANDBOX_REQUIRED=true` every repository job is refused (above). Otherwise:
+`repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. With no repository configured
+and no `LOOM_CODE_SANDBOX_REQUIRED`, `loom doctor` prints the probe's warning and lists
+no problem, and a server process probes only when it serves an add from the page. Until
+then its `/v1/health` says nothing of the sandbox, so after a refused add replicas
+differ, and the Repositories page offers the add whenever one that has not probed
+answers. With `LOOM_CODE_SANDBOX_REQUIRED=true` every repository job is refused (above).
+Otherwise:
 
 - operator repositories (`LOOM_CODE_REPOS_JSON`) keep every tier, and their build steps
   run as plain processes on the host, as before;

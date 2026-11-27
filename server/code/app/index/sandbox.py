@@ -172,15 +172,21 @@ def sandbox_available() -> bool:
     return _available
 
 
-async def probe_where_owed() -> None:
-    """Probe, off the event loop, once a repository job can be owed here: a repository
-    is configured and the poller is on, or the deployment requires the sandbox.
-    `/v1/health` reports only what this process has probed, and a web process runs no
-    repository job that would probe it."""
+def job_owed() -> bool:
+    """A repository job can be owed: a repository is configured and the poller is on, or
+    the deployment requires the sandbox."""
     from server.code.domain.index.repos import known_repo_count
 
-    owed = settings.code_sandbox_required or (settings.code_ingest_enabled and known_repo_count())
-    if _available is None and owed:
+    return settings.code_sandbox_required or (
+        settings.code_ingest_enabled and known_repo_count() > 0
+    )
+
+
+async def probe_where_owed() -> None:
+    """Probe, off the event loop, once a repository job can be owed here. `/v1/health`
+    reports only what this process has probed, and a web process runs no repository job
+    that would probe it."""
+    if _available is None and job_owed():
         await asyncio.to_thread(sandbox_available)
 
 

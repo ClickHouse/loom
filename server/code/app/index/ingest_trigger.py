@@ -23,6 +23,7 @@ logger = logging.getLogger("loom.code_index.ingest_trigger")
 # How far back an ingest pass in the worker ledger counts as a poller at work. A live
 # poller records a pass every interval, an idle one included, so a day is ample and a
 # deployment that switches the poller off hears of it within one.
+# not a setting: the pass summary reads whole days, and one is its shortest window
 _LEDGER_DAYS = 1
 _REFRESH_KEY = "last_refresh_at"
 

@@ -788,8 +788,8 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     adding one is refused. LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED lifts the last
     two, and the warning stays: their git jobs then reach the remote with
     nothing vetting its address. With no repository configured no job is owed,
-    and nothing is reported until something probes (a refused `code.repo.add`,
-    `loom doctor`), unless the deployment requires the sandbox."""
+    and nothing is reported until this process probes (it refused a
+    `code.repo.add`), unless the deployment requires the sandbox."""
     if not settings.code_ingest_enabled:
         return []
     unprobed = state.code_repos == 0 and state.repo_sandbox is None

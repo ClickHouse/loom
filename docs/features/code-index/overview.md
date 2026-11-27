@@ -11,10 +11,10 @@ the index is built is in
 The [language support table](#language-support) distinguishes fast-tier symbols and
 edges from compiler-tier coverage.
 
-`code_ingest` and the compiler-tier workers are on by default and find nothing to do
-until a repository is configured ([repositories](repositories.md));
-[Workers](#workers) lists each worker's default. The default `core` MCP toolset lists no
-code tools unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
+`code_ingest` is on by default and finds nothing to do until a repository is configured
+([repositories](repositories.md)); [Workers](#workers) lists each worker's default. The
+default `core` MCP toolset lists no code tools unless `LOOM_MCP_CODE_TOOLS=true`;
+`?toolset=coding` always does.
 
 ![The Repositories page: an indexed repository, its branches and its tracker](../../images/dashboard-repositories.png)
 
