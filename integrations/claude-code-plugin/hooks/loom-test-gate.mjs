@@ -7,10 +7,9 @@
 // distinct change with a reason that names them. "This session's" is read
 // from the transcript: dirty paths an edit tool targeted or a shell command
 // named; a tree left dirty before the session does not
-// gate a turn that touched nothing. A transcript that already answers the
-// ask does not block either: pytest ran the named tests clean after the last
-// change, or the person's latest prompt said not to run tests. See
-// lib/test-gate.mjs for the rules.
+// gate a turn that touched nothing. A Claude Code transcript that already
+// answers the ask does not block either (`runAnswered` in lib/test-gate.mjs);
+// a Codex rollout answers nothing, so its stop blocks.
 //
 // Fail-open everywhere: no token, not an indexed repo, clean tree, nothing
 // of the tree touched this session, server down, second stop on the same
@@ -135,7 +134,23 @@ async function main() {
       return false;
     }
   };
-  if (runAnswered(gate, rows, { changed, root, cwd, testExists })) {
+  // When the tree last changed: the newest mtime of an uncommitted or
+  // untracked file. Infinity when one cannot be read (a deleted file, a
+  // listing that failed), so that no test run counts as later.
+  const lastModified = () => {
+    const untracked = git(["ls-files", "--others", "--exclude-standard"], root, { timeoutMs: 2000, fallback: null });
+    if (untracked === null) return Infinity;
+    let last = 0;
+    try {
+      for (const file of [...dirty, ...untracked.split("\n").filter(Boolean)]) {
+        last = Math.max(last, fs.statSync(path.join(root, file)).mtimeMs);
+      }
+    } catch {
+      return Infinity;
+    }
+    return last;
+  };
+  if (runAnswered(gate, rows, { changed, root, cwd, testExists, lastModified })) {
     scheduleExit(0);
     return;
   }
