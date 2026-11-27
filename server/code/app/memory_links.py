@@ -327,10 +327,20 @@ async def parsed_link_paths(
     )
 
 
-async def parsed_local_commit(
+async def parsed_link_path(
     org: str, namespace: str, commit: str, path: str, *, named: str
+) -> list[FileAt | None] | None:
+    """Read one lesson file, checking mirror availability if the local read misses."""
+    if local := await _parsed_local_commit(org, namespace, commit, path, named):
+        return [local]
+    if not await mirror_here(org, namespace, commit):
+        return None
+    return [await parsed(org, namespace, commit, path, named=named)]
+
+
+async def _parsed_local_commit(
+    org: str, namespace: str, commit: str, path: str, named: str
 ) -> FileAt | None:
-    """Read a file in a local commit without a separate commit lookup."""
     cfg = repo_for_namespace(org, namespace)
     git_dir = await mirrors.present_dir(cfg)
     if not git_dir:

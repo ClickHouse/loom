@@ -263,17 +263,12 @@ async def _definitions_at(
 
     named = bare_name(qualified_name)
     unique = list(dict.fromkeys(paths))
-    files: list[code.FileAt | None]
+    files: list[code.FileAt | None] | None
     try:
-        local = (
-            await _parse_link_source(
-                code.parsed_local_commit(org, code_namespace, head, unique[0], named=named)
+        if len(unique) == 1:
+            files = await _parse_link_source(
+                code.parsed_link_path(org, code_namespace, head, unique[0], named=named)
             )
-            if len(unique) == 1
-            else None
-        )
-        if local is not None:
-            files = [local]
         else:
             if not await code.mirror_here(org, code_namespace, head):
                 return None
@@ -281,6 +276,8 @@ async def _definitions_at(
                 code.parsed_link_paths(org, code_namespace, head, unique, named=named)
             )
     except (gitrepo.GitError, code.ParseFailed, TimeoutError):
+        return None
+    if files is None:
         return None
     here: dict[tuple[str, str], Definition] = {}
     for f in files:
