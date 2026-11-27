@@ -107,10 +107,15 @@ def _renamed(
 ) -> dict[str, Any] | None:
     out: dict[str, Any] = {}
     for key, item in value.items():
-        target = near.get(f"{prefix}{key}", key)
-        if target is None:
-            return None
-        name = target.rsplit(".", 1)[-1] if target != key else key
+        name = key
+        address = f"{prefix}{key}"
+        if address in near:
+            target = near[address]
+            if target is None:
+                return None
+            scope, _, name = target.rpartition(".")
+            if scope != prefix.removesuffix("."):
+                return None
         if name in out:
             return None
         out[name] = item

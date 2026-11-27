@@ -147,6 +147,23 @@ def test_a_key_correction_does_not_overwrite_a_canonical_key() -> None:
     assert example(model, args, near) is None
 
 
+def test_literal_dotted_argument_does_not_change_a_nested_retry_target() -> None:
+    message, data = _fail(
+        "memory.apply",
+        {
+            "target.memory_keys": ["test/x/a"],
+            "target": {"memory_keys": ["test/x/b"]},
+            "action": "expire",
+            "reason": "Retire obsolete examples",
+            "expire": {"ttl_seconds": 60},
+            "dry_run": False,
+        },
+    )
+    assert "target.memory_keys" in message
+    assert "example:" not in message
+    assert "example" not in data
+
+
 def test_working_memory_append_names_addition() -> None:
     msg, data = _fail("working_memory.append", {"text": "hello"})
     assert "addition: Field required [missing]" in msg
