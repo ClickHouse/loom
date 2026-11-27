@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
@@ -37,7 +38,6 @@ from server.memory.app.code_link_reads import (
     memory_inputs,
 )
 from server.memory.domain.code_link_keys import IDENTITY, QueuePosition
-from server.memory.domain.observation_tags import OBSERVATION_KEY_PREFIX
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
@@ -100,12 +100,12 @@ async def _link_org(
         existing[a["memory_id"]].append(a)
     todo: dict[str, list[dict[str, Any]]] = defaultdict(list)
     stale: list[LinkRow] = []
-    deleted: set[str] = set()
+    unlinkable: set[str] = set()
     for r in rows:
         links = existing.get(r["mid"], [])
-        if r.get("tombstoned_at") is not None or _is_observation(r):
+        if r.get("tombstoned_at") is not None or is_observation(r):
             if links:
-                deleted.add(r["mid"])  # its links go outright, not as tombstones
+                unlinkable.add(r["mid"])  # its links go outright, not as tombstones
             continue
         tags = [str(t) for t in r.get("tags") or []]
         cns = code_namespace_for(org, str(r["namespace"]), tags)
@@ -120,8 +120,8 @@ async def _link_org(
             todo[cns].append(r)
         else:
             stale.extend(links)
-    if deleted:
-        result.unlinked += await store.drop_gone(org, deleted)
+    if unlinkable:
+        result.unlinked += await store.drop_unlinkable(org, unlinkable)
     out = store.tombstones(stale)
     result.unlinked += len(stale)
     linked: list[str] = []
@@ -160,9 +160,10 @@ async def _relink_rewritten(
         await _link_org(org, newer, result, rereads=rereads)
 
 
-def _is_observation(memory: dict[str, Any]) -> bool:
-    """Whether `memory` is a raw tool observation: a tool call's record, never linked."""
-    return str(memory["memory_key"]).startswith(OBSERVATION_KEY_PREFIX)
+def is_observation(row: Mapping[str, Any]) -> bool:
+    """Whether `row` (a memory head or a link) is of a raw tool observation: any memory
+    whose key starts `obs:`, as `observe.record` writes it."""
+    return str(row["memory_key"]).startswith("obs:")
 
 
 def _names_a_repository(memory: dict[str, Any], tags: list[str], links: list[LinkRow]) -> bool:
@@ -348,12 +349,12 @@ def _link_row(
     )
 
 
-async def sweep_erased(
+async def sweep_unlinkable(
     cursor: dict[str, Any], limit: int, result: link_pass.PassResult
 ) -> dict[str, Any]:
-    """Drop the links of gone memories and of raw tool observations in the next page of
-    the link table, a page a pass, a new cycle `memory_code_links_sweep_interval_s` after
-    the last; the cursor to store."""
+    """Drop the links of unlinkable memories (`store.sweep_page`) in the next page of the
+    link table, a page a pass, a new cycle `memory_code_links_sweep_interval_s` after the
+    last; the cursor to store."""
     if time.time() - float(cursor.get("done_at", 0)) < settings.memory_code_links_sweep_interval_s:
         return cursor
     try:

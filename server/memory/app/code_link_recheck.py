@@ -571,12 +571,15 @@ async def _elsewhere(org: str, cns: str, lost: dict[str, str]) -> dict[str, list
 async def _resolve_pending(
     org: str, cns: str, head: str, files: link_pass.RepoReads, result: link_pass.PassResult
 ) -> list[Move]:
-    """Every pass: drop pending names older than `memory_code_links_pending_days`; once
-    the repository is indexed, relink the memories written before its first index and
-    turn the pending names the head now defines into links."""
-    rows = await store.pending(org, cns, days=int(settings.memory_code_links_pending_days))
-    await store.insert(store.tombstones([r for r in rows if r["expired"]]))
-    rows = [r for r in rows if not r["expired"]]
+    """Every pass: drop pending names older than `memory_code_links_pending_days` and
+    what waits for a raw tool observation; once the repository is indexed, relink the
+    memories written before its first index and turn the pending names the head now
+    defines into links."""
+    rows: list[PendingLink] = []
+    dropped: list[PendingLink] = []
+    for r in await store.pending(org, cns, days=int(settings.memory_code_links_pending_days)):
+        (dropped if r["expired"] or links.is_observation(r) else rows).append(r)
+    await store.insert(store.tombstones(dropped))
     if not head or not rows:
         return []
     awaiting = [r for r in rows if r["qualified_name"] == links.AWAITING_INDEX]

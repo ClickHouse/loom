@@ -401,6 +401,50 @@ async def test_a_pending_name_is_retried_until_the_pending_days_pass(monkeypatch
     ]
 
 
+@pytest.mark.asyncio
+async def test_the_recheck_never_links_a_raw_tool_observation_that_waits(monkeypatch) -> None:
+    # what a pass that linked observations left: a `*` marker and a pending name
+    waiting = [
+        _full(
+            {
+                "memory_id": mid,
+                "memory_key": f"obs:s1:{mid}",
+                "qualified_name": name,
+                "state": "pending",
+                "expired": 0,
+                "version": 1,
+            }
+        )
+        for mid, name in (("marker", code_links.AWAITING_INDEX), ("name", "Reader.get"))
+    ]
+    written: list[Any] = []
+
+    async def rows(org, cns, *, days):
+        return waiting
+
+    async def insert(out):
+        written.extend(out)
+
+    async def read(*args, **kwargs):
+        raise AssertionError("read an observation to link it")
+
+    monkeypatch.setattr(code_links.store, "pending", rows)
+    monkeypatch.setattr(code_links.store, "insert", insert)
+    monkeypatch.setattr(code_links.store, "memory_heads", read)
+    monkeypatch.setattr(code_links.code, "candidates", read)
+    files = code_link_pass.RepoReads("o", "code-a")
+    assert (
+        await code_link_recheck._resolve_pending(
+            "o", "code-a", "c2", files, code_link_pass.PassResult()
+        )
+        == []
+    )
+    assert [(r["qualified_name"], r["tombstoned_at"] is not None) for r in written] == [
+        (code_links.AWAITING_INDEX, True),
+        ("Reader.get", True),
+    ]
+
+
 def test_the_worker_row_and_its_table() -> None:
     from server.memory.store.code_links import TABLE
     from server.workers.registry import _WORKERS
@@ -1183,11 +1227,11 @@ async def test_a_finished_sweep_waits_before_its_next_cycle(monkeypatch) -> None
         return None, 0
 
     monkeypatch.setattr(code_links.store, "sweep_page", sweep_page)
-    done = await code_links.sweep_erased({}, 10, code_link_pass.PassResult())
+    done = await code_links.sweep_unlinkable({}, 10, code_link_pass.PassResult())
     assert pages == [None] and "done_at" in done
-    assert await code_links.sweep_erased(done, 10, code_link_pass.PassResult()) == done
+    assert await code_links.sweep_unlinkable(done, 10, code_link_pass.PassResult()) == done
     stale = {"done_at": time.time() - settings.memory_code_links_sweep_interval_s - 1}
-    await code_links.sweep_erased(stale, 10, code_link_pass.PassResult())
+    await code_links.sweep_unlinkable(stale, 10, code_link_pass.PassResult())
     assert pages == [None, None]
 
 
@@ -3603,7 +3647,7 @@ async def test_a_raw_tool_observation_is_never_linked_and_loses_the_links_it_hol
     async def insert(rows):
         written.extend(rows)
 
-    async def drop_gone(org, ids):
+    async def drop_unlinkable(org, ids):
         dropped.append((org, set(ids)))
         return len(ids)
 
@@ -3612,7 +3656,7 @@ async def test_a_raw_tool_observation_is_never_linked_and_loses_the_links_it_hol
 
     monkeypatch.setattr(code_links.store, "for_memories", for_memories)
     monkeypatch.setattr(code_links.store, "insert", insert)
-    monkeypatch.setattr(code_links.store, "drop_gone", drop_gone)
+    monkeypatch.setattr(code_links.store, "drop_unlinkable", drop_unlinkable)
     monkeypatch.setattr(code_links, "_link", link)
     for module in (code_links, code_link_reads):
         monkeypatch.setattr(module, "code_namespace_for", lambda org, ns, tags: "code-r")
@@ -3659,14 +3703,14 @@ async def test_a_stalled_queue_is_backfilled_once_while_it_catches_up(monkeypatc
         scans.append(after)
         return None  # one page: done
 
-    async def sweep_erased(cursor, limit, result):
+    async def sweep_unlinkable(cursor, limit, result):
         return cursor
 
     monkeypatch.setattr(code_links.code, "link_cursor", link_cursor)
     monkeypatch.setattr(code_links.code, "set_link_cursor", set_link_cursor)
     monkeypatch.setattr(code_links.code, "configured_code_namespaces", lambda: [["o", "c"]])
     monkeypatch.setattr(code_links.store, "queue_horizon", queue_horizon)
-    for fn in (link_queued, backfill, sweep_erased):
+    for fn in (link_queued, backfill, sweep_unlinkable):
         monkeypatch.setattr(code_links, fn.__name__, fn)
     for _ in range(5):
         await worker._link_writes(10, code_link_pass.PassResult())
@@ -3680,7 +3724,7 @@ async def test_a_stalled_queue_is_backfilled_once_while_it_catches_up(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_an_unread_registry_links_nothing_but_still_sweeps_erased_memories(
+async def test_an_unread_registry_links_nothing_but_still_sweeps(
     monkeypatch,
 ) -> None:
     from server.code.domain.index import repos
@@ -3702,7 +3746,7 @@ async def test_an_unread_registry_links_nothing_but_still_sweeps_erased_memories
         calls.append("link")
         return position
 
-    async def sweep_erased(cursor, limit, result):
+    async def sweep_unlinkable(cursor, limit, result):
         calls.append("sweep")
         return cursor
 
@@ -3714,7 +3758,7 @@ async def test_an_unread_registry_links_nothing_but_still_sweeps_erased_memories
     monkeypatch.setattr(code_links.code, "configured_code_namespaces", unread)
     monkeypatch.setattr(code_links.store, "queue_horizon", queue_horizon)
     monkeypatch.setattr(code_links, "link_queued", link_queued)
-    monkeypatch.setattr(code_links, "sweep_erased", sweep_erased)
+    monkeypatch.setattr(code_links, "sweep_unlinkable", sweep_unlinkable)
     await worker._link_writes(10, code_link_pass.PassResult())
     assert calls == ["sweep"] and cursors["repos"] == '[["o", "c"]]'
 
@@ -3779,14 +3823,14 @@ async def test_an_empty_registry_snapshot_neither_links_nor_restarts_the_backfil
         scans.append(after)
         return None
 
-    async def sweep_erased(cursor, limit, result):
+    async def sweep_unlinkable(cursor, limit, result):
         return cursor
 
     monkeypatch.setattr(code_links.code, "link_cursor", link_cursor)
     monkeypatch.setattr(code_links.code, "set_link_cursor", set_link_cursor)
     monkeypatch.setattr(code_links.code, "configured_code_namespaces", lambda: configured.pop(0))
     monkeypatch.setattr(code_links.store, "queue_horizon", queue_horizon)
-    for fn in (link_queued, backfill, sweep_erased):
+    for fn in (link_queued, backfill, sweep_unlinkable):
         monkeypatch.setattr(code_links, fn.__name__, fn)
     await worker._link_writes(10, code_link_pass.PassResult())  # the registry read failed
     assert json.loads(cursors["repos"]) == [["o", "c"]]

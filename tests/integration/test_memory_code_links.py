@@ -2933,7 +2933,7 @@ async def test_a_delayed_cleanup_keeps_links_made_after_a_restore(env) -> None:
                 await _pass()
             return await self.real.execute(sql, params=params)
 
-    assert await store._drop_gone(_RestoreBeforeDelete(get_client()), {ORG: {mid}}) == 1
+    assert await store._drop_unlinkable(_RestoreBeforeDelete(get_client()), {ORG: {mid}}) == 1
     assert [x["state"] for x in await _links(mid)] == ["fresh"]
     await _remove_fetch_rows(env, TRUNK)
     await _pass()

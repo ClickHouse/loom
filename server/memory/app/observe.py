@@ -38,7 +38,6 @@ from server.memory.domain.observation_tags import (
     BLACKLISTED_TAG,
     CRYSTALLIZE_DONE_TAG,
     CRYSTALLIZE_READY_TAG,
-    OBSERVATION_KEY_PREFIX,
     OBSERVATION_TAG,
     SELF_REFERENTIAL_REASON,
     SELF_REFERENTIAL_TAG,
@@ -226,7 +225,7 @@ def _build_narrative(
 def _observation_memory_key(session_id: str, content_sha: str) -> str:
     """Idempotent RMT key for one observation. A re-fired hook for the same
     tool call (same session, same content) collapses onto this key."""
-    return f"{OBSERVATION_KEY_PREFIX}{session_id}:{content_sha[:8]}"
+    return f"obs:{session_id}:{content_sha[:8]}"
 
 
 async def _step_content(input: ObserveRecordInput, kind: str) -> tuple[str, list[str], str]:

@@ -384,6 +384,6 @@ async def test_the_drop_takes_the_links_of_a_raw_tool_observation_and_of_a_memor
             "namespace, memory_id, memory_key, agent, state, version) VALUES ('o', 'c', "
             f"'src/flask/app.py', 'f', 'n', '{ids[name]}', '{keys[name]}', 'a', 'fresh', 1)"
         )
-    assert await store.drop_gone("o", set(ids.values()), ch=ch) == 3
+    assert await store.drop_unlinkable("o", set(ids.values()), ch=ch) == 3
     left = await ch.query_all(f"SELECT memory_key {store._LIVE} ORDER BY memory_key")
     assert [r["memory_key"] for r in left] == [keys["lesson"]]
