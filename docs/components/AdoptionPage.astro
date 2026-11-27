@@ -11,6 +11,7 @@ import {
   adoptionGrowthForRange,
   adoptionPaths,
   daysBefore,
+  periodOffset,
   thresholds,
   usageMetricGroups,
 } from "../lib/adoption-view.mjs";
@@ -87,11 +88,12 @@ const domainSeries = (selfHosted.companyTrends ?? [])
   .filter(
     ({ grain: periodGrain, period, period_end }) => grain === periodGrain && period_end > cutoff && period < today,
   )
-  .map(({ period, period_end, companies }) => ({
+  .map(({ period, period_end, companies, days_reported }) => ({
     day: period,
     value: companies,
+    days: days_reported,
     current: period_end > today,
-    partial: period < cutoff,
+    partial: period < cutoff || days_reported == null || days_reported < periodOffset(period, period_end, "day"),
   }));
 const growth = adoptionGrowthForRange(selfHosted.growth, filters, today);
 const observation = selfHosted.firstObservation;
@@ -121,12 +123,18 @@ const versionOptions = [
 ].sort((a, b) => b.group.localeCompare(a.group) || b.label.localeCompare(a.label, "en", { numeric: true }));
 const selectedVersion = versionOptions.find(({ value }) => value === input("version")) ?? versionOptions[0];
 const versionPeriods = Map.groupBy(versionHistory, ({ period }) => period);
-const versionSeries = Array.from(versionPeriods, ([day, rows]) => ({
-  day,
-  value: rows.find(({ product, version }) => product + "/" + version === selectedVersion?.value)?.installations ?? 0,
-  current: periodEnd(day, grain) > today,
-  partial: day < cutoff,
-}));
+const reportingDays = new Map(events.map(({ period, days_reported }) => [period, days_reported]));
+const versionSeries = Array.from(versionPeriods, ([day, rows]) => {
+  const days = reportingDays.get(day);
+  const end = periodEnd(day, grain);
+  return {
+    day,
+    value: rows.find(({ product, version }) => product + "/" + version === selectedVersion?.value)?.installations ?? 0,
+    days,
+    current: end > today,
+    partial: day < cutoff || days == null || days < periodOffset(day, end, "day"),
+  };
+});
 
 const lifecycleGrain = filters.cohort;
 const lifecycleThresholds = Object.entries(thresholds).map(([value, label]) => ({
@@ -246,7 +254,7 @@ const state = Object.fromEntries(
           <Title type="h2" size="lg" id="activity-title">Self-hosted trends</Title>
           {events.length > 0 && <AdoptionDownload {path} {state} dataset="activity" label="Export activity CSV" />}
         </div>
-        {(events.some(({ opening }) => opening) || domainSeries.some(({ partial }) => partial)) && <Text className="coverage" size="sm" color="muted">
+        {(events.some(({ opening }) => opening) || domainSeries.some(({ day }) => day < cutoff)) && <Text className="coverage" size="sm" color="muted">
           The first calendar period starts before the selected window.
         </Text>}
         <div class="two-column">

@@ -54,7 +54,8 @@ test("keeps the self-hosted route clean when a reporting window is submitted", a
   assert.equal(result.path, "/adoption");
   assert.equal(result.filters.days, 90);
   assert.equal(result.filters.grain, "week");
-  assert.equal(result.headers.get("Cache-Control"), "no-store");
+  assert.equal(result.headers.get("Cache-Control"), "private, max-age=0");
+  assert.equal(result.headers.has("Vercel-CDN-Cache-Control"), false);
 });
 
 test("retains the cumulative baseline and sorts the selected growth periods", () => {

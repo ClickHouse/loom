@@ -90,7 +90,7 @@ const navigation = [
         </Link>
         <nav class="site-nav" aria-label={labels.navigation}>
           {navigation.map(({ label, href, hreflang }) => (
-            <Link size="sm" href={href} hrefLang={hreflang} aria-current={path === href ? "page" : undefined}>{label}</Link>
+            <Link size="sm" href={href} hrefLang={hreflang} aria-current={path === href ? "page" : path.startsWith(href + "/") ? "location" : undefined}>{label}</Link>
           ))}
           {!home && <Link className="mobile-start" href={startHref} hrefLang={startLanguage}>{labels.start}</Link>}
         </nav>

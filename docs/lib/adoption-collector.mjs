@@ -108,7 +108,14 @@ function isReport(report, now) {
 
   const daily = report.schema_version === 3;
   const successfulRequests = daily ? report.daily_successful_requests : report.successful_requests;
-  if (!isCount(successfulRequests) || (daily && new Date(end).getUTCHours() !== 0)) return false;
+  if (
+    !isCount(successfulRequests) ||
+    (daily &&
+      (new Date(end).getUTCHours() !== 0 ||
+        successfulRequests < report.successful_requests ||
+        report.successful_requests > report.requests - report.server_errors))
+  )
+    return false;
 
   const domains = report.user_domains;
   if (!Array.isArray(domains) || (!daily && domains.length > 30)) return false;

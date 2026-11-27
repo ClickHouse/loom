@@ -46,7 +46,10 @@ export async function readAdoptionPage(request, url, pageTab) {
     });
   }
 
-  const headers = new Headers({ "Cache-Control": cacheable ? "public, max-age=0, must-revalidate" : "no-store" });
+  const browserCache = submitted ? "private, max-age=0" : "no-store";
+  const headers = new Headers({
+    "Cache-Control": cacheable ? "public, max-age=0, must-revalidate" : browserCache,
+  });
   if (cacheable) {
     headers.set(
       "Vercel-CDN-Cache-Control",

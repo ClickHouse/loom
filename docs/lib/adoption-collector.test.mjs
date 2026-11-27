@@ -190,6 +190,24 @@ test("accepts all active daily domain names, including domains omitted by the le
   assert.equal((await handleAdoption(request(JSON.stringify(legacy)), options)).status, 400);
 });
 
+test("rejects inconsistent request totals in daily reports", async () => {
+  const invalid = [
+    {
+      ...dailyReport,
+      daily_successful_requests: 0,
+      active_accounts: 0,
+      serving_processes: 0,
+      user_domains: [],
+      domain_activity: [],
+    },
+    { ...dailyReport, server_errors: 1 },
+  ];
+  const settings = { env, now: dailyReportNow, fetcher: () => assert.fail("invalid report reached storage") };
+  for (const packet of invalid) {
+    assert.equal((await handleAdoption(request(JSON.stringify(packet)), settings)).status, 400);
+  }
+});
+
 test("returns an error while writes fail or the warehouse is unconfigured", async () => {
   const fetcher = () => Promise.resolve(new Response("Insert error", { status: 200 }));
   const failure = await handleAdoption(request(JSON.stringify(report)), { env, fetcher, now });

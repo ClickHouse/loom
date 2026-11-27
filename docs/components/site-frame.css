@@ -124,7 +124,7 @@ nav a[aria-current="page"] {
   color: var(--click-global-color-text-default);
 }
 
-.site-nav a[aria-current="page"] {
+.site-nav a:is([aria-current="page"], [aria-current="location"]) {
   color: var(--click-global-color-text-default);
   text-decoration: underline;
   text-decoration-color: var(--accent);

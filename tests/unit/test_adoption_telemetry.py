@@ -129,6 +129,41 @@ def test_public_adoption_query_covers_current_and_complete_periods() -> None:
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_complete_adoption_day_adds_missing_successful_requests_to_reported_attempts() -> None:
+    warehouse = (
+        (ROOT / "deploy" / "telemetry" / "warehouse.sql").read_text().strip().removesuffix(";")
+    )
+    rows = run(
+        [
+            warehouse.replace("now('UTC')", "toDateTime('2026-11-27 18:00:00', 'UTC')"),
+            """
+            INSERT INTO loom_product_analytics.adoption_reports
+                (installation_id, window_start, window_end, day, schema_version, loom_version, clickhouse_version,
+                 requests, successful_requests, server_errors, daily_successful_requests)
+            VALUES
+                ('missing-half', '2026-11-26 12:00:00', '2026-11-27 00:00:00', '2026-11-26',
+                 3, '1.2.3', '26.1.0', 20, 10, 10, 25),
+                ('both-halves', '2026-11-26 00:00:00', '2026-11-26 12:00:00', '2026-11-26',
+                 2, '1.2.3', '26.1.0', 20, 10, 10, NULL),
+                ('both-halves', '2026-11-26 12:00:00', '2026-11-27 00:00:00', '2026-11-26',
+                 3, '1.2.3', '26.1.0', 20, 12, 3, 20),
+                ('legacy', '2026-11-26 00:00:00', '2026-11-26 12:00:00', '2026-11-26',
+                 2, '1.2.3', '26.1.0', 5, 3, 1, NULL)
+            """,
+        ],
+        """
+        SELECT installation_id, requests, successful_requests, server_errors
+        FROM loom_product_analytics.loom_external_adoption_daily
+        """,
+    )
+
+    assert {
+        row["installation_id"]: (row["requests"], row["successful_requests"], row["server_errors"])
+        for row in rows
+    } == {"both-halves": (40, 22, 13), "legacy": (5, 3, 1), "missing-half": (35, 25, 10)}
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_domain_lifecycle_survives_installation_changes_and_reports_only_comparable_periods() -> (
     None
 ):
@@ -140,27 +175,28 @@ def test_domain_lifecycle_survives_installation_changes_and_reports_only_compara
         """
         INSERT INTO loom_product_analytics.adoption_reports
             (installation_id, window_start, window_end, day, schema_version, loom_version,
-             clickhouse_version, requests, successful_requests, user_domains)
+             clickhouse_version, requests, successful_requests, user_domains, daily_successful_requests)
         WITH toDateTime('2026-04-27', 'UTC') + toIntervalHour(number * 12) AS start
-        SELECT 'coverage', start, start + INTERVAL 12 HOUR, toDate(start), 2,
-               '1.0.0', '26.0.0', 0, 0, []
+        SELECT 'coverage', start, start + INTERVAL 12 HOUR, toDate(start), multiIf(number = 44, 1, number = 17, 3, 2),
+               '1.0.0', '26.0.0', 0, 0, [], if(number = 17, 0, NULL)
         FROM numbers(84)
-        WHERE number != 44
+        WHERE number != 16
         """,
         """
         INSERT INTO loom_product_analytics.adoption_reports
             (installation_id, window_start, window_end, day, schema_version, loom_version,
              clickhouse_version, requests, successful_requests, user_domains)
-        WITH toDateTime(report_day, 'UTC') AS start
-        SELECT installation, start, start + INTERVAL 12 HOUR, toDate(start), 2,
+        WITH toDateTime(report_day, 'UTC') + toIntervalHour(hours) AS start
+        SELECT installation, start, start + INTERVAL 12 HOUR, toDate(start), schema,
                '1.0.0', '26.0.0', volume, volume, [(domain, toUInt64(1), volume)]
         FROM VALUES(
-            'installation String, report_day String, domain String, volume UInt64',
-            ('old-team', '2026-05-04', 'gmail.com', 12000),
-            ('new-team', '2026-05-11', 'gmail.com', 12000),
-            ('returning', '2026-05-04', 'returning.example', 1),
-            ('returning', '2026-06-01', 'returning.example', 1),
-            ('new', '2026-06-01', 'new.example', 1)
+            'installation String, report_day String, domain String, volume UInt64, hours UInt8, schema UInt8',
+            ('old-team', '2026-05-04', 'gmail.com', 12000, 0, 2),
+            ('new-team', '2026-05-11', 'gmail.com', 12000, 0, 2),
+            ('new-team', '2026-05-11', 'gmail.com', 1000000, 12, 1),
+            ('returning', '2026-05-04', 'returning.example', 1, 0, 2),
+            ('returning', '2026-06-01', 'returning.example', 1, 0, 2),
+            ('new', '2026-06-01', 'new.example', 1, 0, 2)
         )
         """,
     ]
@@ -180,7 +216,18 @@ def test_domain_lifecycle_survives_installation_changes_and_reports_only_compara
     assert activity("domain", 50_000, "2026-05-11") == (0, 1, 0, 0)
     assert activity("domain", 1_000_000, "2026-05-11") == (0, 0, 0, 0)
     assert activity("domain", 0, "2026-06-01") == (1, 0, 1, 0)
-    assert {row["bucket"] for row in rows} == {"2026-05-04", "2026-05-11", "2026-06-01"}
+    assert {row["bucket"] for row in rows if row["entity"] == "domain"} == {
+        "2026-05-04",
+        "2026-05-11",
+        "2026-06-01",
+    }
+    assert {row["bucket"] for row in rows if row["entity"] == "deployment"} == {
+        "2026-05-04",
+        "2026-05-11",
+        "2026-05-18",
+        "2026-05-25",
+        "2026-06-01",
+    }
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -320,14 +367,14 @@ def test_public_adoption_query_publishes_only_measured_company_activity() -> Non
         ),
     }
     companies = {
-        (row["grain"], row["period"]): row["companies"]
+        (row["grain"], row["period"]): (row["companies"], row["days_reported"])
         for row in map(json.loads, report["company_trends"])
     }
-    assert companies["day", "2026-11-21"] == 1
+    assert companies["day", "2026-11-21"] == (1, 1)
     assert ("day", "2026-11-23") not in companies
-    assert companies["day", "2026-11-24"] == 2
-    assert companies["day", "2026-11-25"] == 0
-    assert companies["week", "2026-11-23"] == 2
+    assert companies["day", "2026-11-24"] == (2, 1)
+    assert companies["day", "2026-11-25"] == (0, 1)
+    assert companies["week", "2026-11-23"] == (2, 3)
 
     accounts = {
         (row["grain"], row["period"]): (

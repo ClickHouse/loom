@@ -130,8 +130,12 @@ function decodeVersionTrends(encoded) {
 }
 
 function decodeCompanyTrends(encoded) {
-  return decodeRows(encoded, ({ grain, period, period_end, companies }) =>
-    isPeriod({ grain, period, period_end }) && isCount(companies) ? { grain, period, period_end, companies } : null,
+  return decodeRows(encoded, ({ grain, period, period_end, companies, days_reported }) =>
+    isPeriod({ grain, period, period_end }) &&
+    isCount(companies) &&
+    (days_reported === undefined || isCount(days_reported))
+      ? { grain, period, period_end, companies, ...(days_reported !== undefined && { days_reported }) }
+      : null,
   );
 }
 
