@@ -15,7 +15,8 @@ module ClickHouse
     #
     # Credentials never reach the logger: header values go through redact_headers, and
     # every line goes through redact_text, so a bearer token that ends up in a message by
-    # mistake still shows only its last four characters.
+    # mistake still shows only its last four characters, and a URL loses its user
+    # information (user:password@).
     module Logging
       LEVELS = %i[debug info warn error off].freeze
       DEFAULT_LEVEL = :warn
@@ -26,8 +27,18 @@ module ClickHouse
       # level names.
       STDLIB_ALIASES = { "warning" => :warn, "critical" => :error, "fatal" => :error, "notset" => :debug }.freeze
 
-      # Credential headers: the scheme and the last four characters survive, nothing else.
+      # Credential headers: only the last four characters survive, and for the
+      # authorization headers their scheme ("Bearer"). A cookie or an API key has no
+      # scheme, so its first word is part of the secret.
       CREDENTIAL_HEADERS = %w[authorization proxy-authorization x-api-key cookie set-cookie].freeze
+      SCHEME_HEADERS = %w[authorization proxy-authorization].freeze
+
+      # The user information in a URL: "https://user:secret@host" keeps "https://host".
+      URL_USERINFO = %r{\b([a-z][a-z0-9+.-]*://)[^\s/?#@]+@}i
+
+      # A level name as it may appear in an error: a plain word, else not shown at all,
+      # since a misplaced secret is not a plain word.
+      PLAIN_WORD = /\A[A-Za-z]{1,16}\z/
 
       BEARER = /\b(Bearer|Basic|Token)\s+([A-Za-z0-9._~+\/=-]{8,})/i
 
@@ -39,7 +50,8 @@ module ClickHouse
         return key.to_sym if LEVELS.include?(key.to_sym)
         return STDLIB_ALIASES[key] if STDLIB_ALIASES.key?(key)
 
-        raise ArgumentError, "#{source}: invalid log level #{value.to_s.inspect}; expected one of #{LEVELS.join(", ")}"
+        shown = PLAIN_WORD.match?(value.to_s.strip) ? value.to_s.inspect : "(value not shown)"
+        raise ArgumentError, "#{source}: invalid log level #{shown}; expected one of #{LEVELS.join(", ")}"
       end
 
       # A secret as a log line may show it: "…" and, past 8 characters, its last four.
@@ -50,7 +62,9 @@ module ClickHouse
 
       # The value of header +name+ as it may appear in a log line.
       def redact_header_value(name, value)
-        return value unless CREDENTIAL_HEADERS.include?(name.to_s.downcase)
+        name = name.to_s.downcase
+        return value unless CREDENTIAL_HEADERS.include?(name)
+        return redact_secret(value) unless SCHEME_HEADERS.include?(name)
 
         scheme, secret = value.to_s.strip.split(/\s+/, 2)
         secret ? "#{scheme} #{redact_secret(secret)}" : redact_secret(scheme)
@@ -61,9 +75,12 @@ module ClickHouse
         headers.to_h { |name, value| [name, redact_header_value(name, value)] }
       end
 
-      # Rewrites bearer / basic / token credentials embedded in free text.
+      # Rewrites bearer / basic / token credentials embedded in free text, and drops the
+      # user information from any URL in it.
       def redact_text(text)
-        text.to_s.gsub(BEARER) { "#{Regexp.last_match(1)} #{redact_secret(Regexp.last_match(2))}" }
+        text.to_s
+            .gsub(BEARER) { "#{Regexp.last_match(1)} #{redact_secret(Regexp.last_match(2))}" }
+            .gsub(URL_USERINFO, '\1')
       end
 
       # The logger a client writes to: +sink+ filtered to +level+ and above, every line
@@ -83,7 +100,7 @@ module ClickHouse
 
         parse_level(raw, "LOOM_LOG_LEVEL")
       rescue ArgumentError => e
-        sink.warn("#{e.message}; using #{DEFAULT_LEVEL}")
+        sink.warn(redact_text("#{e.message}; using #{DEFAULT_LEVEL}"))
         DEFAULT_LEVEL
       end
 

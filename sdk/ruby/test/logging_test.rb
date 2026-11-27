@@ -144,6 +144,60 @@ class LoggingTest < LoomTest
                                               "X-Api-Key" => KEY, "Cookie" => "short"))
   end
 
+  # A cookie has no scheme: its first word is the session secret itself.
+  def test_a_cookie_or_api_key_header_keeps_no_word_of_its_value
+    redacted = Loom::Logging.redact_headers(
+      "Cookie" => "session=session_secret_0123456789; theme=dark",
+      "Set-Cookie" => "session=session_secret_0123456789; Path=/; HttpOnly",
+      "X-Api-Key" => "Bearer #{KEY}",
+    )
+
+    assert_equal({ "Cookie" => "…dark", "Set-Cookie" => "…Only", "X-Api-Key" => "…1234" },
+                 redacted)
+    redacted.each_value { |v| refute_includes v, "session_secret" }
+  end
+
+  def test_an_unreadable_loom_log_level_holding_a_secret_is_not_echoed
+    ENV["LOOM_LOG_LEVEL"] = "Bearer #{KEY}"
+
+    client(logger: @log)
+
+    assert_equal ["LOOM_LOG_LEVEL: invalid log level (value not shown); expected one of debug, info, warn, error, off; " \
+                  "using warn"], @log.at(:warn)
+    error = assert_raises(ArgumentError) { client(logger: @log, log_level: KEY) }
+    refute_includes error.message, KEY
+  end
+
+  def test_the_debug_line_drops_the_user_information_from_the_base_url
+    respond_json(200, {})
+    url = @server.base_url.sub("://", "://loom-user:mock_password_0123456789@")
+    client(base_url: url, logger: @log, log_level: :debug).memory.get(memory_key: "k")
+
+    debug = @log.at(:debug).first
+    assert_match(%r{→ POST http://127\.0\.0\.1:\d+/v1/memory\.get attempt 1}, debug)
+    @log.lines.each do |_, text|
+      refute_includes text, "mock_password"
+      refute_includes text, "loom-user"
+    end
+  end
+
+  def test_redact_text_drops_url_user_information_anywhere_in_a_line
+    assert_equal "cannot reach https://loom.example.com/v1/memory.get",
+                 Loom::Logging.redact_text("cannot reach https://u:p4ss@loom.example.com/v1/memory.get")
+  end
+
+  # Matching the TypeScript and Python SDKs: the info line times the last attempt, not
+  # the backoff before it.
+  def test_the_info_line_times_the_last_attempt_not_the_backoff
+    respond_json(503, { detail: { code: "OVERLOADED", message: "busy", category: "capacity", retryable: true } })
+    respond_json(200, {})
+    client(logger: @log, log_level: :info, retry_policy: { max_attempts: 2, backoff_jitter: 0 },
+           sleeper: ->(_) { sleep(0.4) }).memory.get(memory_key: "k")
+
+    ms = @log.at(:info).first[/ (\d+) ms /, 1].to_i
+    assert_operator ms, :<, 400
+  end
+
   def test_a_token_in_a_message_is_redacted_before_it_reaches_the_logger
     leveled = Loom::Logging.logger_for(@log, :debug)
     leveled.warn("retrying with Authorization: Bearer #{KEY}")

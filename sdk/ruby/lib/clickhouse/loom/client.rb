@@ -206,12 +206,15 @@ module ClickHouse
       def succeeded(op, response, state)
         out = decode(op, response)
         rid = response["X-Request-Id"] || state[:request_id]
-        @log.info("#{op} #{response.code} #{elapsed_ms(state)} ms attempts=#{state[:sent]} rid=#{rid}")
+        # The last attempt's own time, as the TypeScript and Python SDKs report it: not
+        # the backoff and 429 waits before it.
+        @log.info("#{op} #{response.code} #{elapsed_ms(state, :attempt_started)} ms attempts=#{state[:sent]} rid=#{rid}")
         out
       end
 
       # The answer of one attempt, or nil after a connection failure the policy resends.
       def attempt(op, spec, body, headers, policy, state)
+        state[:attempt_started] = now
         @log.debug("#{op} → POST #{@base_url}/v1/#{op} attempt #{state[:attempt]} waits #{(@read_timeout * 1000).round} " \
                    "ms bytes #{body.bytesize} #{Logging.redact_headers(headers)}")
         post(op, body, headers)
@@ -316,8 +319,8 @@ module ClickHouse
         Process.clock_gettime(Process::CLOCK_MONOTONIC)
       end
 
-      def elapsed_ms(state)
-        ((now - state[:started]) * 1000).round
+      def elapsed_ms(state, from = :started)
+        ((now - state[from]) * 1000).round
       end
 
       def first_non_blank(*values)
