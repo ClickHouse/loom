@@ -72,7 +72,7 @@ test("too little to remember is null; the tail is kept under the bound", () => {
   assert.ok(long.messages[0].content.length <= 6000 && long.messages[0].content.endsWith("[truncated]"));
 });
 
-test("a session with under 40 characters of user and assistant text is not sent", () => {
+test("a session with under 40 bytes of user and assistant text is not sent", () => {
   const body = (user, reply, ...more) =>
     sessionMemoryBody(scope, { session_id: "s1" }, [
       { role: "user", content: user },
@@ -83,6 +83,8 @@ test("a session with under 40 characters of user and assistant text is not sent"
   assert.equal(body("x".repeat(38), "y"), null);
   assert.equal(body("x".repeat(39), "y").messages.length, 2);
   assert.equal(body("Use pnpm here, never npm.", "Understood: pnpm for installs.").messages.length, 2);
+  // 38 characters, 100 bytes.
+  assert.equal(body("今後このリポジトリではnpmではなくpnpmを使ってください。", "了解しました。").messages.length, 2);
   // A tool's image placeholder is not text the user or the assistant wrote.
   assert.equal(
     body("what is this?", "A red bar.", { role: "tool", content: "[image: 1 image result returned by a tool]" }),
