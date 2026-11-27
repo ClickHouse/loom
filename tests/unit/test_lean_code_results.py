@@ -529,18 +529,17 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
             "edit_context_next": edit_step,
             "next": suggestion,
         }
-    # the follow-ups offered are the ones the connection's own listing shows
-    selectors: list[tuple[Any, ...]] = []
-
-    def listed(*asked: Any) -> set[str]:
-        selectors.append(asked)
-        return set()
-
-    monkeypatch.setattr(mcp_tools, "listed_tool_names", listed)
-    lr.mcp_op_result(
-        "code.grep", payload, arguments, None, toolset="coding", schema_profile="compact"
-    )
-    assert selectors == [("coding", "compact")]
+    # a bound connection gets the same reply, and the listing of code tools alone
+    # carries both tools the reply names
+    scope = set_code_scope("acme/code-repo")
+    try:
+        bound = lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset="coding")
+        assert bound == {**result, "edit_context_next": edit_step, "next": suggestion}
+        assert {"loom_code_read", edit_step["tool"]} <= mcp_tools.listed_tool_names(
+            "coding", "compact"
+        )
+    finally:
+        reset_code_scope(scope)
 
 
 def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lookup() -> None:

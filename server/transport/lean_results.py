@@ -236,13 +236,11 @@ def mcp_op_result(
     hint: tuple[str, str] | None,
     *,
     toolset: str | None = None,
-    schema_profile: str | None = None,
 ) -> Any:
     """The structured result an MCP `tools/call` returns for a registry op:
     the lean shape, a context.pack cut to its bundle, and
     the mentor hint as a key — unless the payload already carries it (a
-    pack renders the same line in its `<mentor>` section). ``toolset`` and
-    ``schema_profile`` are the URL's selectors."""
+    pack renders the same line in its `<mentor>` section)."""
     out = lean_result(result, arguments)
     if op_name == "context.pack":
         out = lean_pack(out)
@@ -256,9 +254,10 @@ def mcp_op_result(
 
         followups: frozenset[str] = frozenset()
         if op_name == "code.grep" and (arguments or {}).get("include_body") is False:
+            # Both are code tools, which the listing of code tools alone keeps:
+            # the toolset decides, whatever the URL's profile.
             candidates = {"loom_code_read", "loom_code_edit_context"}
-            listed = listed_tool_names(toolset, schema_profile)
-            followups = frozenset(candidates.intersection(listed))
+            followups = frozenset(candidates.intersection(listed_tool_names(toolset)))
         out = lean_code(op_name, out, arguments, followups=followups)
     out = _with_ignored_args(op_name, out, arguments)
     if hint is not None and isinstance(out, dict):
