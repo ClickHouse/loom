@@ -8,7 +8,8 @@ seo:
 # Memory linked to code for coding agents
 
 Loom links coding agents' memories to the functions, classes and files they name, follows
-them through refactors, and flags a memory when its code changes. By default, search leaves
+them through refactors, and flags a memory when its code changes. Team decisions and notes
+saved as memories use the same links. By default, search leaves
 out a memory whose code is all gone unless a person pinned, locked or verified it, and every
 read that serves a lesson says when its code changed or is gone. It runs over MCP, HTTP and
 the SDKs on the repositories a self-hosted Loom indexes (the
@@ -89,10 +90,43 @@ hooks capture with `repo:<id>`, and the session primer names the id
 agent saves itself with `loom_memory_set` links when it carries that tag
 (`tags: ["repo:<id>"]`) or is written in the repository's code namespace; any client can do
 either. Over HTTP (or `agent.call` in the Python SDK), a lesson saved in your own namespace
-is read only when the call names that namespace in `lesson_namespaces`. Each link pass links
-writes at least 60 seconds old and passes run every 60 seconds, so once trunk is indexed,
-`code.symbol` on that definition returns the lesson under `lessons` within about two
-minutes.
+is read only when the call names that namespace in `lesson_namespaces`. Writes become
+eligible after `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` (60 seconds by default). An
+admitted worker processes them on later passes; `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS`
+defaults to 60 seconds. Queue backlogs, pass duration and worker failures can delay
+completion. Once trunk is indexed, read `code.symbol` on the definition and check
+`lessons` to confirm that the link resolved.
+
+### Save and retrieve a linked team decision
+
+Replace the repository tag, symbol and claim with a real, verified lesson from your
+indexed repository. Use a token with write access to `team-context` and namespace-wide
+read access to both `team-context` and `code-example`. This example saves a memory
+outside the code namespace, so the symbol read explicitly names its memory namespace:
+
+```sh
+curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/memory.set" \
+  -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"org":"example","namespace":"team-context","agent":"design-assistant","memory_key":"design/retry-tests","value":"Changes to `pkg.Reader.fetch_page` require retry tests.","tags":["repo:<repository-id>"]}'
+```
+
+Check the write receipt before claiming it was saved
+([write outcomes](../guides/agent-integration.md#4-read-the-writes-answer)). After the
+link worker has processed it, request the actual indexed definition:
+
+```sh
+curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/code.symbol" \
+  -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"org":"example","namespace":"code-example","name":"pkg.Reader.fetch_page","include_lessons":true,"lesson_namespaces":["team-context"]}'
+```
+
+Look for the saved memory under `lessons` and inspect `code_state`. A saved memory is
+not proof that a link resolved. An ambiguous name, pending indexing or link work,
+permissions and response caps can prevent it appearing; use `memory.get` to inspect
+the memory's own `code` links. A tag associates content with a repository; it grants
+no read access.
 
 ## Check a lesson after a code edit
 
@@ -129,6 +163,22 @@ tool selection are not tested.
 
 For removal, held-memory exceptions and model-backed revision, see the
 [link policies](../concepts/memory.md#memories-linked-to-code).
+
+To list review work for the example memory, call the read-only integrity report:
+
+```sh
+curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/namespace.validate" \
+  -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"org":"example","namespace":"team-context","keys":["design/retry-tests"]}'
+```
+
+Inspect `code_links_stale` findings and any skipped checks. The report omits repositories
+the token cannot read without marking the check skipped. A zero count covers only
+readable repositories; unavailable evidence does not prove freshness. Review the
+current source and revise the same memory key when the decision changes;
+[history and provenance](../features/memory/history-and-provenance.md) retain the prior
+versions. A code change alone does not authorize rewriting the decision.
 
 ## Compare a code-linked lesson across branches
 

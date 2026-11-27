@@ -39,10 +39,36 @@ curl --fail-with-body -sS "$LOOM_BASE_URL/v1/code.ask" \
 This returns retrieved `citations` with `path`, `start_line` and `end_line`. The
 `answer` field is empty because the request skips synthesis and cached drafts.
 `rerank: "none"` skips reranking. Retrieval can still use the deployment's
-embedding provider. To let Loom draft the answer, set `synthesize` to `true` with a
-[configured server model](../getting-started/models-and-keys.md). Omit `no_cache`
-to let Loom reuse a cached draft. The corresponding MCP tool is
+embedding provider. The corresponding MCP tool is
 [`loom_code_ask`](../reference/operations/code.md#codeask).
+
+To let Loom draft the answer, use a [configured server model](../getting-started/models-and-keys.md)
+and set `synthesize: true`:
+
+```sh
+curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/code.ask" \
+  -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"org":"example","namespace":"code-example","question":"Where are incoming requests authorized?","synthesize":true}'
+```
+
+To verify a model call, first enable tracing and verify that your exporter receives
+spans. Add `--include` to show the `X-Trace-Id` response header and `"no_cache":true`
+to the JSON body. In that trace, look for a successful generation span with
+`loom.llm.stage=code_answer` and the intended provider and model. An abstention can
+skip synthesis, and a successful generation at another stage is not proof of answer
+synthesis. With `LOOM_READS_LLM_FREE=true`, the request returns HTTP 409
+`READS_LLM_FREE` without calling the synthesis model. A
+[spend cap](../features/observability/cost-and-usage.md#daily-spend-caps) can skip synthesis
+while still returning retrieval results. Check those policies before diagnosing a
+missing span as a provider failure. This probe can incur model charges.
+
+A grounded answer returns `answer` and `citations`; an unanswerable question can return
+`abstain` and `abstain_reason`. With cache lookup enabled, a matching cached synthesized
+answer can still be returned. Set `synthesize: false` and `no_cache: true` to retrieve
+citations without fresh synthesis or a cached answer. Retrieval can still use the
+query-embedding cache. The [code operation reference](../reference/operations/code.md#codeask)
+gives the full contract.
 
 Use `as_of` when available to check the indexed branch and commit behind the result.
 Check `abstain`, `partial` and their reasons before displaying an answer. To test
@@ -51,11 +77,30 @@ the repository cannot answer and check that the client surfaces the abstention o
 missing evidence. Use a separate identity without repository access to check that
 it cannot retrieve those citations. [Index freshness](../features/code-index/freshness.md)
 
-| Use case                    | Evidence to request                                                                                                                                 |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Triage a reported behavior  | `code.search` to find relevant code, then `code.symbol` and `code.callers` to inspect a definition and its indexed callers.                         |
-| Review a proposed change    | `code.impact` to inspect mapped definitions and tests, and [code-linked team lessons](../use-cases/memory-linked-to-code.md) for earlier decisions. |
-| Answer a team chat question | `code.ask` to retrieve citations or produce an answer backed by indexed source ranges.                                                              |
+## Serve triage agents, design assistants and team chatbots
+
+| Assistant        | Evidence to request                                                                                           | Result to check                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Triage agent     | `code.search` for the symptom, then `code.symbol` and `code.callers` for the relevant definition              | Cited implementation and callers that explain the reported path            |
+| Design assistant | `code.impact` for a proposed symbol change and [linked team decisions](../use-cases/memory-linked-to-code.md) | Affected definitions, test mappings and lessons with their freshness state |
+| Team chatbot     | `code.ask` for a cited answer, or `code.search` for the application's own reader                              | Source ranges supporting each claim, or an explicit abstention             |
+
+When a chatbot replies in a shared channel, every evidence source must be readable by
+both the questioner and every reader of the reply. That includes repositories and
+any memory namespaces available to `code.ask` synthesis. Checking the repository
+alone is not enough, even for a fresh answer. If the host cannot verify the scope of
+all synthesis inputs, retrieve only from explicitly authorized sources and synthesize
+in the host using only that evidence. If the host cannot establish that scope either,
+reply privately with separate authorization or abstain. See
+[audience-scoped retrieval](audience-scoped-retrieval.md) for the host-side pattern.
+
+The answer concerns the indexed branch, not an uncommitted local checkout. Check
+[freshness](../features/code-index/freshness.md), [language and compiler-tier support](../features/code-index/overview.md#language-support),
+and returned truncation or lower-bound metadata. An empty caller list does not prove
+there are no runtime callers, and an impact test mapping does not mean a test ran.
+Use the [SDK intent table](code-tools.md#choose-evidence-by-intent) to expose bounded
+lookups to a model, and [evaluate on your own repository](../getting-started/evaluate.md#code-intelligence)
+before relying on its answers.
 
 ## Calibrate the embedding model
 
@@ -138,6 +183,12 @@ is a separate result. Keep both measures when evaluating a repository assistant.
 
 ## Using retrieval inside a coding agent
 
+An existing checkout already provides local files and tools. Loom can add remote
+cross-file relationships, cited retrieval and shared lessons that are not present in
+that checkout. Whether these reduce work or improve answers depends on the task and
+index coverage. Use local tools for uncommitted files and insufficient or unsupported
+indexed results; check the indexed commit before treating evidence as current.
+
 For a coding agent, also inspect whether the model requested tools and received useful
 results. A connected MCP server does not establish tool adoption. Hook-supplied
 evidence and model-selected lookups are separate paths; report them separately.
@@ -149,6 +200,9 @@ must happen; model instructions guide discretionary investigation.
 
 For issue-resolution comparisons, give both arms the same public issue, historical
 base, tools for local work, test access and execution budgets. Keep reference fixes
-and hidden tests outside the agent's checkout. Count test-gate overhead, backend model
-usage and failed or unused tools. Zero tool use is a tool-adoption result and must
+and hidden tests out of the checkout and out of retrievable evidence. Apply the same
+task cutoff to Loom's indexed source and Git, pull-request and tracker history, shared
+memory, and cached answers. If you cannot rule out access to the reference fix, label
+the result as an upper bound, not a clean comparison. Count test-gate overhead, backend
+model usage and failed or unused tools. Zero tool use is a tool-adoption result and must
 remain in the report. See [benchmark methodology](../benchmarks/methodology.md).

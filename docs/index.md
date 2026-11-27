@@ -125,6 +125,7 @@ client sees one the server no longer reads.
 ## Guides
 
 [Agent integration](guides/agent-integration.md) ·
+[Offer Loom in an agent platform or factory](guides/agent-platforms.md) ·
 [Headless bots](guides/headless-bots.md) ·
 [Tokens and grants](guides/tokens-and-grants.md) ·
 [Trace and resume long runs](guides/trace-and-resume.md) ·
@@ -162,6 +163,7 @@ client sees one the server no longer reads.
 
 [Overview](features/code-index/overview.md) ·
 [Repositories](features/code-index/repositories.md) ·
+[Repository Q&A for agents and chatbots](guides/repository-questions.md) ·
 [Freshness](features/code-index/freshness.md) ·
 [History and PRs](features/code-index/history-and-prs.md) ·
 [Operations](features/code-index/operations.md) ·

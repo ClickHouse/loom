@@ -11,7 +11,8 @@ the index is built is in
 The [language support table](#language-support) distinguishes fast-tier symbols and
 edges from compiler-tier coverage.
 
-The code workers are off by default; a deployment turns them on per repository
+Worker defaults vary by tier; check the [workers reference](../../reference/workers.md).
+A worker also needs an admitted supervisor and a repository configured for its tier
 ([repositories](repositories.md)). The default `core` MCP toolset lists no code tools
 unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
 
@@ -31,6 +32,12 @@ unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
 | Is the index current enough to answer?                         | `code.index_status`, `as_of` when returned              |
 
 Every op, grouped by task, is on [operations.md](operations.md).
+
+Use `memory.search` to find decisions and lessons in a namespace the caller can read.
+The default scope searches per-agent rows; use `scope: "shared"` for memories promoted
+to the namespace's shared scope. Use `memory.set` to record a verified reusable lesson
+in a namespace the caller can write. See [how to save and retrieve a linked team decision](../../use-cases/memory-linked-to-code.md#save-and-retrieve-a-linked-team-decision)
+for the write and a follow-up lookup by symbol.
 
 Python symbol lookups accept dotted import names such as `package.encoder.dumps`
 and package names such as `package::dumps` for a definition in
@@ -87,8 +94,11 @@ Structure is extracted twice. Each symbol and edge names its tier (`tier`: `scip
   [code index operations](../../operations/code-index-operations.md#compiler-tier)). An
   external producer can upload with `code.scip_ingest`. It gives exact call, override
   and inheritance edges. Its C/C++, Go and TypeScript steps execute the repository's own
-  build code; they run inside the
-  [repository-job sandbox](../../operations/code-index-operations.md#repository-job-sandbox).
+  build code. They use the
+  [repository-job sandbox](../../operations/code-index-operations.md#repository-job-sandbox)
+  when available. With `LOOM_CODE_SANDBOX_REQUIRED=true` they refuse to run without
+  it; otherwise, operator-configured repositories can run those builds as plain
+  processes.
 
 Why two: the fast tier is cheap, so a merge is searchable after one ingest pass. The
 compiler tier needs a build environment and trails. Serving both, labelled, gives an
@@ -317,18 +327,18 @@ generated from the same schemas.
 Start with `code.index_status` (watermarks, lags, tiers, worker errors) and
 `code.coverage` (what the namespace holds).
 
-| Symptom                                    | Cause                                                     | Fix                                                                   |
-| ------------------------------------------ | --------------------------------------------------------- | --------------------------------------------------------------------- |
-| a symbol you just added is not found       | uncommitted, unpushed, or not yet ingested                | grep your tree; `code.index_status` shows the lag                     |
-| `lag_commits: 0` but merges are missing    | the mirror stopped fetching                               | `clone_fetched_at` / `fetch_overdue`, then `/v1/admin/workers.status` |
-| a fix you know exists is not found         | wrong branch namespace                                    | `code.grep mode=presence namespaces=[…]`                              |
-| `AUTH_INSUFFICIENT` on every `code.*` call | the token does not name the code namespace                | join the repository, or mint with `--namespaces`                      |
-| a call that names no namespace is refused  | no `X-Loom-Code-Scope` header and no deployment default   | pass `namespace`, or set `LOOM_CODE_ORG` / `LOOM_CODE_NAMESPACE`      |
-| no code tools in the MCP list              | the `core` toolset without `LOOM_MCP_CODE_TOOLS=true`     | mount `?toolset=coding`, or set the flag                              |
-| `code.search` says lexical-only            | embedding coverage below `LOOM_CODE_READY_EMBED_COVERAGE` | enable `code_embed_recovery`; watch `embedding_coverage`              |
-| callers look incomplete for a language     | the language has only the fast tier                       | read `epistemic` / `causes`; `code.coverage` shows the `scip` column  |
-| every namespace re-indexing after a deploy | an extractor module changed (the stamp moved)             | expected; progress is in `code_index_state`                           |
-| a self-service repository stuck in `error` | clone or first index failed                               | read `stage_detail` on `code.repos`                                   |
+| Symptom                                    | Cause                                                     | Fix                                                                                        |
+| ------------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| a symbol you just added is not found       | uncommitted, unpushed, or not yet ingested                | grep your tree; `code.index_status` shows the lag                                          |
+| `lag_commits: 0` but merges are missing    | the mirror stopped fetching                               | `clone_fetched_at` / `fetch_overdue`, then `/v1/admin/workers.status`                      |
+| a fix you know exists is not found         | wrong branch namespace                                    | `code.grep mode=presence namespaces=[…]`                                                   |
+| `AUTH_INSUFFICIENT` on every `code.*` call | the caller lacks sufficient access for the operation      | check token scope and live grants against [the access rules](repositories.md#who-can-read) |
+| a call that names no namespace is refused  | no `X-Loom-Code-Scope` header and no deployment default   | pass `namespace`, or set `LOOM_CODE_ORG` / `LOOM_CODE_NAMESPACE`                           |
+| no code tools in the MCP list              | the `core` toolset without `LOOM_MCP_CODE_TOOLS=true`     | mount `?toolset=coding`, or set the flag                                                   |
+| `code.search` says lexical-only            | embedding coverage below `LOOM_CODE_READY_EMBED_COVERAGE` | enable `code_embed_recovery`; watch `embedding_coverage`                                   |
+| callers look incomplete for a language     | the language has only the fast tier                       | read `epistemic` / `causes`; `code.coverage` shows the `scip` column                       |
+| every namespace re-indexing after a deploy | an extractor module changed (the stamp moved)             | expected; progress is in `code_index_state`                                                |
+| a self-service repository stuck in `error` | clone or first index failed                               | read `stage_detail` on `code.repos`                                                        |
 
 Operator signals (tier lag, stale files, failed passes) are in
 [code index operations](../../operations/code-index-operations.md).

@@ -1,9 +1,13 @@
 # Code index operations
 
-This page covers how to enable the code index workers, configure repositories and keep
-the index current; the code index runs only when an operator enables its workers and
-configures repositories. Every `code_*` worker except `code_coverage_notify` and
-`code_backport_gaps` is off by default. What the `code.*` operations answer is in the
+This page covers how to configure code index workers and repositories and keep the
+index current. Workers run when the supervisor is admitted and their settings and
+repository prerequisites permit it. Some compiler workers are enabled by default;
+they still need a configured repository, its first indexed revision and the required
+checkout and toolchain. Repository jobs follow the sandbox policy. Check each worker's
+defaults in the [workers reference](../reference/workers.md) and the
+[configuration reference](../reference/configuration.md#code).
+What the `code.*` operations answer is in the
 [code index overview](../features/code-index/overview.md); how the index is built is in
 [code index architecture](../architecture/code-index-architecture.md).
 
@@ -167,9 +171,15 @@ configured restricted namespace, so a private repository is set up in this order
    finish step 3 before handing out `*` tokens of the org.
 3. The maintainer restricts it with `code.repo.set_access` (`classification: "restricted"`
    and `join_policy: "approval"` or `"closed"`; both are required); then set
-   `classification: "restricted"` on the entry as well, so either input restricts, and run
-   `loom code backfill`. Mirrors and compiler-tier checkouts are created at mode 2770
-   when they belong to `code_repos_shared_gid`, open to the server's
+   `classification: "restricted"` on the entry as well to align the configured default
+   with the stored policy. A stored access decision takes precedence over the
+   configured classification and join policy. Wait the `effective_within_s` returned
+   by `code.repo.set_access` for the change to reach all serving processes. Check
+   `code.repos` with the maintainer's token and with a same-org token outside the
+   restricted scope. The maintainer's row has `readable: true`; the other token must
+   not get a readable row. If the check fails, do not index the repository. Once
+   both checks pass, run `loom code backfill`. Mirrors and compiler-tier checkouts are
+   created at mode 2770 when they belong to `code_repos_shared_gid`, open to the server's
    user and that group only, and 0700 otherwise (see "Writable git mirrors"); one an
    older build created, or whose mode was changed by hand, is set to that mode at once
    on the host that serves the call, and on every other host that holds it at that
@@ -196,8 +206,9 @@ with `docker compose --env-file .env -f dev/docker-compose.cloud.yml config`.
 
 Who can read an index is governed by the namespace's join policy and grants
 ([tokens and grants](../guides/tokens-and-grants.md)). `LOOM_CODE_ORG_READABLE=true`
-makes every code namespace readable by every principal in the org without a grant; the
-default is off.
+lets authenticated org members read standard code namespaces without a grant; the
+default is off. Restricted namespaces still need a token naming the namespace and a
+live direct grant; see [restricted namespaces](../guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted).
 
 ## First index
 
@@ -220,9 +231,10 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   an operator `git_dir` must be writable by the `loom` user. Network: a host with an
   empty disk makes one full clone per indexed repository; keep `LOOM_CODE_REPOS_ROOT`
   on a persistent volume so a rollout does not re-clone every mirror on every pod.
-- `backfill` parses, chunks, extracts symbols and edges, and embeds each file. It is
-  resumable: re-run it after an interruption. `--phase index` then `--phase embed` splits
-  the work, since the unembedded rows are the embed phase's queue. `--commit <sha>` pins
+- `backfill` parses, chunks, and extracts symbols and edges. With `--embed`, it also
+  embeds each file. It is resumable: re-run it after an interruption.
+  `--phase index` then `--phase embed` splits the work, since the unembedded rows are
+  the embed phase's queue. `--commit <sha>` pins
   the tree (and implies `--no-fetch`); `--concurrency N` parallelises files; `--limit N`
   indexes a sample.
 - The first full backfill of a namespace also re-derives every file's edges after the
@@ -433,13 +445,14 @@ memory the workers process has. The full index of such a tree takes about an hou
   `git gc --no-prune` every `LOOM_CODE_MIRROR_GC_INTERVAL_H`, under the same rules as
   the mirrors (below). Every git command a tier runs in a checkout has auto-gc and
   background maintenance off, so no fetch starts a repack.
-- **Entry locks.** A full pass and a delta never work on the same entry at once: each
-  takes the entry's lock file in `LOOM_CODE_SCIP_LOCK_DIR` (`var/cron/locks`),
+- **C/C++ entry locks.** The `code_scip_full` and `code_scip_delta` workers never work
+  on the same entry at once: each takes the entry's lock file in
+  `LOOM_CODE_SCIP_LOCK_DIR` (`var/cron/locks`),
   `scip.<org>.<namespace>.lock` with both names percent-encoded
   (`loom code scip-lock-path --org ORG --namespace NS` prints it). A full pass waits for
   a delta already on its entry; a delta skips an entry a full pass holds and names it
   under `skipped` ("entry lock held (full pass running)"). Different entries run side by
-  side. Every pass also takes the entry's key in ClickHouse (`scip_entry:<org>/<namespace>`
+  side. These passes also take the entry's key in ClickHouse (`scip_entry:<org>/<namespace>`
   in `loom._migration_lock`), so
   passes on two hosts exclude each other too; a dead holder's key expires after 120 s.
   A pass that cannot take the key (ClickHouse or Keeper unreachable) fails instead of
@@ -588,8 +601,9 @@ operator's proxy: a host that runs the sandbox runs no network git while
 (`dev/docker-compose.colour.yml`) set the container options below. The other Compose
 files (`compose.yaml`, `dev/docker-compose.cloud.yml`) do not: an
 AppArmor profile the host has not loaded stops a container from starting, so they keep
-Docker's defaults, the probe fails and every repository job runs as a plain process (see
-_Without the sandbox_). To run it there, once the host has the profile:
+Docker's defaults. When the sandbox probe fails, jobs may run without it, skip work
+or be refused, depending on the repository type and sandbox policy (see _Without the
+sandbox_). To run it there, once the host has the profile:
 
 - copy the colour file's `security_opt` block and its `pids_limit` (the container's
   backstop). The `seccomp=` path is relative to the project directory (the compose
@@ -789,7 +803,7 @@ The setting also resumes the git jobs of entries that members added before
 `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` was set. They keep the remotes their adders
 named and are cloned and fetched the same way. Before turning it on, list the branches in
 the registry (the active rows of `loom.code_repos` whose `row_kind` is not `access`;
-`code.repos` lists only what its caller may read) and have those a platform admin would
+`code.repos` is caller-filtered and can include request-only metadata) and have those a platform admin would
 not add removed with `code.repo.remove`.
 
 `/v1/health` and `loom doctor` keep reporting `repo_jobs_unsandboxed` as a warning, with
@@ -1063,8 +1077,8 @@ copy.
 | Command                                      | Does                                                                                                                                                                                                                                                                                                                    |
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `loom code compact [--table T] [--apply]`    | measures, and with `--apply` runs, `OPTIMIZE … FINAL` on a code vector table once its physical copies per key reach `LOOM_CODE_COMPACT_MIN_RATIO` (1.5), and waits for the merge; bulk passes do it themselves after `LOOM_CODE_COMPACT_AFTER_BULK_ROWS` rows ([maintenance](./maintenance.md#compaction-and-optimize)) |
-| `loom code warm <questions.txt>`             | asks each question once so `code.ask` answers are cached for everyone (text lines or JSONL with `question`); hits are free, so re-running is safe                                                                                                                                                                       |
-| `loom code answers-purge`                    | retires cached `code.ask` answers after a synthesis-model change (the cache otherwise invalidates only when a cited file changes); dry run until `--apply`                                                                                                                                                              |
+| `loom code warm <questions.txt>`             | asks each question once to populate shared `code.ask` answers (text lines or JSONL with `question`); a valid answer hit avoids fresh synthesis, but query embedding can still cost                                                                                                                                      |
+| `loom code answers-purge`                    | retires stored `code.ask` answers; dry run until `--apply`. Normal reuse already checks the model and prompt, answer-key settings, maximum age and recorded source hashes                                                                                                                                               |
 | `loom code repack`                           | rebuilds context packs for recently merged PRs in the current shape                                                                                                                                                                                                                                                     |
 | `loom code crossref`                         | the SQL/shell test → implementing C++ reference pass (idempotent)                                                                                                                                                                                                                                                       |
 | `loom code coverage-import [--dry-run]`      | imports the newest per-test line coverage run of the configured source into the test map ([measured coverage](#measured-coverage))                                                                                                                                                                                      |
@@ -1088,16 +1102,24 @@ has a gold question set; it is never run in CI, whose embedder is fake
   the mirror host loop; every other code worker keeps its own switch
   ([workers](../reference/workers.md)).
 - **Retire a repository.** A maintainer uses **Retire…** on the repository's Access tab
-  (`code.repo.remove` with `confirm` set to the namespace). The entry goes inactive, an
-  erasure saga purges every `loom.code_*` table for the namespace, and the bare mirror is
-  deleted when no other branch uses it. Search telemetry is kept. An operator-configured
+  (`code.repo.remove` with `confirm` set to the namespace). The registry and directory
+  entries go inactive, and a resumable namespace erasure saga purges selected index
+  tables plus search traces and outcomes. The inactive registry row remains. The index
+  purge excludes `code_answers`; a separate step deletes answers whose quoted
+  `memory_namespace` matches the erased namespace, so other cached code answers can
+  remain. The bare mirror is deleted when no other branch uses it. An operator-configured
   entry is refused with `REPO_FROM_CONFIG`: remove it from `LOOM_CODE_REPOS_JSON`
   instead. With `LOOM_CODE_INTEL_ENABLED=false` the page cannot list repositories, but
   `code.repo.remove` over HTTP, MCP or the SDK is still served; the other replicas then
   sweep their copy of the mirror only once code intelligence is on again.
 - **Erase an index.** `erasure.request` with `scope_type = namespace` on a code namespace
-  also purges the `loom.code_*` tables. An entry that is still configured is re-indexed
-  from scratch on the next pass, so retire it first.
+  also purges indexed content and the `git_head` watermark. An active self-service
+  entry can bootstrap again; an operator-configured entry needs a full
+  `loom code backfill --org <org> --namespace <namespace>` before incremental ingestion
+  resumes. A targeted `--paths-file` repair does not restore that watermark. Add
+  `--embed` to request vector rebuilding in the same backfill. To keep the namespace
+  unindexed, first retire the self-service entry or remove the operator entry from
+  `LOOM_CODE_REPOS_JSON`.
 
 ## When a tier fails
 
