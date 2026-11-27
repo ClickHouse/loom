@@ -303,30 +303,24 @@ function pathNamer(root, cwd) {
     );
 }
 
-// "Do not run the test suite", "don't run any tests yet": an instruction
-// that opens its clause and ends its sentence. `do not run tests/test_slow.py`
-// and `don't run the tests, except tests/test_a.py` rule out some tests,
-// `agents that do not run tests` only mentions the phrase: neither rules out
-// the run.
-const DECLINES = new RegExp(
-  "(?:^|[.!?;:,(\\n—–]\\s*|\\s-\\s+|\\b(?:please|and|but|so|then|also|just)\\s+)" +
-    "(?:do\\s+not|don['’]?t|never)\\s+run\\s+(?:(?:the|any)\\s+)?(?:tests|test\\s+suite)" +
-    "(?=(?:\\s+(?:yet|now|again|please|at\\s+all|for\\s+now|this\\s+time))?[ \\t]*\\)?" +
-    "(?:$|\\n|[.!?]+(?:\\s|$)))",
-  "i",
-);
+// The prompt's last sentence, whole: "Do not run the test suite.", "Please
+// don't run any tests". A sentence that says more (`do not run
+// tests/test_slow.py`, "If lint fails, do not run the tests.") or that is not
+// the last does not rule the run out.
+const DECLINES =
+  /(?:^|[.!?]\s+)(?:please\s+)?(?:do\s+not|don['’]?t|never)\s+run\s+(?:(?:the|any)\s+)?(?:tests|test\s+suite)[.!]*$/i;
 
-/** True when the person's latest prompt tells the agent not to run tests.
- *  Only the latest: "now run them" in a later prompt takes the earlier one
- *  back. Tool results and rows the client injected (isMeta: hook feedback,
- *  a skill body) are not the person speaking. */
+/** True when the person's latest prompt ends by telling the agent not to run
+ *  tests. Only the latest: "now run them" in a later prompt takes the earlier
+ *  one back. Tool results and rows the client injected (isMeta: hook
+ *  feedback, a skill body) are not the person speaking. */
 export function declinesTests(objs) {
   let prompt = "";
   for (const o of objs || []) {
     if (!o || o.type !== "user" || o.isSidechain || o.isMeta || o.isCompactSummary) continue;
     const content = o.message && o.message.content;
     if (Array.isArray(content) && content.some((b) => b && b.type === "tool_result")) continue;
-    prompt = contentText(content);
+    prompt = contentText(content).trim();
   }
   return DECLINES.test(prompt);
 }
@@ -383,13 +377,14 @@ function allPassed(output, runs) {
 /**
  * The repo-relative files and directories pytest ran clean on the tree as
  * it stands, read in transcript order (Claude Code rows; sidechains
- * skipped). A run counts when its command finished no earlier than `since`,
- * the tree's last change, so an edit by a subagent or a script the
- * transcript never shows forgets it. A tree-rewriting git command, or a
- * pytest run that does not count, forgets every earlier run. A command may
+ * skipped). A run counts when its Bash command finished no earlier than
+ * `since`, the newest time of an uncommitted or untracked file, so an edit
+ * by a subagent or a script the transcript never shows forgets it. Any
+ * other shell command after it forgets every earlier run: it may have
+ * deleted or replaced a file, which leaves no newer time. A command may
  * change files and then test them (`cat >> tests/test_a.py <<EOF … EOF;
  * pytest tests`), so within one command only what follows its first pytest
- * is read for a change: a floor, since a rewrite there that names no changed
+ * is read for a change: a floor, since a change there that names no changed
  * path is not seen. A run's paths are read from the directory it ran in:
  * the row's own cwd, moved by at most one `cd` before the first run.
  */
@@ -414,9 +409,10 @@ function cleanRuns(objs, { changed, root, cwd, since } = {}) {
       const name = normalizeToolName(b.name);
       if (name !== "Bash" && name !== "PowerShell") continue;
       const command = commandText(b.input);
-      const runs = [...command.matchAll(PYTEST)];
+      // Bash only: this reader follows no PowerShell move (`Set-Location`).
+      const runs = name === "Bash" ? [...command.matchAll(PYTEST)] : [];
       if (!runs.length) {
-        if (TREE_GIT.test(command)) clean = [];
+        clean = [];
         continue;
       }
       const before = command.slice(0, runs[0].index);
@@ -458,14 +454,14 @@ function cleanRuns(objs, { changed, root, cwd, since } = {}) {
 /**
  * True when the gate's ask is to run tests this checkout has and the
  * transcript already answers it, so the gate has nothing to add: the
- * person's latest prompt said not to run tests, or pytest ran every named
- * test clean (its file, or a directory above it) and the tree has not
- * changed since: `lastModified()` is that change in epoch ms. The stop then
- * names no untested function either. A gate that names a test missing from
- * the checkout, or only untested functions, still asks; so does one whose
- * tests another runner runs, unless the person ruled the run out. Read from
- * Claude Code transcript rows: a Codex rollout answers nothing, so its stop
- * blocks.
+ * person's latest prompt ends by saying not to run tests, or the session's
+ * last shell commands ran every named test clean with pytest (its file, or
+ * a directory above it) and no file is newer: `lastModified()` is the
+ * tree's newest file time in epoch ms. The stop then names no untested
+ * function either. A gate that names a test missing from the checkout, or
+ * only untested functions, still asks; so does one whose tests another
+ * runner runs, unless the person ruled the run out. Read from Claude Code
+ * transcript rows: a Codex rollout answers nothing, so its stop blocks.
  */
 export function runAnswered(gate, objs, { changed, root, cwd, testExists, lastModified } = {}) {
   const tests = gate && Array.isArray(gate.tests) ? gate.tests : [];
@@ -475,6 +471,20 @@ export function runAnswered(gate, objs, { changed, root, cwd, testExists, lastMo
   if (!tests.every((t) => isPytest(t.run))) return false;
   const clean = cleanRuns(objs, { changed, root, cwd, since: lastModified() });
   return paths.every((p) => clean.some((c) => p === c || p.startsWith(`${c}/`)));
+}
+
+/** The newest modification time, in epoch ms, of `files` under `root`.
+ *  Infinity when the list is unknown (null) or a file cannot be read (a
+ *  deleted tracked file), so that no test run counts as later. */
+export function newestChange(root, files) {
+  if (!files) return Infinity;
+  let last = 0;
+  try {
+    for (const file of files) last = Math.max(last, fs.statSync(path.join(root, file)).mtimeMs);
+  } catch {
+    return Infinity;
+  }
+  return last;
 }
 
 /** The checkout root as `cwd` spells it, when that differs from git's: a

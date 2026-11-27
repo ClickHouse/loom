@@ -42,6 +42,7 @@ import {
   decideBlock,
   gatePayload,
   gateSignature,
+  newestChange,
   renderGate,
   runAnswered,
   sessionScope,
@@ -49,7 +50,6 @@ import {
 
 const ENABLED = envSwitch("LOOM_TEST_GATE", true);
 const DEPTH = Math.min(3, Math.max(1, Number(process.env.LOOM_TEST_GATE_DEPTH || 2)));
-const PLAIN = ["-c", "core.quotePath=false"];
 
 async function main() {
   if (!ENABLED) {
@@ -74,10 +74,9 @@ async function main() {
     scheduleExit(0);
     return;
   }
-  // Paths as the file system names them: git quotes a non-ASCII one otherwise.
-  const dirty = git([...PLAIN, "diff", "--name-only", "HEAD"], root, { timeoutMs: 2000 })
-    .split("\n")
-    .map((s) => s.trim())
+  // -z: paths as the file system names them, where git would quote one.
+  const dirty = git(["diff", "--name-only", "-z", "HEAD"], root, { timeoutMs: 2000, raw: true })
+    .split("\0")
     .filter(Boolean);
   if (!dirty.length) {
     scheduleExit(0);
@@ -135,24 +134,14 @@ async function main() {
       return false;
     }
   };
-  // When the tree last changed: the newest mtime of an uncommitted or
-  // untracked file. Infinity when one cannot be read (a deleted file, a
-  // listing that failed), so that no test run counts as later.
+  // The newest file time among the uncommitted and untracked files.
   const lastModified = () => {
-    const untracked = git([...PLAIN, "ls-files", "--others", "--exclude-standard"], root, {
+    const untracked = git(["ls-files", "-z", "--others", "--exclude-standard"], root, {
       timeoutMs: 2000,
+      raw: true,
       fallback: null,
     });
-    if (untracked === null) return Infinity;
-    let last = 0;
-    try {
-      for (const file of [...dirty, ...untracked.split("\n").filter(Boolean)]) {
-        last = Math.max(last, fs.statSync(path.join(root, file)).mtimeMs);
-      }
-    } catch {
-      return Infinity;
-    }
-    return last;
+    return newestChange(root, untracked === null ? null : [...dirty, ...untracked.split("\0").filter(Boolean)]);
   };
   if (runAnswered(gate, rows, { changed, root, cwd, testExists, lastModified })) {
     scheduleExit(0);

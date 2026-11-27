@@ -369,7 +369,7 @@ test("checkoutPython runs no pytest.py planted in the checkout", () => {
 import http from "node:http";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { declinesTests, runAnswered } from "../lib/test-gate.mjs";
+import { declinesTests, newestChange, runAnswered } from "../lib/test-gate.mjs";
 import { cachePathFor } from "../lib/repo-scope.mjs";
 import { hostEnv } from "./host-env.mjs";
 
@@ -420,7 +420,8 @@ test("a clean pytest run of the named test after the last change answers the gat
     answered([edit(), bash(".venv/bin/pytest /r/tests/test_a.py -q", "3 passed, 1 warning in 62.10s (0:01:02)")]),
     true,
   );
-  assert.equal(answered([edit(), bash(SUITE, PASSED), bash("git status --short", " M src/a.py")]), true);
+  // A tool that is not a shell forgets nothing.
+  assert.equal(answered([edit(), bash(SUITE, PASSED), call("Read", { file_path: "/r/src/a.py" }, "x")]), true);
   // Two files, two runs, no change between them.
   const two = {
     ...RUN_GATE,
@@ -433,8 +434,6 @@ test("a clean pytest run of the named test after the last change answers the gat
   ];
   assert.equal(answered(runs, two), true);
   assert.equal(answered(runs.slice(0, 2), two), false);
-  // Reading a changed file changes nothing.
-  assert.equal(answered([edit(), bash(SUITE, PASSED), bash("git diff -- src/a.py", "+x")]), true);
   for (const launched of [
     "timeout 300 .venv/bin/python -m pytest tests -q",
     "env -u CI LOOM_ENV_FILE= $PY -m pytest tests -q",
@@ -480,21 +479,35 @@ test("a run's paths are read from the directory its command moved to", () => {
     assert.equal(answered([edit(), bash(elsewhere, "3 passed in 0.10s")]), false, elsewhere);
     assert.equal(answered([edit(), bash(elsewhere, "3 passed in 0.10s")], nested), false, elsewhere);
   }
+  // A PowerShell run is not read: its moves are not ones the reader knows.
+  for (const command of ["pytest tests -q", "Set-Location sub; pytest tests -q"]) {
+    const rows = [edit(), call("PowerShell", { command }, "3 passed in 0.10s")];
+    assert.equal(answered(rows), false, command);
+    assert.equal(answered(rows, nested), false, command);
+  }
 });
 
-test("a run before the tree's last change answers nothing", () => {
+test("a run before the tree's last change or another shell command answers nothing", () => {
   assert.equal(answered([edit()]), false);
   assert.equal(answered([bash(SUITE, PASSED), edit()]), false);
-  // Changes the transcript does not show as one: a subagent's edit, a rewrite
-  // that names no changed path, a new untracked file.
-  for (const unseen of [
-    () => call("Agent", { prompt: "tidy src/a.py" }, "done", WROTE),
-    () => bash("ruff check --fix .", "", WROTE),
-    () => bash("sed -i s/a/b/ src/*.py", "", WROTE),
-    () => bash("cat > tests/conftest.py <<'EOF'\nx = 1\nEOF", "", WROTE),
+  // A change the transcript does not show as one, such as a subagent's edit: the file is newer.
+  assert.equal(
+    answered([edit(), bash(SUITE, PASSED), call("Agent", { prompt: "tidy src/a.py" }, "done", WROTE)]),
+    false,
+  );
+  assert.equal(answered([edit(), bash(SUITE, PASSED), call("Agent", { prompt: "explain src/a.py" }, "done")]), true);
+  // Any other shell command after the run: a delete or a copy can leave no newer file, and a read is not told apart.
+  for (const later of [
+    "ruff check --fix .",
+    "rm src/helper.py",
+    "mv src/helper.py src/util.py",
+    "cp -p /tmp/a.py src/b.py",
+    "git status --short",
+    "git diff -- src/a.py",
   ]) {
-    assert.equal(answered([edit(), bash(SUITE, PASSED), unseen()]), false);
+    assert.equal(answered([edit(), bash(SUITE, PASSED), bash(later, "")]), false, later);
   }
+  assert.equal(answered([edit(), bash(SUITE, PASSED), call("PowerShell", { command: "Get-Date" }, "")]), false);
   // A result row without a time cannot be placed after the change.
   const [ran, result] = bash(SUITE, PASSED);
   assert.equal(answered([edit(), ran, { ...result, timestamp: undefined }]), false);
@@ -552,20 +565,26 @@ test("a gate that asks for more than a pytest run of present tests still asks", 
   assert.equal(answered(no, other), true);
 });
 
-test("only the person's latest prompt can rule the tests out", () => {
+test("only the last sentence of the person's latest prompt can rule the tests out", () => {
   for (const yes of [
     "Fix f. Do not run the test suite.",
+    "[run 12] Fix f in this run. Do not run the test suite.",
     "don't run tests",
-    "Don’t run any tests yet.",
+    "Fix f.\n\nPlease don’t run any tests!\n",
     "Never run the tests",
-    "Fix f, but please don't run the tests.",
-    "Fix f (do not run the tests).",
-    "Fix f and do not run tests.\nThen stop.",
   ]) {
     assert.equal(declinesTests([said(yes)]), true, yes);
   }
   for (const no of [
     "Run the tests.",
+    // Not the last sentence, or not a whole sentence.
+    "Don't run the tests. Run only tests/unit.",
+    "If lint fails, do not run the tests.",
+    "Add this line to AGENTS.md: never run the test suite.",
+    "Fix f, but please don't run the tests.",
+    "Fix f (do not run the tests).",
+    "Fix f and do not run tests.\nThen stop.",
+    "Don't run any tests yet.",
     "do not run tests/test_slow.py",
     "Why did you not run the tests?",
     "do not run test_slow",
@@ -590,6 +609,21 @@ test("only the person's latest prompt can rule the tests out", () => {
   ];
   assert.equal(declinesTests([said("Fix f."), ...later]), false);
   assert.equal(declinesTests([said("Fix f. Do not run the tests."), ...later]), true);
+});
+
+test("the tree's newest change is unknown when a file or the listing cannot be read", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-newest-"));
+  try {
+    fs.writeFileSync(path.join(dir, "a.py"), "x = 1\n");
+    fs.writeFileSync(path.join(dir, "b.py"), "x = 1\n");
+    fs.utimesSync(path.join(dir, "a.py"), new Date(2e12), new Date(2e12));
+    assert.equal(newestChange(dir, ["a.py", "b.py"]), 2e12);
+    assert.equal(newestChange(dir, []), 0);
+    assert.equal(newestChange(dir, null), Infinity);
+    assert.equal(newestChange(dir, ["a.py", "deleted.py"]), Infinity);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("a Codex rollout answers nothing", () => {
@@ -662,10 +696,13 @@ test("the hook blocks a change whose tests never ran and lets an answered one st
     const no = [said("Fix f. Do not run the test suite."), change];
     assert.match(await stop("never-ran", [change]), /"decision":"block".*pytest tests\/test_a\.py/);
     assert.equal(await stop("never-ran", [change]), "");
-    // An untracked file whose name git would quote does not hide the tree's age.
-    fs.writeFileSync(path.join(dir, "naïve.txt"), "x\n");
-    touch("naïve.txt", new Date(1e12 - 1000));
+    // An untracked file whose name git would quote or a trim would cut does not hide the tree's age.
+    const odd = process.platform === "win32" ? " naïve.txt" : ' na"ï\tve.txt';
+    fs.writeFileSync(path.join(dir, odd), "x\n");
+    touch(odd, new Date(1e12 - 1000));
     assert.equal(await stop("ran", ran), "");
+    // A shell command after the run may have deleted a file, which leaves nothing newer.
+    assert.match(await stop("removed-after-run", [...ran, bash("rm src/helper.py", "")]), /"decision":"block"/);
     // A silent stop leaves the change its one block.
     assert.equal(await stop("ruled-out", no), "");
     assert.match(await stop("ruled-out", [...no, said("now run them")]), /"decision":"block"/);
