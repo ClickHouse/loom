@@ -14,6 +14,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from server.memory.domain import code_change
+
 _EXCERPT_CHARS = 2000
 
 
@@ -60,7 +62,9 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
     """One paragraph per hit: `[date] [memory_key] (type) excerpt`, in the
     order `memory.ask` would read them for this question (chronological for
     temporal questions, rank order otherwise). A hit from `label_namespace`
-    names it beside its type: `(decision, code-acme)`."""
+    names it beside its type: `(decision, code-acme)`. A hit whose linked code
+    changed, was not found again or went says so before its excerpt
+    (`code_change.note`)."""
     if not hits:
         return ""
     from server.memory.app.ask.rendering import evidence_order
@@ -77,7 +81,10 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
         if label_namespace and _get(h, "namespace") == label_namespace:
             mtype = f"{mtype}, {label_namespace}"
         text = str(_get(h, "content_excerpt") or "")[:_EXCERPT_CHARS]
-        parts.append(f"[{_date_of(h)}] [{key}] ({mtype}) {text}{_restatement_note(h, keys)}")
+        code = code_change.note(
+            str(_get(h, "code_state") or ""), str(_get(h, "code_changed_since") or "")
+        )
+        parts.append(f"[{_date_of(h)}] [{key}] ({mtype}){code} {text}{_restatement_note(h, keys)}")
     return "\n\n".join(parts)
 
 

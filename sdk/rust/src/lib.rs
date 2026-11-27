@@ -74,6 +74,39 @@
 //! # }
 //! ```
 //!
+//! # Routes outside the op registry
+//!
+//! [`Client::request`] and [`Client::request_json`] reach the routes the
+//! registry does not hold, such as `/v1/whoami` and `/v1/knowledge.upload`.
+//! The body and query go out as given. The SDK can wait and resend on a 429.
+//! The HTTP transport does not retry requests.
+//!
+//! ```
+//! use clickhouse_loom::{Client, Error, RouteRequest};
+//! use serde_json::{json, Value};
+//!
+//! # async fn example(client: Client) -> Result<(), Error> {
+//! let me: Value = client.request_json(RouteRequest::get("/v1/whoami")).await?;
+//! let chosen: Value = client
+//!     .request_json(
+//!         RouteRequest::post("/v1/me/set-default-namespace").json(&json!({"namespace": "eng"})),
+//!     )
+//!     .await?;
+//! let stored: Value = client
+//!     .request_json(
+//!         RouteRequest::post("/v1/knowledge.upload")
+//!             .query("org", "dev")
+//!             .query("namespace", "local")
+//!             .query("filename", "notes.bin")
+//!             .query("content_type", "application/octet-stream")
+//!             .bytes("application/octet-stream", vec![0, 1, 2, 3]),
+//!     )
+//!     .await?;
+//! println!("{} {} {}", me["org"], chosen["default_namespace"], stored);
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! # Using public types
 //!
 //! Request, response and API error structs are non-exhaustive.
@@ -164,6 +197,7 @@ mod error;
 mod models;
 mod operations;
 mod retry;
+mod routes;
 mod wire_models;
 
 #[cfg(feature = "blocking")]
@@ -177,4 +211,5 @@ pub use client::{Client, ClientBuilder};
 pub use error::{ApiError, Error};
 pub use models::*;
 pub use retry::{RetryPolicy, RetryTimeouts};
+pub use routes::{Method, RouteRequest, RouteResponse};
 pub use wire_models::*;

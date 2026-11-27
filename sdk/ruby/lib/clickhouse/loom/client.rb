@@ -9,6 +9,7 @@ require "uri"
 require_relative "errors"
 require_relative "version"
 require_relative "configuration"
+require_relative "logging"
 require_relative "retry_policy"
 require_relative "operations"
 require_relative "pagination"
@@ -71,10 +72,12 @@ module ClickHouse
       # Authorization header, which a server with auth off accepts. +retry_policy+ is a
       # Hash of RetryPolicy fields set over the configured policy ({ max_attempts: 1 }
       # disables retries); +rate_limit_max_wait+ is the seconds one call may spend waiting
-      # out 429 answers (default 15, 0 raises the first). +sleeper+ is called with the
+      # out 429 answers (default 15, 0 raises the first). +logger+ and +log_level+ turn on
+      # logging (see Logging; off unless a logger is given). +sleeper+ is called with the
       # seconds to wait between attempts (a test seam; default Kernel#sleep).
       def initialize(base_url: nil, api_key: nil, org: nil, namespace: nil, agent: nil, open_timeout: nil,
-                     read_timeout: nil, retry_policy: nil, rate_limit_max_wait: nil, sleeper: nil)
+                     read_timeout: nil, retry_policy: nil, rate_limit_max_wait: nil, logger: nil, log_level: nil,
+                     sleeper: nil)
         config = Loom.configuration
         @base_url = first_non_blank(base_url, config.base_url, ENV.fetch("LOOM_BASE_URL", nil),
                                     DEFAULT_BASE_URL).sub(%r{/+\z}, "")
@@ -89,6 +92,7 @@ module ClickHouse
         @retry_policy = RetryPolicy.resolve(@retry_policy, retry_policy, "Client")
         @rate_limit_max_wait = Float(rate_limit_max_wait || config.rate_limit_max_wait || 15)
         @sleeper = sleeper || ->(seconds) { sleep(seconds) }
+        @log = Logging.logger_for(logger || config.logger, log_level || config.log_level)
         @groups = {}
       end
 
@@ -176,13 +180,14 @@ module ClickHouse
       # One call: attempts until an answer to return or an error to raise. Every attempt
       # sends the same body and headers, so the same Idempotency-Key and X-Request-Id.
       def send_with_retries(op, spec, body, headers, policy)
-        state = { attempt: 1, sent: 0, slept: 0.0, paced: 0.0 }
+        state = { op: op, attempt: 1, sent: 0, slept: 0.0, paced: 0.0, started: now,
+                  request_id: headers["X-Request-Id"] }
         loop do
           headers["X-Loom-Retry-Count"] = state[:sent].to_s
           state[:sent] += 1
           response = attempt(op, spec, body, headers, policy, state)
           next if response.nil?
-          return decode(op, response) if response.is_a?(Net::HTTPSuccess)
+          return succeeded(op, response, state) if response.is_a?(Net::HTTPSuccess)
 
           # The server's echo of X-Request-Id, else the id this call sent (an error answer may not echo it).
           request_id = response["X-Request-Id"] || headers["X-Request-Id"]
@@ -192,10 +197,26 @@ module ClickHouse
 
           raise error
         end
+      rescue Error => e
+        @log.error("#{op} failed after #{elapsed_ms(state)} ms: #{describe(e)} (rid=#{state[:request_id]})")
+        raise
+      end
+
+      # The decoded answer of a 2xx, and its summary line.
+      def succeeded(op, response, state)
+        out = decode(op, response)
+        rid = response["X-Request-Id"] || state[:request_id]
+        # The last attempt's own time, as the TypeScript and Python SDKs report it: not
+        # the backoff and 429 waits before it.
+        @log.info("#{op} #{response.code} #{elapsed_ms(state, :attempt_started)} ms attempts=#{state[:sent]} rid=#{rid}")
+        out
       end
 
       # The answer of one attempt, or nil after a connection failure the policy resends.
       def attempt(op, spec, body, headers, policy, state)
+        state[:attempt_started] = now
+        @log.debug("#{op} → POST #{@base_url}/v1/#{op} attempt #{state[:attempt]} waits #{(@read_timeout * 1000).round} " \
+                   "ms bytes #{body.bytesize} #{Logging.redact_headers(headers)}")
         post(op, body, headers)
       rescue *NETWORK_ERRORS => e
         # A TLS failure (certificate verification stays on) does not pass by resending.
@@ -205,7 +226,7 @@ module ClickHouse
         # A timeout or a cut-off answer may follow a write: resent only where the server dedups.
         resend = unsent ? policy.retry_connection_errors : may_rerun?(policy, spec)
         # The error raised in the end stays not retryable either way, as before: the call may have run.
-        raise Error.network(op, e) unless resend && pause_before_next(policy, state, nil)
+        raise Error.network(op, e) unless resend && pause_before_next(policy, state, nil, e.message)
 
         nil
       end
@@ -219,7 +240,8 @@ module ClickHouse
         return false if error.detail["category"] == "configuration"
         return false unless spec&.idempotent || status == 408 || NEVER_RAN_CODES.include?(error.code)
 
-        pause_before_next(policy, state, RetryAfter.parse(response["Retry-After"] || error.detail["retry_after_s"]))
+        why = error.code.empty? ? status.to_s : "#{status} #{error.code}"
+        pause_before_next(policy, state, RetryAfter.parse(response["Retry-After"] || error.detail["retry_after_s"]), why)
       end
 
       # A 429 is pacing, not a retry: wait the Retry-After (1 s when absent, zero, past or over
@@ -229,6 +251,7 @@ module ClickHouse
         return false unless @rate_limit_max_wait.positive? && state[:paced] + wait <= @rate_limit_max_wait
 
         state[:paced] += wait
+        @log.warn("#{state[:op]} 429 rate limited; waiting #{(wait * 1000).round} ms (rid=#{state[:request_id]})")
         @sleeper.call(wait)
         true
       end
@@ -238,14 +261,20 @@ module ClickHouse
       end
 
       # Sleeps before the next attempt and counts it, or returns false when the policy says
-      # stop: attempts spent, or the backoff budget. +hint+ is the server's wait in seconds.
-      def pause_before_next(policy, state, hint)
+      # stop: attempts spent, or the backoff budget. +hint+ is the server's wait in seconds;
+      # +why+ names what is retried in the log line.
+      def pause_before_next(policy, state, hint, why)
         return false if state[:attempt] >= policy.max_attempts
 
         delay = policy.backoff_delay(state[:attempt])
         delay = hint if policy.respect_retry_after && hint && hint <= policy.max_retry_after
-        return false if delay > policy.total_backoff_budget - state[:slept]
+        if delay > policy.total_backoff_budget - state[:slept]
+          @log.warn("#{state[:op]}: backoff budget of #{(policy.total_backoff_budget * 1000).round} ms spent; giving up")
+          return false
+        end
 
+        @log.warn("#{state[:op]} attempt #{state[:attempt]}/#{policy.max_attempts} #{why}; retrying in " \
+                  "#{(delay * 1000).round} ms (rid=#{state[:request_id]})")
         @sleeper.call(delay)
         state[:slept] += delay
         state[:attempt] += 1
@@ -276,6 +305,22 @@ module ClickHouse
         parsed.is_a?(Hash) ? parsed : nil
       rescue JSON::ParserError
         nil
+      end
+
+      # An error as a log line names it: its class, code and status, never its message.
+      def describe(error)
+        name = error.class.name.split("::").last
+        name += " #{error.code}" unless error.code.to_s.empty?
+        name += " (#{error.status})" unless error.status.to_i.zero?
+        name
+      end
+
+      def now
+        Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      end
+
+      def elapsed_ms(state, from = :started)
+        ((now - state[from]) * 1000).round
       end
 
       def first_non_blank(*values)

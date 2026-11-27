@@ -772,7 +772,7 @@ export interface CodeEditContextInput {
   name?: string;
   /** Text fragments or exact declarations. */
   clues?: string[];
-  /** Batch of exact names or locations. */
+  /** Exact names or locations. */
   names?: string[];
   /** Set false after reading extra bodies. */
   include_related_source?: boolean;
@@ -5172,6 +5172,7 @@ export interface MemorySearchHit {
   created_at?: string;
   namespace?: string;
   code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
+  code_changed_since?: string;
   body_truncated?: boolean;
   next?: string;
   source_resource_id?: string;

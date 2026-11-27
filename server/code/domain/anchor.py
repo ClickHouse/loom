@@ -11,12 +11,12 @@ where to look.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
+from server.code.domain.anchor_state import definition_state
 from server.code.domain.extract.lang_detect import detect_by_extension
 from server.code.domain.extract.lang_go import go_dir_scope
 from server.code.domain.extract.lang_rust import module_scope_rust
@@ -289,13 +289,6 @@ def local_name(qualified_name: str, path: str) -> str:
     return q
 
 
-def fingerprint(texts: Sequence[str]) -> str:
-    """One hash over a definition's texts (its overloads, in order), as given but for line
-    endings ('' when all are empty)."""
-    joined = "\0".join(t.replace("\r\n", "\n") for t in texts)
-    return hashlib.sha256(joined.encode()).hexdigest() if joined.strip("\0") else ""
-
-
 def locate(
     link: Link,
     path_now: str,
@@ -364,9 +357,12 @@ def recheck(
     elif d is renamed and renamed_exactly and link.matched_baseline():
         # only the name changed since a check that matched the baseline: it is the new one
         link = replace(link, body_hash=d.body_hash)
-    changed = link.carried or bool(link.body_hash and d.body_hash and d.body_hash != link.body_hash)
-    moved = link.moved_from_anchor(d.path, d.qualified_name)
-    state = "changed" if changed else "moved" if moved else "fresh"
+    state = definition_state(
+        link.body_hash,
+        d.body_hash,
+        moved=link.moved_from_anchor(d.path, d.qualified_name),
+        carried=link.carried,
+    )
     return replace(
         _in_state(link, state, head),
         path=d.path,

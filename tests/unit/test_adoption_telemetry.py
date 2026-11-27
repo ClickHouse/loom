@@ -8,7 +8,7 @@ import pytest
 
 from server.insights.workers import adoption_telemetry
 from server.settings import Settings, settings
-from server.workers import pass_context
+from server.workers import pass_context, status_store, supervisor
 from server.workers.registry import enabled_workers
 from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, run
 
@@ -18,28 +18,33 @@ def test_domain_sharing_is_enabled_by_default() -> None:
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-def test_public_adoption_query_lists_only_recent_active_public_domains() -> None:
+def test_public_adoption_query_includes_completed_windows_from_today() -> None:
     telemetry = ROOT / "deploy" / "telemetry"
+    clock = "toDateTime('2026-11-27 18:00:00', 'UTC')"
+    warehouse = (telemetry / "warehouse.sql").read_text().strip().removesuffix(";")
     setup = [
-        (telemetry / "warehouse.sql").read_text().strip().removesuffix(";"),
+        warehouse.replace("now('UTC')", clock),
         """
         INSERT INTO loom_product_analytics.adoption_enrollments (installation_id, is_internal)
         VALUES ('internal', 1)
         """,
         """
         INSERT INTO loom_product_analytics.adoption_reports
-            (installation_id, window_start, window_end, day, schema_version, user_domains)
-        WITH toDate(now('UTC')) - days_ago AS report_day
+            (installation_id, window_start, window_end, day, schema_version,
+             requests, successful_requests, memory_requests, user_domains)
+        WITH toDate('2026-11-27') - days_ago AS report_day
         SELECT
             instance, toDateTime(report_day, 'UTC'), toDateTime(report_day, 'UTC') + INTERVAL 12 HOUR,
-            report_day, version, [(domain, toUInt64(1), requests)]
+            report_day, version, request_count, request_count, request_count,
+            [(domain, toUInt64(1), request_count)]
         FROM VALUES(
-            'instance String, days_ago UInt16, version UInt8, domain String, requests UInt64',
+            'instance String, days_ago Int16, version UInt8, domain String, request_count UInt64',
             ('present', 1, 2, 'active.example', 1),
             ('duplicate', 2, 2, 'active.example', 2),
             ('boundary', 90, 2, 'boundary.example', 1),
             ('expired', 91, 2, 'old.example', 1),
-            ('incomplete', 0, 2, 'today.example', 1),
+            ('today', 0, 2, 'today.example', 5),
+            ('future', -1, 2, 'future.example', 1),
             ('legacy', 1, 1, 'private.example', 1),
             ('idle', 1, 2, 'idle.example', 0),
             ('internal', 1, 2, 'internal.example', 1)
@@ -49,7 +54,17 @@ def test_public_adoption_query_lists_only_recent_active_public_domains() -> None
 
     [report] = run(setup, (telemetry / "public-adoption.sql").read_text())
 
-    assert report["domains"] == ["active.example", "boundary.example"]
+    assert report["domains"] == ["active.example", "boundary.example", "today.example"]
+    totals = {
+        row["comparison"]: row
+        for row in map(json.loads, report["totals"])
+        if row["range_days"] == 30
+    }
+    assert totals["current"]["memory_requests"] == 4
+    assert totals["current"]["last_reported"] == "2026-11-26"
+    assert totals["live"]["memory_requests"] == 9
+    assert totals["live"]["last_reported"] == "2026-11-27"
+    assert totals["live"]["days_reported"] == totals["current"]["days_reported"] == 2
 
 
 async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -71,6 +86,34 @@ def test_adoption_worker_uses_the_configured_interval(monkeypatch: pytest.Monkey
     monkeypatch.setattr(settings, "adoption_telemetry_interval_seconds", 120)
     worker = next(worker for worker in enabled_workers() if worker.name == "adoption_telemetry")
     assert worker.interval_seconds == 120
+
+
+@pytest.mark.parametrize(
+    ("cursor", "due"),
+    [
+        ("", True),
+        ("2026-11-23T00:00:00+00:00", True),
+        ("2026-11-23T12:00:00+00:00", False),
+    ],
+)
+async def test_boot_reports_unacknowledged_windows_without_a_stagger(
+    monkeypatch: pytest.MonkeyPatch, cursor: str, due: bool
+) -> None:
+    monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
+    monkeypatch.setattr(settings, "adoption_telemetry_interval_seconds", 3600)
+    monkeypatch.setattr(
+        adoption_telemetry, "utc_now", lambda: datetime(2026, 11, 24, 12, 59, tzinfo=UTC)
+    )
+    monkeypatch.setattr(status_store, "resume_cursor", AsyncMock(return_value=cursor))
+    monkeypatch.setattr(status_store, "last_pass_finished", AsyncMock(return_value=None))
+    worker = next(worker for worker in enabled_workers() if worker.name == "adoption_telemetry")
+
+    delay, state = await supervisor._begin_loop(worker)
+
+    assert state.cursor == cursor
+    assert (delay, state.trigger) == (
+        (0, "first_pass") if due else (supervisor.first_pass_delay(worker), "boot")
+    )
 
 
 async def test_missing_deployment_id_surfaces_status_without_delivery(

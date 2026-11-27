@@ -36,7 +36,6 @@ async function loadWarehouse(env) {
   url.searchParams.set("format", "JSON");
   const response = await readSource(url, {
     headers: { Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}` },
-    // An idle warehouse needs time to resume before it runs the query.
     signal: AbortSignal.timeout(30_000),
   });
   const row = response?.data?.[0];
@@ -66,8 +65,7 @@ async function containerPulls() {
 
 const numberOrNull = (value) => (Number.isFinite(value) ? value : null);
 
-function readRegistryMetrics(now) {
-  const today = now.toISOString().slice(0, 10);
+function readRegistryMetrics(today) {
   const firstDay = daysBefore(today, 365);
   const historyStart = daysBefore(today, 730);
   const yesterday = daysBefore(today, 1);
@@ -81,16 +79,13 @@ function readRegistryMetrics(now) {
   ]);
 }
 
-async function loadAdoptionWithRegistries(env, now, registryMetrics) {
-  const refreshedAt = now.toISOString();
-  const today = refreshedAt.slice(0, 10);
+async function loadOpenSource(warehouse, today, readRegistries) {
   const historyStart = daysBefore(today, 730);
-  const [warehouse, [repository, releases, python, npm, olderNpm, pulls]] = await Promise.all([
-    loadWarehouse(env),
-    registryMetrics,
+  const [aggregates, [repository, releases, python, npm, olderNpm, pulls]] = await Promise.all([
+    warehouse,
+    readRegistries(today),
   ]);
-
-  const oss = warehouse.oss ?? [];
+  const oss = aggregates.oss ?? [];
   const series = (source, metric) => oss.filter((row) => row.source === source && row.metric === metric);
   const fetchDays = (rows) =>
     rows
@@ -133,77 +128,95 @@ async function loadAdoptionWithRegistries(env, now, registryMetrics) {
     };
   };
 
-  return {
+  return [
+    {
+      id: "stars",
+      label: "GitHub stars",
+      source: "GitHub",
+      ...counter("github", "stars", repository?.stargazers_count),
+    },
+    { id: "forks", label: "GitHub forks", source: "GitHub", ...counter("github", "forks", repository?.forks_count) },
+    {
+      id: "pypi",
+      artifact: "clickhouse-loom",
+      label: "Python SDK downloads",
+      source: "PyPI",
+      ...downloads(pythonDays, "pypi"),
+    },
+    {
+      id: "npm",
+      artifact: "@clickhouse/loom",
+      label: "TypeScript SDK downloads",
+      source: "npm",
+      ...downloads(npmDays, "npm"),
+    },
+    {
+      id: "releases",
+      label: "Release asset downloads",
+      source: "GitHub",
+      ...counter("github", "release_asset_downloads_total", releaseDownloads),
+    },
+    { id: "pulls", label: "Container pulls", source: "GHCR", ...counter("ghcr", "container_pulls_total", pulls) },
+  ];
+}
+
+export function createAdoptionReader(env, now, readRegistries = readRegistryMetrics) {
+  const refreshedAt = now.toISOString();
+  const today = refreshedAt.slice(0, 10);
+  const warehouse = loadWarehouse(env);
+  const selfHosted = warehouse.then(({ totals, versions, retention, activity, lifecycle, domains }) => ({
     today,
     refreshedAt,
     selfHosted: {
-      totals: warehouse.totals,
-      versions: warehouse.versions,
-      retention: warehouse.retention,
-      activity: warehouse.activity ?? [],
-      lifecycle: warehouse.lifecycle ?? [],
-      domains: warehouse.domains ?? null,
+      totals,
+      versions,
+      retention,
+      activity: activity ?? [],
+      lifecycle: lifecycle ?? [],
+      domains: domains ?? null,
     },
-    openSource: [
-      {
-        id: "stars",
-        label: "GitHub stars",
-        source: "GitHub",
-        ...counter("github", "stars", repository?.stargazers_count),
-      },
-      { id: "forks", label: "GitHub forks", source: "GitHub", ...counter("github", "forks", repository?.forks_count) },
-      {
-        id: "pypi",
-        artifact: "clickhouse-loom",
-        label: "Python SDK downloads",
-        source: "PyPI",
-        ...downloads(pythonDays, "pypi"),
-      },
-      {
-        id: "npm",
-        artifact: "@clickhouse/loom",
-        label: "TypeScript SDK downloads",
-        source: "npm",
-        ...downloads(npmDays, "npm"),
-      },
-      {
-        id: "releases",
-        label: "Release asset downloads",
-        source: "GitHub",
-        ...counter("github", "release_asset_downloads_total", releaseDownloads),
-      },
-      { id: "pulls", label: "Container pulls", source: "GHCR", ...counter("ghcr", "container_pulls_total", pulls) },
-    ],
+    openSource: [],
+  }));
+  let withOpenSource;
+  return (tab) => {
+    if (tab === "self-hosted") return selfHosted;
+    withOpenSource ??= Promise.all([selfHosted, loadOpenSource(warehouse, today, readRegistries)]).then(
+      ([data, openSource]) => ({
+        ...data,
+        openSource,
+      }),
+    );
+    return withOpenSource;
   };
 }
 
-export function loadAdoption(env = process.env, now = new Date()) {
-  return loadAdoptionWithRegistries(env, now, readRegistryMetrics(now));
+const warehouseTtlMs = 30_000;
+const retryTtlMs = 15_000;
+const registryTtlMs = 5 * 60_000;
+let registries;
+function readPublishedRegistries(today) {
+  const now = Date.now();
+  if (!registries || now >= registries.expires || registries.today !== today) {
+    registries = { today, expires: now + registryTtlMs, data: readRegistryMetrics(today) };
+  }
+  return registries.data;
 }
 
-const refreshTtlMs = 5 * 60_000;
-const failedRefreshTtlMs = 15_000;
-let registryCache;
 let published;
-export function loadPublishedAdoption() {
+export function loadPublishedAdoption(tab) {
   const now = Date.now();
   if (!published || now >= published.expires) {
-    const date = new Date(now);
-    if (!registryCache || now >= registryCache.expires) {
-      registryCache = { expires: now + refreshTtlMs, data: readRegistryMetrics(date) };
-    }
-    const refresh = { expires: now + refreshTtlMs };
-    refresh.data = loadAdoptionWithRegistries(process.env, date, registryCache.data).then(
-      (data) => {
-        if (data.selfHosted.domains === null) refresh.expires = Date.now() + failedRefreshTtlMs;
-        return data;
+    const read = createAdoptionReader(process.env, new Date(now), readPublishedRegistries);
+    const refresh = { expires: Infinity, read };
+    read("self-hosted").then(
+      ({ selfHosted }) => {
+        refresh.expires = Date.now() + (selfHosted.domains === null ? retryTtlMs : warehouseTtlMs);
       },
-      (error) => {
-        refresh.expires = Date.now() + failedRefreshTtlMs;
-        throw error;
+      () => {
+        refresh.expires = Date.now() + retryTtlMs;
       },
     );
     published = refresh;
   }
-  return published.data;
+  return published.read(tab);
 }

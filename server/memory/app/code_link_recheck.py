@@ -8,6 +8,9 @@ import hashlib
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import cache
+from time import time_ns
+from typing import Any
 
 from server.code.app import memory_links as code
 from server.code.domain.anchor import (
@@ -26,13 +29,10 @@ from server.code.domain.successor import Side, Successor, close_to, successor
 from server.core.datetimes import naive_utc_now
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app import code_link_policy as policy
+from server.memory.app import code_link_reads
 from server.memory.app import code_link_rehash as rehash
 from server.memory.app import code_links as links
-from server.memory.app.code_link_reads import (
-    SERVED,
-    current,
-    memory_inputs,
-)
+from server.memory.app.code_link_reads import SERVED, memory_inputs
 from server.memory.store import code_links as store
 from server.memory.store.code_links import Former, LinkRow, PendingLink
 from server.memory.store.key_write_lock import LeaseBusy
@@ -110,9 +110,7 @@ async def _recheck_repository(
     files = link_pass.RepoReads(org, cns)
     head = await code.indexed_head(org, cns)
     checked = await code.checked_head(org, cns)
-    moves = await _resolve_pending(org, cns, head, files, result)
-    await _write_moves(await _current_moves(org, moves), head)
-    result.rechecked += len(moves)
+    await _recheck_pending(org, cns, head, files, result)
     await rehash.refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
     if head and head != checked:
@@ -568,15 +566,59 @@ async def _elsewhere(org: str, cns: str, lost: dict[str, str]) -> dict[str, list
     return out
 
 
-async def _resolve_pending(
+async def _recheck_pending(
     org: str, cns: str, head: str, files: link_pass.RepoReads, result: link_pass.PassResult
+) -> None:
+    cursor = link_pass.Cursor[dict[str, Any]](f"{_lock_name(org, cns)}/pending", {})
+    state = await cursor.read()
+    stored_after = state.get("after")
+    after = (int(stored_after[0]), str(stored_after[1])) if stored_after else None
+    before = int(state.get("before") or time_ns())
+    rows, nxt = await store.pending(
+        org,
+        cns,
+        days=int(settings.memory_code_links_pending_days),
+        after=after,
+        before=before,
+        limit=int(settings.memory_code_links_batch),
+    )
+    moves = await _resolve_pending(org, cns, head, files, result, rows)
+    await _write_moves(await _current_moves(org, moves), head)
+    result.rechecked += len(moves)
+    if nxt != after:
+        await cursor.write({"before": before, "after": list(nxt)} if nxt else {})
+
+
+def _pending_definitions(
+    rows: list[PendingLink], defs: list[Definition], named: dict[str, list[str]]
+) -> list[Definition | None]:
+    by_name: dict[str, list[Definition]] = defaultdict(list)
+    for definition in defs:
+        by_name[definition.name].append(definition)
+
+    @cache
+    def choose(mention: str, files: tuple[str, ...]) -> Definition | None:
+        return resolve(mention, by_name.get(bare_name(mention), []), files)
+
+    return [choose(row["qualified_name"], tuple(named.get(row["memory_id"]) or ())) for row in rows]
+
+
+async def _resolve_pending(
+    org: str,
+    cns: str,
+    head: str,
+    files: link_pass.RepoReads,
+    result: link_pass.PassResult,
+    rows: list[PendingLink],
 ) -> list[Move]:
-    """Every pass: drop pending names older than `memory_code_links_pending_days`; once
-    the repository is indexed, relink the memories written before its first index and
-    turn the pending names the head now defines into links."""
-    rows = await store.pending(org, cns, days=int(settings.memory_code_links_pending_days))
-    await store.insert(store.tombstones([r for r in rows if r["expired"]]))
-    rows = [r for r in rows if not r["expired"]]
+    """Drop expired names and what waits for a raw tool observation, and resolve the
+    rest whose definitions exist at the head."""
+    waiting: list[PendingLink] = []
+    dropped: list[PendingLink] = []
+    for r in rows:
+        (dropped if r["expired"] or links.is_observation(r) else waiting).append(r)
+    await store.insert(store.tombstones(dropped))
+    rows = waiting
     if not head or not rows:
         return []
     awaiting = [r for r in rows if r["qualified_name"] == links.AWAITING_INDEX]
@@ -588,20 +630,18 @@ async def _resolve_pending(
         return []
     wanted = sorted({bare_name(r["qualified_name"]) for r in names})
     defs = await code.candidates(org, cns, names=wanted)
-    by_name: dict[str, list[Definition]] = defaultdict(list)
-    for x in defs:
-        by_name[x.name].append(x)
     # the files each memory names pick between namesakes, as when it was first linked
     heads = await store.memory_heads(org, sorted({r["memory_id"] for r in names}))
     named = {h["mid"]: [str(f) for f in h.get("files") or []] for h in heads}
+    # A common name can have thousands of definitions. Keep the pure matching
+    # work off the event loop so lease renewal can run even during a large page.
+    targets = await asyncio.to_thread(_pending_definitions, names, defs, named)
     moves = []
-    for r in names:
-        m = r["qualified_name"]
-        d = resolve(m, by_name.get(bare_name(m), []), named.get(r["memory_id"], []))
+    for r, target in zip(names, targets, strict=True):
         try:
-            here = await links.at_head(files, head, d) if d is not None else None
+            here = await links.at_head(files, head, target) if target is not None else None
         except code.ParseFailed:
-            continue  # stays pending: retried next pass
+            continue  # Keep the row pending for the next scan.
         if here is None:
             continue
         anchored: PendingLink = {
@@ -663,17 +703,20 @@ async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
     queue replaced or dropped since the recheck read it is not moved back in."""
     if not moves:
         return []
-    heads = {
-        h["mid"]: h
-        for h in await store.memory_heads(org, [m.row["memory_id"] for m in moves])
-        if h["tombstoned_at"] is None and h["status"] in SERVED
+    heads = await store.memory_heads(org, [m.row["memory_id"] for m in moves])
+    # A path can hold many links. Keep repository resolution off the lease's event loop.
+    return await asyncio.to_thread(_moves_for_current_heads, org, moves, heads)
+
+
+def _moves_for_current_heads(
+    org: str, moves: list[Move], heads: list[dict[str, Any]]
+) -> list[Move]:
+    expected = {
+        head["mid"]: code_link_reads.inputs_now(org, head)
+        for head in heads
+        if head["tombstoned_at"] is None and head["status"] in SERVED
     }
-    out = []
-    for m in moves:
-        head = heads.get(m.row["memory_id"])
-        if head is not None and current(org, head, [m.row]):
-            out.append(m)
-    return out
+    return [m for m in moves if m.row["inputs_hash"] == expected.get(m.row["memory_id"])]
 
 
 # the earlier identities a link keeps: a branch may still have any of them

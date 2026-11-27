@@ -48,6 +48,16 @@ describe("navigationHref keeps only the query keys the target view owns", () => 
     setLocation("/graph?seed=a%20b");
     expect(navigationHref("graph")).toBe("/graph?seed=a+b");
   });
+
+  it("shortens links to the default Settings tab and Help page", () => {
+    setLocation("/?view=setup&tab=tokens");
+    expect(pathnameView()).toBe("setup");
+    expect(navigationHref("setup")).toBe("/settings");
+    setLocation("/help?page=index.md");
+    expect(navigationHref("help")).toBe("/help");
+    expect(navigationHref("help", { page: "index.md" })).toBe("/help");
+    expect(navigationHref("help", { page: "features/knowledge.md" })).toBe("/help?page=features%2Fknowledge.md");
+  });
 });
 
 describe("view ↔ path", () => {

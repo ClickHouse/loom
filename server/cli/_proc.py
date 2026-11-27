@@ -34,8 +34,8 @@ async def cancel_on_sigterm[T](aw: Awaitable[T]) -> T:
 
     def _on_term() -> None:
         nonlocal got_term
-        got_term = True
-        if task is not None:
+        if task is not None and task.cancelling() == 0:
+            got_term = True
             task.cancel()
 
     installed = False

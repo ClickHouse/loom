@@ -14,7 +14,8 @@ from collections.abc import Iterator, Sequence
 from functools import lru_cache
 from typing import Any, NamedTuple
 
-from server.code.domain.anchor import NO_SHAPE, Shape, extension, fingerprint, language, unnumbered
+from server.code.domain.anchor import NO_SHAPE, Shape, extension, language, unnumbered
+from server.code.domain.anchor_state import fingerprint
 from server.code.domain.extract import bounded_parse
 from server.code.domain.extract.lang_typescript_nodes import (
     _is_function_like,
