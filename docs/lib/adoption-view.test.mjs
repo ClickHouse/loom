@@ -76,6 +76,15 @@ test("retains the cumulative baseline and sorts the selected growth periods", ()
     ],
   );
   assert.deepEqual(adoptionGrowthForRange(null, filters, "2026-11-19"), []);
+  const monthly = adoptionFilters(new URLSearchParams("grain=month"));
+  const july = {
+    grain: "month",
+    period: "2026-07-01",
+    period_end: "2026-08-01",
+    first_active: 4,
+    cumulative_active: 50,
+  };
+  assert.deepEqual(adoptionGrowthForRange([july], monthly, "2026-08-01"), [{ ...july, current: false }]);
 });
 
 test("projects only an in-progress period with every completed day represented", () => {

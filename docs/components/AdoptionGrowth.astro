@@ -8,15 +8,20 @@ import AdoptionTrend from "./AdoptionTrend.astro";
 interface Props {
   rows: { period: string; first_active: number; cumulative_active: number; current: boolean }[];
   grain: "day" | "week" | "month";
+  rangeStart: string;
 }
 
-const { rows, grain } = Astro.props;
+const { rows, grain, rangeStart } = Astro.props;
+const includesOpeningPeriod = rows[0].period < rangeStart;
 const numbers = new Intl.NumberFormat("en-US");
 ---
 
 <Panel className="growth-chart" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
   <Title type="h3" size="sm">Observed installations over time</Title>
-  <Text size="sm" color="muted">Each installation enters the total once, at its first successful Loom request in retained telemetry. The line shows the cumulative total at each period.</Text>
+  <Text size="sm" color="muted">
+    Each installation enters the total once, at its first successful Loom request in retained telemetry.
+    Points show totals through each period.{includesOpeningPeriod && " The first period starts before the selected window."}
+  </Text>
   <AdoptionTrend
     rows={rows.map(({ period, cumulative_active, current }) => ({ day: period, value: cumulative_active, current }))}
     label="Observed installations"

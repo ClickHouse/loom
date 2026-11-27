@@ -47,7 +47,7 @@ export const usageMetricGroups = /** @type {const} */ ([
       ["median_agents", "Active agents"],
       ["median_sessions", "Active sessions"],
       ["median_active_orgs", "Active organizations"],
-      ["median_total_namespaces", "Stored namespaces"],
+      ["median_total_namespaces", "Enabled namespaces"],
     ],
   },
   {
@@ -128,7 +128,7 @@ export function activityForRange(rows, filters, today) {
 export function adoptionGrowthForRange(rows, filters, today) {
   const start = daysBefore(today, filters.days);
   return (rows ?? [])
-    .filter(({ period, grain }) => grain === filters.grain && period >= start && period < today)
+    .filter(({ period, period_end, grain }) => grain === filters.grain && period_end > start && period < today)
     .sort((left, right) => left.period.localeCompare(right.period))
     .map((row) => ({ ...row, current: row.period_end > today }));
 }

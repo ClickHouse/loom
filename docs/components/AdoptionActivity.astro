@@ -42,7 +42,7 @@ const columns = [
 <div class="charts">
   <Panel className="chart" orientation="vertical" alignItems="start" padding="lg" gap="none" hasBorder fillWidth>
     <Title type="h3" size="sm">Active installations</Title>
-    <Text size="sm" color="muted">Distinct installations with at least one successful request in the period. An installation may be active in multiple periods.</Text>
+    <Text size="sm" color="muted">Distinct installations with a successful request.</Text>
     <AdoptionTrend
       rows={rows.map(({ period, active, current }) => ({ day: period, value: active, current }))}
       label="Active installations"
@@ -55,7 +55,7 @@ const columns = [
   </Panel>
   <Panel className="chart" orientation="vertical" alignItems="start" padding="lg" gap="none" hasBorder fillWidth>
     <Title type="h3" size="sm">Successful requests</Title>
-    <Text size="sm" color="muted">Successful Loom requests across reporting installations in the period.</Text>
+    <Text size="sm" color="muted">Successful requests across reporting installations.</Text>
     <AdoptionTrend
       rows={rows.map(({ period, operations, current }) => ({ day: period, value: operations, current }))}
       label="Successful requests"
@@ -94,6 +94,7 @@ const columns = [
   .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem; }
   .chart { min-inline-size: 0; }
   .chart p { margin-block-start: 0.3rem; }
+  @media (min-width: 46.01rem) and (max-width: 58rem) { .chart p { min-block-size: 2lh; } }
   :global(.activity-guide) { margin-block-end: 0.7rem; }
   .data { margin-block-start: 0.75rem; }
   summary { cursor: pointer; padding-block: 0.55rem; color: var(--click-global-color-text-link-default); font-size: 0.86rem; }

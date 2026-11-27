@@ -100,7 +100,8 @@ The domain directory returns all names from version 2 reports with attributed
 successful requests in today's completed reporting windows or the previous 30 or
 90 UTC days. Each list is ordered by attributed successful requests. The one-year
 site view uses the 90-day directory, the longest period under the public
-domain-sharing notice.
+domain-sharing notice. Deploy the collector that accepts version 2 before
+releasing workers that send it.
 
 Grant the restricted `loom_adoption_top_domains_30d` view only to authorized
 analytics staff. Its rows contain reported contact domains and attributed counts.

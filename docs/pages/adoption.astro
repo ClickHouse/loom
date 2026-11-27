@@ -280,7 +280,7 @@ const ossCounterGroups = [
               : "Across retained self-hosted telemetry"}</Text>
           </Panel>
           {growthSeries.length > 0 ? (
-            <AdoptionGrowth rows={growthSeries} grain={filters.grain} />
+            <AdoptionGrowth rows={growthSeries} grain={filters.grain} rangeStart={cutoff} />
           ) : <Text className="growth-message" size="sm" color="muted">No growth periods are available in the selected window.</Text>}
         </div>
       ) : summaries && <Text size="sm" color="muted">
@@ -449,7 +449,6 @@ const ossCounterGroups = [
               {rows.length > 0 ? <>
                 <BigStat className="statistic" height="auto" label="Downloads in this window" title={metricValue(value)} order="titleBottom" size="lg" />
                 <Text size="sm" color="muted">{days} of {filters.days} days reported</Text>
-                {change !== null && <Text className="change" size="sm">{signedPercent.format(change)} vs. previous {filters.days} days</Text>}
                 <AdoptionTrend
                   label={label}
                   grain={ossGrain}
@@ -458,6 +457,7 @@ const ossCounterGroups = [
                   axisStart={ossInterval(cutoff)}
                   axisEnd={ossInterval(lastCompleteDate)}
                 />
+                {change !== null && <Text className="change" size="sm">{signedPercent.format(change)} vs. previous {filters.days} days</Text>}
               </> : <Text size="sm" color="muted">No download history is available for this window.</Text>}
             </Panel>
           ))}
