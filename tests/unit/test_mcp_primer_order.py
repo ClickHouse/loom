@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.settings import settings
 from server.transport import mcp_primer
 
@@ -16,8 +18,9 @@ NAMESPACE = "agent-a-long-default-namespace-name"
 
 
 @pytest.fixture(autouse=True)
-def wired_caller(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
-    """The caller's workspace and profile; returns the restricted-access checks made."""
+def wired_caller(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Any]]:
+    """The caller's workspace and profile on a connection bound to a repository;
+    yields the restricted-access checks made."""
     restricted_checks: list[Any] = []
 
     async def defaults(*_a: Any, **_k: Any) -> dict[str, str]:
@@ -41,8 +44,9 @@ def wired_caller(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     monkeypatch.setattr("server.identity.app.namespace_classification.is_restricted", unrestricted)
     monkeypatch.setattr(mcp_primer, "_mentor_line", mentor)
     monkeypatch.setattr(mcp_primer, "_caller_default_context", workspace)
-    monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: ("acme", "code-repo"))
-    return restricted_checks
+    bound = set_code_scope("acme/code-repo")
+    yield restricted_checks
+    reset_code_scope(bound)
 
 
 def _split(text: str) -> tuple[str, str]:
@@ -112,8 +116,10 @@ def test_compact_coding_primer_preserves_scope_and_profile() -> None:
 
 def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) -> None:
     defaults = {"org": "project", "namespace": "history", "agent": "coding"}
-    bound = mcp_primer._coding_instructions("coding", defaults, compact=True)
-    standard = mcp_primer._coding_instructions("coding", defaults)
+    # a compact profile the URL did not ask for: the deployment's default
+    monkeypatch.setattr(settings, "mcp_schema_profile", "compact")
+    bound = mcp_primer._coding_instructions("coding", defaults)
+    standard = mcp_primer._coding_instructions("coding", defaults, schema_profile="standard")
     assert "First step of each task" not in bound
     assert "For prior decisions or procedures beyond linked code lessons" in bound
     assert "For prior decisions or procedures beyond linked code lessons" in standard
@@ -123,10 +129,61 @@ def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) 
     for primer in (bound, standard, activation):
         assert primer.index(reuse) < primer.index("with the task as `query`. Skip it when")
     assert "first with the task" not in activation
-    assert reuse not in mcp_primer._coding_instructions("coding", compact=True)
-    monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: None)
-    unbound = mcp_primer._coding_instructions("coding", defaults, compact=True)
+    assert reuse not in mcp_primer._coding_instructions("coding")
+    set_code_scope(None)
+    unbound = mcp_primer._coding_instructions("coding", defaults)
     assert "First step of each task" in unbound
+    assert "`loom_op(" in unbound and "`loom_search`" in unbound
+
+
+def test_bound_compact_coding_primer_routes_code_tools_alone() -> None:
+    """Its listing carries the code tools alone, so the text names no other tool."""
+
+    def routing(defaults: dict[str, str] | None) -> str:
+        return mcp_primer._coding_instructions("coding", defaults, schema_profile="compact")
+
+    defaults = {"org": "project", "namespace": "history", "agent": "coding"}
+    reuse = "For a repeat source lookup, set `include_lessons: false`"
+    bound = routing(defaults)
+    assert bound.startswith("Use Loom first for unchanged indexed code and tests.")
+    assert reuse in bound
+    no_memory_home = routing({**defaults, "namespace": ""})
+    assert reuse not in no_memory_home
+    assert reuse not in routing(None)
+    started = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "coding", schema_profile="compact")
+    )
+    # the `loom` prompt, `loom://primer` and `loom_activate`, served by name
+    activation = asyncio.run(
+        mcp_primer._loom_primer_text(object(), toolset="coding", schema_profile="compact")
+    )
+    for text in (bound, no_memory_home, _split(started)[0], _split(activation)[0]):
+        assert "`loom_code_edit_context`" in text
+        for absent in ("loom_op", "loom_search", "loom_memory", "loom_context_pack"):
+            assert absent not in text, absent
+    assert "repository bound to this connection when namespace is omitted" in started
+    assert "default memory namespace" not in started
+    assert _split(activation)[1] == _split(started)[1]
+
+
+def test_a_compact_deployment_default_keeps_the_bound_coding_primer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The URL names no profile: the connection lists every tool, so its
+    instructions route memory and name `loom_op`."""
+    monkeypatch.setattr(settings, "mcp_schema_profile", "compact")
+    started = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
+    rules = _split(started)[0]
+    assert "Use Loom first for unchanged indexed code and tests." in rules
+    assert "`loom_op(" in rules and "`loom_search`" in rules and "`loom_memory_set`" in rules
+    assert "For prior decisions or procedures beyond linked code lessons" in rules
+    assert "default memory namespace" in rules
+    asked = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "coding", schema_profile="compact")
+    )
+    assert "`loom_op(" not in asked and len(asked) < len(started)
+    activation = asyncio.run(mcp_primer._loom_primer_text(object(), toolset="coding"))
+    assert "**Loom-first mode active" in activation
 
 
 def test_bound_coding_activation_with_no_default_memory_home() -> None:
@@ -140,6 +197,8 @@ def test_bound_coding_activation_with_no_default_memory_home() -> None:
 
 def test_compact_coding_catalog_describes_the_task_pack_without_ordering() -> None:
     from server.transport.mcp_tools import _tools_descriptor
+
+    set_code_scope(None)  # the listing of code tools alone carries no task pack
 
     async def describe(profile: str) -> str:
         tools = await _tools_descriptor(toolset="coding", schema_profile=profile)
@@ -181,7 +240,7 @@ def test_coding_startup_reuses_routing_text_across_implicit_bindings(
     monkeypatch.setattr(mcp_primer, "_mentor_line", mentor_should_be_on_demand)
     first = asyncio.run(mcp_primer._initialize_instructions(object(), toolset))
     monkeypatch.setattr(mcp_primer, "_caller_defaults", different_default)
-    monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: ("other-org", "other-repo"))
+    set_code_scope("other-org/other-repo")
     second = asyncio.run(mcp_primer._initialize_instructions(object(), toolset))
     assert first == second
     assert NAMESPACE not in first

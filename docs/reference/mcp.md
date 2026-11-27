@@ -31,9 +31,38 @@ Query parameters on the URL select what `tools/list` shows for that connection:
   argument tree).
 
 Compact coding connections describe the common source workflows in the
-startup instructions. Find the other tools through discovery. When the
-`coding` toolset is bound to a repository, the primer uses the task context pack
-for prior decisions or procedures beyond the lessons returned with indexed source.
+startup instructions. Find the other tools through discovery. When the `coding`
+toolset is bound to a repository, the primer uses the task context pack for
+prior decisions or procedures beyond the lessons returned with indexed source.
+The listing of code tools alone, described next, lists neither `loom_op` nor
+`loom_context_pack`.
+
+A `coding` connection that the `X-Loom-Code-Scope` header binds to a repository
+lists the code tools alone when its URL carries `schema_profile=compact`. A
+compact profile that comes only from `LOOM_MCP_SCHEMA_PROFILE` does not narrow
+the listing: a client that did not ask for it keeps every tool of the roster.
+
+The listing of code tools alone leaves out:
+
+| Part                                | Left out                                                                                                                                                                                                                                                              |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tools/list`                        | `loom_op`, `loom_search`, `loom_context_pack`, `loom_activate`, the memory tools and `loom_tracker_duplicate_check`.                                                                                                                                                  |
+| `prompts/list` and `resources/list` | Every entry: both are empty.                                                                                                                                                                                                                                          |
+| Startup instructions                | Memory, workspace and `loom_op` guidance. They carry the source workflows and the repository binding. The `loom` prompt, `loom://primer` and `loom_activate`, asked for by name, carry the same source workflows.                                                     |
+| `loom_code_grep` arguments          | Beyond what every compact coding listing leaves out: `namespace`, which the binding fills; `namespaces`, which only a presence check across several repositories takes; and `path_prefix` and `langs`, which `path_globs` expresses. The call still accepts all four. |
+
+Every other tool stays callable by name, but a client that calls only listed
+tools cannot save or recall memory on this connection: leave
+`schema_profile=compact` off the URL for that. Lessons linked to source still
+arrive with code results. A mentor hint, and the `OP_NOT_ON_MCP` refusal of an
+op kept off MCP, name an op outside the listing by its dotted name; other
+refusals keep the tool names they spell.
+
+The coding-agent plugins send the `X-Loom-Code-Scope` header for a checkout they
+resolve to a repository, so those connections are bound; the URLs they ship name
+no profile. The lists of a `coding` connection whose URL carries
+`schema_profile=compact` follow that header, so their `cacheScope` is `private`
+with the header or without it.
 
 With the automatic loading policy, compact coding connections load
 `code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
@@ -44,12 +73,14 @@ with no direct tests or lessons can receive
 examples or notes labeled with its verified owning type. Clients can discover
 `code.symbol` and `code.search` as needed.
 An explicit `LOOM_MCP_ALWAYS_LOAD_TOOLS` list controls loading on every profile.
+It marks tools the listing carries and adds none: on the listing of code tools
+alone, a named tool outside the code tools is not listed.
 
 Compact coding connections list grep's main inputs for reading enclosing
-definitions. Use `mode: "files"` to list matching paths. Use `loom_op` with
-`{"op": "help", "query": "code.grep"}` to find controls for match excerpts,
-full bodies, related source, neighbours and deadlines. Calls accept the full
-argument set.
+definitions. Use `mode: "files"` to list matching paths. Where `loom_op` is
+listed, use it with `{"op": "help", "query": "code.grep"}` to find controls for
+match excerpts, full bodies, related source, neighbours and deadlines. Calls
+accept the full argument set.
 
 On coding connections, `code.symbol` includes related indexed tests and nearby
 source with the definition. Set `include_examples: false` to omit the tests,
@@ -172,7 +203,9 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   org and the caller may read that repository; with such a scope, a write into another
   configured code namespace takes that namespace's repository tag instead. A scope that
   names no configured, readable repository adds no tag, and an explicit `repo:` tag
-  always stays.
+  always stays. On a `coding` connection whose URL carries `schema_profile=compact`
+  the header also narrows `tools/list`, `prompts/list`, `resources/list` and the
+  startup instructions to the code tools ([Endpoint](#endpoint)).
 - **Implicit run.** One run per (org, token subject, session), begun in the
   run ledger by the session's first run-scoped tool call and filed in the
   caller's default namespace; writes carry its `run_id` (except `run.*`, which
@@ -221,7 +254,8 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   tools never runs a state change unprompted. They are hints; the role check at
   call time is the boundary.
 
-Three synthetic tools are listed on every toolset but `assistant`:
+Three synthetic tools are listed on every toolset but `assistant`, except on the
+listing of code tools alone ([Endpoint](#endpoint)), where they stay callable by name:
 
 | Tool            | Does                                                                                                                                                                                                                 |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

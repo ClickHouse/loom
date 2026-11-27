@@ -36,6 +36,12 @@ NONE: dict[str, str] = {}
         ("fake", "", BOTH, ResolvedLLM("fake", "fake-echo-1", "LOOM_LLM_PROVIDER")),
         ("fake", "gpt-4o-mini", OPENAI, ResolvedLLM("fake", "gpt-4o-mini", "LOOM_LLM_PROVIDER")),
         (" OpenAI ", "gpt-5", NONE, ResolvedLLM("openai", "gpt-5", "LOOM_LLM_PROVIDER")),
+        (
+            "vertex",
+            "gemini-3.5-flash-lite",
+            BOTH,
+            ResolvedLLM("vertex", "gemini-3.5-flash-lite", "LOOM_LLM_PROVIDER"),
+        ),
         # Unset provider: the model name decides, key or no key.
         (
             "",
@@ -51,9 +57,25 @@ NONE: dict[str, str] = {}
             ResolvedLLM("anthropic", "claude-opus-4-1", "LOOM_LLM_MODEL=claude-opus-4-1"),
         ),
         ("", "fake-echo-1", BOTH, ResolvedLLM("fake", "fake-echo-1", "LOOM_LLM_MODEL=fake-echo-1")),
+        (
+            "",
+            "vertex:gemini-3.5-flash-lite",
+            BOTH,
+            ResolvedLLM(
+                "vertex",
+                "vertex:gemini-3.5-flash-lite",
+                "LOOM_LLM_MODEL=vertex:gemini-3.5-flash-lite",
+            ),
+        ),
         # Unset provider and an unknown model name: the key decides, model kept.
         ("", "mystery-7b", OPENAI, ResolvedLLM("openai", "mystery-7b", "OPENAI_API_KEY is set")),
         ("", "mystery-7b", NONE, ResolvedLLM("fake", "mystery-7b", "nothing set")),
+        (
+            "",
+            "gemini-3.5-flash-lite",
+            OPENAI,
+            ResolvedLLM("openai", "gemini-3.5-flash-lite", "OPENAI_API_KEY is set"),
+        ),
         # Nothing but a key: provider + its default model.
         ("", "", OPENAI, ResolvedLLM("openai", "gpt-6-luna", "OPENAI_API_KEY is set")),
         (
@@ -244,3 +266,135 @@ def test_settings_accept_every_known_explicit_provider(
     _clear_llm_env(monkeypatch)
     monkeypatch.setenv("LOOM_LLM_PROVIDER", provider)
     assert Settings(_env_file=None).llm_provider == provider.strip().lower()
+
+
+@pytest.mark.parametrize(
+    ("setting", "error"),
+    [
+        ("LOOM_LLM_MODEL", "requires LOOM_LLM_MODEL"),
+        ("LOOM_VERTEX_PROJECT", "requires LOOM_VERTEX_PROJECT and LOOM_VERTEX_LOCATION"),
+        ("LOOM_VERTEX_LOCATION", "requires LOOM_VERTEX_PROJECT and LOOM_VERTEX_LOCATION"),
+    ],
+)
+def test_vertex_settings_require_a_model_project_and_location(
+    monkeypatch: pytest.MonkeyPatch, setting: str, error: str
+) -> None:
+    from server.settings import Settings
+
+    monkeypatch.setenv("LOOM_LLM_PROVIDER", "vertex")
+    monkeypatch.setenv("LOOM_LLM_MODEL", "gemini-3.5-flash-lite")
+    monkeypatch.setenv("LOOM_VERTEX_PROJECT", "test-project")
+    monkeypatch.setenv("LOOM_VERTEX_LOCATION", "global")
+    monkeypatch.setenv(setting, " ")
+    with pytest.raises(ValueError, match=error):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("llm_model", "models/gemini-3.5-flash-lite", "needs a Gemini model ID"),
+        ("vertex_project", "project/path", "LOOM_VERTEX_PROJECT"),
+        ("vertex_location", "us-central1/api", "LOOM_VERTEX_LOCATION"),
+    ],
+)
+def test_vertex_rejects_malformed_routes_at_settings_load(
+    field: str, value: str, error: str
+) -> None:
+    from server.settings import Settings
+
+    route = {
+        "llm_model": "gemini-3.5-flash-lite",
+        "vertex_project": "test-project",
+        "vertex_location": "global",
+    }
+    route[field] = value
+    with pytest.raises(ValueError, match=error):
+        Settings(_env_file=None, llm_provider="vertex", **route)
+
+
+def test_vertex_is_refused_when_the_deployment_requires_its_gateway() -> None:
+    from server.settings import Settings
+
+    with pytest.raises(ValueError, match="refuses native Vertex AI"):
+        Settings(
+            _env_file=None,
+            llm_provider="vertex",
+            llm_model="gemini-3.5-flash-lite",
+            vertex_project="test-project",
+            vertex_location="global",
+            inference_gateway_required=True,
+            inference_gateway_hosts="aiplatform.googleapis.com",
+        )
+
+
+def test_vertex_override_is_refused_even_if_google_is_an_allowlisted_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.errors import GatewayRequiredError
+    from server.llm import client
+    from server.settings import Settings
+
+    s = Settings(
+        _env_file=None,
+        llm_provider="fake",
+        vertex_project="test-project",
+        vertex_location="global",
+        inference_gateway_required=True,
+        inference_gateway_hosts="aiplatform.googleapis.com",
+        openai_base_url="https://aiplatform.googleapis.com",
+        anthropic_base_url="https://aiplatform.googleapis.com",
+    )
+    monkeypatch.setattr("server.settings.settings", s)
+    client.reset()
+    try:
+        with pytest.raises(GatewayRequiredError, match="refuses native Vertex AI"):
+            client.get_llm_client_for_model("vertex:gemini-3.5-flash-lite")
+    finally:
+        client.reset()
+
+
+def test_vertex_factory_routes_primary_and_prefixed_models_without_an_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.llm import client
+    from server.settings import Settings
+
+    _clear_llm_env(monkeypatch)
+    s = Settings(
+        _env_file=None,
+        llm_provider="vertex",
+        llm_model="gemini-3.5-flash-lite",
+        vertex_project="test-project",
+        vertex_location="global",
+    )
+    monkeypatch.setattr("server.settings.settings", s)
+    client.reset()
+    try:
+        main = client.get_llm_client()
+        override = client.get_llm_client_for_model("vertex:gemini-3.5-flash")
+        assert (main.provider, main.model) == ("vertex", "vertex:gemini-3.5-flash-lite")
+        assert (override.provider, override.model) == ("vertex", "vertex:gemini-3.5-flash")
+    finally:
+        client.reset()
+
+
+def test_vertex_fallback_must_target_a_distinct_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.llm import client
+    from server.llm.vertex import VertexLLMClient
+    from server.settings import Settings
+
+    s = Settings(
+        _env_file=None,
+        llm_provider="vertex",
+        llm_model="gemini-3.5-flash-lite",
+        llm_fallback_model="vertex:gemini-3.5-flash-lite",
+        vertex_project="test-project",
+        vertex_location="global",
+    )
+    monkeypatch.setattr("server.settings.settings", s)
+    client.reset()
+    try:
+        assert isinstance(client.get_llm_client(), VertexLLMClient)
+    finally:
+        client.reset()

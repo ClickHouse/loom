@@ -306,6 +306,11 @@ def _runtime_problems(state: HealthState) -> list[Problem]:
                 "Check that the model server at LOOM_LOCAL_LLM_BASE_URL is running and "
                 "serves the models Loom names (Ollama: ollama pull <model>)"
             )
+        elif name.startswith("vertex:"):
+            fix = (
+                "Check Google Application Default Credentials, Vertex AI permissions, "
+                "model availability and project quota"
+            )
         else:
             key_env = _key_env_for_health_name(name)
             behind = f"{key_env}'s quota" if key_env else f"the key and quota behind {name}"
