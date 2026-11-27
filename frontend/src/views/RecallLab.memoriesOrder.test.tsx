@@ -124,6 +124,23 @@ describe("Recall Lab and the Memories list", () => {
     expect(screen.getAllByText("semantic +0.60")).toHaveLength(2);
   });
 
+  it("shows one row for a memory the keyword read and a legacy ranked hit both hold", async () => {
+    const held = { ...entry("older_azure"), user_id: "u", session_id: "s" };
+    const page = { entries: [held], total: 1, today: 0, truncated: false };
+    // the keyword read, then the lookup that names the hit's writer
+    vi.mocked(listMemories).mockResolvedValueOnce(page).mockResolvedValueOnce(page);
+    // A legacy hit names its agent but not the user or session.
+    vi.mocked(searchMemory).mockResolvedValueOnce({
+      results: [{ ...hit("older_azure", 0.9), user_id: undefined, session_id: undefined }],
+      embedding_model: "m",
+    });
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
+    await screen.findByText("keyword match", {}, { timeout: 3000 });
+    await waitFor(() => expect(screen.getAllByText("older_azure")).toHaveLength(1));
+  });
+
   it("shows a high keyword match as sensitive, not as an empty row", async () => {
     vi.mocked(listMemories).mockResolvedValueOnce({
       entries: [{ ...entry("vault_azure"), value: null, value_truncated: true, sensitivity: "high" }],

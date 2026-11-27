@@ -514,9 +514,16 @@ export function RecallLab() {
         const keyword = new Map(
           (kw?.entries ?? []).map((e, i) => [recallRowId(identity.namespace, e, `keyword:${i}`), e]),
         );
-        const ranked = new Map(
-          (r?.results ?? []).map((h, i) => [recallRowId(identity.namespace, h, `ranked:${i}`), h]),
+        // A legacy hit omits its writer: name it before keying, so a keyword row of the same
+        // memory is one row, not two.
+        const named = await Promise.all(
+          (r?.results ?? []).map(async (h) => {
+            const writer = namesWriter(h) ? undefined : await resolveSearchWriter(identity, h, ac.signal);
+            return writer ? { ...h, ...writer } : h;
+          }),
         );
+        if (ac.signal.aborted) return;
+        const ranked = new Map(named.map((h, i) => [recallRowId(identity.namespace, h, `ranked:${i}`), h]));
         const order = keywordThenRanked([...keyword.keys()], [...ranked.keys()]);
         setRowsQuery(q);
         setRows(
@@ -543,15 +550,6 @@ export function RecallLab() {
         setModel(r?.embedding_model ?? "");
         setRankedError(failure);
         setLoading(false);
-        await Promise.all(
-          [...ranked].map(async ([id, hit]) => {
-            if (namesWriter(hit)) return;
-            const writer = await resolveSearchWriter(identity, hit, ac.signal);
-            if (!ac.signal.aborted && writer) {
-              setRows((shown) => shown?.map((row) => (row.id === id ? { ...row, writer } : row)) ?? null);
-            }
-          }),
-        );
       } catch (e) {
         if (ac.signal.aborted) return;
         setError(e);
