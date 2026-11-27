@@ -1,5 +1,6 @@
 import { defineConfig } from "blume";
 import { vercel } from "blume/deploy";
+import { gettingStartedOverview } from "./lib/documentation-routes.mjs";
 import { publisher, siteDescription, siteUrl, website } from "./lib/site-identity.mjs";
 
 export default defineConfig({
@@ -75,7 +76,7 @@ export default defineConfig({
           "zh-CN": "开始使用",
         },
         path: "/getting-started",
-        href: "/getting-started/overview",
+        href: gettingStartedOverview,
       },
       {
         label: { en: "Guides", es: "Guías", ja: "ガイド", ko: "가이드", "pt-BR": "Guias", "zh-CN": "指南" },

@@ -1,4 +1,5 @@
 import data from "blume:data";
+import { localizedDocumentationOverview } from "../lib/documentation-routes.mjs";
 import type { SiteLocale } from "./site-locales";
 
 const translatedPaths = new Set(data.routes.filter((route) => !route.fallback && !route.draft).map(({ path }) => path));
@@ -12,10 +13,5 @@ export function documentationLink(locale: SiteLocale, path: string) {
 }
 
 export function documentationOverview(locale: SiteLocale) {
-  const index = documentationLink(locale, "");
-  const firstTab = data.navigation.tabs[0];
-  if (index.hreflang === locale || !firstTab) return index;
-
-  const landing = documentationLink(locale, firstTab.href ?? firstTab.path);
-  return landing.hreflang === locale ? landing : index;
+  return localizedDocumentationOverview(locale, (path) => translatedPaths.has(path));
 }
