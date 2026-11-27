@@ -129,8 +129,12 @@ async def _file_rehashed(
     written = await cited_at(a["anchored_commit"], link.anchored_path)
     first = written or await cited_at(a["baseline_commit"], a["baseline_path"])
     checked = await cited_at(a["checked_commit"], link.path)
-    baseline = first or (checked if link.matched_baseline() else NO_BASELINE)
+    took = not first and link.matched_baseline()
+    baseline = first or (checked if took else NO_BASELINE)
     out = {"anchored_hash": written, "body_hash": baseline, "checked_hash": checked}
+    if took and checked:
+        # the next re-hash reads the baseline where this one took it
+        out |= {"baseline_commit": a["checked_commit"], "baseline_path": link.path}
     if a["state"] != "missing":  # a file that is gone stays gone
         after = recheck(
             replace(link, body_hash=baseline),

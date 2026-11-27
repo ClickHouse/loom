@@ -3168,6 +3168,15 @@ async def test_a_file_link_is_rehashed_from_the_lines_its_memory_cites(monkeypat
     took |= {"checked_commit": "c2"}
     out = await code_link_rehash._file_rehashed(took, ["http_date"], files)
     assert (out["anchored_hash"], out["body_hash"], "state" in out) == ("", then, False)
+    # one stored with no hash, written at c0 and last read at c1, takes c1's lines and
+    # names their commit: re-hashed again once c2 changed it, it keeps them
+    bare = old | {"body_hash": "", "checked_hash": "", "anchored_commit": "c0"}
+    bare |= {"checked_commit": "c1"}
+    out = await code_link_rehash._file_rehashed(bare, ["http_date"], files)
+    assert (out["body_hash"], out["baseline_commit"], out["baseline_path"]) == (then, "c1", path)
+    again = bare | out | {"state": "changed", "checked_hash": now, "checked_commit": "c2"}
+    out = await code_link_rehash._file_rehashed(again, ["http_date"], files)
+    assert (out["body_hash"], out["checked_hash"], "state" in out) == (then, now, False)
 
     async def stale(org, cns, version, *, after, limit):
         return [old | {"body_hash": "", "checked_hash": ""}], None  # one that holds no hash
