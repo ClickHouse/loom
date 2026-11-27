@@ -63,6 +63,7 @@ async def test_search_and_file_follow_reviewed_content(control_plane_url, mint_t
         ({"tags": ["irrelevant" * 300, "mined"]}, "candidate"),
         ({"template": {"details": "x" * 3000}}, "template"),
         ({"run_stats": ["x" * 3000]}, "unknown"),
+        ({"run_stats": {"total": "\u3000\t+" + "\uff11_" * 128 + "\u0661\n"}}, "exercised"),
     ],
 )
 async def test_file_recall_classifies_procedure_beyond_the_preview(

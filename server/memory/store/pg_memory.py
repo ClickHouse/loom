@@ -51,7 +51,12 @@ from server.memory.store.rows import (
     memory_head_state,
     parse_memory_value,
 )
-from server.memory.store.sql import PROCEDURE_FIELD_MAX_BYTES, PROCEDURE_TOTAL_MAX_DIGITS
+from server.memory.store.sql import (
+    PROCEDURE_FIELD_MAX_BYTES,
+    PROCEDURE_INTEGER_SOURCE_HEX,
+    PROCEDURE_INTEGER_TARGET,
+    PROCEDURE_TOTAL_MAX_DIGITS,
+)
 from server.observability import pg_pipeline
 from server.settings import settings
 
@@ -1685,8 +1690,9 @@ async def guidance_heads(
                                    THEN to_jsonb((total.value >= '1'::jsonb)::int)
                                WHEN jsonb_typeof(total.value) = 'string'
                                    AND total.text ~ '^[+-]?[0-9]+(_[0-9]+)*$'
-                                   AND length(translate(total.text, '+_-', ''))
-                                       <= {PROCEDURE_TOTAL_MAX_DIGITS}
+                                   AND ({PROCEDURE_TOTAL_MAX_DIGITS} = 0 OR
+                                       length(translate(total.text, '+_-', ''))
+                                           <= {PROCEDURE_TOTAL_MAX_DIGITS})
                                    THEN to_jsonb((left(total.text, 1) <> '-'
                                        AND total.text ~ '[1-9]')::int)
                                ELSE '"invalid"'::jsonb END)
@@ -1717,7 +1723,9 @@ async def guidance_heads(
         ) AS body
         CROSS JOIN LATERAL (
             SELECT body.fields->'run_stats'->'total' AS value,
-                   btrim(body.fields->'run_stats'->>'total') AS text
+                   btrim(translate(body.fields->'run_stats'->>'total',
+                       convert_from(decode('{PROCEDURE_INTEGER_SOURCE_HEX}', 'hex'), 'UTF8'),
+                       '{PROCEDURE_INTEGER_TARGET}')) AS text
         ) AS total
         """,
         *_key_arrays(keys),

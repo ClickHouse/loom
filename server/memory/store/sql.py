@@ -6,6 +6,8 @@ tuple type.
 
 from __future__ import annotations
 
+import sys
+import unicodedata
 from typing import Any
 
 # The value memory.get serves: the native JSON column when populated, else the stored text.
@@ -16,13 +18,27 @@ _PROCEDURE_BODY = SERVED_VALUE.replace(", value)", ", memory.value)")
 
 # Preserve short scalar values for the classifier without transferring arbitrary JSON.
 PROCEDURE_FIELD_MAX_BYTES = 128
-# The default Python integer conversion limit for decimal strings.
-PROCEDURE_TOTAL_MAX_DIGITS = 4300
+PROCEDURE_TOTAL_MAX_DIGITS = sys.get_int_max_str_digits()
+
+# Normalize the characters Python accepts in integer strings before checking the
+# ASCII grammar. ASCII control characters accepted by str.isspace() can fail int().
+_DECIMAL_DIGITS = tuple(ch for ch in map(chr, range(128, sys.maxunicode + 1)) if ch.isdecimal())
+_INTEGER_WHITESPACE = "\t\n\v\f\r" + "".join(
+    ch for ch in map(chr, range(128, 0x3001)) if ch.isspace()
+)
+PROCEDURE_INTEGER_SOURCE_HEX = ("".join(_DECIMAL_DIGITS) + _INTEGER_WHITESPACE).encode().hex()
+PROCEDURE_INTEGER_TARGET = "".join(
+    str(unicodedata.decimal(ch)) for ch in _DECIMAL_DIGITS
+) + " " * len(_INTEGER_WHITESPACE)
 
 
 def _procedure_field(path: str, oversized: str) -> str:
     raw = f"JSONExtractRaw({_PROCEDURE_BODY}, {path})"
-    substitute = oversized.format(raw=raw, string=f"trimBoth(JSONExtractString({raw}))")
+    integer = (
+        f"trimBoth(translateUTF8(JSONExtractString({raw}), "
+        f"unhex('{PROCEDURE_INTEGER_SOURCE_HEX}'), '{PROCEDURE_INTEGER_TARGET}'))"
+    )
+    substitute = oversized.format(raw=raw, string=integer)
     return (
         f"if(length({raw}) > {PROCEDURE_FIELD_MAX_BYTES}, {substitute}, "
         f"ifNull(nullIf({raw}, ''), 'null'))"
@@ -34,12 +50,14 @@ _PROCEDURE_TEMPLATE = _procedure_field(
 )
 _PROCEDURE_TOTAL = _procedure_field(
     "'run_stats', 'total'",
-    f"""multiIf(
-        isNotNull(toFloat64OrNull({{raw}})), if(toFloat64OrNull({{raw}}) >= 1, '1', '0'),
-        match({{string}}, '^[+-]?[0-9]+(_[0-9]+)*$')
-            AND length(replaceRegexpAll({{string}}, '[+_-]', '')) <= {PROCEDURE_TOTAL_MAX_DIGITS},
-            if(NOT startsWith({{string}}, '-') AND match({{string}}, '[1-9]'), '1', '0'),
-        '"invalid"')""",
+    f"""if(isNotNull(toFloat64OrNull({{raw}})),
+        if(toFloat64OrNull({{raw}}) >= 1, '1', '0'),
+        arrayMap(digits -> if(
+            match(digits, '^[+-]?[0-9]+(_[0-9]+)*$')
+                AND ({PROCEDURE_TOTAL_MAX_DIGITS} = 0 OR
+                    length(replaceRegexpAll(digits, '[+_-]', '')) <= {PROCEDURE_TOTAL_MAX_DIGITS}),
+            if(NOT startsWith(digits, '-') AND match(digits, '[1-9]'), '1', '0'),
+            '"invalid"'), [{{string}}])[1])""",
 )
 _PROCEDURE_TAGS = _procedure_field("'tags'", "'true'")
 
