@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -274,8 +275,11 @@ def test_the_captures_repository_is_its_repo_tags_or_else_its_project_tags() -> 
     assert tags(["source:codex"]) == []  # a capture that names neither is not narrowed
 
 
-def _row(key: str, value: str, tags: list[str]) -> SimpleNamespace:
-    return SimpleNamespace(memory_key=key, memory_id=f"id-{key}", value=value, tags=tags)
+def _row(key: str, value: str, tags: list[str], **fields: object) -> SimpleNamespace:
+    served = {"status": "active", "tombstoned_at": None, "expires_at": None, "valid_to": None}
+    return SimpleNamespace(
+        memory_key=key, memory_id=f"id-{key}", value=value, tags=tags, **{**served, **fields}
+    )
 
 
 class _StoredWorld:
@@ -371,13 +375,25 @@ async def test_a_fact_an_earlier_session_stored_is_not_written_again(
     assert world.events == [("evidence", "id-m1", "o", "n", "a")]
 
 
+_PAST = datetime(2000, 1, 1)
+
+
 @pytest.mark.asyncio
-async def test_a_key_another_repository_holds_newer_is_not_shown(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "newer",
+    [
+        {"tags": ["repo:r2"]},  # the other session wrote the key for another repository
+        {"status": "superseded"},
+        {"expires_at": _PAST},
+        {"valid_to": _PAST},
+    ],
+)
+async def test_a_key_whose_newest_row_is_not_a_served_row_of_the_repository_is_not_shown(
+    monkeypatch: pytest.MonkeyPatch, newer: dict
 ) -> None:
-    # Two sessions hold one key, each for its own repository; the newer row is the other's.
+    # Two sessions hold one key. The hit is the older row; the key read returns the newer.
     mine = _row("k", "The list now has an entry.", ["repo:r1"])
-    other = SimpleNamespace(memory_key="k", memory_id="id-other", value="x", tags=["repo:r2"])
+    other = _row("k", "The list now has an entry.", **{"tags": ["repo:r1"], **newer})
     world = _StoredWorld(monkeypatch, [mine, other])
     client = _Scripted({**_answer(n=3), "stored": [{"i": 0, "s": 0}]})
     monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])

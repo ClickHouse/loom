@@ -131,10 +131,11 @@ async def nearest_existing_rows(
     query_vec: list[float] | None = None,
     tags: list[str] | None = None,
 ) -> list[Any]:
-    """The live fact rows of `identity`'s agent and user, in any session, nearest
-    `query_text` (`query_vec` when the caller has its vector), nearest first; with
-    `tags`, among the rows that carry one of them. Never a row that is or reads 'high':
-    the callers show these rows to an LLM provider."""
+    """The rows read back for the fact hits of `identity`'s agent and user, in any
+    session, nearest `query_text` (`query_vec` when the caller has its vector), nearest
+    first: each hit's key as its newest row in any session, which may be a retired one.
+    With `tags`, only hits and rows that carry one of them. Never a row that is or reads
+    'high': the callers show these rows to an LLM provider."""
     import server.memory.store as memory_repo
     from server.memory.app import retrieval as memory_search
 

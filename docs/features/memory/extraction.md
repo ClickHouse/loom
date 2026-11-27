@@ -65,14 +65,15 @@ session that states the same attribute lands on the same key and revises the row
 the user asks to forget something, the matching rows are retired and named in
 `forgotten` / `forgotten_keys` (a window's latest 50 requests are matched by content).
 
-**A stored fact said again** by a later coding capture is not written twice.
-`loom.verify_durable` reads the stored memories nearest each remaining fact: the writer's
-agent and user, any session, the capture's repository (its `repo:` tag, or its `project:`
-tag when it has none), never a `high` row. Only the first verifier model is sent them. A
-fact that one of them already states in full is dropped, and that memory gets one
-`evidence` usage event instead. A fact that adds a detail or gives another value is
-written and goes through the [write-time conflict check](conflicts-and-refusal.md). An
-`append_only` namespace skips this read.
+**A stored fact said again** by a later coding capture is dropped when the verifier
+finds the memory that states it. `loom.verify_durable` reads the stored memories nearest
+each remaining fact: the writer's agent and user, any session, the capture's repository
+(its `repo:` tag, or its `project:` tag when it has none; a capture with neither is not
+narrowed), never a `high` row. Only the first verifier model is sent them. A fact that it
+lists as stated in full by one of them is dropped, and that memory gets one `evidence`
+usage event instead. Every other fact the step keeps goes on to the
+[write-time conflict check](conflicts-and-refusal.md). An `append_only` namespace skips
+this read.
 
 **Coding captures** are requests whose `extra_tags` carry `source:claude-code`,
 `source:codex` or `source:cursor` (the plugins tag every capture), or a trajectory replay
