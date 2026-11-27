@@ -24,19 +24,17 @@ function tmp() {
 }
 
 test("planMaterialize: only when no token is saved, and LOOM_API_KEY only where the helper lacks it", () => {
-  assert.equal(planMaterialize({}, { configExists: false, tokenFileExists: false }).write, false);
+  assert.equal(planMaterialize({}, { configExists: false, fileToken: "" }).write, false);
   assert.equal(
-    planMaterialize(
-      { CLAUDE_PLUGIN_OPTION_TOKEN: "t", LOOM_API_KEY: "e" },
-      { configExists: false, tokenFileExists: false },
-    ).reason,
+    planMaterialize({ CLAUDE_PLUGIN_OPTION_TOKEN: "t", LOOM_API_KEY: "e" }, { configExists: false, fileToken: "" })
+      .reason,
     "LOOM_API_KEY set",
   );
   assert.equal(
-    planMaterialize({ LOOM_API_KEY: "e" }, { configExists: false, tokenFileExists: false }).reason,
+    planMaterialize({ LOOM_API_KEY: "e" }, { configExists: false, fileToken: "" }).reason,
     "LOOM_API_KEY set",
   );
-  const hidden = { configExists: false, tokenFileExists: false, envHidden: true };
+  const hidden = { configExists: false, fileToken: "", envHidden: true };
   assert.deepEqual(planMaterialize({ LOOM_API_KEY: "e", LOOM_BASE_URL: "https://h/" }, hidden), {
     write: true,
     url: "https://h",
@@ -44,31 +42,26 @@ test("planMaterialize: only when no token is saved, and LOOM_API_KEY only where 
   });
   assert.equal(planMaterialize({ LOOM_API_KEY: "  " }, hidden).reason, "no token to save");
   assert.equal(planMaterialize({ LOOM_API_KEY: "e" }, { ...hidden, configToken: "c" }).reason, "config has a token");
+  assert.equal(planMaterialize({ LOOM_API_KEY: "e" }, { ...hidden, fileToken: "f" }).reason, "token file has a token");
   assert.equal(
-    planMaterialize({ LOOM_API_KEY: "e" }, { ...hidden, tokenFileExists: true }).reason,
-    "token file exists",
-  );
-  assert.equal(
-    planMaterialize(
-      { CLAUDE_PLUGIN_OPTION_TOKEN: "t" },
-      { configExists: true, configToken: "c", tokenFileExists: false },
-    ).reason,
+    planMaterialize({ CLAUDE_PLUGIN_OPTION_TOKEN: "t" }, { configExists: true, configToken: "c", fileToken: "" })
+      .reason,
     "config has a token",
   );
   assert.equal(
-    planMaterialize({ CLAUDE_PLUGIN_OPTION_TOKEN: "t" }, { configExists: false, tokenFileExists: true }).reason,
-    "token file exists",
+    planMaterialize({ CLAUDE_PLUGIN_OPTION_TOKEN: "t" }, { configExists: false, fileToken: "f" }).reason,
+    "token file has a token",
   );
   const p = planMaterialize(
     { CLAUDE_PLUGIN_OPTION_TOKEN: "t", CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://h/" },
-    { configExists: false, tokenFileExists: false },
+    { configExists: false, fileToken: "" },
   );
   assert.deepEqual(p, { write: true, url: "https://h", reason: "no config" });
   // the url saved beside the token is the MCP entry's: the option outranks LOOM_BASE_URL
   assert.equal(
     planMaterialize(
       { CLAUDE_PLUGIN_OPTION_TOKEN: "t", LOOM_BASE_URL: "https://env", CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://opt" },
-      { configExists: false, tokenFileExists: false },
+      { configExists: false, fileToken: "" },
     ).url,
     "https://opt",
   );
@@ -107,7 +100,7 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
   // a token file present → not written
   fs.unlinkSync(configPath);
   fs.writeFileSync(tokenPath, "file.tok\n");
-  assert.equal(applyPluginOptions(env, { configPath, tokenPath }).reason, "token file exists");
+  assert.equal(applyPluginOptions(env, { configPath, tokenPath }).reason, "token file has a token");
   assert.equal(fs.existsSync(configPath), false);
 });
 
@@ -143,9 +136,14 @@ test("applyPluginOptions saves LOOM_API_KEY where the helper lacks it, and never
   assert.equal(applyPluginOptions(env, paths, { envHidden: true }).helperFinds, "");
   fs.writeFileSync(tokenPath, "file.tok\n");
   const beside = applyPluginOptions(env, paths, { envHidden: true });
-  assert.equal(beside.reason, "token file exists");
+  assert.equal(beside.reason, "token file has a token");
   assert.equal(beside.helperFinds, "another");
   assert.equal(fs.existsSync(configPath), false);
+  // an empty token file holds nothing for the helper: the token is saved
+  fs.writeFileSync(tokenPath, "\n");
+  assert.equal(applyPluginOptions(env, paths, { envHidden: true }).write, true);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).token, "env.tok");
+  fs.unlinkSync(configPath);
   // a write that fails leaves the helper without a token, and says so
   fs.unlinkSync(tokenPath);
   fs.mkdirSync(configPath);
@@ -153,6 +151,23 @@ test("applyPluginOptions saves LOOM_API_KEY where the helper lacks it, and never
   assert.equal(failed.write, false);
   assert.match(failed.reason, /^write failed/);
   assert.equal(failed.helperFinds, "no");
+});
+
+test("applyPluginOptions reads the token file the helper reads, not the one LOOM_API_KEY_FILE names", () => {
+  const dir = tmp();
+  const configPath = path.join(dir, ".loom", "config.json");
+  const named = path.join(dir, "secret");
+  fs.writeFileSync(named, "env.tok\n");
+  const env = { LOOM_API_KEY: "env.tok", LOOM_API_KEY_FILE: named, LOOM_CONFIG_FILE: configPath };
+  // Claude Code keeps LOOM_API_KEY_FILE from the helper too: that file saves the helper nothing
+  const saved = applyPluginOptions(env, {}, { envHidden: true });
+  assert.equal(saved.write, true);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).token, "env.tok");
+  // where the helper is given the variables, the named file is a saved token
+  fs.unlinkSync(configPath);
+  const option = { CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok", LOOM_API_KEY_FILE: named, LOOM_CONFIG_FILE: configPath };
+  assert.equal(applyPluginOptions(option).reason, "token file has a token");
+  assert.equal(fs.existsSync(configPath), false);
 });
 
 test("installTokenNotice: LOOM_API_KEY the helper will not send", () => {

@@ -94,33 +94,32 @@ function givenToken(env) {
 }
 
 /** What a run would do, without doing it: {write, url, reason}. `url` is
- *  the server the token is for, "" when nothing names one. `envHidden`: the
- *  helper is not given LOOM_API_KEY, so that token is saved like the option;
- *  where the helper reads it itself, it rules the option out. Pure. */
-export function planMaterialize(env, { configExists, configToken, tokenFileExists, envHidden = false }) {
+ *  the server the token is for, "" when nothing names one. `fileToken` is
+ *  the token file's content. `envHidden`: the helper is not given
+ *  LOOM_API_KEY, so that token is saved like the option; where the helper
+ *  reads it itself, it rules the option out. Pure. */
+export function planMaterialize(env, { configExists, configToken, fileToken, envHidden = false }) {
   if (!givenToken(env)) return { write: false, reason: "no token to save" };
   if (!envHidden && String(env.LOOM_API_KEY || "").trim()) return { write: false, reason: "LOOM_API_KEY set" };
   if (String(configToken || "").trim()) return { write: false, reason: "config has a token" };
-  if (tokenFileExists) return { write: false, reason: "token file exists" };
+  if (String(fileToken || "").trim()) return { write: false, reason: "token file has a token" };
   const url = namedServerUrl(env);
   return { write: true, url, reason: configExists ? "config lacks a token" : "no config" };
 }
 
-/** What Claude Code's helper finds in place of a LOOM_API_KEY that was not
- *  saved: "another" token, "no" token, or "" when it finds that very token.
- *  It reads the config, then ~/.loom/token (LOOM_API_KEY_FILE is kept from
- *  it too). */
-function helperFinds(envToken, configToken, tokenPath) {
-  let saved = String(configToken || "").trim();
-  if (!saved) {
-    try {
-      saved = readFileSync(tokenPath, "utf8").trim();
-    } catch {
-      // no token file
-    }
+/** The token in the token file at `path`; "" when it is missing or empty. */
+function readTokenFile(path) {
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch {
+    return "";
   }
-  if (saved === envToken) return "";
-  return saved ? "another" : "no";
+}
+
+/** The token Claude Code's helper sends: the config's, else the one in
+ *  ~/.loom/token (LOOM_API_KEY_FILE is kept from it too); "" with neither. */
+export function helperToken(configToken, fileToken = readTokenFile(loomTokenPath({}))) {
+  return String(configToken || "").trim() || fileToken;
 }
 
 /** The primer line when Claude Code's MCP header helper will not send what
@@ -157,24 +156,27 @@ export function installTokenNotice(plan, env = process.env) {
 
 /** Save the session's token for the helper when the plan says so. `envHidden`
  *  is `planMaterialize`'s; the caller sets it for Claude Code outside agent
- *  mode. */
+ *  mode, where the token file is the one the helper reads, not the one
+ *  LOOM_API_KEY_FILE names. */
 export function applyPluginOptions(env = process.env, paths = {}, { envHidden = false } = {}) {
   const configPath = paths.configPath || loomConfigPath(env);
-  const tokenPath = paths.tokenPath || loomTokenPath(env);
+  const fileToken = readTokenFile(paths.tokenPath || loomTokenPath(envHidden ? {} : env));
   const configExists = existsSync(configPath);
   const existing = readConfigFile(configPath);
   const plan = planMaterialize(env, {
     configExists,
     configToken: existing.token,
-    tokenFileExists: existsSync(tokenPath),
+    fileToken,
     envHidden,
   });
   plan.configUrl = normalizeUrl(existing.url);
   plan.configHasToken = Boolean(String(existing.token || "").trim());
-  // For the notice, when LOOM_API_KEY stays out of the config. The helper's
-  // token file is the default one: LOOM_API_KEY_FILE does not reach it.
+  // For the notice, when LOOM_API_KEY stays out of the config: "another"
+  // token is what the helper sends in its place, or "no" token.
   const envToken = envHidden ? String(env.LOOM_API_KEY || "").trim() : "";
-  const finds = envToken ? helperFinds(envToken, existing.token, paths.tokenPath || loomTokenPath({})) : "";
+  const sends = helperToken(existing.token, fileToken);
+  let finds = "";
+  if (envToken && sends !== envToken) finds = sends ? "another" : "no";
   if (!plan.write) return { ...plan, helperFinds: finds };
   try {
     // The token goes in beside the server named for it, over a url another

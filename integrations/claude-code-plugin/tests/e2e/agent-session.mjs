@@ -24,6 +24,7 @@
 //                           server in LOOM_BASE_URL, with nothing saved under
 //                           ~/.loom; Claude Code keeps the variable from the
 //                           plugin's header helper, which must still send it
+//                           on every MCP request, with no sign-up tried
 //
 // Exit 0 when the helper sent the token, each event's own Loom call arrived
 // with it, and (Claude Code, which reports them) every hook exited 0 with
@@ -503,6 +504,14 @@ async function main() {
   const bearer = `Bearer ${TOKEN}`;
   if (!opts.noNode && !fake.seen.some((s) => s.path === "/mcp" && s.auth === bearer)) {
     problems.push("the MCP header helper never sent the token");
+  }
+  if (opts.tokenEnv) {
+    // The hook saves the token before the helper gives up on it: every
+    // connection carries it, and the helper never signs up beside it.
+    if (fake.seen.some((s) => s.path === "/mcp" && s.auth !== bearer))
+      problems.push("an MCP request came without the token");
+    if (fake.seen.some((s) => s.path === "/v1/auth/agent-signup"))
+      problems.push("a sign-up was tried beside the session's token");
   }
   for (const [event, call] of Object.entries(EXPECTED_CALLS)) {
     if (!opts.noNode && !fake.seen.some((s) => call(s) && s.auth === bearer))

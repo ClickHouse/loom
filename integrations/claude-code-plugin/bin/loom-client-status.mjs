@@ -15,7 +15,7 @@ import {
   resolveServerUrl,
   tokenLookup,
 } from "../lib/loom-client.mjs";
-import { entryIsFixed, sameServer, statusServerUrl } from "../lib/plugin-options.mjs";
+import { entryIsFixed, helperToken, sameServer, statusServerUrl } from "../lib/plugin-options.mjs";
 import { serverVersionMessage } from "../lib/server-version.mjs";
 
 const FLUSH_RE = /^loom-flush-\d{13}-\d+\.json$/;
@@ -47,6 +47,10 @@ export async function clientStatus({
   token,
   scope,
   tokenKind = "",
+  // Claude Code outside agent mode: the token its MCP header helper sends
+  // (`helperToken`) and the `url` saved beside a config token. Unset where
+  // the `source` line compares nothing.
+  mcpToken,
   configUrl = "",
   // The server an agent's exchange went to: the hooks' server, which may
   // differ from the MCP entry's checked here.
@@ -89,16 +93,17 @@ export async function clientStatus({
     add("token", "PASS", `${claims.sub || "unknown subject"} @ ${claims.org || "unknown org"}`);
   }
   if (tokenKind) {
-    // A config token saved for another server is what the MCP header helper
-    // sends to this one; the hooks may hold a different token.
-    const source = tokenSourceName(tokenKind);
+    // The MCP header helper sends the saved token to this server, whatever
+    // the lookup here resolved: another token than this check's, none, or a
+    // config token saved for another server.
     const saved = normalizeUrl(configUrl);
-    const other = tokenKind === "config" && saved && !sameServer(saved, serverUrl);
-    add(
-      "source",
-      other ? "WARN" : "PASS",
-      other ? `token from ${source}, which names ${saved}; this check uses ${serverUrl}` : `token from ${source}`,
-    );
+    let warn = "";
+    if (mcpToken !== undefined && mcpToken !== token) {
+      warn = `; the loom MCP tools read ${loomConfigPath()}, then ${loomTokenPath({})}, and ${mcpToken ? "send another token" : "find no token"}`;
+    } else if (saved && !sameServer(saved, serverUrl)) {
+      warn = `${tokenKind === "config" ? ", which" : `; ${loomConfigPath()}`} names ${saved}; this check uses ${serverUrl}`;
+    }
+    add("source", warn ? "WARN" : "PASS", `token from ${tokenSourceName(tokenKind)}${warn}`);
   }
 
   if (health.status === 200 && checks.find((c) => c.name === "token")?.grade === "PASS") {
@@ -148,14 +153,18 @@ export async function clientStatus({
 if (process.env.LOOM_HOOK_NO_MAIN !== "1") {
   const { token, kind } = tokenLookup();
   // Under Codex the MCP entry's URL is unknown here: the check runs against
-  // the hooks' server and compares the config with nothing.
+  // the hooks' server and compares the config with nothing. Nor for an
+  // agent, whose tools send its own token.
   const fixed = entryIsFixed();
+  const compared = !fixed && !agentMode();
+  const config = loomConfig();
   const result = await clientStatus({
     serverUrl: fixed ? resolveServerUrl() : statusServerUrl(),
     token,
     scope: resolveScope(process.cwd()),
     tokenKind: kind,
-    configUrl: fixed ? "" : loomConfig().url,
+    mcpToken: compared ? helperToken(config.token) : undefined,
+    configUrl: compared && String(config.token || "").trim() ? config.url : "",
     exchangeUrl: resolveServerUrl(),
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
