@@ -191,7 +191,7 @@ test("preserves repository source links, images and examples", () => {
 });
 
 test("keeps a translated multiline code span on one line for link validation", () => {
-  const source = 'Some HTML syntax `<p\nalign="center">` and `# <img src="logo.svg">`.';
-  const prepared = prepareTranslatedMarkup(source, new Set());
-  assert.equal(prepared, source.replace("\n", " "));
+  const source = 'Some HTML syntax `<p\nalign="center"\nclass="intro">` and `# <img src="logo.svg">`.\n\nParagraph.';
+  const expected = 'Some HTML syntax `<p align="center" class="intro">` and `# <img src="logo.svg">`.\n\nParagraph.';
+  assert.equal(prepareTranslatedMarkup(source, new Set()), expected);
 });
