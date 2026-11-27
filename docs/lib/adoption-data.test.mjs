@@ -21,6 +21,7 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
             retention: [],
             activity: [],
             lifecycle: [],
+            domains: ["company.example", "other.example", { domain: "private.example", accounts: 7 }],
             oss: [
               { day: "2025-01-01", source: "pypi", metric: "sdk_downloads", value: 2 },
               { day: "2026-10-01", source: "pypi", metric: "sdk_downloads", value: 3 },
@@ -59,6 +60,7 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
   );
 
   assert.deepEqual(queried, ["https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001?format=JSON"]);
+  assert.deepEqual(result.selfHosted.domains, ["company.example", "other.example"]);
   const archived = result.openSource.find(({ id }) => id === "pypi");
   assert.equal(archived.history[0].day, "2025-01-01");
   const byLabel = Object.fromEntries(
@@ -96,9 +98,10 @@ test("keeps Query API credentials off unrecognized endpoint URLs", async (t) => 
   );
   assert.ok(requests.every(([host, authorization]) => host !== "external.example" && authorization === undefined));
   assert.equal(result.selfHosted.totals, undefined);
+  assert.equal(result.selfHosted.domains, null);
 });
 
-test("retries a timed-out warehouse and caches the next successful refresh", async (t) => {
+test("retries incomplete warehouse refreshes without fetching the registries again", async (t) => {
   let now = Date.UTC(2026, 10, 27);
   t.mock.method(Date, "now", () => now);
   const originalEnv = process.env;
@@ -118,16 +121,18 @@ test("retries a timed-out warehouse and caches the next successful refresh", asy
     timeoutBySignal.set(signal, delay);
     return signal;
   });
-  const publicTimeouts = new Set();
+  const registryTimeouts = [];
   const warehouseTimeouts = [];
   t.mock.method(globalThis, "fetch", async (input, init) => {
     if (new URL(input).hostname !== "queries.clickhouse.cloud") {
-      publicTimeouts.add(timeoutBySignal.get(init.signal));
+      registryTimeouts.push(timeoutBySignal.get(init.signal));
       return new Response(null, { status: 502 });
     }
     warehouseTimeouts.push(timeoutBySignal.get(init.signal));
     if (warehouseTimeouts.length === 1) throw new DOMException("Warehouse wake-up timed out", "TimeoutError");
-    return Response.json({ data: [{ totals: [], versions: [], retention: [], activity: [], lifecycle: [], oss: [] }] });
+    const totals = { totals: [], versions: [], retention: [], activity: [], lifecycle: [], oss: [] };
+    const row = warehouseTimeouts.length === 2 ? totals : { ...totals, domains: ["clickhouse.com"] };
+    return Response.json({ data: [row] });
   });
 
   const first = loadPublishedAdoption();
@@ -143,7 +148,13 @@ test("retries a timed-out warehouse and caches the next successful refresh", asy
   const retry = loadPublishedAdoption();
   assert.notEqual(retry, first);
   assert.deepEqual((await retry).selfHosted.totals, []);
+  assert.equal((await retry).selfHosted.domains, null);
   assert.equal(loadPublishedAdoption(), retry);
-  assert.deepEqual(warehouseTimeouts, [30_000, 30_000]);
-  assert.deepEqual([...publicTimeouts], [5_000]);
+
+  now += 15_000;
+  const recovered = loadPublishedAdoption();
+  assert.deepEqual((await recovered).selfHosted.domains, ["clickhouse.com"]);
+  assert.equal(loadPublishedAdoption(), recovered);
+  assert.deepEqual(warehouseTimeouts, [30_000, 30_000, 30_000]);
+  assert.deepEqual(registryTimeouts, Array(6).fill(5_000));
 });

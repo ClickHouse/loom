@@ -102,6 +102,16 @@ class _CH:
             ]
         raise AssertionError(f"unexpected statement: {sql}")
 
+    async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
+        p = dict(params or {})
+        self.calls.append((sql, p))
+        assert sql.startswith("DELETE FROM loom.code_answers") and "question_id" in sql
+        self.rows = [
+            r
+            for r in self.rows
+            if (r["org"], r["namespace"], str(r["question_id"])) != (p["org"], p["ns"], p["qid"])
+        ]
+
     async def query_one(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
@@ -495,16 +505,38 @@ def test_an_answer_is_not_cached_while_an_erasure_may_have_missed_it(
     assert seen and seen[0][0] == ORG
 
 
-def test_an_answer_with_no_memory_reads_no_erasure_ledger(
-    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("pending", [True, None])
+def test_a_code_only_answer_is_not_cached_while_an_erasure_may_have_missed_it(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, pending: Any
 ) -> None:
-    async def _unfinished(*a: Any, **kw: Any) -> list[dict[str, Any]]:
-        raise AssertionError("only an answer that quoted memory waits on erasure")
+    # an erasure of the org may have deleted its code answers before this one lands,
+    # whether or not the answer quoted memory; an unreadable ledger counts as one (None)
+    async def _unfinished(org: str, since_s: int, margin_s: int, **kw: Any) -> list[dict[str, Any]]:
+        if pending is None:
+            raise RuntimeError("ledger unreadable")
+        return [{"erasure_id": "e1", "scope_type": "namespace", "scope_value": NS}]
 
     repo = env["repo"]
     monkeypatch.setattr("server.erasure.app.ledger_reads.unfinished_since", _unfinished)
-    _ask(repo, "how does TTL drop old parts?")
-    assert len(repo.inserts) == 1
+    out = _ask(repo, "how does TTL drop old parts?")
+    assert out.source == "synthesized" and not repo.inserts
+
+
+def test_a_code_only_answer_stored_before_an_erasure_marks_is_deleted_again(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # read clean before the store and marked after it: the erasure's code_answers delete
+    # may already have passed, so the row goes by its own key; no memory key names it
+    repo = env["repo"]
+
+    async def _unfinished(org: str, since_s: int, margin_s: int, **kw: Any) -> list[dict[str, Any]]:
+        return [{"erasure_id": "e1"}] if repo.inserts else []
+
+    monkeypatch.setattr("server.erasure.app.ledger_reads.unfinished_since", _unfinished)
+    assert _ask(repo, "how does TTL drop old parts?").source == "synthesized"
+    stored, tomb = repo.inserts
+    assert tomb["question_id"] == stored["question_id"] and tomb["answer"] == ""
+    assert not [r for r in repo._ch.rows if r["answer"]]  # no version keeps the text
 
 
 @pytest.mark.parametrize("redacted", [True, None])
@@ -906,6 +938,43 @@ def test_an_abstain_is_cached_for_its_exact_text_under_the_index_head(env: dict[
     assert para.cache != "negative" and env["searches"] == 2
     # a new merge re-opens it
     assert _ask(repo, q, head="b" * 40).cache != "negative" and env["searches"] == 3
+
+
+@pytest.mark.parametrize("pending", [True, None])
+def test_an_abstain_is_not_cached_while_an_erasure_may_have_missed_it(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, pending: Any
+) -> None:
+    # the negative entry holds the question text: an abstaining ask that overlaps an
+    # erasure must not recreate it after the namespace delete (None: unreadable ledger)
+    async def _unfinished(org: str, since_s: int, margin_s: int, **kw: Any) -> list[dict[str, Any]]:
+        if pending is None:
+            raise RuntimeError("ledger unreadable")
+        return [{"erasure_id": "e1", "scope_type": "namespace", "scope_value": NS}]
+
+    repo = env["repo"]
+    env["abstain"] = True
+    monkeypatch.setattr("server.erasure.app.ledger_reads.unfinished_since", _unfinished)
+    assert _ask(repo, "how does the server encrypt data at rest?").abstain
+    assert not repo.inserts
+
+
+def test_an_abstain_stored_before_an_erasure_marks_is_deleted_again(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # read clean before the store and marked after it: the erasure's delete may have
+    # passed, so the negative row goes by its own key and no version keeps the question
+    repo = env["repo"]
+    env["abstain"] = True
+
+    async def _unfinished(org: str, since_s: int, margin_s: int, **kw: Any) -> list[dict[str, Any]]:
+        return [{"erasure_id": "e1"}] if repo.inserts else []
+
+    monkeypatch.setattr("server.erasure.app.ledger_reads.unfinished_since", _unfinished)
+    assert _ask(repo, "how does the server encrypt data at rest?").abstain
+    stored, tomb = repo.inserts
+    assert stored["entry_kind"] == "negative"
+    assert tomb["question_id"] == stored["question_id"] and tomb["tombstoned_at"] is not None
+    assert not repo._ch.rows  # deleted by its key
 
 
 def test_a_negative_entry_expires(env: dict[str, Any]) -> None:

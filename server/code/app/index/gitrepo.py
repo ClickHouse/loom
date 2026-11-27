@@ -1106,6 +1106,16 @@ class BlobTooLarge(Exception):
         self.head = head
 
 
+async def show_local_commit_file(
+    git_dir: str, commit: str, path: str, max_bytes: int
+) -> bytes | None:
+    """Read a bounded local blob and establish that its revision is a commit."""
+    if len(commit) not in (40, 64) or not _OBJECT_ID.fullmatch(commit) or max_bytes <= 0:
+        return None
+    env = auth_env() | {"GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": ""}
+    return await _capped_blob(git_dir, f"{commit}^{{commit}}", path, max_bytes, env=env)
+
+
 async def show_file(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes | None:
     """File contents at a commit; None when the path is no file there (absent, a
     directory, a submodule) or `sha` is not a revision. With `max_bytes`, a larger
@@ -1134,7 +1144,7 @@ async def show_file(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> by
     return out
 
 
-async def _rev_parse(git_dir: str, spec: str) -> str | None:
+async def _rev_parse(git_dir: str, spec: str, env: dict[str, str]) -> str | None:
     """The object `spec` names, or None when there is none; a timeout is an error."""
     proc = await asyncio.create_subprocess_exec(
         "git",
@@ -1146,7 +1156,7 @@ async def _rev_parse(git_dir: str, spec: str) -> str | None:
         spec,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
-        env=auth_env(),
+        env=env,
     )
     try:
         out, _err = await communicate_or_kill(proc, timeout_s=settings.code_git_timeout_s)
@@ -1155,12 +1165,15 @@ async def _rev_parse(git_dir: str, spec: str) -> str | None:
     return out.decode("utf-8", "replace").strip() if proc.returncode == 0 else None
 
 
-async def _capped_blob(git_dir: str, sha: str, path: str, max_bytes: int) -> bytes | None:
+async def _capped_blob(
+    git_dir: str, sha: str, path: str, max_bytes: int, *, env: dict[str, str] | None = None
+) -> bytes | None:
     """`show_file` under a cap: one `git cat-file --batch` names the object's type and
     size before its bytes, and the read stops at the cap's verdict."""
+    env = auth_env() if env is None else env
     spec = f"{sha}:{path}"
     if "\n" in spec or spec.endswith("\r"):  # --batch reads lines, a CR before LF dropped
-        oid = await _rev_parse(git_dir, spec)
+        oid = await _rev_parse(git_dir, spec, env)
         if oid is None:
             return None
         spec = oid
@@ -1174,7 +1187,7 @@ async def _capped_blob(git_dir: str, sha: str, path: str, max_bytes: int) -> byt
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
-        env=auth_env(),
+        env=env,
     )
     assert proc.stdin is not None and proc.stdout is not None
     whole = False  # every byte git writes was read: it exits on its own

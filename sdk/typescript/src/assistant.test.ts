@@ -168,7 +168,7 @@ describe("loom.assistant.stream", () => {
   });
 
   it("throws an error event after the text as its typed error", async () => {
-    const error = { code: "ASSISTANT_UPSTREAM_FAILED", message: "LibreChat failed", status: 503 };
+    const error = { code: "ASSISTANT_UPSTREAM_FAILED", message: "The native assistant failed", status: 503 };
     const { loom } = client(() => new Response(body(sse(chunk("Deploys "), { error }))));
     const seen: AssistantEvent[] = [];
     const run = async () => {
@@ -185,7 +185,7 @@ describe("loom.assistant.stream", () => {
 
   it("throws an error event with no readable status, as a build without it sends, as a 503", async () => {
     for (const status of [undefined, "busy", 0]) {
-      const error = { code: "ASSISTANT_UPSTREAM_FAILED", message: "LibreChat failed", status };
+      const error = { code: "ASSISTANT_UPSTREAM_FAILED", message: "The native assistant failed", status };
       const { loom } = client(() => new Response(body(sse(chunk("Deploys "), { error }))));
       const err = await collect(loom).then(
         () => undefined,

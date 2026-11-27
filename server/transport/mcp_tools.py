@@ -572,6 +572,15 @@ async def _tools_descriptor(
                 _shape_schema(model_schema(op.input_model)),
             ),
         )
+        if op.name == "code.read":
+            for choice in input_schema["properties"]["ranges"]["anyOf"]:
+                pair = choice["items"]
+                if (
+                    pair.get("type") == "array"
+                    and pair.get("minItems") == pair.get("maxItems") == 2
+                ):
+                    # Line endpoints fit a JavaScript integer and need numeric bounds.
+                    pair["items"]["type"] = "integer"
         if custom:
             # The curated text is the guidance; the model docstring beside it
             # is developer prose.
@@ -583,6 +592,8 @@ async def _tools_descriptor(
             input_schema = _with_identity(input_schema, op)
         if profile == "compact" and toolset == "coding" and op.name == "code.grep":
             input_schema = _without(input_schema, _COMPACT_CODING_GREP_OMITTED_ARGS)
+            # JSON Schema numeric bounds do not constrain a string alternative.
+            input_schema["properties"]["context_lines"]["type"] = "integer"
         if defaults := mcp_argument_defaults(op.name, toolset):
             fields = input_schema.get("properties", {})
             for field, value in defaults.items():

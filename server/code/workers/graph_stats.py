@@ -597,6 +597,10 @@ async def _run_repo(org: str, ns: str, result: CodeGraphStatsResult) -> None:
             if live is not None:
                 row = CodeRepo.tombstone_of("code_summaries", live)  # full mirror
                 row["tombstoned_at"] = None
+                # Just above the version read: a tombstone or a new summary
+                # written since carries a later clock version and wins, so
+                # the rank copy never brings back a card retired meanwhile.
+                row["version"] = int(live["version"]) + 1
                 row["pagerank"] = rank
                 row["in_degree"] = ind
                 row["out_degree"] = outd

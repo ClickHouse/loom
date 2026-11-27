@@ -216,7 +216,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.outline`](operations/code.md#codeoutline) | "What is in this file?" — the question a whole-file read answers at the price of the whole file. | viewer | read | yes |  |
 | [`code.path_guards`](operations/code.md#codepath_guards) | The conditions that stand on the call path from `from_symbol` to `to_symbol`: the verify(reaches) chain, and for each hop the guards the call site sits under inside its caller… | viewer | read | no |  |
 | [`code.pr_check`](operations/code.md#codepr_check) | A PR draft asks whether a PR like it already exists. | viewer | read | no |  |
-| [`code.read`](operations/code.md#coderead) | Read inclusive, one-based indexed lines. | viewer | read | no |  |
+| [`code.read`](operations/code.md#coderead) | Read indexed lines. | viewer | read | no |  |
 | [`code.recent_commits`](operations/code.md#coderecent_commits) | List the most recently indexed commits of a repository, decorated with subject and time from the clone. | viewer | read | yes |  |
 | [`code.refresh`](operations/code.md#coderefresh) | CI calls this right after a merge lands: run one ingest pass now instead of waiting for the poll interval. | writer | write | no | yes |
 | [`code.reindex`](operations/code.md#codereindex) | Operator repair: move the git watermark (e.g. back N commits after a bad pass, or to a specific sha). | admin | write | no | yes |

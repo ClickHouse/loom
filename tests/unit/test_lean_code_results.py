@@ -65,6 +65,50 @@ def test_scip_symbol_drops_rendered_description_already_in_source() -> None:
     assert elided["description"] == rendered
 
 
+def test_scip_edit_context_drops_only_repeated_wrapped_function_documentation() -> None:
+    body = '''    def register(self, app: "Flask", name: str = "a  b") -> None:
+        """Register with :meth:`Flask.register_blueprint`.
+
+        Example:
+
+            register(app, "a  b")
+        """
+        pass
+'''
+    rendered = (
+        '```python\ndef register(\n  self,\n  app: Flask,\n  name: str = "a  b"\n) -> None:\n```\n'
+        "Register with :meth:`Flask.register_blueprint`.\n\n        Example:\n\n"
+        '            register(app, "a  b")'
+    )
+    distinct = [
+        rendered.replace("def register", "@setupmethod\ndef register"),
+        rendered.replace("app: Flask", "app: Other"),
+        rendered.replace('= "a  b"', '= "a b"'),
+        rendered.replace('app, "a  b"', 'app, "a b"'),
+        rendered.replace("            register(app", "        register(app"),
+        rendered.replace("  self,", "  self,  # Flag for setup"),
+        rendered.replace("-> None:\n```", "-> None:\n    side_effect()\n```"),
+        rendered + "\nExtra documentation.",
+    ]
+    source = {"symbol": "register", "tier": "scip", "body": body, "description": rendered}
+    large_source = {**source, "body": body + "        pass\n" * 2048}
+    out = lean_code(
+        "code.edit_context",
+        {
+            "definitions": [
+                source,
+                *[{**source, "description": item} for item in distinct],
+                large_source,
+            ]
+        },
+    )
+    repeated, *kept, large = out["definitions"]
+    assert repeated["body"] == body
+    assert "description" not in repeated
+    assert [definition["description"] for definition in kept] == distinct
+    assert large["body"] == large_source["body"] and large["description"] == rendered
+
+
 def test_scip_symbol_keeps_distinct_code_literals_in_docs() -> None:
     descriptions = (
         ('Send marker `"a  b"`.', 'Send marker `"a b"`.'),

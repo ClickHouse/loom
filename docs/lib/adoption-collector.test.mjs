@@ -73,6 +73,7 @@ test("rejects extra fields, malformed identities and windows, and oversized requ
   const settings = { env, now, fetcher: () => assert.fail("invalid report reached storage") };
   const invalid = [
     { ...report, prompt: "private text" },
+    { ...report, schema_version: 3 },
     { ...report, installation_id: "host.example" },
     { ...report, user_domains: [{ domain: "person@example.test", user_count: 1, successful_requests: 1 }] },
     { ...report, window_end: "2026-06-02T12:00:00+00:00" },
@@ -82,6 +83,16 @@ test("rejects extra fields, malformed identities and windows, and oversized requ
     assert.equal((await handleAdoption(request(JSON.stringify(body)), settings)).status, 400);
   }
   assert.equal((await handleAdoption(request(" ".repeat(16_385)), settings)).status, 413);
+});
+
+test("preserves the public domain report version in storage", async () => {
+  const publicReport = { ...report, schema_version: 2 };
+  const fetcher = (_url, options) => {
+    assert.deepEqual(JSON.parse(options.body), publicReport);
+    return Promise.resolve(new Response());
+  };
+  const response = await handleAdoption(request(JSON.stringify(publicReport)), { env, fetcher, now });
+  assert.equal(response.status, 200);
 });
 
 test("returns an error while writes fail or the warehouse is unconfigured", async () => {

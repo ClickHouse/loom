@@ -169,6 +169,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.setting_facts": ("sdk_method",),
     "code.symbol": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
@@ -360,7 +361,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "grants.create": (
         "sdk_method",
-        "plugin_hook",
         "dashboard",
     ),
     "grants.list": (
@@ -379,13 +379,9 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "grants.unshare_agent": ("sdk_method",),
     "help.get": (
         "sdk_method",
-        "plugin_hook",
         "dashboard",
     ),
-    "help.search": (
-        "sdk_method",
-        "plugin_hook",
-    ),
+    "help.search": ("sdk_method",),
     "inbox.list": (
         "sdk_method",
         "dashboard",
@@ -410,7 +406,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "insights.query": (
         "sdk_method",
         "sdk_example",
-        "plugin_hook",
     ),
     "knowledge.add": (
         "sdk_method",
@@ -458,7 +453,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "knowledge.get": (
         "sdk_method",
-        "plugin_hook",
         "dashboard",
     ),
     "knowledge.ingest": (
@@ -486,10 +480,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "knowledge.outline": (
-        "sdk_method",
-        "plugin_hook",
-    ),
+    "knowledge.outline": ("sdk_method",),
     "knowledge.query": ("sdk_method",),
     "knowledge.query_history.add": (
         "sdk_method",
@@ -567,7 +558,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "knowledge.upsert": (
         "sdk_method",
         "sdk_example",
-        "plugin_hook",
         "dashboard",
     ),
     "learnings.list": (
@@ -683,7 +673,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.history": (
         "sdk_method",
         "sdk_example",
-        "plugin_hook",
         "dashboard",
     ),
     "memory.import": ("sdk_method",),
@@ -694,7 +683,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.import_evidence": ("sdk_method",),
     "memory.inspect": (
         "sdk_method",
-        "plugin_hook",
         "dashboard",
     ),
     "memory.keys": ("sdk_method",),
@@ -888,7 +876,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "namespace.inventory": (
         "sdk_method",
-        "plugin_hook",
         "dashboard",
     ),
     "namespace.join": (
@@ -950,7 +937,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "namespace.tune": (
         "sdk_method",
-        "plugin_hook",
         "dashboard",
     ),
     "namespace.validate": (

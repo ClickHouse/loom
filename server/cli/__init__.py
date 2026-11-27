@@ -14,14 +14,16 @@ the published `clickhouse-loom` distribution is the SDK only.
 
 The console entrypoint is `loom = server.cli:main`; `python -m server.cli`
 runs the same `main` through `__main__`. `app` builds the parser tree and
-dispatches; each command family lives in its own module and registers its
-own subcommands:
+hands the parsed command to `dispatch`; each command family lives in its own
+module and registers its own subcommands:
 
   access         mint-token, revoke-token, claim-release
   ch_setup       ch-setup
   code           the `loom code …` tree (code-intelligence ingest and upkeep)
   code_*         its subcommand bodies: run, backfill, prs, scip, maintenance
   demo           demo
+  dispatch       run_parsed: a parsed command in its own context, for `app` and
+                 a process that runs a share of a command
   deployment     deployment
   doctor         doctor, report
   doctor_client  the `doctor --client` checks of this machine as a client
@@ -47,7 +49,7 @@ own subcommands:
   up             up
 
 Imports run one way: `app` imports the family modules; a family module never
-imports `app`.
+imports `app`. `dispatch` imports neither, and both may import it.
 """
 
 from server.cli.app import main

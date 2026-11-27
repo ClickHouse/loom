@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, NamedTuple
 
 from server.code.domain.anchor import Definition, bare_name, local_name
@@ -261,30 +261,43 @@ async def _definitions_at(
     from server.code.app import memory_links as code
     from server.code.app.index import gitrepo
 
-    if not await code.mirror_here(org, code_namespace, head):
-        return None
     named = bare_name(qualified_name)
-    # a parse waiting behind another one gives up with this read (its threads copy this)
-    seconds = settings.memory_code_plane_parse_timeout_s  # one deadline for the wait and the read
-    lock_wait = bounded_parse.LockWait(seconds)
-    token = bounded_parse.LOCK_WAIT.set(lock_wait)
+    unique = list(dict.fromkeys(paths))
+    files: list[code.FileAt | None] | None
     try:
-        parse = asyncio.gather(
-            *(code.parsed(org, code_namespace, head, p, named=named) for p in dict.fromkeys(paths))
-        )
-    finally:
-        bounded_parse.LOCK_WAIT.reset(token)
-    try:
-        files = await asyncio.wait_for(parse, seconds)
+        if len(unique) == 1:
+            files = await _parse_link_source(
+                code.parsed_link_path(org, code_namespace, head, unique[0], named=named)
+            )
+        else:
+            if not await code.mirror_here(org, code_namespace, head):
+                return None
+            files = await _parse_link_source(
+                code.parsed_link_paths(org, code_namespace, head, unique, named=named)
+            )
     except (gitrepo.GitError, code.ParseFailed, TimeoutError):
         return None
-    if lock_wait.gave_up:  # a parser may have taken the refusal for the file's own answer
+    if files is None:
         return None
     here: dict[tuple[str, str], Definition] = {}
     for f in files:
         for d in _named(qualified_name, f.defs if f else []):
             here.setdefault((d.path, d.qualified_name), d)
     return here
+
+
+async def _parse_link_source[T](read: Awaitable[T]) -> T:
+    # A parse waiting behind another one gives up with this read (its threads copy this).
+    seconds = settings.memory_code_plane_parse_timeout_s
+    lock_wait = bounded_parse.LockWait(seconds)
+    token = bounded_parse.LOCK_WAIT.set(lock_wait)
+    try:
+        result = await asyncio.wait_for(read, seconds)
+    finally:
+        bounded_parse.LOCK_WAIT.reset(token)
+    if lock_wait.gave_up:
+        raise TimeoutError
+    return result
 
 
 def _matched(

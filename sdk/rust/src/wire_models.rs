@@ -9468,6 +9468,12 @@ pub struct CodeEditContextInput {
         deserialize_with = "present_value"
     )]
     pub names: Option<Vec<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub include_related_source: Option<bool>,
 }
 impl Default for CodeEditContextInput {
     fn default() -> Self {
@@ -9487,6 +9493,7 @@ impl CodeEditContextInput {
             name: None,
             clues: None,
             names: None,
+            include_related_source: None,
         }
     }
     pub fn include_lessons(mut self, include_lessons: bool) -> Self {
@@ -9530,6 +9537,10 @@ impl CodeEditContextInput {
     }
     pub fn names(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.names = Some(names.into_iter().map(Into::into).collect());
+        self
+    }
+    pub fn include_related_source(mut self, include_related_source: bool) -> Self {
+        self.include_related_source = Some(include_related_source);
         self
     }
     pub async fn send(
@@ -12315,6 +12326,7 @@ impl<'de> Deserialize<'de> for CodeReadInputRanges1Item {
 pub enum CodeReadInputRanges {
     Variant0(Vec<String>),
     Variant1(Vec<CodeReadInputRanges1Item>),
+    Variant2(Vec<Vec<Integer>>),
 }
 impl<'de> Deserialize<'de> for CodeReadInputRanges {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -12324,6 +12336,9 @@ impl<'de> Deserialize<'de> for CodeReadInputRanges {
         }
         if let Ok(value) = serde_json::from_value::<Vec<CodeReadInputRanges1Item>>(value.clone()) {
             return Ok(Self::Variant1(value));
+        }
+        if let Ok(value) = serde_json::from_value::<Vec<Vec<Integer>>>(value.clone()) {
+            return Ok(Self::Variant2(value));
         }
         Err(serde::de::Error::custom(
             "no matching variant for CodeReadInputRanges",

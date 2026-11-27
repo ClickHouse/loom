@@ -1,0 +1,24 @@
+{
+  "path": "retry.py",
+  "memory_key": "decision/retry-policy",
+  "saved_value": "`should_retry` retries on 503. Check retry.py at `a3b7e4ae19726fa8fb7b8cd9a522d569e00ca892`.",
+  "before": {
+    "code": "def should_retry(status: int) -> bool:\n    return status == 503",
+    "indexed_commit": "c48dc9fadc75c993d1d40f6b4877f87a7c37e17d",
+    "code_state": "fresh",
+    "changed_since": ""
+  },
+  "after": {
+    "code": "def should_retry(status: int) -> bool:\n    return status == 429",
+    "indexed_commit": "ed0984aa70bb65cab0e9dd399970006c71726d06",
+    "code_state": "changed",
+    "changed_since": "ed0984aa70bb65cab0e9dd399970006c71726d06"
+  },
+  "release": {
+    "code": "def should_retry(status: int) -> bool:\n    return status == 503",
+    "indexed_commit": "a3b7e4ae19726fa8fb7b8cd9a522d569e00ca892",
+    "code_state": "fresh",
+    "changed_since": ""
+  },
+  "loom_revision": "287bc1a4224cb14ceb0779c5236aa3513e7bad20"
+}

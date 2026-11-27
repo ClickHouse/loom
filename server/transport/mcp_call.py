@@ -51,6 +51,7 @@ from server.transport._common import (
     validation_note,
 )
 from server.transport._common import validation_errors as _validation_errors
+from server.transport.arg_check import IDENTITY_KEYS
 from server.transport.arg_feedback import feedback, refused_result, tool_error
 from server.transport.assistant_call import answer_run, assistant_call, set_assistant_call
 from server.transport.lean_results import lean_result
@@ -254,8 +255,7 @@ async def _call_tool(
     that can end the call returns its response and this function returns it
     at once, so no gate runs after a refusal and none runs after the
     handler."""
-    name = params.get("name")
-    arguments = params.get("arguments") or {}
+    name, arguments = params.get("name"), params.get("arguments") or {}
 
     if not name or not isinstance(name, str):
         return _err(req_id, INVALID_PARAMS, "tools/call requires 'name' (string)")
@@ -275,6 +275,7 @@ async def _call_tool(
     refused = await _another_cells_org(req_id, op, arguments, auth)
     if refused is not None:
         return refused
+    explicit_identity = not IDENTITY_KEYS.isdisjoint(arguments)
     request_id, defaults = await _bind_caller_identity(op, arguments, auth, client_name)
 
     run_caller, stamped_run = _stamp_session_run(op, arguments, defaults, mcp_session_id)
@@ -282,7 +283,12 @@ async def _call_tool(
     client_idem_key = _pop_idempotency_key(op, arguments)
 
     validated = _validated_input(
-        req_id, op, gates.with_resolved_org(op, arguments, auth), request_id, toolset=toolset
+        req_id,
+        op,
+        gates.with_resolved_org(op, arguments, auth),
+        request_id,
+        toolset=toolset,
+        include_example=not explicit_identity,
     )
     if isinstance(validated, dict):
         return validated  # misspelled-argument refusal, or VALIDATION_FAILED
@@ -773,6 +779,7 @@ def _validated_input(
     request_id: str,
     *,
     toolset: str | None = None,
+    include_example: bool = True,
 ) -> BaseModel | dict[str, Any]:
     """Phase 4 of `_call_tool`: the misspelled-argument refusal, then
     Pydantic validation. Returns the input model, or the refusal response
@@ -802,7 +809,9 @@ def _validated_input(
             error=validation_note(errors),
         ):
             schedule_code_trace_validation_failure(op.name, arguments, errors)
-        return _ok(req_id, tool_error(*feedback(op, arguments, errors)))
+        return _ok(
+            req_id, tool_error(*feedback(op, arguments, errors, include_example=include_example))
+        )
     if (
         isinstance(input_obj, CodeSymbolInput)
         and not input_obj.include_body

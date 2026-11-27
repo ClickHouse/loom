@@ -42,7 +42,9 @@ async function loadWarehouse(env) {
   const row = response?.data?.[0];
   if (datasets.every((name) => Array.isArray(row?.[name]))) {
     try {
-      return Object.fromEntries(datasets.map((name) => [name, row[name].map((json) => JSON.parse(json))]));
+      const aggregates = Object.fromEntries(datasets.map((name) => [name, row[name].map((json) => JSON.parse(json))]));
+      const domains = Array.isArray(row.domains) ? row.domains.filter((domain) => typeof domain === "string") : null;
+      return { ...aggregates, domains };
     } catch {
       console.warn("Adoption Query API returned invalid data.");
       return {};
@@ -64,20 +66,28 @@ async function containerPulls() {
 
 const numberOrNull = (value) => (Number.isFinite(value) ? value : null);
 
-export async function loadAdoption(env = process.env, now = new Date()) {
-  const refreshedAt = now.toISOString();
-  const today = refreshedAt.slice(0, 10);
+function readRegistryMetrics(now) {
+  const today = now.toISOString().slice(0, 10);
   const firstDay = daysBefore(today, 365);
   const historyStart = daysBefore(today, 730);
   const yesterday = daysBefore(today, 1);
-  const [warehouse, repository, releases, python, npm, olderNpm, pulls] = await Promise.all([
-    loadWarehouse(env),
+  return Promise.all([
     readSource("https://api.github.com/repos/ClickHouse/loom"),
     readSource("https://api.github.com/repos/ClickHouse/loom/releases?per_page=100"),
     readSource("https://pypistats.org/api/packages/clickhouse-loom/overall?mirrors=false"),
     readSource(`https://api.npmjs.org/downloads/range/${firstDay}:${yesterday}/@clickhouse/loom`),
     readSource(`https://api.npmjs.org/downloads/range/${historyStart}:${daysBefore(firstDay, 1)}/@clickhouse/loom`),
     containerPulls(),
+  ]);
+}
+
+async function loadAdoptionWithRegistries(env, now, registryMetrics) {
+  const refreshedAt = now.toISOString();
+  const today = refreshedAt.slice(0, 10);
+  const historyStart = daysBefore(today, 730);
+  const [warehouse, [repository, releases, python, npm, olderNpm, pulls]] = await Promise.all([
+    loadWarehouse(env),
+    registryMetrics,
   ]);
 
   const oss = warehouse.oss ?? [];
@@ -132,6 +142,7 @@ export async function loadAdoption(env = process.env, now = new Date()) {
       retention: warehouse.retention,
       activity: warehouse.activity ?? [],
       lifecycle: warehouse.lifecycle ?? [],
+      domains: warehouse.domains ?? null,
     },
     openSource: [
       {
@@ -166,15 +177,25 @@ export async function loadAdoption(env = process.env, now = new Date()) {
   };
 }
 
+export function loadAdoption(env = process.env, now = new Date()) {
+  return loadAdoptionWithRegistries(env, now, readRegistryMetrics(now));
+}
+
+const refreshTtlMs = 5 * 60_000;
 const failedRefreshTtlMs = 15_000;
+let registryCache;
 let published;
 export function loadPublishedAdoption() {
   const now = Date.now();
   if (!published || now >= published.expires) {
-    const refresh = { expires: now + 5 * 60_000 };
-    refresh.data = loadAdoption(process.env, new Date(now)).then(
+    const date = new Date(now);
+    if (!registryCache || now >= registryCache.expires) {
+      registryCache = { expires: now + refreshTtlMs, data: readRegistryMetrics(date) };
+    }
+    const refresh = { expires: now + refreshTtlMs };
+    refresh.data = loadAdoptionWithRegistries(process.env, date, registryCache.data).then(
       (data) => {
-        if (data.selfHosted.totals === undefined) refresh.expires = Date.now() + failedRefreshTtlMs;
+        if (data.selfHosted.domains === null) refresh.expires = Date.now() + failedRefreshTtlMs;
         return data;
       },
       (error) => {

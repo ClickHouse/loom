@@ -53,6 +53,51 @@ async def test_named_examples_skip_ambiguous_bare_types(monkeypatch) -> None:
     repo.source_chunks_for_span.assert_not_awaited()
 
 
+@pytest.mark.parametrize("tier", ["scip", "treesitter"])
+@pytest.mark.parametrize(("radius", "start"), [(2, 1), (1, 2)])
+async def test_named_examples_include_attached_decorators(monkeypatch, tier, radius, start) -> None:
+    from dataclasses import asdict
+
+    from server.code.app.symbol.named_examples import named_test_examples
+    from server.code.domain.extract.lang_python import parse_python
+    from server.code.domain.extract.py_decorated_chunks import python_chunks
+    from server.embedding.fake import fake_model_name
+
+    revision = "a" * 40
+    target = {**DEFS[0], "qualified_name": "modern::Cache", "name": "Cache", "kind": "class"}
+    source = '@pytest.mark.parametrize("value", [1])\ndef test_cache(value):\n    Cache(value)\n'
+    path = "tests/test_cache.py"
+    parsed = parse_python(path, source.encode())
+    (definition,) = (symbol for symbol in parsed.symbols if symbol.name == "test_cache")
+    repo = AsyncMock()
+    repo.symbols_by_name.return_value = [target]
+    repo.symbols_fuzzy.return_value = [
+        {
+            "path": path,
+            "name": definition.name,
+            "qualified_name": definition.qualified_name,
+            "kind": "function",
+            "tier": tier,
+            "start_line": definition.start_line,
+            "end_line": definition.end_line,
+            "indexed_commit": revision,
+        }
+    ]
+    repo.source_chunks_for_span.return_value = [
+        {**asdict(chunk), "indexed_commit": revision}
+        for chunk in python_chunks(parsed, max_chars=6000)
+    ]
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    (example,) = await named_test_examples(repo, "o", "n", target, radius)
+    assert example["context"] == {
+        "commit": revision,
+        "start_line": start,
+        "end_line": 3,
+        "text": "".join(source.splitlines(keepends=True)[start - 1 :]),
+    }
+    repo.source_chunks_for_span.assert_awaited_once()
+
+
 class _Clock:
     """Counts the reads in flight at once; the proof the legs overlap."""
 

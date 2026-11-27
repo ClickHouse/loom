@@ -4,6 +4,8 @@ job's environment."""
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from server.code.app.index import git_proxy, gitrepo
@@ -40,8 +42,6 @@ async def _proxy_env(env: dict[str, str]) -> dict[str, str]:
 def test_through_the_proxy_its_bundle_wins_when_set(
     monkeypatch: pytest.MonkeyPatch, proxy_ca: str, want: str
 ) -> None:
-    import asyncio
-
     monkeypatch.setattr(settings, "code_git_ca_file", "/etc/ssl/private-ca/bundle.pem")
     monkeypatch.setattr(settings, "code_git_proxy_url", "http://proxy.example.com:3128")
     monkeypatch.setattr(settings, "code_git_proxy_ca_file", proxy_ca)

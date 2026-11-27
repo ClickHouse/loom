@@ -190,7 +190,9 @@ flowchart LR
 2. **Re-indexes exactly the changed files** of each commit (`ingest_file` in
    `code/app/index/ingest.py`): parse, chunk, symbols, edges, call guards, the file
    row, and a context pack and review brief for the merged PR the commit names. Then it
-   advances `git_head`. A crash re-runs from the last complete commit.
+   advances `git_head`. A crash re-runs from the last complete commit. Across entries
+   the pass takes one commit per entry per round, so a long backlog never holds another
+   entry's new commits; a round the budget ends resumes next pass at the entry (org and namespace) it missed.
 3. **Walks** with the share `LOOM_CODE_INGEST_WALK_BUDGET_SHARE` leaves: reconciliation
    heals and extractor re-chunks (below).
 
@@ -209,6 +211,13 @@ Lanes help because a lane waits on ClickHouse round trips, not CPU.
 (`code/app/index/denylist.py`, `LOOM_CODE_INGEST_EXCLUDE`,
 `LOOM_CODE_INGEST_IGNORE_FILE`), is binary, or exceeds `LOOM_CODE_INGEST_MAX_FILE_BYTES`.
 So `coverage_floor: true` on a grep means every admitted chunk, not every byte.
+A path the entry's `embed_exclude` globs name (`LOOM_CODE_EMBED_EXCLUDE` for the scalar
+entry) is admitted, chunked and mapped, but its chunks are neither described nor embedded:
+they carry the `unembedded by design` marker, which every writer of a vector or a
+description honours and the coverage counts skip, the `code_summary` pass writes no card
+for them, and code.search reaches them through the lexical leg only. A changed glob
+applies to chunks written after it, in both directions (the operations guide's
+`embed_exclude` notes name the repair).
 
 ### Choosing a parser
 
@@ -560,11 +569,13 @@ Every column is in the generated [schema reference](../reference/schema.md).
 
 A file-qualified symbol request (`src/module.py:Type.method` or
 `src/Type.cpp:Namespace::Type::method`) keeps the filename as a hard constraint.
-Candidate discovery reads that file's symbol rows; the authoritative live read
-checks the filename again before ranking and limiting. It never retries the name
-against other files. `resolved_by: file_symbol` discloses the binding; stored
-symbol names and ids stay intact. The shared resolver applies this spelling to
-structural code operations.
+The exact indexed path takes precedence even when it lacks the requested symbol.
+If it is absent, an unanchored relative path with two or more components can match
+the complete suffix of one live indexed file in the namespace. A `./` or absolute
+path keeps the lookup exact. Both symbol reads use the selected path before ranking
+and limiting. The response includes `resolved_by: file_symbol`, the canonical
+indexed path, and the stored symbol name and id. The shared resolver applies this
+spelling to structural code operations.
 
 Python import spellings use the bounded short-name candidate read after an exact
 symbol miss. Read-side matching preserves dotted module scopes and treats a package's

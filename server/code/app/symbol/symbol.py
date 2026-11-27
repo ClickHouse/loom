@@ -36,6 +36,7 @@ from server.code.app.spans import (
     start_stage_wall,
 )
 from server.code.app.symbol.edit_lessons import attach_verified_caller_lessons
+from server.code.app.symbol.edit_reads import read_sources_for_definitions
 from server.code.app.symbol.hierarchy import _symbol_hierarchy
 from server.code.app.symbol.named_examples import named_test_examples, owning_type
 from server.code.app.symbol.neighbours import (
@@ -61,6 +62,7 @@ from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
     from server.code.app.symbol.edit_target import EditTarget
+    from server.code.domain.units import CodeUnit
 
 logger = logging.getLogger(__name__)
 
@@ -582,7 +584,7 @@ async def _edit_context_for_target(
         )
     out = await handle_code_symbol(
         CodeSymbolInput(
-            **input.model_dump(exclude={"name", "clues", "names"}),
+            **input.model_dump(exclude={"name", "clues", "names", "include_related_source"}),
             name=target.name,
             include_history=False,
             test_examples_only=True,
@@ -594,7 +596,8 @@ async def _edit_context_for_target(
         matched_members=target.grouped,
         match_witnesses=target.matches,
         related_test_names=_edit_batch_names(input.names),
-        include_indirect_lessons=not in_batch,
+        standalone_edit=not in_batch,
+        include_related_source=input.include_related_source,
     )
     if target.revision is not None:
         if not out.definitions:
@@ -636,10 +639,11 @@ async def _batched_edit_context(
     from server.code.app.enrich import (
         deduplicate_indirect_caller_sources,
         merge_indirect_caller_sources,
+        share_edit_example_reads,
     )
     from server.code.app.symbol.edit_reads import batch_read_sources
     from server.code.app.symbol.edit_target import EditTarget
-    from server.code.domain.units import CodeUnit, estimate_json_tokens, estimate_unit_tokens
+    from server.code.domain.units import estimate_json_tokens, estimate_unit_tokens
 
     if started is None:
         started = time.monotonic()
@@ -655,10 +659,11 @@ async def _batched_edit_context(
             )
 
     with code_span("edit_context.batch", seeds=len(names)):
-        results = await asyncio.gather(
-            *(read_target(name) for name in names),
-            return_exceptions=True,
-        )
+        async with share_edit_example_reads():
+            results = await asyncio.gather(
+                *(read_target(name) for name in names),
+                return_exceptions=True,
+            )
     by_name = dict(zip(names, results, strict=True))
     definitions: list[CodeUnit] = []
     positions: dict[str, int] = {}
@@ -703,11 +708,16 @@ async def _batched_edit_context(
     shape = "declaration_batch" if located else "named_batch"
     note_budget_shape(shape)
     candidates = located.candidates if located else []
-    tokens = sum(estimate_unit_tokens(unit) for unit in definitions) + estimate_json_tokens(
-        [target.model_dump() for target in targets]
+    tokens = (
+        sum(estimate_unit_tokens(unit) for unit in definitions)
+        + estimate_json_tokens([target.model_dump() for target in targets])
+        + estimate_json_tokens(candidates)
     )
-    tokens += estimate_json_tokens(candidates)
-    read_sources = await batch_read_sources(org, ns, definitions, targets)
+    read_sources = (
+        await batch_read_sources(org, ns, definitions, targets)
+        if input.include_related_source
+        else []
+    )
     tokens += estimate_json_tokens([source.model_dump() for source in read_sources])
     route = f"edit_context_{shape}"
     trace_id = _symbol_trace(
@@ -796,6 +806,25 @@ async def _rank_symbol_rows(
         )
 
 
+async def _rank_by_fan_in(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    units: list[CodeUnit],
+    input: CodeSymbolInput,
+    stats: dict[str, dict[str, Any]] | None,
+) -> list[CodeUnit]:
+    from server.code.app import fan_in as code_fan_in
+
+    if not units:
+        return units
+    with code_span("symbol.fan_in") as sp:
+        span_attrs(sp, results=await code_fan_in.annotate_units(repo, org, ns, units, stats=stats))
+    if input.min_fan_in:
+        units = [unit for unit in units if unit.fan_in >= input.min_fan_in]
+    return code_fan_in.order_by_fan_in(units) if input.sort_by == "fan_in" else units
+
+
 async def handle_code_symbol(
     input: CodeSymbolInput,
     *,
@@ -805,10 +834,9 @@ async def handle_code_symbol(
     matched_members: bool = False,
     match_witnesses: list[dict[str, Any]] | None = None,
     related_test_names: tuple[str, ...] = (),
-    include_indirect_lessons: bool = False,
+    standalone_edit: bool = False,
+    include_related_source: bool = True,
 ) -> CodeSymbolOutput:
-    from server.code.app import fan_in as code_fan_in
-
     require_code_intel()
     # Presence on several namespaces: one verdict per namespace, no bodies. Unset: the
     # plain single-namespace lookup below.
@@ -873,23 +901,7 @@ async def handle_code_symbol(
         brief_stats: dict[str, dict[str, Any]] | None = None
         if legs.brief is not None:
             brief, brief_stats = await legs.brief
-        if units:
-            with code_span("symbol.fan_in") as sp:
-                span_attrs(
-                    sp,
-                    results=await code_fan_in.annotate_units(
-                        repo,
-                        org,
-                        ns,
-                        units,
-                        stats=brief_stats,
-                    ),
-                )
-            if input.min_fan_in:
-                units = [u for u in units if u.fan_in >= input.min_fan_in]
-            if input.sort_by == "fan_in":
-                units = code_fan_in.order_by_fan_in(units)
-
+        units = await _rank_by_fan_in(repo, org, ns, units, input, brief_stats)
         _apply_enrichment(units, await legs.enrich)  # PRs, examples, lessons
         # the documents that cite the definition, beside it
         documented_in = await legs.documented_in
@@ -902,7 +914,7 @@ async def handle_code_symbol(
         legs.cancel()
         raise
 
-    if include_indirect_lessons:
+    if standalone_edit:
         await attach_verified_caller_lessons(input, org, ns, units, started=started)
 
     from server.code.domain.units import estimate_json_tokens, remaining_token_budget
@@ -921,6 +933,13 @@ async def handle_code_symbol(
         tokens += estimate_json_tokens(documented_in)
     tokens += block_tokens
     ambiguous = not matched_members and len({(u.symbol, u.signature) for u in budgeted}) > 1
+    read_sources = (
+        await read_sources_for_definitions(org, ns, budgeted, set(range(len(budgeted))))
+        if standalone_edit and include_related_source and not ambiguous
+        else []
+    )
+    if read_sources:
+        tokens += estimate_json_tokens([source.model_dump() for source in read_sources])
     uses: list[dict[str, Any]] | dict[str, Any]
     uses, uses_truncated = uses_pair
     uses_truncated |= brief_omitted
@@ -979,6 +998,7 @@ async def handle_code_symbol(
     )
     return CodeSymbolOutput(
         definitions=budgeted,
+        read_sources=read_sources or None,
         lessons_left_out=lessons_left_out,
         ambiguous=ambiguous,
         candidates=[],

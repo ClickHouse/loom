@@ -139,6 +139,10 @@ export function branchHealth(b: CodeRepoSummary): Health {
     return { text: "Not indexed", state: "neutral", rank: 3, detail: "Nothing is indexed on this branch yet." };
   if (b.searchable === false)
     return { text: "Not searchable", state: "neutral", rank: 2, detail: building?.title ?? "Not searchable yet." };
+  if (b.fetch_overdue && b.fast_tier_lag <= 0) {
+    const f = freshness(b);
+    return { text: f.label, state: FRESH_STATE[f.tone], rank: 4, detail: `${f.detail} ${heads(b)}` };
+  }
   // The server answers -1 when it can't read the clone: say so rather than up to date or behind.
   if (b.fast_tier_lag < 0)
     return {

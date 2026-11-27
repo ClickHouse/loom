@@ -626,6 +626,12 @@ def test_entity_vectors_is_in_the_census_for_both_scopes() -> None:
         assert t in erasure_census.census_tables("namespace"), t
 
 
+def test_the_namespace_census_counts_a_code_answer_row_holding_only_its_question() -> None:
+    # an abstain's negative entry has no answer, citations or memory keys
+    sub = next(s for s in erasure_census._CENSUS if s.table == "loom.code_answers")
+    assert sub.ns_pred is not None and "question != ''" in sub.ns_pred
+
+
 async def test_entity_vectors_delete_is_lightweight_in_every_mode() -> None:
     ch = _CH(count=7)
     n = await graph_steps.delete_entity_vectors_by_namespace("o", ["lme-1", "lme-2"], ch=ch)

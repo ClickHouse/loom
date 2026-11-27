@@ -634,7 +634,7 @@ async def test_an_entry_the_budget_cut_is_not_recorded_healthy() -> None:
 
     await ingest_pass._run_leg(result, spent, [served, cut], "walk", never)
     assert result.unserved == {("o", "code-x"), ("o", "code-y")}
-    assert result.resume == "code-x:walk"  # the next pass starts at the first
+    assert result.resume == "o/code-x:walk"  # the next pass starts at the first
 
 
 @pytest.mark.asyncio
