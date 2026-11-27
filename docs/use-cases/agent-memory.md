@@ -206,14 +206,14 @@ on your own repository.
 ### Conversation recall
 
 On 100 paired LongMemEval-S questions with the same `gpt-5` reader, answers from Loom's
-retrieved memories scored 94% against 90% from the whole history, with 91% fewer reader
-prompt tokens (excluding the one-time cost of building the memory); the accuracy
+retrieved memories scored 94% against 90% from the whole history. The accuracy
 difference is not statistically established.
 
-Building the memory used about 1.5 million extraction tokens per history. At about
-94,000 reader prompt tokens saved per question, those savings offset the extraction
-tokens after about 16 questions over the same history. The estimate compares token
-counts across two models; it does not account for their different prices.
+Building the memory used about 1.5 million extraction tokens per history. The benchmark
+counts reader and judge prompts for retrieval and only reader prompts for the whole
+history. Even with the judge prompts included for retrieval, the difference is about
+94,000 prompt tokens per question. That offsets the extraction tokens after about
+16 questions over the same history. The estimate does not price model calls.
 [With and without Loom](../benchmarks/results.md#with-and-without-loom)
 
 ## Pass a coding task's review rule to the next session
