@@ -139,6 +139,25 @@ def test_input_schema_keeps_every_argument_and_field_description():
     assert "description" not in by["loom_memory_update"]["inputSchema"]
 
 
+@pytest.mark.parametrize("profile", SCHEMA_PROFILES)
+def test_code_read_line_pair_schema_enforces_line_bounds(profile):
+    tool = next(t for t in _listing("coding", False, profile) if t["name"] == "loom_code_read")
+    schema = tool["inputSchema"]
+    properties = schema["properties"]
+    batch = next(
+        choice for choice in properties["ranges"]["anyOf"] if choice["items"].get("type") == "array"
+    )
+    pair = batch["items"]
+    assert batch["maxItems"] == 32
+    assert (pair["minItems"], pair["maxItems"]) == (2, 2)
+    assert pair["items"] == {"type": "integer", "minimum": 1, "exclusiveMaximum": 2**32}
+    assert properties["start_line"]["type"] == ["integer", "string"]
+    assert schema["$defs"]["CodeReadRangeInput"]["properties"]["start_line"]["type"] == [
+        "integer",
+        "string",
+    ]
+
+
 # ---------------------------------------------------------------- reference lint
 
 _OP_REF = re.compile(rf"\b{mcp_op.OP_MENTION}\b")

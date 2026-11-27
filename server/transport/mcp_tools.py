@@ -572,6 +572,15 @@ async def _tools_descriptor(
                 _shape_schema(model_schema(op.input_model)),
             ),
         )
+        if op.name == "code.read":
+            for choice in input_schema["properties"]["ranges"]["anyOf"]:
+                pair = choice["items"]
+                if (
+                    pair.get("type") == "array"
+                    and pair.get("minItems") == pair.get("maxItems") == 2
+                ):
+                    # Line endpoints fit a JavaScript integer and need numeric bounds.
+                    pair["items"]["type"] = "integer"
         if custom:
             # The curated text is the guidance; the model docstring beside it
             # is developer prose.

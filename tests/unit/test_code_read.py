@@ -31,6 +31,11 @@ def test_read_line_pairs_match_canonical_ranges(path: str, pairs: list[list[int]
     assert _request_ranges(shared_path) == _request_ranges(canonical)
 
 
+def test_read_line_pairs_keep_numeric_string_coercion() -> None:
+    request = CodeReadInput.model_validate({"path": "file.py", "ranges": [["1", "2"]]})
+    assert _request_ranges(request) == [("file.py", 1, 2)]
+
+
 @pytest.mark.parametrize(
     "arguments",
     [

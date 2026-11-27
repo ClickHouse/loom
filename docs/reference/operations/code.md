@@ -1138,7 +1138,7 @@ A PR draft asks whether a PR like it already exists.
 
 ## `code.read`
 
-Read inclusive, one-based indexed lines.
+Read indexed lines.
 
 `POST /v1/code.read` · MCP `loom_code_read` · role `viewer` · read · not listed under the MCP `all` toolset
 
