@@ -3,6 +3,7 @@ exits 143 instead of dying on the spot."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import subprocess
@@ -10,10 +11,11 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from server.cli._proc import TERMINATED_EXIT
+from server.cli._proc import TERMINATED_EXIT, Terminated, cancel_on_sigterm
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 
@@ -61,3 +63,28 @@ def test_sigterm_unwinds_a_code_subcommand_and_exits_143(tmp_path: Path) -> None
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+async def test_sigterm_stops_a_command_during_timeout_cleanup() -> None:
+    loop = asyncio.get_running_loop()
+    recovered = False
+
+    async def command() -> None:
+        nonlocal recovered
+        try:
+            async with asyncio.timeout(0):
+                try:
+                    await asyncio.Future()
+                finally:
+                    install.call_args.args[1]()
+                    await asyncio.sleep(0)
+        except TimeoutError:
+            recovered = True
+
+    with (
+        patch.object(loop, "add_signal_handler") as install,
+        patch.object(loop, "remove_signal_handler"),
+        pytest.raises(Terminated, match="terminated by SIGTERM"),
+    ):
+        await cancel_on_sigterm(command())
+    assert not recovered

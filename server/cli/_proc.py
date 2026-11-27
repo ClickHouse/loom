@@ -12,7 +12,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import signal
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 
 TERMINATED_EXIT = 128 + signal.SIGTERM
 """The exit code of a command ended by SIGTERM (143), as a shell reports it."""
@@ -20,6 +21,17 @@ TERMINATED_EXIT = 128 + signal.SIGTERM
 
 class Terminated(Exception):
     """The command was cancelled because the process received SIGTERM."""
+
+
+_request_stop: ContextVar[Callable[[asyncio.Task[object]], bool] | None] = ContextVar(
+    "cli_request_stop", default=None
+)
+
+
+def cancel_for_shutdown(task: asyncio.Task[object]) -> bool:
+    """Cancel a task for shutdown, once for a command sharing the signal handler."""
+    request = _request_stop.get()
+    return task.cancel() if request is None else request(task)
 
 
 async def cancel_on_sigterm[T](aw: Awaitable[T]) -> T:
@@ -31,18 +43,28 @@ async def cancel_on_sigterm[T](aw: Awaitable[T]) -> T:
     loop = asyncio.get_running_loop()
     task = asyncio.current_task()
     got_term = False
+    stopping = False
+
+    def _stop(target: asyncio.Task[object]) -> bool:
+        nonlocal stopping
+        if target is not task:
+            return target.cancel()
+        # A second shutdown request would interrupt cleanup in progress.
+        if stopping:
+            return False
+        stopping = task.cancel()
+        return stopping
 
     def _on_term() -> None:
         nonlocal got_term
-        # A second cancellation can interrupt cleanup already in progress.
-        if task is not None and not task.cancelling():
+        if task is not None and _stop(task):
             got_term = True
-            task.cancel()
 
     installed = False
     with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
         loop.add_signal_handler(signal.SIGTERM, _on_term)
         installed = True
+    token = _request_stop.set(_stop)
     try:
         return await aw
     except asyncio.CancelledError:
@@ -50,5 +72,6 @@ async def cancel_on_sigterm[T](aw: Awaitable[T]) -> T:
             raise Terminated("terminated by SIGTERM") from None
         raise
     finally:
+        _request_stop.reset(token)
         if installed:
             loop.remove_signal_handler(signal.SIGTERM)
