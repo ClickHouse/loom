@@ -124,7 +124,11 @@ async def search(org: str, namespaces: list[str], query: str, *, top_k: int) -> 
                             source_quota: int = source_quota,
                         ) -> list[live_provider_search.LiveProviderHit]:
                             return await live_provider_search.search(
-                                authority.source, access, query, top_k=source_quota, deadline=deadline
+                                authority.source,
+                                access,
+                                query,
+                                top_k=source_quota,
+                                deadline=deadline,
                             )
 
                         hits = tuple(await authority.run(native))[:source_quota]
