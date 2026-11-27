@@ -582,8 +582,9 @@ async def _tools_descriptor(
     (`name_ops_for_listing`; every schema field description the profile sends
     too). The caller's default-workspace context is delivered once via the
     `initialize` `instructions` field, not duplicated per tool; descriptors
-    are caller-independent. ``toolset`` is the per-request ``?toolset=``
-    override.
+    do not vary by caller, except on a compact `coding` URL, where they follow
+    the request's repository header (`code_only_listing`). ``toolset`` is the
+    per-request ``?toolset=`` override.
     """
     from server.settings import settings
     from server.transport.mcp_schemas import apply_schema_profile, resolve_schema_profile
