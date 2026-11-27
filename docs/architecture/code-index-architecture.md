@@ -560,11 +560,13 @@ Every column is in the generated [schema reference](../reference/schema.md).
 
 A file-qualified symbol request (`src/module.py:Type.method` or
 `src/Type.cpp:Namespace::Type::method`) keeps the filename as a hard constraint.
-Candidate discovery reads that file's symbol rows; the authoritative live read
-checks the filename again before ranking and limiting. It never retries the name
-against other files. `resolved_by: file_symbol` discloses the binding; stored
-symbol names and ids stay intact. The shared resolver applies this spelling to
-structural code operations.
+The exact indexed path takes precedence even when it lacks the requested symbol.
+If it is absent, an unanchored relative path with two or more components can match
+the complete suffix of one live indexed file in the namespace. A `./` or absolute
+path keeps the lookup exact. Both symbol reads use the selected path before ranking
+and limiting. The response includes `resolved_by: file_symbol`, the canonical
+indexed path, and the stored symbol name and id. The shared resolver applies this
+spelling to structural code operations.
 
 Python import spellings use the bounded short-name candidate read after an exact
 symbol miss. Read-side matching preserves dotted module scopes and treats a package's
