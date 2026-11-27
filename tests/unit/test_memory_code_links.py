@@ -5382,6 +5382,50 @@ async def test_a_range_git_cannot_read_is_not_searched(monkeypatch) -> None:
     assert files.wide_ranges == 0
 
 
+def _two_that_may_be_it(c2: dict[str, str]) -> dict[tuple[str, str], str]:
+    """A history where c1 moves `fetch_rows` out of pkg/a.py and b.py and c.py each gain
+    its text under another name; `c2` is what c2 holds beside pkg/a.py."""
+    two = {
+        "pkg/b.py": _LONG_ROWS.replace("fetch_rows", "warm_up"),
+        "pkg/c.py": _LONG_ROWS.replace("fetch_rows", "cool_down"),
+    }
+    commits = {("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS}
+    commits |= {("c1", path): src for path, src in ({"pkg/a.py": _KEEP} | two).items()}
+    return commits | {("c2", path): src for path, src in ({"pkg/a.py": _KEEP} | c2).items()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unread", [False, True], ids=["too-wide", "unreadable"])
+async def test_an_unresolved_link_stays_unresolved_over_a_range_not_searched(
+    monkeypatch, unread: bool
+) -> None:
+    # an unresolved link is looked for from its own commit, c0, so its range only grows:
+    # c2 changes 33 other files, or c0..c2 cannot be read, and both candidates are there
+    two = {p: src for (c, p), src in _two_that_may_be_it({}).items() if c == "c1"}
+    others = {} if unread else {f"pkg/n{i}.py": f"N{i} = 1\n" for i in range(33)}
+    files, row = _renaming_world(monkeypatch, _two_that_may_be_it(two | others))
+    assert await _followed(files, row) == [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]
+    range_of = files.range
+
+    async def since_c1(base, head):
+        return None if unread and base == "c0" else await range_of(base, head)
+
+    monkeypatch.setattr(files, "range", since_c1)
+    lost = row | {"state": "unresolved", "changed_since": "c1"}
+    assert await _followed(files, lost, "c1", "c2") == []
+    assert files.wide_ranges == (0 if unread else 1)
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_link_is_followed_once_one_candidate_is_left(monkeypatch) -> None:
+    # c2 removes c.py: of the two that might be it at c1, b.py's is the only one left
+    commits = _two_that_may_be_it({"pkg/b.py": _LONG_ROWS.replace("fetch_rows", "warm_up")})
+    files, row = _renaming_world(monkeypatch, commits)
+    assert await _followed(files, row) == [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]
+    lost = row | {"state": "unresolved", "changed_since": "c1"}
+    assert await _followed(files, lost, "c1", "c2") == [("moved", "pkg/b.py", "pkg.b::warm_up")]
+
+
 @pytest.mark.asyncio
 async def test_a_changed_file_that_does_not_parse_adds_no_definition(monkeypatch) -> None:
     # z.py does not parse: the index holds nothing of it, and b.py's definition is

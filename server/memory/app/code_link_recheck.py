@@ -163,8 +163,8 @@ _LOST_SEARCHED_DAYS = 30
 
 
 # files of namesakes a lost link is weighed against: past it, the answer is unsure; and
-# files a range may change for a renamed definition to be looked for in them: past it, the
-# link is read as if nothing was renamed
+# files a range may change for a renamed definition to be looked for in them: past it, a
+# live link is read as if nothing was renamed and an unresolved one stays unresolved
 _MAX_ELSEWHERE = 32
 
 
@@ -556,14 +556,18 @@ async def _renamed_elsewhere(files: link_pass.RepoReads, r: _Read, head: str) ->
     (`successor.elsewhere`), among the definitions new since `_searched_from` in the
     files changed since. Nothing, as before this search, when the range brought no
     definition in, changed more than `_MAX_ELSEWHERE` files or cannot be read, or the
-    link's last-read text cannot."""
+    link's last-read text cannot. A link already unresolved is unsure over a range not
+    searched: its range starts at its own commit and only grows, and the candidates
+    that left it unresolved may still be there."""
     checked, path = r.row["checked_commit"], r.before.read_path
     base = _searched_from(r.before, r.row, r.range)
     key = ("renamed", checked, path, r.before.qualified_name, base, head)
     if (known := files.successors.get(key)) is not None:
         return known
     turnover = await files.turnover(base, head, limit=_MAX_ELSEWHERE)
-    if turnover is None or not any(side.defs for side in turnover.new):
+    if turnover is None:
+        return Successor(None, uncertain=r.before.state == "unresolved")
+    if not any(side.defs for side in turnover.new):
         return Successor(None)
     try:
         old = await files.at(checked, path) if checked and await files.has(checked) else None
