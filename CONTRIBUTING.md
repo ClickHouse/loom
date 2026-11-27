@@ -282,7 +282,9 @@ Docs follow the [documentation style guide](./docs/development/documentation-sty
 - **Title:** a sentence saying what is now true, as in `git log` (e.g. `MCP reads the bearer from the Authorization header only, never from ?token=`).
 - **Body:** fill the template (`.github/PULL_REQUEST_TEMPLATE.md`). It opens with the linked issues (`Closes:` / `Related:`, full URLs) and a **changelog category** with a one- or two-sentence **changelog entry** a user can read without the diff; the release pull request collects those entries into its release notes. Then **Why**, **Scope and risk**, **Compatibility, rollout and rollback** (ops and fields added, changed or removed, operator steps, what a revert leaves behind), **Tests** (what you ran and what it showed) and how AI tools were used. Its checklist matches what CI and repository policy enforce.
 - **Measurements** that justify a change go in the description with the command that reproduces them, not in code comments or docs.
-- CI must be green before merge. Squash-merge is the default: one logical change per pull request.
+- Before merge, CI must pass for the current commit, required GitHub approvals must be present, and required review conversations must be resolved. The pull request page shows what remains.
+- A local review report does not submit a GitHub approval. After pushing changes, follow the updated checks and review requirements on the pull request.
+- Squash-merge is the default: one logical change per pull request.
 
 ## Working with a coding agent
 
