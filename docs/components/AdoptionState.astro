@@ -1,0 +1,12 @@
+---
+interface Props {
+  state: Record<string, string | number>;
+  omit?: string[];
+}
+
+const { state, omit = [] } = Astro.props;
+---
+
+{Object.entries(state).filter(([key, value]) => value !== "" && !omit.includes(key)).map(([name, value]) => (
+  <input type="hidden" name={name} value={value} />
+))}

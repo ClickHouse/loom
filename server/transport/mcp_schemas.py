@@ -400,9 +400,16 @@ def compact_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
 #            against it. Opt in per request with `?schema_profile=full` or
 #            per deployment with LOOM_MCP_SCHEMA_PROFILE=full.
 # compact  — first paragraph + argument tree only.
+# plugin   — the compact shapes for a coding-agent plugin whose hooks carry the
+#            routing: every tool of the toolset stays listed with or without the
+#            repository header, and a toolset with a `coding` part gets startup
+#            instructions of one paragraph.
+#            Only a URL names it (`?schema_profile=plugin`); a server that does
+#            not know the value answers with its default profile.
 
 SCHEMA_PROFILES = ("standard", "full", "compact")
 DEFAULT_SCHEMA_PROFILE = "standard"
+PLUGIN_SCHEMA_PROFILE = "plugin"
 
 
 def resolve_schema_profile(requested: str | None, configured: str | None) -> str:
@@ -410,7 +417,12 @@ def resolve_schema_profile(requested: str | None, configured: str | None) -> str
     if default not in SCHEMA_PROFILES:
         default = DEFAULT_SCHEMA_PROFILE
     profile = str(requested or default).lower()
-    return profile if profile in SCHEMA_PROFILES else default
+    return profile if profile in (*SCHEMA_PROFILES, PLUGIN_SCHEMA_PROFILE) else default
+
+
+def compact_shapes(profile: str) -> bool:
+    """Whether a resolved profile sends the compact descriptor shapes."""
+    return profile in ("compact", PLUGIN_SCHEMA_PROFILE)
 
 
 def standard_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
@@ -419,7 +431,7 @@ def standard_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_schema_profile(descriptors: list[dict[str, Any]], profile: str) -> list[dict[str, Any]]:
-    if profile == "compact":
+    if compact_shapes(profile):
         return [compact_descriptor(d) for d in descriptors]
     if profile == "full":
         return descriptors

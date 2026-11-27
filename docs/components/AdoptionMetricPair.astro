@@ -1,0 +1,105 @@
+---
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
+import {
+  type ChartGrain,
+  type ChartKind,
+  type ChartPoint,
+  metricGrowth,
+  periodStart,
+} from "../lib/adoption-chart-series.mjs";
+import { periodOffset } from "../lib/adoption-view.mjs";
+import AdoptionTrend from "./AdoptionTrend.astro";
+
+interface Props {
+  label: string;
+  description?: string;
+  rows: ChartPoint[];
+  grain: ChartGrain;
+  kind?: ChartKind;
+  axisStart?: string;
+  axisEnd?: string;
+  observedLabel?: string;
+  growthLabel?: string;
+  growthRows?: ChartPoint[];
+  growthFirst?: boolean;
+  observedMode?: "line" | "bars";
+  compact?: boolean;
+}
+
+const {
+  label,
+  description,
+  rows,
+  grain,
+  kind = "additive",
+  axisStart,
+  axisEnd,
+  observedLabel = kind === "gauge" ? "Reported level" : "Per " + grain,
+  growthLabel = kind === "gauge" ? "Change from prior " + grain : "Cumulative observed",
+  growthRows,
+  growthFirst = false,
+  observedMode = kind === "gauge" ? "line" : "bars",
+  compact = false,
+} = Astro.props;
+
+const observed = rows.filter(({ value }) => Number.isFinite(value)).sort((a, b) => a.day.localeCompare(b.day));
+const growth = growthRows?.filter(({ value }) => Number.isFinite(value)) ?? metricGrowth(observed, grain, kind);
+const dates = [...observed, ...growth].map(({ day }) => day).sort();
+const chosenStart = axisStart && periodStart(axisStart, grain);
+const chosenEnd = axisEnd && periodStart(axisEnd, grain);
+const first = dates[0];
+const last = dates.at(-1);
+const start = chosenStart && (!first || chosenStart < first) ? chosenStart : first;
+const end = chosenEnd && (!last || chosenEnd > last) ? chosenEnd : last;
+const partial = observed.some(({ current, partial }) => current || partial);
+const missing = start && end && observed.length < periodOffset(start, end, grain) + 1;
+const signedChange = kind === "gauge" && !growthRows;
+const observedPlot = { rows: observed, label: observedLabel, mode: observedMode };
+const growthPlot = {
+  rows: growth,
+  label: growthLabel,
+  mode: signedChange ? ("bars" as const) : ("line" as const),
+  emptyMessage: signedChange ? "Change needs two consecutive complete reporting periods." : undefined,
+};
+const plots = growthFirst ? [growthPlot, observedPlot] : [observedPlot, growthPlot];
+---
+
+<Panel className="metric-pair" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
+  <Title type="h3" size="sm">{label}</Title>
+  {description && <Text size="sm" color="muted">{description}</Text>}
+  {observed.length > 0 ? (
+    <div class="paired-plots">
+      {plots.map((plot, index) => (
+        <div class="pair-plot">
+          <Text size="sm">{plot.label}</Text>
+          <AdoptionTrend
+            {...plot}
+            label={label + " · " + plot.label}
+            {grain}
+            color={index === 0 ? "accent" : "info"}
+            axisStart={start}
+            axisEnd={end}
+            {compact}
+            showNotes={false}
+          />
+        </div>
+      ))}
+    </div>
+  ) : (
+    <Text size="sm" color="muted">No observations in this window.</Text>
+  )}
+  {observed.length > 0 && (partial || missing) && (
+    <Text size="sm" color="muted">
+      {partial && "Some periods have partial coverage."}{partial && missing && " "}{missing && "Gaps mark missing observations."}
+    </Text>
+  )}
+</Panel>
+
+<style>
+  .metric-pair { min-inline-size: 0; }
+  .paired-plots { display: grid; inline-size: 100%; gap: 0.85rem; margin-block: 0.25rem; }
+  .pair-plot { display: grid; min-inline-size: 0; gap: 0.5rem; }
+  .pair-plot + .pair-plot { padding-block-start: 0.7rem; border-block-start: 1px solid var(--line); }
+</style>

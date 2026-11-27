@@ -73,7 +73,7 @@ test("rejects extra fields, malformed identities and windows, and oversized requ
   const settings = { env, now, fetcher: () => assert.fail("invalid report reached storage") };
   const invalid = [
     { ...report, prompt: "private text" },
-    { ...report, schema_version: 3 },
+    { ...report, schema_version: 4 },
     { ...report, installation_id: "host.example" },
     { ...report, user_domains: [{ domain: "person@example.test", user_count: 1, successful_requests: 1 }] },
     { ...report, window_end: "2026-06-02T12:00:00+00:00" },
@@ -82,7 +82,7 @@ test("rejects extra fields, malformed identities and windows, and oversized requ
   for (const body of invalid) {
     assert.equal((await handleAdoption(request(JSON.stringify(body)), settings)).status, 400);
   }
-  assert.equal((await handleAdoption(request(" ".repeat(16_385)), settings)).status, 413);
+  assert.equal((await handleAdoption(request(" ".repeat(1_048_577)), settings)).status, 413);
 });
 
 test("preserves the public domain report version in storage", async () => {
@@ -93,6 +93,119 @@ test("preserves the public domain report version in storage", async () => {
   };
   const response = await handleAdoption(request(JSON.stringify(publicReport)), { env, fetcher, now });
   assert.equal(response.status, 200);
+});
+
+const dailyReport = {
+  ...report,
+  schema_version: 3,
+  window_start: "2026-06-01T12:00:00+00:00",
+  window_end: "2026-06-02T00:00:00+00:00",
+  daily_successful_requests: 15,
+  active_accounts: 4,
+  serving_processes: 3,
+  user_domains: [{ ...report.user_domains[0], successful_requests: 11 }],
+  domain_activity: [
+    { domain: report.user_domains[0].domain, active_accounts: 3, successful_requests: 11, serving_processes: 2 },
+  ],
+};
+const dailyReportNow = Date.parse("2026-06-02T01:00:00Z");
+
+test("stores daily activity, including a measured zero and missing process counts", async () => {
+  const packets = [
+    dailyReport,
+    {
+      ...dailyReport,
+      daily_successful_requests: 0,
+      successful_requests: 0,
+      active_accounts: 0,
+      serving_processes: 0,
+      user_domains: [],
+      domain_activity: [],
+    },
+    {
+      ...dailyReport,
+      serving_processes: null,
+      domain_activity: [{ ...dailyReport.domain_activity[0], serving_processes: null }],
+    },
+  ];
+  for (const packet of packets) {
+    const fetcher = (_url, options) => {
+      assert.deepEqual(JSON.parse(options.body), packet);
+      return Promise.resolve(new Response());
+    };
+    const response = await handleAdoption(request(JSON.stringify(packet)), { env, fetcher, now: dailyReportNow });
+    assert.equal(response.status, 200);
+  }
+});
+
+test("accepts daily activity only for a complete UTC day and shared domain names", async () => {
+  const settings = { env, now: dailyReportNow, fetcher: () => assert.fail("invalid report reached storage") };
+  const [domain] = dailyReport.domain_activity;
+  const invalid = [
+    { ...dailyReport, schema_version: 2 },
+    { ...report, schema_version: 3, daily_successful_requests: 3, active_accounts: 1, domain_activity: [] },
+    { ...dailyReport, daily_successful_requests: 3 },
+    { ...dailyReport, active_accounts: null },
+    { ...dailyReport, active_accounts: -1 },
+    { ...dailyReport, serving_processes: -1 },
+    { ...dailyReport, domain_activity: [domain, domain] },
+    { ...dailyReport, domain_activity: [{ ...domain, active_accounts: 5 }] },
+    { ...dailyReport, domain_activity: [{ ...domain, successful_requests: 2 }] },
+    { ...dailyReport, domain_activity: [{ ...domain, serving_processes: 4 }] },
+    { ...dailyReport, serving_processes: null, domain_activity: [domain] },
+    { ...dailyReport, domain_activity: [{ ...domain, domain: "another.example" }] },
+    { ...dailyReport, domain_activity: [{ ...domain, subject: "private" }] },
+  ];
+  for (const packet of invalid) {
+    assert.equal((await handleAdoption(request(JSON.stringify(packet)), settings)).status, 400);
+  }
+});
+
+test("accepts all active daily domain names, including domains omitted by the legacy cap", async () => {
+  const domains = ["gmail.com", ...Array.from({ length: 34 }, (_, index) => `contact-${index}.example`)];
+  const packet = {
+    ...dailyReport,
+    successful_requests: 0,
+    daily_successful_requests: domains.length,
+    user_domains: domains.map((domain) => ({ domain, user_count: 1, successful_requests: 1 })),
+    domain_activity: domains.map((domain) => ({
+      domain,
+      active_accounts: 1,
+      successful_requests: 1,
+      serving_processes: 1,
+    })),
+  };
+  const fetcher = (_url, options) => {
+    assert.deepEqual(JSON.parse(options.body), packet);
+    return Promise.resolve(new Response());
+  };
+  const options = { now: dailyReportNow, env, fetcher };
+  assert.equal((await handleAdoption(request(JSON.stringify(packet)), options)).status, 200);
+  const legacy = {
+    ...report,
+    schema_version: 2,
+    user_domains: packet.user_domains,
+    successful_requests: domains.length,
+  };
+  assert.equal((await handleAdoption(request(JSON.stringify(legacy)), options)).status, 400);
+});
+
+test("rejects inconsistent request totals in daily reports", async () => {
+  const invalid = [
+    {
+      ...dailyReport,
+      daily_successful_requests: 0,
+      active_accounts: 0,
+      serving_processes: 0,
+      user_domains: [],
+      domain_activity: [],
+    },
+    { ...dailyReport, server_errors: 1 },
+  ];
+  const settings = { env, now: dailyReportNow, fetcher: () => assert.fail("invalid report reached storage") };
+  for (const packet of invalid) {
+    assert.equal((await handleAdoption(request(JSON.stringify(packet)), settings)).status, 400);
+  }
 });
 
 test("returns an error while writes fail or the warehouse is unconfigured", async () => {
