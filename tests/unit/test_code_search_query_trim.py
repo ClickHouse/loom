@@ -58,12 +58,18 @@ def test_identifier_forms_keep_camel_snake_and_qualified_names() -> None:
     assert qt.identifier_forms("see 98b4bdfa-7c05008562fe") == frozenset()
 
 
-def test_a_hash_is_long_hex_with_digits_and_a_short_code_is_a_name() -> None:
-    for h in ("98b4bdfa", "7c05008562fe", "2eed554c3fd75dae1beade79f357ffd18d3c4fdf"):
+def test_a_hash_is_long_hex_that_mixes_digits_and_a_code_or_a_numbered_name_is_a_name() -> None:
+    for h in ("2eed554", "98b4bdfa", "7c05008562fe", "2eed554c3fd75dae1beade79f357ffd18d3c4fdf"):
         assert qt.is_hash(h)
     # a code, a letters-only word, a word around one digit, a number
     for name in ("f401", "e164", "d3d9", "abc123", "deadbeef", "face2face", "aes256", "1290012"):
         assert not qt.is_hash(name)
+    # a word and a number, in either order, however long
+    for name in ("ed25519", "fade20481024", "1024bad"):
+        assert not qt.is_hash(name)
+    # the name stays in the question, whole and as an identifier
+    key = "the ssh-ed25519 key is rejected"
+    assert qt.strip_non_terms(key) == key and "ed25519" in qt.identifier_forms(key)
 
 
 def test_strip_non_terms_drops_urls_and_whole_hashes_and_keeps_codes() -> None:
@@ -139,15 +145,56 @@ def test_select_terms_keeps_identifiers_and_repeated_words_before_the_others() -
     dfs = {"open": 50, "call_command": 530, "max_length": 2700, "check_filterable": 5}
     ids = frozenset(many[1:])
     assert _select(many, dfs, 3, keep=ids) == ["open", "call_command", "check_filterable"]
-    # a caller's own terms are no words to filter: the commonest is asked for while
-    # there is room, and past the cap they go after the identifiers, the rarest first
-    own = frozenset({"model", "or"})
-    assert {"model", "or"} <= set(_select(tokens, df, keep=keep, said=said, own=own))
-    assert _select(tokens, df, 3, keep=keep, said=said, own=own) == [
-        *("paginator", "parsequotakey", "or"),
-    ]
     # the cap is never exceeded
     assert len(_select(tokens, df, 1, keep=keep, said=said)) == 1
+
+
+def test_a_callers_terms_are_asked_for_after_the_identifiers_and_move_no_word() -> None:
+    question = ["hi", "team", "paginator", "reports", "pages", "parsequotakey"]
+    terms = ["pagecount", "page", "count", "orderedset", "ordered", "set", "of", "paginator"]
+    tokens = [*question, *terms[:-1]]
+    df = dict.fromkeys(tokens, 40) | {"set": 19_000, "of": 60_000, "paginator": 9_000}
+    keep, named = frozenset({"parsequotakey"}), frozenset({"pagecount", "orderedset"})
+    said = dict.fromkeys(question, 1) | {"paginator": 3, "pages": 2}
+    own = frozenset(terms)
+
+    def select(k: int, **kw: Any) -> list[str]:
+        return _select(tokens, df, k, keep=keep, said=said, **kw)
+
+    # no word to filter: a common piece and a function word are asked for while there is room
+    assert select(32, own=own, named=named) == tokens
+    # past the cap: the words, the identifiers of both, then the rarest pieces
+    assert select(8, own=own, named=named) == [
+        *("hi", "team", "paginator", "pages", "parsequotakey", "pagecount", "page", "orderedset"),
+    ]
+    # a word the question says is its word still when a term holds it: `paginator` is in
+    # more chunks than the pieces that are kept, and keeps the slot repetition gives it
+    for k in (2, 4, 8, 32):
+        alone = [t for t in select(k) if t not in keep]
+        assert [t for t in select(k, own=own, named=named) if t in alone] == alone
+    assert select(2, own=own, named=named) == ["paginator", "parsequotakey"]
+    # a lexeme only the terms hold is no word of the question, however rare
+    assert "page" not in select(4, own=own, named=named)
+
+
+def test_a_function_word_is_no_word_to_keep_whatever_its_class() -> None:
+    q = (
+        "It doesn't work: the form doesn't save and the view doesn't redirect, and I've also "
+        "seen that we'll only get all of the rows through the admin after each save, while "
+        "both of the others don't show any. Also only some of them are there, so it isn't "
+        "just the form. The select_for_update call should also lock the rows until the "
+        "transaction ends, and the admin should not show the rows before the lock is released "
+        "or after the transaction is rolled back by another request."
+    )
+    p = qt.plan(q, None, 48, {})
+    assert p.active and p.said["doesn"] == 3 and p.said["also"] == 3 and p.said["only"] == 2
+    kept = _select(p.all_tokens, dict.fromkeys(p.all_tokens, 40), p.cap, keep=p.keep, said=p.said)
+    # repeated or not: a contraction's half, a quantifier, a preposition, a particle
+    function = {"doesn", "ve", "ll", "don", "isn", "also", "only", "all", "through", "each"}
+    function |= {"both", "any", "some", "after", "while", "until", "before", "just", "another"}
+    assert function <= set(p.all_tokens) and function.isdisjoint(kept)
+    # the content words are kept, and a function word inside an identifier is asked for there
+    assert {"form", "rows", "admin", "transaction", "select_for_update"} <= set(kept)
 
 
 _GREETING = "Hi team, I have been looking at this for a while now and am not sure what is going on."
@@ -190,7 +237,8 @@ def test_a_common_word_is_asked_for_when_no_other_word_is_left() -> None:
 
 def test_a_question_of_addresses_numbers_and_hashes_still_has_terms() -> None:
     links = " ".join(
-        f"https://example.com/o/r/commit/{i:04d}abcdef{i:04d} deadbeef{i:02d}" for i in range(30)
+        f"https://example.com/o/r/commit/{i:04d}abcdef{i:04d} dead{i:02d}beef{i:02d}"
+        for i in range(30)
     )
     # nothing but addresses and hashes: they are all the question says
     p = qt.plan(links, None, 48, {})
@@ -224,14 +272,16 @@ def test_a_term_list_is_kept_whole_and_cut_to_its_rarest() -> None:
     terms = ["".join(f"{a}{b}part".capitalize() for b in "abcdef") for a in "abcdefgh"]
     p = qt.plan("", terms, 48, {})
     assert p.active and len(p.all_tokens) == 56 and p.cap == 32
-    assert p.own == frozenset(p.all_tokens) and p.keep == {t.lower() for t in terms}
+    assert p.own == frozenset(p.all_tokens) and p.named == {t.lower() for t in terms}
+    assert p.keep == frozenset() and p.said == {}
     df = dict.fromkeys(p.all_tokens, 40) | {"aapart": 90_000, "abpart": 80_000, "hfpart": 1}
-    kept = _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said, own=p.own)
+    kw: dict[str, Any] = dict(keep=p.keep, said=p.said, own=p.own, named=p.named)
+    kept = _select(p.all_tokens, df, p.cap, **kw)
     # every name, then the rarest pieces: none is lost for where it stands, and a
     # chosen term is not dropped for being common while there is room
-    assert len(kept) == 32 and p.keep <= set(kept)
+    assert len(kept) == 32 and p.named <= set(kept)
     assert kept[-1] == "hfpart" and {"aapart", "abpart"}.isdisjoint(kept)
-    assert "aapart" in _select(p.all_tokens[:20], df, p.cap, keep=p.keep, said=p.said, own=p.own)
+    assert "aapart" in _select(p.all_tokens[:20], df, p.cap, **kw)
     # under the cap the list is the terms' tokens in order
     short = qt.plan("", terms[:2], 48, {})
     assert not short.active and short.tokens == code_tokens(" ".join(terms[:2]))
@@ -271,10 +321,12 @@ def test_plan_over_the_cap_cleans_counts_and_bounds() -> None:
     assert broken.said == p.said | {"hi": 1} and broken.keep == p.keep
     # a caller's own terms are named apart, and none is stripped: one shaped like a
     # hash is a term too
-    extra = qt.plan(_ISSUE, ["retry", "QuotaKey", "2eed554c3fd75dae"], 32, {})
-    assert {"retry", "quotakey", "quota", "key", "2eed554c3fd75dae"} <= extra.own
-    assert extra.own <= set(extra.all_tokens) and extra.keep == p.keep | {"quotakey"}
+    extra = qt.plan(_ISSUE, ["retry", "QuotaKey", "2eed554c3fd75dae", "Jaccard"], 32, {})
+    assert {"retry", "quotakey", "quota", "key", "2eed554c3fd75dae", "jaccard"} <= extra.own
+    assert extra.own <= set(extra.all_tokens) and extra.named == {"quotakey"}
     assert extra.all_tokens[len(p.all_tokens) :][:3] == ["retry", "quotakey", "2eed554c3fd75dae"]
+    # they are no words of the question: its identifiers and its counts are its own
+    assert extra.keep == p.keep and extra.said == p.said
     assert work == {
         "query_trimmed_tokens_in": p.tokens_in,
         "query_trimmed_boilerplate_lines_dropped": 6,
@@ -458,6 +510,29 @@ def test_proposed_terms_do_not_cost_a_long_question_its_own_identifiers() -> Non
     assert {t.lower() for t in proposed} <= scan
     # the pieces of the proposed names take the slots that are left, the rarest first
     assert len(scan) == 32 and {"compiler", "related"} <= scan and common.keys().isdisjoint(scan)
+
+
+def test_a_proposed_term_that_repeats_a_word_of_the_question_does_not_cost_it() -> None:
+    question = _PROSE + " I think get_search_results in ChangeList.get_queryset goes wrong."
+    # the proposer echoes the subject: `paginator`, `rows` and `pages` are words of the
+    # question, and each is in more chunks than any piece of the other names
+    proposed = (
+        "Paginator DuplicateRows page_count_cache SqlCompilerBase execute_raw_sql SelectRelatedField"
+    ).split()
+    tokens = code_tokens(question + " " + " ".join(proposed))
+    echoed = {"paginator": 30_000, "rows": 25_000, "pages": 20_000}
+    df = dict.fromkeys(tokens, 40) | echoed
+    alone, repo = _Repo(df), _Repo(df)
+    _run(alone, question, _Emb())
+    _run(repo, question, _Emb(), extra_terms=proposed)
+    assert len(alone.scan_tokens) < 32 == len(repo.scan_tokens)
+    # more lexemes than slots: some piece of the proposed names is cut
+    cut = set(code_tokens(" ".join(proposed))) - set(repo.scan_tokens)
+    assert cut and echoed.keys().isdisjoint(cut)
+    # the question's own list is asked for whole, in its order, beside the proposed names
+    assert [t for t in repo.scan_tokens if t in alone.scan_tokens] == alone.scan_tokens
+    assert echoed.keys() <= set(repo.scan_tokens)
+    assert {t.lower() for t in proposed} <= set(repo.scan_tokens)
 
 
 def test_the_setting_drives_the_trim_and_zero_turns_it_off() -> None:

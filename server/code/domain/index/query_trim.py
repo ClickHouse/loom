@@ -19,16 +19,20 @@ This module is the plan for such a question, pure and unit-testable:
   question says more than once first, then the others, each in reading order. The
   whole forms of the identifiers (camel / snake / `a::b`) take the rest, then the
   other lexemes of the terms a caller added, the rarest when there are more than
-  fit. An English function word is not a word to keep. A word that more than
-  `COMMON_SHARE` of the chunks hold, a bare number, and a lexeme the corpus does not
-  contain (df 0 admits no row and scores nothing) fill a slot only when nothing
-  better is left.
+  fit. A caller's terms add to the list and move no word of the question: its words
+  are chosen as they are without them. An English function word is not a word to
+  keep. A word that more than `COMMON_SHARE` of the chunks hold, a bare number, and a
+  lexeme the corpus does not contain (df 0 admits no row and scores nothing) fill a
+  slot only when nothing better is left.
 * the vector leg embeds the first `EMBED_MAX_WORDS` words of the cleaned
   text instead of the raw body.
 
 Known limits: a subject the question states once, as a plain word, after its word
 share is already taken is not asked for, nor is one that more than `COMMON_SHARE` of
-the chunks hold when other words fill the share; the function words are English.
+the chunks hold when other words fill the share. The function words are English, and
+one that is also a name in code (`only`, `over`) is asked for only inside an
+identifier. A hash spelled as one run of letters and one of digits, about one
+seven-character hash in eight, reads as such a name and stays a term.
 
 Nothing here runs for a question whose tokenizer output fits the cap: the
 plan's `lexical_query`, `embed_text` and `tokens` are then the raw inputs,
@@ -66,21 +70,44 @@ LEXICAL_TOKEN_CAP = 32
 # Words take at most this share of the list, also when the identifiers leave slots
 # free: a word said once is as often prose as subject, and each one adds the chunks
 # that hold it to the pool. The identifiers take the rest; more than fit are cut to
-# the rarest.
+# the rarest. Half is a round value: no sweep chose it.
 WORD_SHARE = 0.5
 # A word that more of the chunks hold than this ranks little and opens the gate to
-# that share of the namespace: it is asked for after every other word.
+# that share of the namespace: it is asked for after every other word. One in eight
+# is a round value: no sweep chose it.
 COMMON_SHARE = 1 / 8
 # The vector leg embeds at most this many whitespace words of the cleaned text (~2,000
 # characters of prose: the request cap for `query`).
 EMBED_MAX_WORDS = 512
-# English function words: a question repeats them more than its subject, and they name
-# none. A closed class, so a fixed list.
+# English function words, by class: a question repeats them more than its subject, and
+# they name none. The tokenizer splits a contraction at its apostrophe and drops the
+# one-letter half, so the other half is listed with them.
 _FUNCTION_WORDS = frozenset(
-    "a an the is are was were be been being am has have had do does did can cannot could "
-    "should would will may might must shall of to in on at for with by from as into about "
-    "and or but if then than so because that this these those it its you your we our they "
-    "their them he she his her my me which who what when where why how not no there here".split()
+    (
+        # determiners
+        "a an the this that these those all any both each every either neither some such no "
+        "many much more most few several other another enough "
+        # pronouns
+        "me we us you he him she her it they them my mine our ours your yours his hers its their "
+        "theirs myself ourselves yourself yourselves himself herself itself themselves "
+        "who whom whose which what none anyone anything anybody everyone everything everybody "
+        "someone something somebody nobody nothing "
+        # auxiliaries and modals
+        "be am is are was were been being have has had having do does did doing "
+        "can cannot could may might must shall should will would ought "
+        # prepositions
+        "about above across after against along among around as at before behind below beneath "
+        "beside besides between beyond by despite down during except for from in inside into like "
+        "near of off on onto out outside over per since than through throughout to toward towards "
+        "under until up upon via with within without "
+        # conjunctions
+        "and or but nor so yet if then because although though unless while whereas whether "
+        # question and place words, negation, focus and degree particles
+        "when where why how here there not only also just too very even "
+        # halves of contractions
+        "don doesn didn isn aren wasn weren hasn haven hadn won wouldn couldn shouldn mustn ain "
+        "ve ll re"
+    ).split()
 )
 
 _BOILERPLATE_RE = re.compile(
@@ -115,6 +142,7 @@ class TrimPlan:
     keep: frozenset[str] = frozenset()
     said: dict[str, int] = field(default_factory=dict)
     own: frozenset[str] = frozenset()
+    named: frozenset[str] = frozenset()
     cap: int = LEXICAL_TOKEN_CAP
     boilerplate_dropped: int = 0
 
@@ -142,10 +170,15 @@ def identifier_forms(text: str) -> frozenset[str]:
 
 
 def is_hash(word: str) -> bool:
-    """A lowercased word of seven or more hex characters, letters among two or more
-    digits: a commit or fiddle hash. A short code (`f401`, `e164`) and a word spelled
-    in a to f around one digit (`face2face`) are names; a number stays a number."""
-    return bool(_HEX_RE.fullmatch(word)) and 2 <= sum(c.isdigit() for c in word) < len(word)
+    """A lowercased word of seven or more hex characters with two or more digits, where
+    letters and digits meet at two or more places: a commit or fiddle hash. A short code
+    (`f401`, `e164`), a word and a number (`ed25519`) and a word around one digit
+    (`face2face`) are names; a number stays a number."""
+    return (
+        bool(_HEX_RE.fullmatch(word))
+        and sum(c.isdigit() for c in word) >= 2
+        and sum(a.isdigit() != b.isdigit() for a, b in zip(word, word[1:], strict=False)) >= 2
+    )
 
 
 def strip_non_terms(text: str) -> str:
@@ -175,15 +208,19 @@ def select_terms(
     keep: frozenset[str],
     said: dict[str, int],
     own: frozenset[str] = frozenset(),
+    named: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """At most `k` tokens for the lexical gate, in their first-seen order: the
-    identifier forms (`keep`), the caller's own terms (`own`) and, for `WORD_SHARE` of
-    `k`, the words: those `said` more than once first, then the others, each in reading
-    order; never a function word. Past `k` the words go first, then the identifiers,
-    then the other lexemes of the caller's terms, the rarest by document frequency
-    first. A word more than `COMMON_SHARE` of `n_chunks` chunks hold ranks after the
-    other words; a bare number and an unknown token (df 0) rank after everything the
-    corpus knows."""
+    """At most `k` tokens for the lexical gate, in their first-seen order: the whole
+    forms of the question's identifiers (`keep`), the lexemes of a caller's terms (`own`,
+    the whole forms of their identifiers in `named`) and, for `WORD_SHARE` of `k`, the
+    words: those `said` more than once first, then the others, each in reading order;
+    never a function word. `said` counts the question alone, and a lexeme it says is a
+    word of the question whether or not a caller's term holds it too, so the words kept
+    are the same with and without a caller's terms. Past `k` the words go first, then the
+    identifiers of both, then the lexemes only a caller's terms hold, the rarest by
+    document frequency first. A word more than `COMMON_SHARE` of `n_chunks` chunks hold
+    ranks after the other words; a bare number and an unknown token (df 0) rank after
+    everything the corpus knows."""
     k = max(int(k), 1)
     position = {t: i for i, t in enumerate(tokens)}
 
@@ -193,15 +230,16 @@ def select_terms(
     def common(t: str) -> bool:
         return df.get(t, 0) > n_chunks * COMMON_SHARE
 
-    named = keep | own
-    words = [t for t in tokens if t not in named and t not in _FUNCTION_WORDS]
+    theirs = own - said.keys()
+    words = [t for t in tokens if t not in keep and t not in theirs and t not in _FUNCTION_WORDS]
     words.sort(key=lambda t: (unknown(t), common(t), said.get(t, 0) < 2, position[t]))
     kept_words = set(words[: max(int(k * WORD_SHARE), 1)])
+    names = keep | named
 
     def rank(t: str) -> tuple[bool, bool, bool, int, int]:
-        return (unknown(t), t not in kept_words, t not in keep, df.get(t, 0), position[t])
+        return (unknown(t), t not in kept_words, t not in names, df.get(t, 0), position[t])
 
-    eligible = [t for t in tokens if t in kept_words or t in named]
+    eligible = [t for t in tokens if t in kept_words or t in names or t in own]
     chosen = set(sorted(eligible, key=rank)[:k])
     return [t for t in tokens if t in chosen]
 
@@ -222,9 +260,9 @@ def plan(
     gate will take at most `min(max_tokens, LEXICAL_TOKEN_CAP)` tokens once the
     corpus statistics arrive (select_terms): its identifiers and its words, those
     it repeats first. `extra_terms` are a caller's own choice of terms, not words of
-    the question: none is stripped or filtered, and what is not an identifier's whole
-    form among them is asked for after the identifiers. `work` receives the disclosure
-    counters only when the trim is active."""
+    the question: none is stripped or filtered or counted as said, and what is not an
+    identifier's whole form among them is asked for after the identifiers. `work`
+    receives the disclosure counters only when the trim is active."""
     lexical_query = query if not extra_terms else query + " " + " ".join(extra_terms)
     raw_tokens = code_tokens(lexical_query)
     cap = int(max_tokens)
@@ -232,23 +270,23 @@ def plan(
         return TrimPlan(lexical_query, query, raw_tokens[:LEXICAL_TOKEN_CAP])
     cleaned_q, dropped = strip_boilerplate(query)
     extra = " ".join(extra_terms or ())
-    stripped = strip_non_terms(cleaned_q)
-    cleaned_lex = stripped if not extra else stripped + " " + extra
-    all_tokens = code_tokens(cleaned_lex)
+    asked = strip_non_terms(cleaned_q)
+    all_tokens = code_tokens(asked + " " + extra)
     if not all_tokens:  # only addresses and hashes: they are all the question says
-        cleaned_lex, all_tokens = cleaned_q, code_tokens(cleaned_q)
+        asked, all_tokens = cleaned_q, code_tokens(cleaned_q)
     work["query_trimmed_tokens_in"] = len(raw_tokens)
     work["query_trimmed_boilerplate_lines_dropped"] = dropped
     return TrimPlan(
-        lexical_query=cleaned_lex,
+        lexical_query=asked if not extra else asked + " " + extra,
         embed_text=embed_text_for(cleaned_q),
         tokens=all_tokens[:LEXICAL_TOKEN_CAP],
         active=True,
         tokens_in=len(raw_tokens),
         all_tokens=all_tokens,
-        keep=identifier_forms(cleaned_lex),
-        said=term_counts(cleaned_lex),
+        keep=identifier_forms(asked),
+        said=term_counts(asked),
         own=frozenset(code_tokens(extra)),
+        named=identifier_forms(extra),
         cap=min(cap, LEXICAL_TOKEN_CAP),
         boilerplate_dropped=dropped,
     )

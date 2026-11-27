@@ -93,7 +93,14 @@ async def _lexical_terms(
     lex_tokens = tokens
     if trimming and trim is not None:
         lex_tokens = query_trim.select_terms(
-            base, df, n_chunks, trim.cap, keep=trim.keep, said=trim.said, own=trim.own
+            base,
+            df,
+            n_chunks,
+            trim.cap,
+            keep=trim.keep,
+            said=trim.said,
+            own=trim.own,
+            named=trim.named,
         )
         work["query_trimmed_tokens_used"] = len(lex_tokens)
     idfs = [bm25.idf(df.get(t, 0), max(n_chunks, 1)) for t in lex_tokens]
