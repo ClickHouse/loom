@@ -2120,6 +2120,16 @@ careful re-examination there is genuinely nothing memorable, return
 {"facts": []} — but only after looking carefully.
 """
 
+# The retry of a coding session, whose rules decide what a fact is: the addendum
+# above would end the prompt by asking for every value those rules leave out.
+_CODING_SESSION_RETRY_ADDENDUM = """
+
+The previous reply held no usable fact: it was not the JSON object of the
+OUTPUT SCHEMA, or none of its facts was an object with a "key" and a
+"value". Answer again in that schema, under the same rules. {"facts": []}
+is still the right answer for a session with nothing to extract.
+"""
+
 
 # A SMALL input (one decision, one preference — the shape an
 # agent's tool call sends) does not need the 49 schema anchors written for

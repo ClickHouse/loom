@@ -14,6 +14,7 @@ from server.llm.client import LLMResult
 from server.memory.app import durability_verifier as dv
 from server.memory.app import pipeline as mp
 from server.memory.app import pipeline_state as pipeline_state
+from server.memory.app.trajectory_notes import TRAJECTORY_EXTRACTION_INSTRUCTIONS
 from server.memory.domain import durable_facts as df
 from server.settings import settings
 
@@ -347,8 +348,6 @@ def _turns(n_user: int) -> list[dict]:
 async def test_a_session_capture_and_a_short_replay_skip_the_auto_sweep(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.memory.app.trajectory_notes import TRAJECTORY_EXTRACTION_INSTRUCTIONS as REPLAY
-
     seen: list[dict] = []
     monkeypatch.setattr("server.memory.app.extract.extract_from_messages", _extract_spy(seen))
 
@@ -359,8 +358,8 @@ async def test_a_session_capture_and_a_short_replay_skip_the_auto_sweep(
     for tags, instructions, n in (
         (["source:claude-code"], "", 1),
         (["source:codex"], "", 4),
-        (["from_observation"], REPLAY, 3),
-        (["from_observation"], REPLAY, 4),
+        (["from_observation"], TRAJECTORY_EXTRACTION_INSTRUCTIONS, 3),
+        (["from_observation"], TRAJECTORY_EXTRACTION_INSTRUCTIONS, 4),
         ([], "", 1),
     ):
         st = pipeline_state.WorkflowState(

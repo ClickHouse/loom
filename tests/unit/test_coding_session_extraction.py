@@ -16,6 +16,7 @@ from server.memory.app.trajectory_notes import TRAJECTORY_EXTRACTION_INSTRUCTION
 from server.memory.domain import durable_facts
 from server.memory.domain.extraction_prompts import (
     _CODING_SESSION_PROMPT_BLOCK,
+    _CODING_SESSION_RETRY_ADDENDUM,
     CODING_SESSION_ANCHOR,
 )
 from server.settings import settings
@@ -35,9 +36,9 @@ def test_the_coding_rules_follow_the_base_prompt_of_a_coding_session_only(compac
 
 
 async def _calls_for_no_facts(
-    monkeypatch: pytest.MonkeyPatch, coding_session: bool, reply: str = '{"facts": []}'
+    monkeypatch: pytest.MonkeyPatch, coding_session: bool, *replies: str
 ) -> ScriptedLLM:
-    llm = ScriptedLLM([reply], repeat_last=True)
+    llm = ScriptedLLM([*replies, '{"facts": []}'], repeat_last=True)
     monkeypatch.setattr(settings, "memory_extract_coverage_sweep_auto_min_uncovered", 0)
     monkeypatch.setattr("server.memory.app.extract.extract._extractor_client", lambda **_: llm)
     result = await extract_from_messages(
@@ -60,13 +61,21 @@ async def test_a_coding_session_with_no_facts_is_not_asked_again(
     assert CODING_SESSION_ANCHOR in llm.calls[0].system
 
 
+@pytest.mark.parametrize(
+    "misfire",
+    [
+        # every fact object discarded: no key
+        [json.dumps({"facts": [{"value": "The user deploys from the release branch."}]})] * 2,
+        ["not json"],
+    ],
+)
 @pytest.mark.asyncio
-async def test_a_coding_session_whose_facts_were_all_discarded_is_asked_again(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_a_coding_session_misfire_is_asked_again_under_the_coding_rules(
+    monkeypatch: pytest.MonkeyPatch, misfire: list[str]
 ) -> None:
-    reply = json.dumps({"facts": [{"value": "The user deploys from the release branch."}]})
-    llm = await _calls_for_no_facts(monkeypatch, coding_session=True, reply=reply)
-    assert len(llm.calls) == 2
+    llm = await _calls_for_no_facts(monkeypatch, True, *misfire)
+    first, retry = (call.system for call in llm.calls)
+    assert retry == first + _CODING_SESSION_RETRY_ADDENDUM
 
 
 @pytest.mark.asyncio
@@ -169,6 +178,7 @@ async def test_only_a_session_capture_is_verified_by_the_codebase_rules(
         "The scoring code without I/O is in server/tracker/domain/dupcheck.py.",
         "`Blueprint.register` is in src/flask/blueprints.py.",
         "The JSON tests are in `tests/test_json.py`",
+        "The function `register` is in src/flask/blueprints.py.",
     ],
 )
 def test_a_fact_that_is_one_code_location_is_not_durable(text: str) -> None:
@@ -186,6 +196,8 @@ def test_a_fact_that_is_one_code_location_is_not_durable(text: str) -> None:
         "The tests that constrain `_default` in src/flask/json/provider.py are in "
         "tests/test_json.py.",
         "`send` is the only caller of `backoff` whose tests are in tests/test_backoff.py.",
+        "The tests for `_default` are in tests/test_json.py.",
+        "`_default`'s tests are in tests/test_json.py.",
         "The handler lives in server/x.py and takes the key lock before it reads.",
     ],
 )

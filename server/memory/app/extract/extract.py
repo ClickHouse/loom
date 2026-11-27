@@ -48,6 +48,7 @@ from server.memory.app.extract.parse import (
 from server.memory.app.extract.prompts import (
     _build_extraction_user_prompt,
     _extraction_base_prompt,
+    _retry_addendum,
     _use_compact_prompt,
 )
 from server.memory.app.extract.relations import _backfill_relations
@@ -59,7 +60,6 @@ from server.memory.app.extract.sweep import _coverage_sweep
 from server.memory.domain.extraction_policy import with_policy
 from server.memory.domain.extraction_prompts import (
     _NO_RECITATION_ADDENDUM,
-    _RETRY_PROMPT_ADDENDUM,
     with_strict_examples_preamble,
 )
 from server.memory.domain.grounding import grade_facts
@@ -236,6 +236,7 @@ async def _complete_and_parse(
     client: Any,
     *,
     base_prompt: str,
+    retry_addendum: str,
     user_prompt: str,
     max_tokens: int,
     json_format: dict[str, str],
@@ -244,7 +245,7 @@ async def _complete_and_parse(
 ) -> tuple[Any, list[ExtractedFact], str]:
     """The extraction call and its parse, with one retry on an unparseable
     answer: a larger budget when it reads as truncated (salvaging complete
-    fact objects if it truncates again), else the stricter addendum. Returns
+    fact objects if it truncates again), else `retry_addendum`. Returns
     (accumulated LLM result, facts, truncation). `base_prompt` is the system
     prompt without the operator's policy: every call, retries included, appends
     the policy to it."""
@@ -307,7 +308,7 @@ async def _complete_and_parse(
                 facts = _parse(json.dumps({"facts": salvaged}))
                 truncation = "salvaged"
         else:
-            retry_result = await complete(base_prompt + _RETRY_PROMPT_ADDENDUM, max_tokens)
+            retry_result = await complete(base_prompt + retry_addendum, max_tokens)
             facts = _parse(retry_result.text)
     return _accumulate(calls), facts, truncation
 
@@ -570,6 +571,7 @@ async def extract_from_messages(
     accumulated, facts, truncation = await _complete_and_parse(
         client,
         base_prompt=base_prompt,
+        retry_addendum=_retry_addendum(coding_session),
         user_prompt=user_prompt,
         max_tokens=max_tokens,
         json_format=json_format,
@@ -577,13 +579,12 @@ async def extract_from_messages(
         operator_policy=operator_policy,
     )
 
-    # Validation gate: retry once on non-trivial-input + zero-facts. A coding session
-    # that established nothing reusable has none (the retry's addendum asks for every
-    # value its rules leave out); one whose every fact object was discarded misfired.
+    # Validation gate: retry once on non-trivial-input + zero-facts. A coding session that
+    # established nothing reusable has none; one whose every fact object was discarded misfired.
     if not facts and (not coding_session or parse_discards) and _is_nontrivial(messages):
         facts, accumulated = await _zero_fact_retry(
             client,
-            system=with_policy(base_prompt + _RETRY_PROMPT_ADDENDUM, operator_policy),
+            system=with_policy(base_prompt + _retry_addendum(coding_session), operator_policy),
             user=user_prompt,
             max_tokens=max_tokens,
             response_format=json_format,
