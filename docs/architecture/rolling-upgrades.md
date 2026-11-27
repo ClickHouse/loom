@@ -966,7 +966,7 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     range is read by one build. A `missing` link is never handed to a definition added
     since, so a link N-1 read `missing` during the rollout stays `missing` under N
     until its own name returns. The link rows are unchanged; `wide_ranges` is one more
-    number in the pass outcome, which every build serves as stored. No gate holds the
+    number in the `memory_code_links` pass outcome, which every build serves as stored. No gate holds the
     rollout.
 
 ## What checks them

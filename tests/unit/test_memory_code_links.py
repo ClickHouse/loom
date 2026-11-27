@@ -7,6 +7,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import json
+import logging
 import re
 import subprocess
 from collections.abc import Callable
@@ -5320,7 +5321,9 @@ async def test_a_missing_link_is_not_handed_to_a_definition_renamed_elsewhere(mo
 
 
 @pytest.mark.asyncio
-async def test_a_range_past_the_file_cap_is_not_searched_and_is_counted(monkeypatch) -> None:
+async def test_a_range_past_the_file_cap_is_not_searched_and_is_counted(
+    monkeypatch, caplog
+) -> None:
     commits = {
         ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
         ("c1", "pkg/a.py"): _KEEP,
@@ -5328,10 +5331,19 @@ async def test_a_range_past_the_file_cap_is_not_searched_and_is_counted(monkeypa
     }
     files, row = _renaming_world(monkeypatch, commits)
     monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 1)  # a.py and b.py changed
-    assert await _followed(files, row) == [("missing", "pkg/a.py", "pkg.a::fetch_rows")]
-    # once a range, however many links are lost over it
-    assert await files.turnover("c0", "c1", limit=1) is None
+    with caplog.at_level(logging.WARNING, logger=code_link_pass.log.name):
+        assert await _followed(files, row) == [("missing", "pkg/a.py", "pkg.a::fetch_rows")]
+        # once a range, however many links are lost over it
+        assert await files.turnover("c0", "c1", limit=1) is None
     assert files.wide_ranges == 1
+    # a warning, the only trace when `code.refresh` rechecks: it keeps no pass outcome
+    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+        (
+            "WARNING",
+            "memory links: no renamed definition searched for across files: 2 files "
+            "changed in c0..c1 of code-a",
+        )
+    ]
 
 
 @pytest.mark.asyncio

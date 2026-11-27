@@ -478,10 +478,11 @@ or, once no member of its class is left in its file, into the class that is that
 renamed or keeps its members. Two definitions that may be it,
 or one that another removed definition may have become, leave the link `unresolved`. A
 range that changed more than 32 files under the entry's `path_prefixes` is not searched
-this way: the link is read as if nothing was renamed, and the `memory_code_links`
-worker's pass outcome counts the range in `wide_ranges`. A namesake that was already
-there never inherits a link, and a `missing` link comes back only
-when its own name does. A name gone from its file is looked for in the files changed
+this way: the link is read as if nothing was renamed, and a warning in the server log
+names the range. The `memory_code_links` worker's pass outcome counts in `wide_ranges`
+the ranges its own pass followed, not those a `code.refresh` call followed first. A
+namesake that was already there never inherits a link, and a `missing` link comes back
+only when its own name does. A name gone from its file is looked for in the files changed
 since its last check as the mirror holds them, beside the index, so a definition moved by
 a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
 followed when the link is rechecked. When `memory_code_links_mirror_naming_files` or more

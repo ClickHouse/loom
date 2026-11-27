@@ -283,7 +283,8 @@ class RepoReads:
             paths = {old: now for old, now in changed.paths.items() if scope.under(now or old)}
             if len(paths) > limit:
                 self.wide_ranges += 1
-                log.info(
+                # a warning: `code.refresh` rechecks too and keeps no count
+                log.warning(
                     "memory links: no renamed definition searched for across files: %d "
                     "files changed in %s..%s of %s",
                     len(paths),
