@@ -583,6 +583,8 @@ async def _tools_descriptor(
             input_schema = _with_identity(input_schema, op)
         if profile == "compact" and toolset == "coding" and op.name == "code.grep":
             input_schema = _without(input_schema, _COMPACT_CODING_GREP_OMITTED_ARGS)
+            # JSON Schema numeric bounds do not constrain a string alternative.
+            input_schema["properties"]["context_lines"]["type"] = "integer"
         if defaults := mcp_argument_defaults(op.name, toolset):
             fields = input_schema.get("properties", {})
             for field, value in defaults.items():

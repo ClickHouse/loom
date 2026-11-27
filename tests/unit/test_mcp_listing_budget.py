@@ -453,6 +453,17 @@ def test_compact_coding_grep_advertises_common_args_and_help_lists_the_rest():
     assert advanced <= set(help_row["optional"])
 
 
+def test_compact_coding_grep_context_bounds_apply_to_the_advertised_type():
+    def radius(profile):
+        tool = next(t for t in _listing("coding", True, profile) if t["name"] == "loom_code_grep")
+        return tool["inputSchema"]["properties"]["context_lines"]
+
+    compact = radius("compact")
+    assert compact["type"] == "integer"
+    assert (compact["minimum"], compact["maximum"], compact["default"]) == (0, 20, 0)
+    assert radius("standard") == radius("full") == {**compact, "type": ["integer", "string"]}
+
+
 # ---------------------------------------------------------------- one revision policy
 
 
