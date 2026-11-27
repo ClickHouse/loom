@@ -80,7 +80,7 @@ def _code_hits() -> list[Any]:
     code is as it was, one that names no code."""
     from server.memory.api.models_search import _MemorySearchHit
 
-    def hit(key: str, **code: str) -> Any:
+    def hit(key: str, **code: Any) -> Any:
         return _MemorySearchHit(
             memory_key=key,
             memory_type="semantic",
@@ -89,7 +89,7 @@ def _code_hits() -> list[Any]:
             similarity=0.8,
             rank_score=0.8,
             valid_at="2026-03-02T00:00:00",
-            **code,  # type: ignore[arg-type]
+            **code,
         )
 
     return [

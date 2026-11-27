@@ -554,9 +554,9 @@ The links are read where the code is:
   read from a memory's own row carry its worst link as `code_state` and, when that is
   `changed`, `unresolved` or `missing`, the commit that put it there, when one is known,
   as `code_changed_since` (a chunk, record or summary hit carries neither and is never
-  left out). A reader block (`render="reader"`, `loom_search`'s block) says so on such a
-  hit's line, with the same note as a `memory.for_file` line; `memory.ask` notes the
-  memories whose code moved, changed or went.
+  left out). A `render="reader"` block and every page of `loom_search`'s text say so on
+  such a hit's line, with the same note as a `memory.for_file` line; `memory.ask` notes
+  the memories whose code moved, changed or went.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read.
 
