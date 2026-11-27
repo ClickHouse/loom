@@ -465,8 +465,21 @@ A memory's detail in the dashboard lists these links with their state
 ([clip](../assets/screenshots/clip-memory-linked-code.webm)).
 
 A link follows its definition through file moves, renames (with an edit, when the new
-name is related to the old), and its class's rename within the file. A namesake in
-another class or namespace never inherits a link, and a `missing` link comes back only
+name is related to the old), and its class's rename within the file. A definition
+renamed as it moves to another file, class or namespace is looked for among the
+definitions the changed files did not have before: the only one with its tokens under
+another name reads `moved`; failing that, the only one of its own name with a close text
+reads `changed`, unless a definition of that name that stayed in the changed files is
+close as well. A member reads `changed` there unless its class came with it unchanged. A
+definition under 30 tokens is told by neither its text nor its own name, which any class
+may define: it is followed there only under a related name and with its scope, from
+module level to module level or, once no member of its class is left in its file, into
+the class that is that one renamed or keeps its members. Two definitions that may be it,
+or one that another removed definition may have become, leave the link `unresolved`. A
+range that changed more than 32 files under the entry's `path_prefixes` is not searched
+this way: the link is read as if nothing was renamed, and the `memory_code_links`
+worker's pass outcome counts the range in `wide_ranges`. A namesake that was already
+there never inherits a link, and a `missing` link comes back only
 when its own name does. A name gone from its file is looked for in the files changed
 since its last check as the mirror holds them, beside the index, so a definition moved by
 a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is

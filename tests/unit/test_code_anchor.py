@@ -177,6 +177,32 @@ def test_recheck_follows_a_rename_the_caller_found_by_shape() -> None:
     )
 
 
+def test_recheck_follows_a_rename_the_caller_found_in_another_file() -> None:
+    link = Link(
+        path="src/a.py", qualified_name="src.a.fetch_rows", body_hash="h1", checked_hash="h1"
+    )
+    there = _d("src/b.py", "src.b.load_rows", "h2", line=7)
+    kept = [_d("src/a.py", "src.a.other", "h9")]
+    # its own file kept, or deleted with it
+    for path_now, here in (("src/a.py", kept), ("", [])):
+        after = recheck(link, path_now=path_now, here=here, renamed=there, head="c2")
+        assert (after.path, after.qualified_name, after.state) == (
+            "src/b.py",
+            "src.b.load_rows",
+            "moved",
+        )
+        assert (after.body_hash, after.start_line, after.checked_path) == ("h2", 7, "")
+    # it left its class on the way: changed whatever its text, its baseline kept
+    carried = recheck(link, path_now="src/a.py", here=kept, renamed=there, carried=True, head="c2")
+    assert (carried.path, carried.state, carried.body_hash, carried.changed_since) == (
+        "src/b.py",
+        "changed",
+        "h1",
+        "c2",
+    )
+    assert carried.carried
+
+
 def test_a_fingerprint_covers_every_overload_in_order_and_every_character() -> None:
     assert fingerprint(["a", "b"]) != fingerprint(["a", "c"]) != fingerprint(["b", "a"])
     inside = "def f(x):\n    if x:\n        return 1\n        return 2"

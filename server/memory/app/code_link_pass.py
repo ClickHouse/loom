@@ -14,8 +14,10 @@ from server.code.app import memory_links as code
 from server.code.domain.anchor import (
     Definition,
     Link,
+    local_name,
+    unnumbered,
 )
-from server.code.domain.successor import Successor
+from server.code.domain.successor import Side, Successor
 from server.memory.store.code_links import LinkRow
 from server.memory.store.key_write_lock import KeyWriteLocks
 from server.settings import settings
@@ -34,6 +36,8 @@ class PassResult:
     unlinked: int = 0
     rechecked: int = 0
     suggested: int = 0
+    # ranges that changed too many files to look in for a definition renamed as it moved
+    wide_ranges: int = 0
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -43,6 +47,7 @@ class PassResult:
             "unlinked": self.unlinked,
             "rechecked": self.rechecked,
             "suggested": self.suggested,
+            "wide_ranges": self.wide_ranges,
             "errors": len(self.errors),
         }
 
@@ -66,6 +71,18 @@ class Range:
 
     base: str
     paths: dict[str, str]
+
+
+@dataclass(frozen=True)
+class Turnover:
+    """The definitions a range brought in, took out and left, file by file: `new` the
+    files at its head, each with the definitions whose name it did not define at the
+    base, and `kept` with those whose name it did; `gone` the files at the base, each
+    with the definitions whose name it no longer defines."""
+
+    new: list[Side]
+    gone: list[Side]
+    kept: list[Side]
 
 
 # parsed files a pass keeps: a full recheck reads every linked file of a repository
@@ -99,8 +116,11 @@ class RepoReads:
         self.org, self.cns = org, cns
         self._parsed: Recent[tuple[str, str], code.FileAt | None] = Recent(_FILES_CACHED)
         self._read: dict[tuple[Any, ...], Any] = {}
-        # ("here" | "elsewhere", …): the same-file search and the one in another module
+        # ("here" | "elsewhere" | "renamed", …): the same-file search, the one for its
+        # name in another module and the one for it under another name
         self.successors: dict[tuple[str, ...], Successor] = {}
+        # ranges `turnover` did not read: they changed more files than its limit
+        self.wide_ranges = 0
 
     async def _once[T](self, key: tuple[Any, ...], read: Callable[[], Awaitable[T]]) -> T:
         if key not in self._read:
@@ -245,6 +265,68 @@ class RepoReads:
         return await self._once(
             ("touched", base, head), lambda: code.touched_paths(self.org, self.cns, base, head)
         )
+
+    async def turnover(self, base: str, head: str, *, limit: int) -> Turnover | None:
+        """The definitions `base..head` brought in and took out of the files it changed,
+        those the ingest would not index left out, a renamed file read as one. None when
+        the range cannot be read (a force-push, a diff git fails on), or changed more
+        than `limit` files under the entry's prefixes: counted in `wide_ranges`."""
+
+        async def read() -> Turnover | None:
+            changed = await self.range(base, head)
+            scope = await self._once(
+                ("scope", head), lambda: code.ingest_scope(self.org, self.cns, head)
+            )
+            if changed is None or scope is None:
+                return None
+            # by prefix first: the denylist is matched only on a range within the bound
+            paths = {old: now for old, now in changed.paths.items() if scope.under(now or old)}
+            if len(paths) > limit:
+                self.wide_ranges += 1
+                log.info(
+                    "memory links: no renamed definition searched for across files: %d "
+                    "files changed in %s..%s of %s",
+                    len(paths),
+                    base[:12],
+                    head[:12],
+                    self.cns,
+                )
+                return None
+            found = Turnover([], [], [])
+            for old, now in sorted(paths.items()):
+                if not scope.takes(now or old):
+                    continue
+                try:
+                    await self._file_turnover(scope, base, old, head, now, found)
+                except code.ParseFailed:
+                    pass  # the index holds nothing of a file that does not parse
+            return found
+
+        return await self._once(("turnover", base, head), read)
+
+    async def _file_turnover(
+        self, scope: code.IngestScope, base: str, old: str, head: str, now: str, found: Turnover
+    ) -> None:
+        """Add to `found` what the file `old` at `base`, `now` at `head` ('' = deleted),
+        gained, lost and kept, by the name inside its module. Its text at `base` is
+        fingerprinted only when it lost a name."""
+
+        def local(qualified_name: str, path: str) -> str:
+            return unnumbered(local_name(qualified_name, path))
+
+        names = await self._indexed_names(scope, head, now) if now else None
+        before = {local(name, old) for name in await self.names(base, old) or ()}
+        after = {local(name, now) for name in names or ()}
+        here = await self.at(head, now) if after else None
+        there = await self.at(base, old) if before - after else None
+        if here is not None:
+            new = [d for d in here.defs if local(d.qualified_name, now) not in before]
+            kept = [d for d in here.defs if local(d.qualified_name, now) in before]
+            found.new.append(Side(now, new, here.lines))
+            found.kept.append(Side(now, kept, here.lines))
+        if there is not None:
+            gone = [d for d in there.defs if local(d.qualified_name, old) not in after]
+            found.gone.append(Side(old, gone, there.lines))
 
     async def is_ancestor(self, ancestor: str, descendant: str) -> bool:
         """Whether `ancestor` is in `descendant`'s history."""

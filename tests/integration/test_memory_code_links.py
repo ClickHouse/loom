@@ -727,6 +727,47 @@ async def test_a_rename_alone_moves_the_link(env) -> None:
     assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "moved")
 
 
+_LONG_ROWS = (
+    "def fetch_rows(conn, n, start=0):\n    rows = []\n    for i in range(start, n):\n"
+    "        row = conn.read(i)\n        if row:\n            rows.append(row)\n"
+    "    return rows\n"
+)
+
+
+async def test_a_definition_renamed_as_it_moves_to_another_file_is_followed(env) -> None:
+    repo = env
+    keep = "def keep():\n    return 0\n"
+    c1 = repo.commit({"src/widgets/io.py": keep + "\n\n" + _LONG_ROWS})
+    await _index(TRUNK, repo, c1, ["src/widgets/io.py"])
+    mid = await _remember(MEM, "fetch-rows", "`fetch_rows` drops empty rows")
+    await _pass()
+    # one commit takes it out of io.py and brings it into a new file under another name
+    moved = {
+        "src/widgets/io.py": keep,
+        "src/widgets/rows.py": _LONG_ROWS.replace("fetch_rows", "warm_up"),
+    }
+    c2 = repo.commit(moved)
+    await _index(TRUNK, repo, c2, list(moved))
+    result = await _pass()
+    assert result.wide_ranges == 0
+    (link,) = await _links(mid)
+    assert (link["path"], link["symbol"], link["state"]) == (
+        "src/widgets/rows.py",
+        "src.widgets.rows::warm_up",
+        "moved",
+    )
+    # served, on the definition it is now, with its text as written
+    assert (await _search(MEM, "fetch_rows drops empty rows")).get("fetch-rows") == "moved"
+    lessons = await _lessons(TRUNK, "warm_up")
+    assert [(x["memory_key"], x["code_state"]) for x in lessons] == [("fetch-rows", "moved")]
+    assert (await _row(mid)).value == "`fetch_rows` drops empty rows"
+    # a later commit that removes it brings nothing in: the code is gone
+    c3 = repo.commit({"src/widgets/rows.py": None})
+    await _index(TRUNK, repo, c3, ["src/widgets/rows.py"])
+    await _pass()
+    assert [x["state"] for x in await _links(mid)] == ["missing"]
+
+
 async def test_a_file_link_follows_its_cited_lines_and_the_definition_its_memory_names(
     env,
 ) -> None:
@@ -3521,6 +3562,33 @@ async def test_a_removed_method_never_moves_to_a_namesake_in_another_class(env) 
         ("src.rw::Reader::read_rows", "missing")
     ]
     assert await _lessons(TRUNK, "Writer.read_rows") == []
+
+
+async def test_a_method_moved_to_another_class_with_its_text_reads_changed(env) -> None:
+    # thirty tokens or more: its text tells it from any other method of that name, and
+    # what surrounds it is no longer what the memory saw
+    method = (
+        "    def read_rows(self, conn, start=0):\n        rows = []\n"
+        "        for i in range(start, self.limit):\n            row = conn.read(i)\n"
+        "            if row:\n                rows.append(row)\n        return rows\n"
+    )
+    other = "    def other(self):\n        return 1\n"
+    c1 = env.commit({"src/rw.py": "class Reader:\n    limit = 3\n\n" + method + "\n" + other})
+    await _index(TRUNK, env, c1, ["src/rw.py"])
+    mid = await _remember(MEM, "rw", "`Reader.read_rows` reads three rows", files=["src/rw.py"])
+    await _pass()
+    moved = (
+        "class Reader:\n    limit = 3\n\n" + other + "\n\nclass Writer:\n    limit = 4\n\n" + method
+    )
+    c2 = await _relink_once(env, "src/rw.py", moved)
+    (link,) = await _links(mid)
+    assert (link["symbol"], link["state"], link["changed_since"]) == (
+        "src.rw::Writer::read_rows",
+        "changed",
+        c2,
+    )
+    lessons = await _lessons(TRUNK, "Writer.read_rows")
+    assert [(x["memory_key"], x["code_state"]) for x in lessons] == [("rw", "changed")]
 
 
 @pytest.mark.parametrize("path", ["io.cpp", "io/reader.cpp"])

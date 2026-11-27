@@ -33,8 +33,11 @@ reported commit](#check-a-lesson-after-a-code-edit).
 - **Links that follow refactors.** On every indexed commit, each link reads `fresh`,
   `moved`, `changed` (naming the commit that changed it), `unresolved` or `missing`. A link
   records the definition's tokens, so whitespace, comments and most formatter changes leave
-  it `fresh`. A link to a file follows the lines that hold a name the memory cites, and
-  is replaced by a link to a definition the memory names once the file defines it.
+  it `fresh`. A definition renamed as it moves to another file or class is followed
+  when one new definition there is it: `moved` with the same tokens, `changed` with an
+  edit or outside its class. A link to a file follows the lines that hold a name the
+  memory cites, and is replaced by a link to a definition the memory names once the
+  file defines it.
   [Link states](../concepts/memory.md#memories-linked-to-code)
 - **Stale memories handled the way you choose.** The namespace's
   [`code_change_policy`](../reference/operations/namespace.md#namespaceregister) decides:
