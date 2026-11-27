@@ -14,7 +14,6 @@ from server.code.api.models_symbol import (
     CodeEditReadSource,
 )
 from server.code.app.enrich import bounded
-from server.code.app.grep_dependencies import _helper_edges, _one_target, typed_forward_call
 from server.code.app.index.denylist import under_prefixes
 from server.code.app.spans import code_span, span_attrs
 from server.code.app.symbol.resolve import _indexed_commit, symbol_body
@@ -138,6 +137,8 @@ async def _member_read_sources(
 def _one_forwarder(
     anchors: dict[_AnchorKey, CodeUnit],
 ) -> tuple[CodeUnit, int, str, str] | None:
+    from server.code.app.grep_dependencies import typed_forward_call
+
     witness = None
     for unit in anchors.values():
         if len(unit.body) > settings.code_chunk_max_chars:
@@ -159,6 +160,8 @@ async def _forward_source(
     anchors: dict[_AnchorKey, CodeUnit],
     ids_by_name: dict[str, list[str]],
 ) -> list[CodeEditReadSource]:
+    from server.code.app.grep_dependencies import _helper_edges, _one_target
+
     witness = await asyncio.to_thread(_one_forwarder, anchors)
     if witness is None:
         return []
