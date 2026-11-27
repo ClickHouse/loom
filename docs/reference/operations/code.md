@@ -615,7 +615,7 @@ Read source, tests, and notes.
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
 | `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
-| `read_sources` | `list[CodeEditReadSource] \| None` | Batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Edit context only. |
 
 ## `code.enclosing`
 
@@ -1681,7 +1681,7 @@ Find an exact definition by name or path:line.
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
 | `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
-| `read_sources` | `list[CodeEditReadSource] \| None` | Batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Edit context only. |
 
 ## `code.symbol_history`
 

@@ -291,7 +291,7 @@ class CodeSymbolOutput(BaseModel):
     summary: dict[str, list[str]] = Field(default_factory=dict)
     # Per-requested-name resolution for batched edit context only. Definitions are shared.
     edit_targets: list[CodeEditContextTarget] = Field(default_factory=list)
-    # Batched edit context only. Cross-file member reads grouped by retained definition.
+    # Edit context only. Cross-file member reads grouped by retained definition.
     read_sources: list[CodeEditReadSource] | None = None
 
 

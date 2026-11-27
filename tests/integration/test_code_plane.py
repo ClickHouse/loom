@@ -640,6 +640,13 @@ async def test_edit_context_batch_returns_shared_member_source_at_its_revision(
     assert source.body.strip() == 'def label(self):\n        return "one"'
     assert [(site.path, site.line) for site in source.sites] == [(caller_path, 4), (caller_path, 7)]
 
+    single = request.model_copy(update={"name": names[0], "names": []})
+    single_result = await handle_code_edit_context(single)
+    one_name = await handle_code_edit_context(request.model_copy(update={"names": names[:1]}))
+    assert single_result.read_sources == one_name.read_sources
+    assert single_result.read_sources == [source.model_copy(update={"sites": source.sites[:1]})]
+    assert "edit_targets" not in single_result.model_dump()
+
     explicit = await handle_code_edit_context(
         request.model_copy(update={"names": [*names, f"{member_path}:Options.label"]})
     )
@@ -652,6 +659,7 @@ async def test_edit_context_batch_returns_shared_member_source_at_its_revision(
     stale = await handle_code_edit_context(request)
     assert len(stale.definitions) == 2
     assert "read_sources" not in stale.model_dump()
+    assert "read_sources" not in (await handle_code_edit_context(single)).model_dump()
 
 
 @pytest.mark.parametrize(
