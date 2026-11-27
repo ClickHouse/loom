@@ -78,8 +78,8 @@
 //!
 //! [`Client::request`] and [`Client::request_json`] reach the routes the
 //! registry does not hold, such as `/v1/whoami` and `/v1/knowledge.upload`.
-//! The body and query go out as given. The SDK waits and resends on a 429;
-//! the HTTP transport may also resend a stream refused by the peer.
+//! The body and query go out as given. The SDK can wait and resend on a 429.
+//! The HTTP transport does not retry requests.
 //!
 //! ```
 //! use clickhouse_loom::{Client, Error, RouteRequest};

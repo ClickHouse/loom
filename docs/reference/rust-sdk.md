@@ -152,8 +152,8 @@ let chosen: Value = client
 `request` returns the status, headers and bytes of a response below 400.
 `request_json` decodes the body as the requested type. A status of 400 or
 higher is `Error::Api`. The SDK resends on a 429 after the server's hint and
-within the client's pacing budget. The HTTP transport may also resend a
-stream refused by the peer. See the
+within the client's pacing budget. A refused HTTP/2 stream returns
+`Error::Transport` without a retry. See the
 [route contract](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md#routes-outside-the-op-registry).
 
 ## Call options, errors and retries

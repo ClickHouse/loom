@@ -125,8 +125,8 @@ impl Client {
     ///
     /// Only `CallOptions::timeout` and `CallOptions::request_id` apply. The
     /// SDK resends only on a 429, after the server's hint and within the
-    /// client's pacing budget. The HTTP transport may also resend a stream
-    /// refused by the peer.
+    /// client's pacing budget. A refused HTTP/2 stream returns a transport
+    /// error without a retry.
     pub async fn request(&self, request: RouteRequest) -> Result<RouteResponse, Error> {
         self.request_with_options(request, CallOptions::default())
             .await

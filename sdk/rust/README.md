@@ -477,10 +477,10 @@ a route takes the org, namespace and other fields it needs from them.
 `request` returns the whole response of a status below 400 with its status and
 headers; a redirect is returned, not followed. `request_json` decodes the body
 as the requested type; an empty body decodes as an empty object and an invalid
-one is `Error::Protocol`. A status of 400 or higher is `Error::Api`. At the
-SDK level, only a 429 triggers a resend, after the server's hint and within
-the client's pacing budget. The HTTP transport may also resend a request the
-peer did not process, such as an HTTP/2 stream refused with `REFUSED_STREAM`.
+one is `Error::Protocol`. A status of 400 or higher is `Error::Api`. The SDK
+resends only on a 429, after the server's hint and within the client's pacing
+budget. The HTTP transport does not retry requests. A refused HTTP/2 stream
+returns `Error::Transport`.
 
 `request_with_options` and `request_json_with_options` accept `CallOptions`
 and return `CallResult` or `CallFailure`. Only `timeout` and `request_id`
