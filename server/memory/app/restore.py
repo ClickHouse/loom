@@ -474,7 +474,7 @@ async def _reopen_facts(
     )
 
 
-def _served_now(row: MemoryRow) -> bool:
+def served_now(row: MemoryRow) -> bool:
     """Whether reads serve `row` now: not deleted, a served status, not ended."""
     if row.tombstoned_at is not None or row.status not in SERVED_STATUSES:
         return False
@@ -501,7 +501,7 @@ async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
             strong=True,
         )
         # Reads only stand the original in for it while it is served and not ended.
-        return "duplicate" if original is not None and _served_now(original) else "active"
+        return "duplicate" if original is not None and served_now(original) else "active"
     if was != "conflicted":
         return "active"
     # A peer deleted or resolved while this row was retired leaves nothing to review.

@@ -119,6 +119,16 @@ class HealthState:
     # reads a restricted namespace) or `all` (the doctor, run on the host with the
     # deployment's own credentials).
     code_tier_names: Literal["none", "unrestricted", "all"] = "none"
+    # Repository entries this process knows are configured (`repos.known_repo_count`);
+    # None = not counted here.
+    code_repos: int | None = None
+    # Configured repositories nothing indexes (`ingest_trigger.untriggered`). None =
+    # not read here.
+    code_repos_untriggered: int | None = None
+    # Repositories whose memory links have trailed their indexed head for longer than a
+    # link pass may take (`server.memory.app.code_link_lag.behind`): None = not read
+    # here, or linking is off.
+    memory_links_behind: int | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -781,8 +791,13 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     host; self-registered ones get none, are not fetched over the network, and
     adding one is refused. LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED lifts the last
     two, and the warning stays: their git jobs then reach the remote with
-    nothing vetting its address."""
+    nothing vetting its address. With no repository configured no job is owed,
+    and nothing is reported until this process probes (it refused a
+    `code.repo.add`), unless the deployment requires the sandbox."""
     if not settings.code_ingest_enabled:
+        return []
+    unprobed = state.code_repos == 0 and state.repo_sandbox is None
+    if unprobed and not settings.code_sandbox_required:
         return []
     problems = _layout_problems(state)
     if state.repo_sandbox is not False:
@@ -824,6 +839,30 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
             f"in LOOM_CODE_REPOS_JSON — {_SANDBOX_DOCS}.",
             source="runtime",
         ),
+    ]
+
+
+def _ingest_trigger_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """Repositories are configured and nothing indexes them (`ingest_trigger`), so
+    their index never follows a push. A count only: `/v1/health` answers anyone, and
+    `code.repos` names each entry to whoever may read it."""
+    count = state.code_repos_untriggered or 0
+    if settings.code_ingest_enabled or not count:
+        return []
+    noun, them = ("repository is", "it") if count == 1 else ("repositories are", "them")
+    return [
+        Problem(
+            "code_repos_untriggered",
+            "error",
+            f"{count} configured {noun} not indexed after a push: LOOM_CODE_INGEST_ENABLED "
+            f"is false, no ingest pass ran in the last day and code.refresh was never "
+            f"called for {them}.",
+            "Set LOOM_CODE_INGEST_ENABLED=true (its default) so the code_ingest worker "
+            "polls every configured repository, or call code.refresh from the CI job that "
+            "runs after each push — 'Pushing freshness from CI' in "
+            "docs/features/code-index/freshness.md.",
+            source="workers",
+        )
     ]
 
 
@@ -1050,6 +1089,29 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
     ]
 
 
+def _memory_link_problems(st: HealthState) -> list[Problem]:
+    """One `memory_links_behind` warning for the repositories whose memory links trail
+    their indexed head: a count, since `/v1/health` answers anyone."""
+    count = st.memory_links_behind
+    if not count:
+        return []
+    noun = "repository" if count == 1 else "repositories"
+    return [
+        Problem(
+            "memory_links_behind",
+            "warn",
+            f"The memory links of {count} {noun} have trailed the indexed code for longer "
+            "than a link pass may take: a memory linked there reads `fresh`, `changed` or "
+            "`missing` as of an older commit.",
+            "Read the memory_code_links worker's last passes in /v1/admin/workers.status: "
+            "a failed leg names the repository, and a pass cut at its deadline needs a "
+            "longer LOOM_MEMORY_CODE_LINKS_MAX_PASS_SECONDS "
+            "(loom.memory.code_link_lag_commits says how far each repository trails).",
+            source="workers",
+        )
+    ]
+
+
 # Problems about the data a deployment holds, not the deployment: they are listed, and
 # never make `status` degraded (a repository's failing code-index tier would otherwise
 # fail `loom up`, `helm test` and every health gate over a missing token).
@@ -1072,6 +1134,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _otel_problems(settings, st)
         + _drift_problems(st)
         + _sandbox_problems(settings, st)
+        + _ingest_trigger_problems(settings, st)
         + _git_proxy_problems(settings, st)
         + _reader_user_problems(settings, st)
         + _analysis_problems(settings, st)
@@ -1079,6 +1142,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _oauth_claim_problems(settings, st)
         + _participant_problems(st)
         + _code_tier_problems(st)
+        + _memory_link_problems(st)
     )
     # within a severity, the deployment's own problems first
     return sorted(

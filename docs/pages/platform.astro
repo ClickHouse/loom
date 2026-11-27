@@ -88,12 +88,15 @@ const workflows = [
     <div>
       <Title type="h1" size="xl" family="brand">Memory, documents, and code in one place</Title>
       <Text color="muted" className="lead">Find the decision, verify its source, and hand that context to the next agent.</Text>
-      <div class="site-actions"><Link className="primary" href="/playground/source-change">Try the Playground <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link></div>
+      <div class="site-actions">
+        <Link className="primary" href="/playground/source-change">Try the Playground <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+        <Link className="secondary" href="/use-cases">Browse use cases</Link>
+      </div>
     </div>
     <nav class="jump-links" aria-label="On this page">
-      {capabilities.map(({ id, title }) => <Link href={`#${id}`}>{title}<span aria-hidden="true">↓</span></Link>)}
-      <Link href="#workflows">Agent workflows<span aria-hidden="true">↓</span></Link>
-      <Link href="#connect">Connect your tools<span aria-hidden="true">↓</span></Link>
+      {capabilities.map(({ id, title }) => <Link href={`#${id}`}>{title}<Icon aria-hidden="true" className="jump-icon" name="arrow-down" size="sm" /></Link>)}
+      <Link href="#workflows">Agent workflows<Icon aria-hidden="true" className="jump-icon" name="arrow-down" size="sm" /></Link>
+      <Link href="#connect">Connect your tools<Icon aria-hidden="true" className="jump-icon" name="arrow-down" size="sm" /></Link>
     </nav>
   </div>
 
@@ -143,9 +146,9 @@ const workflows = [
       <Text color="muted">Connect a coding agent through its plugin or MCP, or add Loom to your application with an SDK.</Text>
     </div>
     <div class="site-actions">
-      <Link className="primary" href="/docs/getting-started/connect-a-coding-agent">Connect a coding agent</Link>
+      <Link className="primary" href="/docs/features/integrations">Find your integration</Link>
+      <Link className="secondary" href="/docs/getting-started/connect-a-coding-agent">Connect a coding agent</Link>
       <Link className="secondary" href="/docs/getting-started/first-agent">Build with an SDK</Link>
-      <Link className="text-link" href="/docs/features/integrations">Browse integrations</Link>
     </div>
   </section>
 </SiteFrame>
@@ -154,7 +157,8 @@ const workflows = [
   .product-intro { display: grid; grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr); align-items: end; gap: clamp(1.5rem, 5vw, 5rem); }
   .jump-links { display: grid; gap: 0.2rem; padding-block: 0.1rem; }
   .jump-links a { display: flex; justify-content: space-between; align-items: center; gap: 0.55rem; min-height: 2.75rem; border-bottom: 1px solid var(--line); text-decoration: none; font-size: 0.92rem; }
-  .jump-links a span, .jump-links a:hover { color: var(--accent); }
+  .jump-links :global(.jump-icon), .jump-links a:hover { color: var(--accent); }
+  .jump-links :global(.jump-icon) { flex: none; }
   .capability { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); align-items: center; gap: clamp(1.5rem, 5vw, 5rem); scroll-margin-top: 1.5rem; }
   .capability img { min-width: 0; display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: var(--radius); }
   .capability-label { color: var(--accent); font-size: 0.88rem; font-weight: 650; margin-bottom: 0.7rem; }
@@ -167,6 +171,9 @@ const workflows = [
     .capability:nth-of-type(even) { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
     #workflows .site-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   }
-  @media (max-width: 55rem) { .capability, .product-intro { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 55rem) {
+    .capability, .product-intro { grid-template-columns: minmax(0, 1fr); }
+    .jump-links { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 0.85rem; }
+  }
   @media (max-width: 40rem) { #workflows .site-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

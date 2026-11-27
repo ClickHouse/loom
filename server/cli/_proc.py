@@ -4,7 +4,8 @@ A `loom code` subcommand that runs a harness for tens of minutes must not leave
 it running when the command itself is terminated (a wrapper's `timeout`, an
 operator's `kill`): the orphan keeps writing into the checkout the next run
 moves, and holds its CPU. `cancel_on_sigterm` turns SIGTERM into a cancellation,
-so the command's `finally` blocks stop its children.
+so the command's `finally` blocks stop its children. `run_interruptible` runs a
+command on a loop that a signal wakes, so Ctrl-C never waits for the next event.
 """
 
 from __future__ import annotations
@@ -12,7 +13,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import signal
-from collections.abc import Awaitable
+import socket
+from collections.abc import Awaitable, Coroutine
+from typing import Any
 
 TERMINATED_EXIT = 128 + signal.SIGTERM
 """The exit code of a command ended by SIGTERM (143), as a shell reports it."""
@@ -51,3 +54,42 @@ async def cancel_on_sigterm[T](aw: Awaitable[T]) -> T:
     finally:
         if installed:
             loop.remove_signal_handler(signal.SIGTERM)
+
+
+def run_interruptible[T](main: Coroutine[Any, Any, T]) -> T:
+    """`asyncio.run(main)` on a loop that every signal wakes.
+
+    `asyncio.run` turns Ctrl-C into a cancellation with a `signal.signal` handler,
+    which Python runs between two bytecodes of the main thread. A signal that
+    arrives as the loop enters its selector, or on another thread, only sets a
+    flag: the handler then waits for the selector's next event, which can be a
+    timer minutes away. A wakeup descriptor the loop reads makes the signal that
+    event. Handlers and what they do stay as they were; where no descriptor can be
+    set (not the main thread, a loop that watches none) `main` runs as is."""
+
+    async def woken() -> T:
+        loop = asyncio.get_running_loop()
+        reader, writer = socket.socketpair()
+        with reader, writer, contextlib.ExitStack() as undo:
+            reader.setblocking(False)
+            writer.setblocking(False)
+
+            def drain() -> None:
+                with contextlib.suppress(BlockingIOError):
+                    while reader.recv(4096):
+                        pass
+
+            def restore(previous: int) -> None:
+                # `loop.add_signal_handler` in `main` sets the loop's own: that one stays.
+                current = signal.set_wakeup_fd(previous)
+                if current != writer.fileno():
+                    signal.set_wakeup_fd(current)
+
+            with contextlib.suppress(NotImplementedError, ValueError):
+                loop.add_reader(reader, drain)
+                undo.callback(loop.remove_reader, reader)
+                previous = signal.set_wakeup_fd(writer.fileno(), warn_on_full_buffer=False)
+                undo.callback(restore, previous)
+            return await main
+
+    return asyncio.run(woken())

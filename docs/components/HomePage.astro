@@ -77,6 +77,17 @@ const useCases = [
     </figure>}
   </section>
 
+  <Panel className="site-section adoption-proof" role="region" aria-labelledby="adoption-title" color="muted" hasBorder fillWidth>
+    <div class="section-copy">
+      <Title type="h2" size="lg" id="adoption-title">{adoption.heading}</Title>
+      <Text color="muted">{adoption.detail}</Text>
+    </div>
+    <div class="site-actions">
+      <Link className="primary" href="/adoption" hrefLang="en">{adoption.metrics}<Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+      <Link className="secondary" href="/adoption#reported-contact-domains" hrefLang="en">{adoption.domains}</Link>
+    </div>
+  </Panel>
+
   <section class="site-section capabilities" aria-labelledby="product-title">
     <div class="section-heading">
       <div class="section-copy">
@@ -100,21 +111,15 @@ const useCases = [
     </div>
   </section>
 
-  <Panel className="site-section adoption-proof" role="region" aria-labelledby="adoption-title" color="muted" hasBorder fillWidth>
-    <div class="section-copy">
-      <Title type="h2" size="lg" id="adoption-title">{adoption.heading}</Title>
-      <Text color="muted">{adoption.detail}</Text>
-    </div>
-    <div class="site-actions">
-      <Link className="primary" href="/adoption" hrefLang="en">{adoption.metrics}<Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
-      <Link className="secondary" href="/adoption#reported-contact-domains" hrefLang="en">{adoption.domains}</Link>
-    </div>
-  </Panel>
-
   <section class="site-section" aria-labelledby="use-cases-title">
-    <div class="section-copy">
-      <Title type="h2" size="lg" id="use-cases-title">{copy.useCasesHeading}</Title>
-      <Text color="muted">{copy.useCasesDetail}</Text>
+    <div class="section-heading">
+      <div class="section-copy">
+        <Title type="h2" size="lg" id="use-cases-title">{copy.useCasesHeading}</Title>
+        <Text color="muted">{copy.useCasesDetail}</Text>
+      </div>
+      {locale === "en" && (
+        <Link className="text-link" href="/use-cases">Browse use cases <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+      )}
     </div>
     <nav class="use-cases" aria-label={copy.useCasesLabel}>
       {useCases.map(({ label, href, hreflang }) => (

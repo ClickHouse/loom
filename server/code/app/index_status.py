@@ -329,7 +329,8 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
     from server.code.app.common import fetch_freshness
 
     clone_fetched_at, fetch_overdue = fetch_freshness(
-        (state.get("clone_head") or {}).get("updated_at")
+        (state.get("clone_head") or {}).get("updated_at"),
+        indexed_at=(state.get("git_head") or {}).get("updated_at"),
     )
 
     # keyed by state key; -1 = unset watermark or unreadable clone

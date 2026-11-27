@@ -5,6 +5,7 @@ import {
   activityForRange,
   adoptionCsv,
   adoptionFilters,
+  adoptionGrowthForRange,
   adoptionUrl,
   csvBody,
   omitDefaultAdoptionFilters,
@@ -24,15 +25,16 @@ test("allowlists shareable ranges, grains, and thresholds", () => {
     installation: 50000,
     domain: 1000000,
   });
+  assert.equal(adoptionUrl(filters, {}, "#downloads"), "/adoption?tab=oss&days=90#downloads");
   assert.equal(
-    adoptionUrl(filters, {}, "#downloads"),
-    "/adoption?tab=oss&days=90&grain=day&cohort=week&installation=50000&domain=1000000#downloads",
+    adoptionUrl(filters, { tab: "self-hosted" }, "#lifecycle"),
+    "/adoption?days=90&grain=day&installation=50000&domain=1000000#lifecycle",
   );
   assert.deepEqual(adoptionFilters(new URLSearchParams("days=31&grain=__proto__&domain=50001")), {
     tab: "self-hosted",
     days: 30,
     grain: "week",
-    cohort: "month",
+    cohort: "week",
     installation: 0,
     domain: 0,
   });
@@ -51,6 +53,38 @@ test("shortens default links and native filter submissions while preserving sele
   assert.equal(adoptionUrl(defaults, { tab: "oss" }), "/adoption?tab=oss");
   assert.equal(adoptionUrl(defaults, { csv: "activity" }), "/adoption?csv=activity");
   assert.equal(adoptionUrl(defaults, {}, "#installation-activity"), "/adoption#installation-activity");
+  const monthly = adoptionFilters(new URLSearchParams("cohort=month"));
+  assert.equal(monthly.cohort, "month");
+  assert.equal(adoptionUrl(monthly), "/adoption?cohort=month");
+});
+
+test("retains the cumulative baseline and sorts the selected growth periods", () => {
+  const rows = [
+    { grain: "week", period: "2026-11-16", period_end: "2026-11-23", first_active: 9, cumulative_active: 50 },
+    { grain: "week", period: "2026-09-14", period_end: "2026-09-21", first_active: 8, cumulative_active: 30 },
+    { grain: "day", period: "2026-11-17", period_end: "2026-11-18", first_active: 4, cumulative_active: 45 },
+    { grain: "week", period: "2026-11-09", period_end: "2026-11-16", first_active: 3, cumulative_active: 41 },
+    { grain: "week", period: "2026-11-23", period_end: "2026-11-30", first_active: 0, cumulative_active: 50 },
+  ];
+  const filters = adoptionFilters(new URLSearchParams());
+  const series = adoptionGrowthForRange(rows, filters, "2026-11-19");
+  assert.deepEqual(
+    series.map(({ period, cumulative_active, current }) => [period, cumulative_active, current]),
+    [
+      ["2026-11-09", 41, false],
+      ["2026-11-16", 50, true],
+    ],
+  );
+  assert.deepEqual(adoptionGrowthForRange(null, filters, "2026-11-19"), []);
+  const monthly = adoptionFilters(new URLSearchParams("grain=month"));
+  const july = {
+    grain: "month",
+    period: "2026-07-01",
+    period_end: "2026-08-01",
+    first_active: 4,
+    cumulative_active: 50,
+  };
+  assert.deepEqual(adoptionGrowthForRange([july], monthly, "2026-08-01"), [{ ...july, current: false }]);
 });
 
 test("projects only an in-progress period with every completed day represented", () => {
@@ -96,6 +130,31 @@ test("projects only an in-progress period with every completed day represented",
   assert.equal(activityForRange(rows, filters, "2026-11-20")[1].estimate, null);
   assert.equal(adoptionCsv("activity", data, [], [])[2][5], 280);
   assert.equal(adoptionCsv("unknown", [], [], []), null);
+});
+
+test("exports every usage period with coverage, exact zeros, and blank missing values", () => {
+  const activity = Array.from({ length: 22 }, (_, index) => ({
+    period: new Date(Date.UTC(2026, 10, index + 1)).toISOString().slice(0, 10),
+    period_end: new Date(Date.UTC(2026, 10, index + 2)).toISOString().slice(0, 10),
+    days_reported: 1,
+    current: index === 21,
+    memory_requests: index,
+    embedding_tokens: index === 21 ? 40 : null,
+  }));
+  const [header, ...rows] = adoptionCsv("usage", activity, [], []);
+  assert.deepEqual(header.slice(0, 4), ["period_start_utc", "period_end_utc", "days_reported", "in_progress"]);
+  assert.equal(new Set(header).size, header.length);
+  assert.ok(header.includes("median_total_namespaces"));
+  assert.ok(header.includes("server_errors"));
+  assert.equal(rows.length, 22);
+  assert.deepEqual(rows[0].slice(0, 4), ["2026-11-01", "2026-11-02", 1, false]);
+  assert.deepEqual(rows.at(-1).slice(0, 4), ["2026-11-22", "2026-11-23", 1, true]);
+  const memory = header.indexOf("memory_requests");
+  const embeddings = header.indexOf("embedding_tokens");
+  assert.equal(rows[0][memory], 0);
+  assert.equal(rows[0][embeddings], null);
+  assert.equal(rows.at(-1)[memory], 21);
+  assert.equal(rows.at(-1)[embeddings], 40);
 });
 
 test("compares downloads with equal complete coverage and encodes public exports", () => {

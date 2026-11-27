@@ -49,18 +49,16 @@ a {
   border-bottom: 1px solid var(--line);
 }
 
-.header-inner,
-.footer-inner {
-  display: flex;
+.header-inner {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 1rem clamp(1rem, 2vw, 2rem);
-  padding-block: 0.85rem;
+  padding-block: 0.625rem;
 }
 
 .brand,
-.site-header nav,
-.site-footer nav,
+.site-nav,
 .header-actions {
   display: flex;
   align-items: center;
@@ -69,6 +67,7 @@ a {
 
 .brand {
   flex: none;
+  justify-self: start;
   font-size: 1.08rem;
   font-weight: 560;
   letter-spacing: -0.025em;
@@ -99,8 +98,8 @@ a {
   fill: var(--accent);
 }
 
-.site-header nav,
-.site-footer nav {
+.site-nav,
+.site-footer ul {
   flex-wrap: wrap;
   gap: 0.25rem clamp(0.75rem, 2vw, 1.35rem);
   font-size: 0.9rem;
@@ -113,6 +112,10 @@ a {
   min-height: 2.75rem;
   color: var(--muted);
   text-decoration: none;
+}
+
+.site-nav a {
+  font-size: 0.875rem;
 }
 
 .site-header nav a:hover,
@@ -134,6 +137,7 @@ nav a[aria-current="page"] {
 
 .header-actions {
   justify-content: flex-end;
+  justify-self: end;
   flex: none;
 }
 
@@ -143,29 +147,38 @@ nav a[aria-current="page"] {
 }
 
 .site-language summary {
-  padding: 0.65rem 0.37rem;
-  min-height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-block-size: 2.75rem;
+  min-inline-size: 2.75rem;
+  padding-inline: 0.55rem;
+  border-radius: var(--radius);
   color: var(--muted);
+  list-style: none;
   white-space: nowrap;
   cursor: pointer;
 }
 
-.site-language summary:hover,
-.repo-link:hover {
-  color: var(--accent);
+.site-language summary::-webkit-details-marker {
+  display: none;
 }
 
-.site-language-code {
-  display: none;
+.site-language[open] .language-chevron {
+  rotate: 180deg;
 }
 
 .site-header .site-language-list {
   position: absolute;
   z-index: 2;
   inset-inline-end: 0;
+  inset-block-start: calc(100% + 0.375rem);
   display: grid;
   gap: 0;
-  min-width: 10rem;
+  inline-size: max-content;
+  min-inline-size: 11rem;
+  max-inline-size: calc(100vw - 2 * var(--page-gutter));
   max-block-size: calc(100dvh - 5rem);
   overflow-y: auto;
   padding: 0.35rem;
@@ -176,6 +189,9 @@ nav a[aria-current="page"] {
 }
 
 .site-language-list a {
+  justify-content: space-between;
+  gap: 1rem;
+  border-radius: var(--radius);
   padding-inline: 0.65rem;
 }
 
@@ -193,8 +209,11 @@ nav a[aria-current="page"] {
   color: var(--muted);
 }
 
-.repo-link:hover {
+.repo-link:hover,
+.site-language summary:hover,
+.site-language[open] summary {
   background: var(--surface);
+  color: var(--click-global-color-text-default);
 }
 
 .header-action {
@@ -393,24 +412,23 @@ section.site-panel {
 }
 
 .footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
-  padding-block: 1.55rem;
+  gap: 0.75rem 2rem;
+  padding-block: 1.5rem;
 }
 
 .footer-inner .brand-mark :is(.loom-logo-background, .loom-logo-cutout) {
   fill: var(--surface);
 }
 
-.site-footer .footer-languages {
-  flex-basis: 100%;
-  border-top: 1px solid var(--line);
-  padding-top: 0.55rem;
-}
-
-.footer-languages span {
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 650;
+.site-footer ul {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 @media (max-width: 67rem) {
@@ -437,18 +455,18 @@ section.site-panel {
     column-gap: 0.4rem;
   }
   .site-header nav {
-    font-size: 0.83rem;
     gap: 0 0.75rem;
+  }
+  .site-nav a {
+    font-size: 0.8125rem;
   }
   .header-actions {
     gap: 0.1rem;
   }
   .header-action,
-  .site-language-name {
+  .site-language-name,
+  .language-chevron {
     display: none;
-  }
-  .site-language-code {
-    display: inline;
   }
   .site-header .mobile-start {
     display: inline-flex;
