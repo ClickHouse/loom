@@ -210,8 +210,9 @@ cannot restore a tool omitted from `--tools`. See [Claude Code tool search](http
 
 In the `coding` toolset the server requests upfront loading for
 `loom_code_edit_context` and `loom_code_grep`, and for `loom_code_symbol`
-outside the compact schema profile. Clients can discover the other code tools,
-general search (`loom_search`) and the dispatcher (`loom_op`) when needed.
+outside the compact schema profile. Clients can discover the other code tools
+and, where listed, general search (`loom_search`) and the dispatcher (`loom_op`)
+when needed.
 Other toolsets, a union such as `coding+tracker` included, request upfront
 loading for `loom_code_search`, `loom_code_grep`, `loom_code_symbol`,
 `loom_search` and `loom_op` where listed. The published plugin uses the same
