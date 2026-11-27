@@ -811,6 +811,36 @@ async def test_a_hit_is_the_stored_memory_its_leg_read(served) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_hit_carries_the_commit_of_its_worst_readable_link(served, monkeypatch) -> None:
+    served.heads += [_row(mid, memory_key=mid) for mid in ("both", "edited", "live")]
+    served.links.update(
+        both=[
+            {**_link("both", "changed"), "path": "a.py", "changed_since": "c1"},
+            {**_link("both", "missing"), "path": "b.py", "changed_since": "c2"},
+        ],
+        edited=[{**_link("edited", "changed"), "path": "a.py", "changed_since": "c1"}],
+        live=[{**_link("live", "moved"), "path": "a.py", "changed_since": "c0"}],
+    )
+    hits = [_hit(mid) for mid in ("both", "edited", "live", "unlinked")]
+    await code_link_reads.annotate_hits(_search(), hits)
+    assert [(h.code_state, h.code_changed_since) for h in hits] == [
+        ("missing", "c2"),
+        ("changed", "c1"),
+        ("moved", ""),  # a state no read notes names no commit
+        ("", ""),
+    ]
+
+    async def readable(org, nss):
+        return set()
+
+    # code the caller may not read gives neither a state nor a commit
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    unread = [_hit("edited")]
+    await code_link_reads.annotate_hits(_search(), unread)
+    assert (unread[0].code_state, unread[0].code_changed_since) == ("", "")
+
+
+@pytest.mark.asyncio
 async def test_a_key_several_agents_share_is_the_memory_its_row_names(served) -> None:
     served.heads += [_row("a1", memory_key="k", agent="a1"), _row("a2", memory_key="k", agent="a2")]
     served.links.update(a1=[_link("a1", "fresh")], a2=[_link("a2", "missing")])

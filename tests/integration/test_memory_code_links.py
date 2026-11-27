@@ -639,6 +639,23 @@ async def test_memories_follow_their_code(env, monkeypatch) -> None:
     assert [(c.path, c.state) for c in got.code] == [("src/widgets/readers.py", "changed")]
     states = await _search(MEM, "fetch_page retries on code 115")
     assert states.get("fetch-retry") == "changed", states
+    # the hit names the commit, and its reader line says so
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search.handler import handle_memory_search
+
+    read = await handle_memory_search(
+        MemorySearchInput(
+            org=ORG,
+            namespace=MEM,
+            agent="*",
+            query="fetch_page retries on code 115",
+            render="reader",
+        )
+    )
+    retried = next(h for h in read.results if h.memory_key == "fetch-retry")
+    assert (retried.code_state, retried.code_changed_since) == ("changed", c2)
+    line = next(p for p in read.reader_block.split("\n\n") if "[fetch-retry]" in p)
+    assert f"(its code changed since it was written, commit {c2[:12]}:" in line
     report = await handle_namespace_validate(NamespaceValidateInput(org=ORG, namespace=MEM))
     stale = next(f for f in report.findings if f.check == "code_links_stale")
     assert {s["memory_key"] for s in stale.samples} == {"fetch-retry", "helper-pinned"}

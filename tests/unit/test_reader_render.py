@@ -58,6 +58,39 @@ def test_event_date_beats_valid_at_and_turn_time_is_kept() -> None:
     assert render_reader_block([]) == ""
 
 
+def _code_hit(key: str, **code: str) -> dict[str, str]:
+    return {"memory_key": key, "memory_type": "semantic", "content_excerpt": "x", **code}
+
+
+def test_a_line_whose_code_changed_or_went_names_the_state_and_its_commit() -> None:
+    block = render_reader_block(
+        [
+            _code_hit("a", code_state="changed", code_changed_since="c0ffee" * 7),
+            _code_hit("b", code_state="unresolved"),
+            _code_hit("c", code_state="missing", code_changed_since="dead" * 10),
+        ]
+    )
+    assert block.split("\n\n") == [
+        "[undated] [a] (semantic) (its code changed since it was written, commit c0ffeec0ffee:"
+        " check before relying on it) x",
+        "[undated] [b] (semantic) (its code was renamed or removed and could not be followed:"
+        " check it) x",
+        "[undated] [c] (semantic) (the code it is about is gone, commit deaddeaddead:"
+        " check before relying on it) x",
+    ]
+
+
+def test_a_fresh_moved_or_unlinked_line_carries_no_code_note() -> None:
+    for code in (
+        {},
+        {"code_state": ""},
+        {"code_state": "fresh"},
+        # a commit beside a state no note names is never printed
+        {"code_state": "moved", "code_changed_since": "c0ffee" * 7},
+    ):
+        assert render_reader_block([_code_hit("k", **code)]) == "[undated] [k] (semantic) x"
+
+
 def test_instructions_are_the_synthesizer_prompt_and_fields_exist() -> None:
     assert reader_instructions().startswith(_SYNTH_SYSTEM)
     assert reader_instructions().endswith(READER_ABSTAIN_TEXT)
