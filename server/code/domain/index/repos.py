@@ -130,8 +130,8 @@ class RepoConfig:
     # "registry" (a maintainer's access row in loom.code_repos, which wins over the
     # entry).
     access_source: str = "config"
-    # A registry entry's `row_kind` (migration 089): "page" a branch added from the
-    # page, "access" an operator entry's access row, "" a row from before the column.
+    # "seed" is a complete repository provisioned from deployment settings.
+    # "page" is a dashboard addition and "access" holds only access settings.
     row_kind: str = ""
     # The user name this entry's network git presents to an operator's forward proxy
     # (settings.code_git_proxy_url, code/app/index/git_proxy.py), which decides by it
@@ -307,11 +307,9 @@ _registry_repos: list[RepoConfig] = []
 
 
 def registry_repos() -> list[RepoConfig]:
-    """The registry snapshot (no I/O); empty while self-service is off. Raw: it holds
-    operator entries' access rows and is not gated on the first read, so a list of
-    configured entries is `configured_repos()` (`test_repo_snapshot_contract.py`
-    pins this one's callers)."""
-    return list(_registry_repos) if settings.code_self_service_enabled else []
+    """The raw snapshot, including access-only rows. Call `configured_repos()`
+    for the active repository list."""
+    return list(_registry_repos)
 
 
 _registry_namespaces: frozenset[tuple[str, str]] = frozenset()
@@ -322,14 +320,13 @@ _registry_loaded = False
 
 
 def registry_unread() -> bool:
-    """Self-service is on and loom.code_repos has not reached the snapshot since the
-    process started (no I/O)."""
-    return settings.code_self_service_enabled and not _registry_loaded
+    """The registry has not reached the snapshot since the process started."""
+    return not _registry_loaded
 
 
 def registry_namespaces() -> frozenset[tuple[str, str]]:
-    """(org, namespace) of every registry entry (no I/O); empty while self-service is off."""
-    return _registry_namespaces if settings.code_self_service_enabled else frozenset()
+    """Namespaces of branches added through the registry, for inherited tracker bindings."""
+    return _registry_namespaces
 
 
 def set_registry_repos(entries: list[RepoConfig], page: frozenset[tuple[str, str]]) -> None:
@@ -339,16 +336,15 @@ def set_registry_repos(entries: list[RepoConfig], page: frozenset[tuple[str, str
     _registry_repos = list(entries)
     # An access row is not a branch (`_with_registry`).
     _registry_namespaces = frozenset(
-        (c.org, c.namespace) for c in _registry_repos if c.row_kind != "access"
+        (c.org, c.namespace) for c in _registry_repos if c.row_kind not in {"access", "seed"}
     )
     _page_namespaces = page
     _registry_loaded = True  # last: no reader sees a first read before all of it
 
 
 def page_namespaces() -> frozenset[tuple[str, str]]:
-    """(org, namespace) of every branch added from the page, removed ones too (no I/O);
-    empty while self-service is off."""
-    return _page_namespaces if settings.code_self_service_enabled else frozenset()
+    """Namespaces reserved by a registered branch or a retirement record."""
+    return _page_namespaces
 
 
 # The operator entries skipped for a member's namespace, logged once each per process.
@@ -364,23 +360,18 @@ def reset_for_tests() -> None:
 
 
 class RegistryUnread(BackendUnavailableError):
-    """The self-service registry has not been read since the process started: which
-    operator entries a member's namespace skips is not known yet."""
+    """The process has no repository registry snapshot yet."""
 
 
 def configured_repos() -> list[RepoConfig]:
-    """The repo list every code worker and op reads: the operator's entries, then the
-    self-service registry's. RegistryUnread while self-service is on and the registry
-    has never been read, since an operator entry for a namespace added from the page
-    would be listed and its repository read, fetched or indexed there. Invalid JSON
-    degrades to the scalar single-repo config with a loud log (a typo must not
-    silently stop all indexing) — loud once, then a gauge."""
+    """The active repositories every code worker and op reads. The registry
+    snapshot must be read before an entry can be fetched, indexed or served."""
     require_registry_read()
-    return _with_registry(_operator_entries())
+    return _with_registry(provisioning_entries())
 
 
 def require_registry_read() -> None:
-    """RegistryUnread while self-service is on and the registry has never been read."""
+    """Refuse operations that need the active repository list before its first read."""
     if registry_unread():
         raise RegistryUnread("the self-service repository registry is not read yet; retry")
 
@@ -408,7 +399,7 @@ def operator_orgs() -> set[str]:
     """The orgs the operator's entries name (`LOOM_CODE_REPOS_JSON`, else the scalar
     repository), without the self-service registry's: a cell's configured orgs
     (`server.core.cell`)."""
-    return {c.org for c in _operator_entries() if c.org}
+    return {c.org for c in provisioning_entries() if c.org}
 
 
 def operator_orgs_for(config: Settings) -> set[str]:
@@ -424,7 +415,7 @@ def config_entries() -> list[RepoConfig]:
     restricted through an access row reads as its configuration says until then. Never
     for reading, fetching or indexing a repository:
     `tests/unit/test_repo_snapshot_contract.py` pins its callers."""
-    return _with_registry(_operator_entries()) if registry_unread() else configured_repos()
+    return _with_registry(provisioning_entries()) if registry_unread() else configured_repos()
 
 
 def config_entry(org: str, namespace: str) -> RepoConfig | None:
@@ -455,17 +446,17 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
             if c.label not in _skipped_logged:
                 _skipped_logged.add(c.label)
                 logger.warning(
-                    "code repo %s skipped: a member added that namespace from the "
-                    "Repositories page; list the entry under another namespace",
+                    "code repo %s declaration skipped: its namespace is reserved by the registry",
                     c.label,
                 )
             continue
         _skipped_logged.discard(c.label)  # listed: a later skip is logged again
-        if unread:
-            c = dataclasses.replace(c, org_readable=False)
         access = rows.get((c.org, c.namespace))
         if access is None:
             out.append(c)
+            continue
+        if access.row_kind == "seed":
+            out.append(access)
             continue
         restricted = access.classification == "restricted"
         out.append(
@@ -479,7 +470,11 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
         )
     seen = {(c.org, c.namespace) for c in out}
     extra = [c for c in entries if (c.org, c.namespace) not in seen and c.row_kind != "access"]
-    return out + extra
+    return (
+        [dataclasses.replace(c, org_readable=False) for c in (*out, *extra)]
+        if unread
+        else out + extra
+    )
 
 
 def _scalar_entries(config: Settings, errors: dict[str, str]) -> list[RepoConfig]:
@@ -502,7 +497,7 @@ def _scalar_entries(config: Settings, errors: dict[str, str]) -> list[RepoConfig
     return [base]
 
 
-def _operator_entries() -> list[RepoConfig]:
+def provisioning_entries() -> list[RepoConfig]:
     errors: dict[str, str] = {}
     result = _configured_from_env(settings, errors)
     _publish_config_errors(errors)

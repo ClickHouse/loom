@@ -1059,3 +1059,15 @@ review; an explicit false field on an ordinary rejected fact preserves its corre
 Clients accepting proposals must send `approved_sha256` for each key and use an
 authenticated human administrator independent of the proposer. Automatic policies continue
 to reject failed proposals and leave passing proposals pending human review.
+
+## Repository provisioning
+
+Keep the deployment's repository declarations through the rollback window. An
+active provisioned entry stores its indexing options with an access row so a
+previous build can keep reading its deployment settings and registry access policy.
+
+The new build accepts repository retirement once the older replicas have stopped.
+Older builds with registry reads disabled index every branch declared in their
+deployment settings. Before rolling back to such a build, remove declarations for
+retired branches or enable its registry reads. The current build honors the inactive
+registry entries even when their declarations remain.

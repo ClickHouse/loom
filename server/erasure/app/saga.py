@@ -165,6 +165,8 @@ async def checkpoint(
 
 async def begin_erasure(
     input: ErasureRequestInput,
+    *,
+    erasure_id: str | None = None,
 ) -> tuple[ErasureRequestInput, RequestRow, str, datetime]:
     """Register a saga: normalise a `namespace_list` scope, write the
     `in_progress` checkpoint and the `erasure.started` audit row. Returns what
@@ -174,7 +176,7 @@ async def begin_erasure(
     # A CLI process configured for another deployment's Postgres is refused here,
     # before the ledger row a recovery worker would later run.
     await pg.verify_deployment()
-    erasure_id = str(uuid.uuid4())
+    erasure_id = erasure_id or str(uuid.uuid4())
     now = datetime.now(UTC).replace(tzinfo=None)
     if input.scope_type == "namespace_list":
         # A `purge` already inside the scope_value object (the CLI writes it
@@ -255,14 +257,27 @@ def _detached_done(task: asyncio.Task[Any]) -> None:
         log.warning("erasure: detached saga ended with %s: %s", type(exc).__name__, exc)
 
 
-async def run_erasure_detached(input: ErasureRequestInput) -> str:
+async def run_erasure_detached(input: ErasureRequestInput, *, erasure_id: str | None = None) -> str:
     """Register the saga and run it in the background; the
     caller gets the erasure id at once. Every step checkpoints, so a process
     that dies mid-saga leaves an `in_progress` row the erasure_recovery worker
     resumes; `erasure.status` follows it. Used by `code.repo.remove`, whose
     caller is a maintainer clicking a button, not an operator waiting on a
     mutation."""
-    input, row, erasure_id, now = await begin_erasure(input)
+    if erasure_id is not None:
+        from server.core.ch import sequential_reads
+
+        with sequential_reads():
+            existing = await erasure_ledger.fetch_request_status(erasure_id)
+        if existing is not None:
+            if (
+                existing["org"] != input.org
+                or existing["scope_type"] != input.scope_type
+                or (existing["scope_value"] != input.scope_value)
+            ):
+                raise ValueError("the erasure id already belongs to another scope")
+            return erasure_id
+    input, row, erasure_id, now = await begin_erasure(input, erasure_id=erasure_id)
     task = asyncio.create_task(
         run_saga(
             input=input,

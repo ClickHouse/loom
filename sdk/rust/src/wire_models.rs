@@ -13201,6 +13201,12 @@ pub struct CodeRepoRemoveInput {
         deserialize_with = "present_value"
     )]
     pub confirm: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub confirm_namespace_purge: Option<bool>,
 }
 impl Default for CodeRepoRemoveInput {
     fn default() -> Self {
@@ -13213,6 +13219,7 @@ impl CodeRepoRemoveInput {
             org: None,
             namespace: None,
             confirm: None,
+            confirm_namespace_purge: None,
         }
     }
     pub fn org(mut self, org: impl Into<String>) -> Self {
@@ -13225,6 +13232,10 @@ impl CodeRepoRemoveInput {
     }
     pub fn confirm(mut self, confirm: impl Into<String>) -> Self {
         self.confirm = Some(confirm.into());
+        self
+    }
+    pub fn confirm_namespace_purge(mut self, confirm_namespace_purge: bool) -> Self {
+        self.confirm_namespace_purge = Some(confirm_namespace_purge);
         self
     }
     pub async fn send(

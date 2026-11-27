@@ -1,9 +1,7 @@
-"""Self-service repositories: loom.code_repos as a second source of ``RepoConfig``
-beside LOOM_CODE_REPOS_JSON.
+"""Repository registry and provisioning from deployment settings.
 
-The environment variable is the operator's; this table is everyone's. A
-person adds a repository (or a branch of one) from the Repositories page,
-becomes its first maintainer, and the ingest worker clones and indexes it.
+The registry stores branches added from the Repositories page and branches
+provisioned from deployment settings. Credentials are sealed before storage.
 ``config_entries()`` (authorization) and ``configured_repos()`` (every other
 reader) stay synchronous, so this module keeps an in-process snapshot refreshed by
 ``refresh_db_repos`` (boot and every ``code_repos_refresh_seconds`` on every process,
@@ -16,15 +14,20 @@ secret with a domain separator) and never returned over the wire.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 import time
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from server.code.domain.index.remote import parse_remote
 from server.code.domain.index.repos import (
     RepoConfig,
+    provisioning_entries,
     registry_repos,
     registry_unread,
     set_registry_repos,
@@ -94,6 +97,7 @@ def remote_for(repo: str) -> str:
 
 
 _TOKEN_PURPOSE = "code_repos.token"
+_REMOTE_PURPOSE = "code_repos.provisioned_remote"
 
 
 def encrypt_token(plain: str) -> str:
@@ -113,7 +117,7 @@ def row_to_config(r: dict[str, Any]) -> RepoConfig:
     policy = str(r.get("join_policy") or ("approval" if restricted else "open"))
     repo = str(r.get("repo") or "")
     namespace = str(r.get("namespace") or "")
-    return RepoConfig(
+    cfg = RepoConfig(
         org=str(r.get("org") or ""),
         namespace=namespace,
         repo=repo,
@@ -134,14 +138,135 @@ def row_to_config(r: dict[str, Any]) -> RepoConfig:
         scip_producer=str(r.get("scip_producer") or ""),
         row_kind=str(r.get("row_kind") or ""),
     )
+    if not r.get("index_options_json"):
+        return cfg
+    options = json.loads(r["index_options_json"])
+    remote_enc = options.pop("git_remote_enc")
+    for field in _LIST_OPTIONS:
+        options[field] = tuple(options[field])
+    options["org_readable"] = bool(options["org_readable"]) and not restricted
+    return replace(
+        cfg,
+        source="config",
+        access_source="registry",
+        row_kind="seed",
+        git_remote=unseal(_REMOTE_PURPOSE, remote_enc) or cfg.git_remote,
+        path_prefixes=tuple(r.get("path_prefixes") or ()),
+        **options,
+    )
+
+
+_LIST_OPTIONS = (
+    "scip_extra_producers",
+    "scip_ts_projects",
+    "embed_exclude",
+    "include_contrib_paths",
+    "depends_on",
+)
+_OPTIONS = (
+    *_LIST_OPTIONS,
+    "git_dir",
+    "scip_checkout_dir",
+    "embed_reuse_from",
+    "include_contrib",
+    "ignore_file",
+    "git_extra_branches",
+    "git_fetch_pr_heads",
+    "org_readable",
+)
+
+
+async def provision_declared(ch: Any) -> None:
+    """Provision declarations from the server lifecycle after its cell has started."""
+    from server.auth.grant_claims import account_change
+    from server.auth.tenancy import ensure_held
+    from server.code.store.index import CodeRepo
+    from server.core.ch import sequential_reads
+    from server.identity.app.registration import namespace_row
+
+    def taken(row: dict[str, Any] | None) -> bool:
+        return bool(row and (row.get("row_kind") == "page" or row.get("index_options_json")))
+
+    declared = provisioning_entries()
+    if not declared:
+        return
+    repo = CodeRepo(ch)
+    registered = {
+        (str(row["org"]), str(row["namespace"])): row for row in await repo.registry_rows()
+    }
+    for cfg in declared:
+        key = cfg.org, cfg.namespace
+        if taken(registered.get(key)):
+            continue
+        await ensure_held(cfg.org, None)
+        async with account_change(*key):
+            with sequential_reads():
+                current = await repo.code_repo_row(*key)
+                if taken(current):
+                    continue
+                directory = await namespace_row(*key, ch=ch)
+            await repo.insert_code_repo_row(_provisioned_row(cfg, current, directory))
+
+
+def _provisioned_row(
+    cfg: RepoConfig, current: dict[str, Any] | None, directory: dict[str, Any] | None
+) -> dict[str, Any]:
+    now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    access = current if current and current.get("active") else {}
+    directory = directory or {}
+    classification = access.get("classification", cfg.classification)
+    policy = (
+        access.get("join_policy")
+        or directory.get("join_policy")
+        or ("open" if cfg.public else "approval")
+    )
+    if directory.get("classification") == "restricted":
+        classification = "restricted"
+        if directory.get("join_policy") == "closed":
+            policy = "closed"
+    if classification == "restricted" and policy == "open":
+        policy = "approval"
+    options = {field: getattr(cfg, field) for field in _OPTIONS}
+    remote, options["git_remote_enc"] = _stored_remote(cfg.git_remote)
+    return {
+        "org": cfg.org,
+        "namespace": cfg.namespace,
+        "repo": cfg.repo,
+        "git_remote": remote,
+        "git_branch": cfg.git_branch,
+        "path_prefixes": list(cfg.path_prefixes),
+        "exclude": list(cfg.exclude),
+        "exclude_generated": cfg.exclude_generated,
+        "scip_producer": cfg.scip_producer,
+        "classification": classification,
+        "join_policy": policy,
+        "github_token_enc": encrypt_token(cfg.github_token),
+        "git_proxy_identity": cfg.git_proxy_identity,
+        "index_options_json": json.dumps(options),
+        "created_by": access.get("created_by", ""),
+        "created_at": access.get("created_at", now),
+        "updated_at": access.get("updated_at", now),
+        "active": True,
+        # The previous build reads the deployment entry with this access row.
+        "row_kind": "access",
+        "version": time.time_ns(),
+    }
+
+
+def _stored_remote(remote: str) -> tuple[str, str]:
+    parts = urlsplit(remote)
+    if not (
+        parts.password or parts.query or parts.fragment or parts.username and parts.scheme != "ssh"
+    ):
+        return remote, ""
+    address = urlunsplit((parts.scheme, parts.netloc.rsplit("@", 1)[-1], parts.path, "", ""))
+    return address, seal(_REMOTE_PURPOSE, remote)
 
 
 async def refresh_db_repos(*, force: bool = False, ch: Any | None = None) -> list[RepoConfig]:
     """Re-read loom.code_repos when the snapshot is older than
     ``code_repos_refresh_seconds`` (or ``force``) into the domain's registry
     snapshot. Never raises: a directory that cannot be read keeps the last snapshot."""
-    if not settings.code_self_service_enabled:
-        return []
     if force or time.monotonic() - _LOADED_AT >= settings.code_repos_refresh_seconds:
         await read_registry(ch)
     return registry_repos()
@@ -149,10 +274,8 @@ async def refresh_db_repos(*, force: bool = False, ch: Any | None = None) -> lis
 
 async def read_registry(ch: Any | None = None) -> bool:
     """Read loom.code_repos into the snapshot now. False when that read failed
-    and the last snapshot was kept; True with self-service off."""
+    and the last snapshot was kept."""
     global _LOADED_AT
-    if not settings.code_self_service_enabled:
-        return True
     try:
         from server.code.store.index import CodeRepo
 
@@ -184,9 +307,7 @@ async def read_registry_or_exit(who: str) -> None:
 
 
 def registry_read() -> bool:
-    """The snapshot holds what loom.code_repos held at some read, or there is no registry
-    (self-service off): False while every read since the process started failed. Reads
-    `repos.registry_unread`, which owns the flag."""
+    """The process has read the repository registry at least once."""
     return not registry_unread()
 
 
@@ -201,8 +322,10 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
     ``code_repos_refresh_seconds``, so an added repository or a new restriction
     reaches every replica within that time, whichever ops it serves. The same timer
     re-reads the failing code-index tiers the health problem reports."""
-    from server.code.app.index import tier_health
+    from server.code.app.index import retire, tier_health
 
+    if ch is not None:
+        await provision_declared(ch)
     await refresh_db_repos(force=True, ch=ch)
     await tier_health.refresh_failing(ch)
 
@@ -214,6 +337,8 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
             await asyncio.sleep(max(1.0, float(settings.code_repos_refresh_seconds)))
             await refresh_db_repos(force=True, ch=ch)  # never raises
             await tier_health.refresh_failing(ch)  # never raises
+            if ch is not None:
+                await retire.resume_retirements(ch)
 
     return asyncio.create_task(_loop(), name="loom-code-repos-refresh")
 

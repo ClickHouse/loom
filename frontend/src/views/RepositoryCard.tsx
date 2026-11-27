@@ -372,7 +372,7 @@ export interface CodeActions {
   onRefresh?: (b: CodeRepoSummary) => void;
   /** A maintainer moves a branch's watermark back to a commit (`code.reindex`). */
   onReindex?: (b: CodeRepoSummary) => void;
-  /** A maintainer retires a branch added from the dashboard (`code.repo.remove`). */
+  /** A maintainer retires a branch (`code.repo.remove`). */
   onRemove?: (b: CodeRepoSummary) => void;
   /** A maintainer sets the repository's access (every branch it maintains). */
   onSetAccess?: (
@@ -436,7 +436,7 @@ function branchMenu(b: CodeRepoSummary, actions: CodeActions, busy: boolean): Ro
   if (reindex && st === "member" && b.my_role === "admin")
     items.push({ label: "Re-index after a commit…", icon: "history", onSelect: () => reindex(b) });
   const remove = actions.onRemove;
-  if (remove && b.my_role === "admin" && b.source === "registry")
+  if (remove && b.my_role === "admin")
     items.push({ label: "Remove branch", icon: "trash", danger: true, onSelect: () => remove(b) });
   return items.map((item) => ({ ...item, disabled: busy }));
 }
@@ -667,9 +667,6 @@ function Settings({
                   {b.git_head ? ` · ${short(b.git_head)}` : ""}
                 </MetaRow>
               ))}
-              <MetaRow label="Origin">
-                {card.code.head.source === "registry" ? "added from the dashboard" : "configured by the operator"}
-              </MetaRow>
             </MetaList>
           </div>
         )}

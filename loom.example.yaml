@@ -1081,10 +1081,8 @@ settings:
 
   # --- multi-repo and self-service ---
 
-  # Repositories added from the Repositories page (loom.code_repos) merge with the
-  # configured entries (`code_repos_json` and the scalar entry); a configured entry for
-  # a namespace a member added from the page is skipped. Off = the operator's JSON is
-  # the only source. [restart]
+  # Allow adding repositories and branches from the Repositories page. Existing entries
+  # are served from the registry in either setting. [restart]
   # code_self_service_enabled: true
 
   # True leaves code.repo.remote_branches, code.repo.add and code.repo.add_branch to

@@ -5,6 +5,7 @@ and an operator entry's access row is not counted against the org's quota."""
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -61,6 +62,58 @@ async def _add(org: str, namespace: str) -> None:
         exclude=[],
         created_by="member",
     )
+
+
+async def test_registry_provisions_and_retires_a_declared_index(org: str, monkeypatch) -> None:
+    namespace = "code-provisioned"
+    declared = json.dumps(
+        [
+            {
+                "org": org,
+                "namespace": namespace,
+                "repo": "it/provisioned",
+                "scip_extra_producers": ["go"],
+                "scip_checkout_dir": "var/provisioned-checkout",
+            }
+        ]
+    )
+    monkeypatch.setattr(settings, "code_repos_json", declared)
+    await reg.provision_declared(_default_client())
+    assert await reg.read_registry()
+    first = await CodeRepo().code_repo_row(org, namespace)
+    assert first and first["active"] and first["row_kind"] == "access"
+    assert await reg.active_count(org) == 1
+
+    monkeypatch.setattr(settings, "code_repos_json", "")
+    assert await reg.read_registry()
+    config = repos.repo_for_namespace(org, namespace)
+    assert config and config.scip_checkout_dir == "var/provisioned-checkout"
+    assert config.scip_extra_producers == ("go",)
+    assert await CodeRepo().code_repo_row(org, namespace) == first
+
+    registry = CodeRepo()
+    request_id = "repository-retirement-test"
+    assert await registry.deactivate_code_repo(
+        org, namespace, retirement_id=request_id, requester="maintainer"
+    )
+    pending = await registry.pending_code_repo_retirements()
+    assert [row for row in pending if row["org"] == org] == [
+        {
+            "org": org,
+            "namespace": namespace,
+            "retirement_id": request_id,
+            "retirement_requester": "maintainer",
+        }
+    ]
+    await registry.mark_code_repo_erasure_started(org, namespace, request_id)
+    assert not any(row["org"] == org for row in await registry.pending_code_repo_retirements())
+    monkeypatch.setattr(settings, "code_repos_json", declared)
+    await reg.provision_declared(_default_client())
+    assert await reg.read_registry()
+    assert repos.repo_for_namespace(org, namespace) is None
+    retired = await CodeRepo().code_repo_row(org, namespace)
+    assert retired and not retired["active"] and retired["row_kind"] == "page"
+    assert retired["retirement_id"] == request_id and retired["retirement_requester"] == ""
 
 
 async def test_a_removed_page_branch_keeps_its_namespace_from_the_operator(org: str) -> None:
@@ -171,6 +224,9 @@ async def test_an_operator_entry_over_an_inactive_access_row_writes_a_fresh_one(
         "scip_producer": "",
         "row_kind": "access",
         "git_proxy_identity": "",
+        "index_options_json": "",
+        "retirement_id": "",
+        "retirement_requester": "",
     }
 
 

@@ -76,9 +76,11 @@ def test_the_registry_counts_as_read_only_after_a_read_succeeded(
         _Repo.rows = [_row("standard")]
         asyncio.run(repo_registry.refresh_db_repos(force=True))
         assert repo_registry.registry_read()
-        # Self-service off: there is no registry to read.
+        # Enrollment can be disabled while the existing repositories stay in the registry.
         repo_registry.reset_for_tests()
         monkeypatch.setattr(settings, "code_self_service_enabled", False)
+        assert not repo_registry.registry_read()
+        asyncio.run(repo_registry.refresh_db_repos(force=True))
         assert repo_registry.registry_read()
     finally:
         repo_registry.reset_for_tests()

@@ -1326,7 +1326,7 @@ What a Git remote shows before anything is written — every branch with its hea
 
 ## `code.repo.remove`
 
-Retire a repository index a person added.
+Retire a repository index.
 
 `POST /v1/code.repo.remove` · MCP `loom_code_repo_remove` · role `admin` · idempotent · audited
 
@@ -1335,6 +1335,7 @@ Retire a repository index a person added.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `confirm` | `str` | `''` | Must equal `namespace`, or the call is refused with CONFIRM_REQUIRED. |
+| `confirm_namespace_purge` | `bool` | `False` | Confirm erasure of the entire code namespace, including its memories and documents. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

@@ -8,6 +8,8 @@ reads its input or the store.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import pytest
 
 from server.code.api.models_repos import CodeRepoRemoveInput
@@ -40,10 +42,23 @@ async def test_a_code_op_refuses_with_code_intelligence_off(
 
 @pytest.mark.asyncio
 async def test_a_retirement_is_not_behind_the_switch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With the switch off, a retirement passes its confirm check and looks the entry up:
-    with self-service off the registry is empty, so the namespace is not a repository."""
+    """With code intelligence off, retirement still looks up the registry entry."""
+    from server.code.app import repo_admin
+    from server.code.store.index import CodeRepo
+    from server.core import ch
+    from server.knowledge.app import sources
+
+    async def missing(*_args):
+        return None
+
+    monkeypatch.setattr(ch, "get_client", object)
+    monkeypatch.setattr(repo_admin, "account_change", lambda *_: nullcontext())
+    monkeypatch.setattr(sources, "sources_lease", lambda *_: nullcontext())
+    monkeypatch.setattr(CodeRepo, "code_repo_row", missing)
     monkeypatch.setattr(settings, "code_intel_enabled", False)
     monkeypatch.setattr(settings, "code_self_service_enabled", False)
     with pytest.raises(ValidationError) as refused:
-        await handle_code_repo_remove(CodeRepoRemoveInput(org="o", namespace="n", confirm="n"))
+        await handle_code_repo_remove(
+            CodeRepoRemoveInput(org="o", namespace="n", confirm="n", confirm_namespace_purge=True)
+        )
     assert refused.value.to_detail()["code"] == "NOT_A_REPO"

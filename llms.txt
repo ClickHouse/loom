@@ -56,7 +56,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Code index freshness](docs/features/code-index/freshness.md): The index trails the repository: it indexes merged commits on a configured branch, pass by pass, and each tier advances its own watermark.
 - [History, PRs and releases](docs/features/code-index/history-and-prs.md): ClickHouse Loom's PR-history operations need merged-PR history.
 - [Code operations](docs/features/code-index/operations.md): This page maps questions to `code.*` ops.
-- [Adding repositories](docs/features/code-index/repositories.md): A fresh install indexes no repository.
+- [Adding repositories](docs/features/code-index/repositories.md): A fresh install has an empty repository registry.
 - [Integrations](docs/features/integrations/index.md): Integrations put Loom's tools in front of a model, capture its conversations, or receive its telemetry.
 - [Agent instructions](docs/features/integrations/agent-instructions.md): A short block in an agent's instruction file tells it when to load Loom's context, save a fact and use the code index instead of grepping or reading files.
 - [Agent Substrate](docs/features/integrations/agent-substrate.md): Needs Agent Substrate v1.0.0 and Loom's Helm chart in one Kubernetes cluster: Substrate's egress gateway adds each agent's Loom token to its MCP calls.

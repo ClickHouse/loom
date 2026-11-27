@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -136,10 +137,18 @@ _NAMES_GIT_PROXY_IDENTITY = "git_proxy_identity is a platform admin's to set"
 
 async def _namespace_taken(org: str, namespace: str) -> bool:
     from server.code.domain.index.repos import repo_for_namespace
+    from server.code.store.index import CodeRepo
+    from server.erasure.app.namespace_purge import namespace_erasure_pending
     from server.identity.app.registration import namespace_claimable
 
     if repo_for_namespace(org, namespace) is not None:
         return True
+    row = await CodeRepo().code_repo_row(org, namespace)
+    if row and row.get("retirement_id"):
+        if row.get("retirement_requester"):
+            return True
+        if await namespace_erasure_pending(str(row["retirement_id"])):
+            return True
     return not await namespace_claimable(org, namespace)
 
 
@@ -511,18 +520,16 @@ def repo_add_audit_subject(input: CodeRepoAddInput, response: Any) -> dict[str, 
 
 async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveOutput:
     """A maintainer retires a repository index. The transport's ADMIN gate on the namespace is
-    who may call. Refuses an entry the operator's LOOM_CODE_REPOS_JSON owns — that one is
-    retired by editing the deployment — and needs `confirm` equal to the namespace, so a
-    mis-clicked op cannot purge an index. The rows leave through an erasure saga: a detached
+    who may call. Requires `confirm` equal to the namespace, so a mis-clicked op cannot
+    purge an index. The rows leave through an erasure saga: a detached
     `namespace_list` purge over the one namespace, loom-only, checkpointed, resumed by
     erasure_recovery if the process dies, and proven by the residue census."""
     # Not behind the code switch: a retirement only deletes, so a maintainer can
     # remove an index on a deployment that has code intelligence off.
     from server.code.app.index import retire
-    from server.code.domain.index.repos import configured_repos, repo_for_namespace
+    from server.code.domain.index.repos import configured_repos
+    from server.code.store.index import CodeRepo
     from server.core.ch import get_client
-    from server.erasure.app.namespace_purge import erase_namespaces_detached
-    from server.identity.api.models import NamespaceDeleteInput
 
     _require_same_org(input.org)
     if input.confirm.strip() != input.namespace:
@@ -530,44 +537,46 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
             f"type the namespace ({input.namespace}) in `confirm` to retire it",
             code="CONFIRM_REQUIRED",
         )
-    await reg.refresh_db_repos(force=True)
-    cfg = repo_for_namespace(input.org, input.namespace)
-    if cfg is None:
-        raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
-    if cfg.source != "registry":
+    if not input.confirm_namespace_purge:
         raise ValidationError(
-            f"{input.namespace} comes from the deployment's LOOM_CODE_REPOS_JSON; remove the "
-            "entry there and swap — the page cannot retire an operator-owned index",
-            code="REPO_FROM_CONFIG",
+            "set confirm_namespace_purge to erase the code namespace and its data",
+            code="CONFIRM_REQUIRED",
         )
     from server.knowledge.app.sources import deactivate_namespace_sources, sources_lease
 
     ch = get_client()
-    # set_access's account claim: it cannot write the row back to life; busy refuses.
+    sources_off: list[str] = []
+    registry_off = False
     async with (
         sources_lease(input.org, input.namespace),
         account_change(input.org, input.namespace),
     ):
-        # First, so a failed clear stops the removal while it can be retried.
-        await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
-        # Sources before the registry row, so a failure in between leaves the repository
-        # registered to retry.
-        sources_off = await deactivate_namespace_sources(input.org, input.namespace)
-        registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
+        with sequential_reads():
+            row = await CodeRepo(ch).code_repo_row(input.org, input.namespace)
+        if not row or (row.get("row_kind") == "access" and not row.get("index_options_json")):
+            raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
+        cfg = reg.row_to_config(row)
+        erasure_id = str(row.get("retirement_id") or "")
+        if row.get("active"):
+            directory = await _directory_row(ch, input.org, input.namespace)
+            if directory is not None and directory.get("kind") != "code":
+                raise ValidationError("retirement requires a code namespace", code="NOT_A_REPO")
+            await retire.require_retirement_schema(ch)
+            await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
+            sources_off = await deactivate_namespace_sources(input.org, input.namespace)
+            erasure_id = str(uuid.uuid4())
+            registry_off = await retire.deactivate_registry_row(
+                ch,
+                input.org,
+                input.namespace,
+                retirement_id=erasure_id,
+                requester=current_caller()[0] or "code.repo.remove",
+            )
+        elif not erasure_id:
+            raise ValidationError(f"{input.namespace} was retired", code="NOT_A_REPO")
     await reg.refresh_db_repos(force=True)
-    from server.identity.app.namespace import handle_namespace_delete
-
-    directory = await handle_namespace_delete(
-        NamespaceDeleteInput(org=input.org, namespace=input.namespace)
-    )
+    directory = await retire.finish_retirement(ch, input.org, input.namespace, erasure_id)
     tables = await retire.code_tables_keyed_by_namespace(ch)
-    erasure_id = await erase_namespaces_detached(
-        input.org,
-        [input.namespace],
-        requester=current_caller()[0] or "code.repo.remove",
-        purge=True,
-        external=False,
-    )
     mirror_removed = await retire.remove_mirror_if_orphaned(cfg, configured_repos())
     return CodeRepoRemoveOutput(
         org=input.org,
@@ -575,12 +584,14 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
         repo=cfg.repo,
         branch=cfg.git_branch,
         registry_deactivated=registry_off,
-        directory_deactivated=bool(directory.deleted),
+        directory_deactivated=bool(directory and directory.deleted),
         purged_tables=len(tables),
         erasure_id=erasure_id,
         mirror_removed=mirror_removed,
         # The namespace delete retires a source added after the lease above was released.
-        sources_deactivated=sorted({*sources_off, *directory.sources_retired}),
+        sources_deactivated=sorted(
+            {*sources_off, *(directory.sources_retired if directory else [])}
+        ),
     )
 
 

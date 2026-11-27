@@ -7514,19 +7514,21 @@ class CodeRepoRemoteBranchesOutput(TypedDict, total=False):
 
 
 class CodeRepoRemoveInput(TypedDict, total=False):
-    "Retire a repository index a person added. `confirm` must equal the namespace. The"
+    "Retire a repository index. `confirm` must equal the namespace. The"
 
     org: Required[str]
     namespace: Required[str]
     confirm: NotRequired[str]
+    confirm_namespace_purge: NotRequired[bool]
 
 
 class CodeRepoRemoveBody(TypedDict, total=False):
-    "Retire a repository index a person added. `confirm` must equal the namespace. The"
+    "Retire a repository index. `confirm` must equal the namespace. The"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
     confirm: NotRequired[str]
+    confirm_namespace_purge: NotRequired[bool]
 
 
 class CodeRepoRemoveOutput(TypedDict, total=False):

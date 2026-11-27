@@ -1551,6 +1551,7 @@ export interface CodeRepoRemoveInput {
   org: string;
   namespace: string;
   confirm?: string;
+  confirm_namespace_purge?: boolean;
 }
 
 export interface CodeRepoRemoveOutput {

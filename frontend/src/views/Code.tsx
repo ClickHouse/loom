@@ -514,8 +514,8 @@ function RepositoriesHome({
     if (
       !(await confirmAction({
         title: `Retire ${b.repo} @ ${b.branch}?`,
-        message: `The index ${b.namespace} is retired now: its readers are refused from this moment, its rows are purged by an erasure that runs in the background (Audit log → Erasures), and the mirror goes if no other branch uses it. This cannot be undone; adding the branch again re-indexes from scratch.`,
-        confirmLabel: "Retire index",
+        message: `This retires ${b.namespace} and erases the entire namespace, including its index, memories, and documents. Follow the erasure in Audit log → Erasures. The mirror is removed when no other branch uses it.`,
+        confirmLabel: "Retire and erase namespace",
         danger: true,
       }))
     )
@@ -3602,9 +3602,6 @@ export function AccessTab({
         </section>
       )}
 
-      {/* 4. Retire — the one irreversible verb, last, red, and
-             behind a confirmation that spells out what goes. Operator-configured
-             entries say who owns them instead. */}
       {(canManage || manageReason) && repoRow && (
         <section
           className="rounded-xl border border-border p-4 flex items-start justify-between gap-4 flex-wrap"
@@ -3613,44 +3610,26 @@ export function AccessTab({
           <div className="min-w-0">
             <div className="text-sm font-medium">Retire this index</div>
             <p className="mt-1 text-xs text-text-muted max-w-xl">
-              {repoRow.source === "registry" ? (
-                <>
-                  Removes the index of{" "}
-                  <b>
-                    {repoRow.repo} @ {repoRow.branch}
-                  </b>
-                  : readers lose access, tokens naming it stop working, every indexed row is purged by an erasure you
-                  can follow under Audit log → Erasures, and the mirror is deleted when no other branch uses it. Adding
-                  it again re-indexes from scratch.
-                </>
-              ) : (
-                <>
-                  This index comes from the deployment's configuration. An operator retires it by removing its entry and
-                  swapping; the page cannot.
-                </>
-              )}
+              Removes the index of{" "}
+              <b>
+                {repoRow.repo} @ {repoRow.branch}
+              </b>
+              . The erasure includes the entire namespace and its memories and documents. Follow it under Audit log →
+              Erasures. The mirror is removed when no other branch uses it.
             </p>
           </div>
-          {/* A configured index is the deployment's for everyone: natively off, with its tip. */}
-          <Unavailable
-            reason={repoRow.source === "registry" ? manageReason : null}
-            tip={
-              repoRow.source === "registry"
-                ? "Irreversible; a confirmation follows"
-                : "Managed by the deployment config"
-            }
-          >
+          <Unavailable reason={manageReason} tip="Irreversible. A confirmation follows.">
             <Button
               type="danger"
               htmlType="button"
               iconLeft="trash"
-              disabled={repoRow.source !== "registry" || (!manageReason && busy !== null)}
+              disabled={!manageReason && busy !== null}
               onClick={async () => {
                 if (
                   !(await confirmAction({
                     title: `Retire ${repoRow.repo} @ ${repoRow.branch}?`,
-                    message: `The index ${id.namespace} is retired now: its readers are refused from this moment, its rows are purged by an erasure that runs in the background (Audit log → Erasures), and the mirror goes if no other branch uses it. This cannot be undone; adding the repository again re-indexes from scratch.`,
-                    confirmLabel: "Retire index",
+                    message: `This retires ${id.namespace} and erases the entire namespace, including its index, memories, and documents. Follow the erasure in Audit log → Erasures. The mirror is removed when no other branch uses it.`,
+                    confirmLabel: "Retire and erase namespace",
                     danger: true,
                   }))
                 )

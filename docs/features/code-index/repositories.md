@@ -1,22 +1,15 @@
 # Adding repositories
 
-A fresh install indexes no repository. Entries come from two sources, merged: the
-repositories people add themselves and the operator's configuration. An operator entry
-for a namespace added here is skipped (see the rules below). One code namespace is one
-branch ([overview](overview.md#one-namespace-is-one-branch)).
+A fresh install has an empty repository registry. Add a branch from the Repositories
+page or provision it with `LOOM_CODE_REPOS_JSON` or the scalar `LOOM_CODE_*` settings.
+Both write to the same registry. Maintainers and platform admins manage access and
+retire entries from the repository page. One code namespace is one branch
+([overview](overview.md#one-namespace-is-one-branch)).
 
-| Path                | How                                                                                                  | Built by                               | Tiers                                              |
-| ------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------- |
-| Self-service        | **Repositories → Add repository** in the dashboard, or **Add branch** on a card you maintain         | the `code_ingest` worker, in slices    | fast tier; optional compiler tiers                 |
-| Operator-configured | an entry in `LOOM_CODE_REPOS_JSON` (or the scalar `LOOM_CODE_*` settings), then `loom code backfill` | the operator, with the `loom code` CLI | fast tier, plus the compiler tier where configured |
+## Add repositories from the dashboard
 
-Self-service needs no operator or shell access for the fast tier. Compiler tiers are
-optional precision upgrades and need their language toolchain in the worker image.
-
-## Self-service repositories
-
-Needs `LOOM_CODE_SELF_SERVICE_ENABLED` and the `code_ingest` worker. Both are enabled by
-the stock development Compose deployment; custom deployments can disable either.
+**Add repository** and **Add branch** need `LOOM_CODE_SELF_SERVICE_ENABLED` and the
+`code_ingest` worker. Both are enabled by the stock development Compose deployment.
 
 It also needs the [repository-job sandbox](../../operations/code-index-operations.md#repository-job-sandbox):
 a repository added here gets compiler tiers that execute its own build code, and its
@@ -72,14 +65,14 @@ chunks carry a vector; until then `code.search` answers lexically
 | `code.repo.add_branch`      | admin  | index another branch of a repository you maintain; it inherits remote, token, prefixes and access                                                         |
 | `code.repo.set_access`      | admin  | set `classification` (`standard` / `restricted`) and `join_policy` (`open` / `approval` / `closed`)                                                       |
 | `code.repo.set_source`      | admin  | link the tracker namespaces this repository reads, primary first ([tracker overview](../tracker/overview.md#linking-a-tracker-to-a-repository))           |
-| `code.repo.remove`          | admin  | retire a self-service index; `confirm` must equal the namespace                                                                                           |
+| `code.repo.remove`          | admin  | retire a repository and erase its namespace                                                                                                               |
 
 Arguments are in the [operations reference](../../reference/operations.md#code).
 
 Rules:
 
 - An org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) active self-service
-  entries, branches included (`REPO_QUOTA`). A branch already indexed, under any
+  registry entries, branches included (`REPO_QUOTA`). A branch already indexed, under any
   namespace, or whose namespace holds data or grants you do not administer, is refused
   with `REPO_EXISTS`; join an index instead. A branch of an operator-configured entry
   with no first index yet is refused with `REPO_NOT_INDEXED` until `loom code backfill`
@@ -128,18 +121,17 @@ Rules:
 - A copy on an operator namespace whose `granted_by` is `repo-maintainers:<namespace>`
   naming a branch added here, or a namespace no longer configured, stays until revoked:
   list those grants and revoke the ones that should not stand.
-- While self-service is off, a revoke on an operator entry sees no branch added here,
-  so a copy there of the revoked grant stays when self-service is switched back on:
-  revoke it on that branch.
 - A restricted repository is never `open`: `code.repo.add` sets `approval`. Widening a
   restricted index to standard needs `confirm` equal to the namespace.
 - A private repository's token is stored encrypted with a key derived from
   `LOOM_JWT_SECRET` and never returned. Rotating that secret makes stored tokens
   unusable until a maintainer enters them again.
-- `code.repo.remove` retires the registry rows and purges every `code_*` row of the
-  namespace through a resumable erasure saga. The mirror is deleted when no other branch
-  uses it. An operator-configured entry is refused with `REPO_FROM_CONFIG`.
-- `LOOM_CODE_SELF_SERVICE_ENABLED=false` removes the feature (`SELF_SERVICE_OFF`).
+- `code.repo.remove` retires a repository and erases its code namespace, including its
+  index, memories and documents. Set `confirm` to the namespace and
+  `confirm_namespace_purge` to `true`. Loom resumes an interrupted retirement and
+  deletes the mirror when no other branch uses it.
+- `LOOM_CODE_SELF_SERVICE_ENABLED=false` disables adding repositories from the page
+  (`SELF_SERVICE_OFF`). Existing indexes stay in the registry.
 - `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY=true` leaves `code.repo.remote_branches`,
   `code.repo.add` and `code.repo.add_branch` to platform admins, beyond the role each op
   asks for: any other caller is refused with `AUTH_INSUFFICIENT` before a remote is asked.
@@ -189,16 +181,13 @@ Health tab expose worker errors, per-language coverage, unresolved edges, embedd
 coverage and freshness. PR/review history currently uses the GitHub API; other providers
 still receive Git history and code intelligence, with an explicit onboarding warning.
 
-## Operator-configured repositories
+## Provision repositories
 
-`LOOM_CODE_REPOS_JSON` holds one object per indexed branch. The entry fields,
-prerequisites (image, embedder, writable mirrors, GitHub token), the first index
-(`loom code init`, `backfill`, `backfill-prs`, `scripts/ops/code_intel_bootstrap.sh`),
-the compiler tier and other branches are in the
-[code index operations runbook](../../operations/code-index-operations.md). The worker
-never starts an operator-configured entry; one without a `git_head` watermark is skipped
-until `loom code backfill` runs. Every setting is in the
-[configuration reference](../../reference/configuration.md#code).
+`LOOM_CODE_REPOS_JSON` holds one object per branch. Loom provisions missing registry
+entries at startup. Changes to the declaration leave existing entries and retired
+namespaces as they are. Run `loom code backfill` for the first index of a provisioned
+entry. The [code index operations runbook](../../operations/code-index-operations.md)
+lists the fields, prerequisites and compiler tiers.
 
 ## Who can read
 

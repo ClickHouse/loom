@@ -951,14 +951,11 @@ class CodeSettings(BaseModel):
     # than this many `src/<dir>` directories (rule wide_callers_untested).
     code_conventions_wide_caller_dirs: int = 5
     # --- multi-repo and self-service ---
-    # Multi-repo: JSON array of repo configs (code/domain/index/repos.py);
-    # empty = the scalar single-repo settings. Missing per-entry fields fall
-    # back to the scalars.
+    # Repository entries to provision in the registry as a JSON array. Empty uses
+    # the scalar single-repo settings. Existing registry entries take precedence.
     code_repos_json: Annotated[str, JsonArray] = ""
-    # Repositories added from the Repositories page (loom.code_repos) merge with the
-    # configured entries (`code_repos_json` and the scalar entry); a configured entry
-    # for a namespace a member added from the page is skipped.
-    # Off = the operator's JSON is the only source.
+    # Allow adding repositories and branches from the Repositories page. Existing
+    # entries are served from the registry in either setting.
     code_self_service_enabled: bool = True
     # True leaves code.repo.remote_branches, code.repo.add and code.repo.add_branch to
     # platform admins: a token scoped to namespaces, or a trusted caller acting for
