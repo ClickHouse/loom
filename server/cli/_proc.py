@@ -14,6 +14,7 @@ import contextlib
 import signal
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
+from types import FrameType
 
 TERMINATED_EXIT = 128 + signal.SIGTERM
 """The exit code of a command ended by SIGTERM (143), as a shell reports it."""
@@ -60,12 +61,24 @@ async def cancel_on_sigterm[T](aw: Awaitable[T]) -> T:
         if task is not None and _stop(task):
             got_term = True
 
+    previous_int = signal.getsignal(signal.SIGINT)
+
+    def _on_int(signum: int, frame: FrameType | None) -> None:
+        nonlocal stopping
+        if task is not None and callable(previous_int):
+            # asyncio.run handles Ctrl-C itself, including a second interrupt.
+            pending = task.cancelling()
+            previous_int(signum, frame)
+            stopping = stopping or task.cancelling() > pending
+
     installed = False
     with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
         loop.add_signal_handler(signal.SIGTERM, _on_term)
         installed = True
     token = _request_stop.set(_stop)
     try:
+        if installed and callable(previous_int):
+            signal.signal(signal.SIGINT, _on_int)
         return await aw
     except asyncio.CancelledError:
         if got_term:
@@ -74,4 +87,6 @@ async def cancel_on_sigterm[T](aw: Awaitable[T]) -> T:
     finally:
         _request_stop.reset(token)
         if installed:
+            if signal.getsignal(signal.SIGINT) is _on_int and callable(previous_int):
+                signal.signal(signal.SIGINT, previous_int)
             loop.remove_signal_handler(signal.SIGTERM)

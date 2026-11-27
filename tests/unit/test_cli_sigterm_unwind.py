@@ -65,6 +65,45 @@ def test_sigterm_unwinds_a_code_subcommand_and_exits_143(tmp_path: Path) -> None
             proc.kill()
 
 
+def test_sigterm_preserves_cleanup_started_by_sigint(tmp_path: Path) -> None:
+    marker = tmp_path / "finally.ran"
+    script = textwrap.dedent(
+        f"""
+        import asyncio
+        import os
+        import signal
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from server.cli._proc import TERMINATED_EXIT, Terminated, cancel_on_sigterm
+
+        async def run():
+            loop = asyncio.get_running_loop()
+            with patch.object(loop, "add_signal_handler") as install:
+                async def command():
+                    try:
+                        os.kill(os.getpid(), signal.SIGINT)
+                        await asyncio.Future()
+                    finally:
+                        install.call_args.args[1]()
+                        await asyncio.sleep(0)
+                        Path({str(marker)!r}).touch()
+
+                await cancel_on_sigterm(command())
+
+        try:
+            asyncio.run(run())
+        except KeyboardInterrupt:
+            raise SystemExit(130)
+        except Terminated:
+            raise SystemExit(TERMINATED_EXIT)
+        """
+    )
+    result = subprocess.run([sys.executable, "-c", script], cwd=ROOT, timeout=20, check=False)
+    assert result.returncode == 130
+    assert marker.exists()
+
+
 async def test_sigterm_stops_a_command_during_timeout_cleanup() -> None:
     loop = asyncio.get_running_loop()
     recovered = False
