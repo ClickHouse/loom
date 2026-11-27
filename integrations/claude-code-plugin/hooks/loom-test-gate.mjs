@@ -7,7 +7,10 @@
 // distinct change with a reason that names them. "This session's" is read
 // from the transcript: dirty paths an edit tool targeted or a shell command
 // named; a tree left dirty before the session does not
-// gate a turn that touched nothing. See lib/test-gate.mjs for the rules.
+// gate a turn that touched nothing. A transcript that already answers the
+// ask does not block either: pytest ran the named tests clean after the last
+// change, or the person's latest prompt said not to run tests. See
+// lib/test-gate.mjs for the rules.
 //
 // Fail-open everywhere: no token, not an indexed repo, clean tree, nothing
 // of the tree touched this session, server down, second stop on the same
@@ -41,6 +44,7 @@ import {
   gatePayload,
   gateSignature,
   renderGate,
+  runAnswered,
   sessionScope,
 } from "../lib/test-gate.mjs";
 
@@ -80,7 +84,8 @@ async function main() {
   }
   // Only what this session touched; no transcript → the whole dirty tree.
   const transcript = payload.transcript_path || "";
-  const changed = transcript ? sessionScope(dirty, readAllLines(transcript), { root, cwd }) : dirty;
+  const rows = transcript ? readAllLines(transcript) : [];
+  const changed = transcript ? sessionScope(dirty, rows, { root, cwd }) : dirty;
   if (!changed.length) {
     scheduleExit(0);
     return;
@@ -120,22 +125,22 @@ async function main() {
     },
     { token, serverUrl: resolveServerUrl() },
   );
+  const testExists = (testPath) => {
+    const target = path.resolve(root, testPath);
+    if (!pathUnder(root, target)) return false;
+    try {
+      return fs.statSync(target).isFile();
+    } catch {
+      // A stale index row or another checkout's test is an explicit gap.
+      return false;
+    }
+  };
+  if (runAnswered(gate, rows, { changed, root, cwd, testExists })) {
+    scheduleExit(0);
+    return;
+  }
   const needsPython = (gate?.tests || []).some((t) => /^pytest(\s|$)/.test(String(t?.run || "")));
-  const out = gatePayload(
-    renderGate(gate, {
-      python: needsPython ? checkoutPython(root) : undefined,
-      testExists: (testPath) => {
-        const target = path.resolve(root, testPath);
-        if (!pathUnder(root, target)) return false;
-        try {
-          return fs.statSync(target).isFile();
-        } catch {
-          // A stale index row or another checkout's test is an explicit gap.
-          return false;
-        }
-      },
-    }),
-  );
+  const out = gatePayload(renderGate(gate, { python: needsPython ? checkoutPython(root) : undefined, testExists }));
   if (out) process.stdout.write(JSON.stringify(out) + "\n");
   scheduleExit(0);
 }

@@ -9,6 +9,8 @@
 // in review. The second stop on the
 // same change passes: the agent has seen the obligation and either ran the
 // tests or chose not to, and a gate that nags is a gate that gets disabled.
+// A stop whose transcript already answers the ask is not blocked at all
+// (`runAnswered`): a block costs the session one more model request.
 //
 // The change is the session's, not the tree's: `sessionScope` keeps only
 // the dirty paths the transcript shows this session edited or named in a
@@ -17,7 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { commandText, extractFiles, normalizeToolName, pathUnder } from "./loom-client.mjs";
+import { commandText, contentText, extractFiles, normalizeToolName, pathUnder } from "./loom-client.mjs";
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "str_replace_editor", "apply_patch"]);
 
@@ -283,14 +285,146 @@ export function sessionScope(changed, objs, { root, cwd } = {}) {
       }
     }
   }
+  const names = pathNamer(root, cwd);
+  return dirty.filter((rel) => edited.has(rel) || commands.some((c) => names(c, rel)));
+}
+
+/** `(command, rel)`: does the shell command name repo-relative `rel`, as
+ *  written or under either spelling of the checkout root? */
+function pathNamer(root, cwd) {
   const roots = root ? [root] : [];
   const logical = root ? logicalRoot(root, cwd) : "";
   if (logical && logical !== root) roots.push(logical);
-  return dirty.filter((rel) => {
-    if (edited.has(rel)) return true;
-    const absPaths = roots.flatMap((r) => absoluteForms(path.join(r, rel)));
-    return commands.some((c) => commandNames(c, rel, absPaths));
-  });
+  return (command, rel) =>
+    commandNames(
+      command,
+      rel,
+      roots.flatMap((r) => absoluteForms(path.join(r, rel))),
+    );
+}
+
+// "Do not run the test suite", "don't run any tests". `do not run
+// tests/test_slow.py` rules out one file, not the run.
+const DECLINES = /\b(?:do\s+not|don['’]?t|never)\s+run\s+(?:(?:the|any)\s+)?tests?(?:\s+suite)?\b(?![/.-]?\w)/i;
+
+/** True when the person's latest prompt tells the agent not to run tests.
+ *  Only the latest: "now run them" in a later prompt takes the earlier one
+ *  back. Tool results and rows the client injected (isMeta: hook feedback,
+ *  a skill body) are not the person speaking. */
+export function declinesTests(objs) {
+  let prompt = "";
+  for (const o of objs || []) {
+    if (!o || o.type !== "user" || o.isSidechain || o.isMeta || o.isCompactSummary) continue;
+    const content = o.message && o.message.content;
+    if (Array.isArray(content) && content.some((b) => b && b.type === "tool_result")) continue;
+    prompt = contentText(content);
+  }
+  return DECLINES.test(prompt);
+}
+
+// A pytest invocation and its arguments up to the end of the simple command.
+// `import pytest` in a heredoc is not one.
+const PYTEST = /(?<!import)(?:^|[\s/])py\.?test(?=\s|$)([^\n;|&)]*)/g;
+// pytest's last line, whose order is fixed: failed, passed, skipped,
+// deselected, xfailed, xpassed, warnings, errors. A clean line starts at
+// "passed" and names nothing deselected, so a -k or --lf subset is not one.
+const SUMMARY = /\b\d+ (?:passed|failed|errors?)\b.* in [\d.]+s\b/;
+const CLEAN = /^=*\s*\d+ passed(?:, \d+ (?:skipped|xfailed|xpassed|warnings?))* in [\d.]+s(?: \([\d:]+\))?\s*=*$/;
+// The directory a command moves to before it runs something.
+const CD = /(?:^|[;&|(\n])\s*cd\s+([^\s;&|)]+)/g;
+const unquoted = (word) => word.replace(/^["']|["']$/g, "");
+// git subcommands that rewrite tracked files without naming them.
+const TREE_GIT = /\bgit\s+(?:stash|checkout|restore|reset|switch|apply|merge|rebase|pull|revert|cherry-pick|am)\b/;
+
+/** True when the output holds a clean pytest summary for each of `runs`
+ *  invocations and no other summary: `| tail -5; echo exit=$?` hides the
+ *  exit status, the summary line survives it. */
+function allPassed(output, runs) {
+  const lines = String(output || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length < 300 && SUMMARY.test(l));
+  return lines.length >= runs && lines.every((l) => CLEAN.test(l));
+}
+
+/**
+ * The repo-relative files and directories pytest ran clean after the
+ * session's last change to the tree, read in transcript order (Claude Code
+ * rows; sidechains skipped). An edit tool, a shell command naming one of
+ * `changed`, a tree-rewriting git command, or a pytest run that is not clean
+ * forgets every earlier run. A command may change files and then test them
+ * (`cat >> tests/test_a.py <<EOF … EOF; pytest tests`): only what follows its
+ * first pytest counts against it. Its paths are read from the directory the
+ * command moved to: `cd sub && pytest tests` ran sub/tests. A floor, like
+ * `sessionScope`: a script that writes files without naming them is not seen.
+ */
+function cleanRuns(objs, { changed, root, cwd } = {}) {
+  const names = pathNamer(root, cwd);
+  const changes = (text) => TREE_GIT.test(text) || (changed || []).some((rel) => names(text, rel));
+  const rows = (objs || []).filter((o) => o && !o.isSidechain && Array.isArray(o.message && o.message.content));
+  const output = new Map();
+  for (const o of rows) {
+    if (o.type !== "user") continue;
+    for (const b of o.message.content) {
+      if (b && b.type === "tool_result") output.set(b.tool_use_id, contentText(b.content));
+    }
+  }
+  let clean = [];
+  for (const o of rows) {
+    if (o.type !== "assistant") continue;
+    for (const b of o.message.content) {
+      if (!b || b.type !== "tool_use") continue;
+      const name = normalizeToolName(b.name);
+      if (EDIT_TOOLS.has(name)) clean = [];
+      if (name !== "Bash" && name !== "PowerShell") continue;
+      const command = commandText(b.input);
+      const runs = [...command.matchAll(PYTEST)];
+      if (!runs.length) {
+        if (changes(command)) clean = [];
+        continue;
+      }
+      const before = command.slice(0, runs[0].index);
+      const after = command.slice(runs[0].index).replace(PYTEST, " ");
+      // --ignore drops a path the summary never mentions; a `cd` between two
+      // runs moves the second one's paths.
+      const ran =
+        allPassed(output.get(b.id), runs.length) &&
+        !command.includes("--ignore") &&
+        !changes(after) &&
+        !/\bcd\s/.test(after);
+      if (!ran || changes(before)) clean = [];
+      if (!ran) continue;
+      const cd = [...before.matchAll(CD)].pop();
+      const base = cd ? path.resolve(cwd || root || "", unquoted(cd[1])) : cwd;
+      for (const run of runs) {
+        for (const word of run[1].split(/\s+/)) {
+          const rel = word.startsWith("-") ? "" : relativeToRoot(root, unquoted(word), base);
+          if (rel) clean.push(rel);
+        }
+      }
+    }
+  }
+  return clean;
+}
+
+/**
+ * True when the gate's ask is to run tests this checkout has and the
+ * transcript already answers it, so the gate has nothing to add: the
+ * person's latest prompt said not to run tests, or pytest ran every named
+ * test clean after the last change (its file, or a directory above it). A
+ * gate that names a test missing from the checkout, or only untested
+ * functions, still asks; so does one whose tests another runner runs, unless
+ * the person ruled the run out. Read from Claude Code transcript rows: a
+ * Codex rollout answers nothing, and its stop is blocked as before.
+ */
+export function runAnswered(gate, objs, { changed, root, cwd, testExists } = {}) {
+  const tests = gate && Array.isArray(gate.tests) ? gate.tests : [];
+  const paths = [...new Set(tests.map((t) => String(t.test_path || "")))];
+  if (!paths.length || !paths.every((p) => p && testExists(p))) return false;
+  if (declinesTests(objs)) return true;
+  if (!tests.every((t) => isPytest(t.run))) return false;
+  const clean = cleanRuns(objs, { changed, root, cwd });
+  return paths.every((p) => clean.some((c) => p === c || p.startsWith(`${c}/`)));
 }
 
 /** The checkout root as `cwd` spells it, when that differs from git's: a
