@@ -48,13 +48,13 @@ To inspect a citation that points inside a function, pass its `path:start_line` 
 `name` to [`code.symbol`](../reference/operations/code.md#codesymbol). For example,
 a citation at line 42 of `src/cache.py` becomes `name: "src/cache.py:42"`. Use the
 same organization and code namespace, and set `include_body: true`.
-Check that one definition resolves, its path and line span cover the cited line,
-and its body supports the claim. Use `code.index_status` to compare the commit of
-[the definition's index tier](../features/code-index/freshness.md) with the
-answer's `as_of.commit`. Matching revisions are a consistency check. To verify
+Find a returned definition whose path and line span match the citation, then
+check whether its body supports the claim. Use `code.index_status` to compare the
+commit of [the definition's index tier](../features/code-index/freshness.md) with
+the answer's `as_of.commit`. Matching revisions are a consistency check. To verify
 the citation, open the file and line range at `as_of.commit` in the repository
-browser and check that those lines support the claim. If you cannot read those
-lines, report the citation as unchecked.
+browser and check that those lines support the claim. If the answer has no
+recorded commit or you cannot read those lines, report the citation as unchecked.
 
 Use `as_of` when available to check the indexed branch and commit behind the result.
 Check `abstain`, `partial` and their reasons before displaying an answer. To test
