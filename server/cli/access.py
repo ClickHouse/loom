@@ -18,6 +18,7 @@ from typing import Any
 from server.cli._ch import OrgFree, reads, revokes, run_connected, writes
 from server.cli._client import token_path
 from server.core.pg import AuthorityMismatch
+from server.core.retirement import unfinished
 
 
 async def _claim_release_answer() -> str:
@@ -200,9 +201,7 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
     except AuthorityMismatch:
         raise
     except Exception as e:  # a mint without verified enrollment is refused
-        from server.insights.app.provider_command import unfinished_line
-
-        if unfinished_line(e):
+        if unfinished(e):
             raise  # `_dispatch` prints it
         print(
             f"  ✗ token mint did not complete in its enrolled scope: {type(e).__name__}",
@@ -627,9 +626,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     except AuthorityMismatch:
         raise  # a shell configured for another deployment: its own one-line refusal
     except Exception as e:  # a revocation that did not land must say so
-        from server.insights.app.provider_command import unfinished_line
-
-        if unfinished_line(e):
+        if unfinished(e):
             raise  # `_dispatch` prints it
         print(f"  ✗ revocation not recorded: {type(e).__name__}: {e}", file=sys.stderr)
         return 1

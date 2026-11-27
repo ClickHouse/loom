@@ -242,7 +242,8 @@ async def _authority_settled(
     ch: Any, participant: UUID, proof: str, *, end: float, own: bool = False
 ) -> bool:
     """Fresh authority selection and positive absence, under one caller-owned end.
-    A process that cannot show them for itself raises `Uncertifiable`."""
+    `own`: no record under ClickHouse authority, or an empty proof once the authority
+    answered settled, raises `Uncertifiable`."""
     try:
         async with asyncio.timeout_at(end):
             recorded = await pg_profile.recorded_authority(ch)

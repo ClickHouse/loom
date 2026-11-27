@@ -19,9 +19,6 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-# Marks, as an exception note, a failed shutdown of a command whose body returned.
-UNFINISHED = "the command returned; its shutdown did not complete"
-
 
 async def _adopt_overrides(*, failing: bool = False) -> bool:
     """Whether the stored overrides loaded. A failure is logged when a run of them
@@ -137,24 +134,24 @@ async def participant_command() -> AsyncIterator[None]:
         except Exception as error:
             # A tracked producer's own failure is not the shutdown's: it keeps its traceback.
             if error is not retirement.get_gate().producer_failure:
-                error.add_note(UNFINISHED)  # `loom` reports it in one line (`unfinished_line`)
+                error.add_note(retirement.UNFINISHED)  # one line from `loom`
             raise
 
 
 def unfinished_line(error: BaseException) -> str | None:
     """What `loom` prints, in place of a traceback, when a command's body returned and
-    its shutdown then failed (`UNFINISHED`); None for any other error."""
-    if UNFINISHED not in getattr(error, "__notes__", ()):
+    its shutdown then failed (`retirement.unfinished`); None for any other error."""
+    if not retirement.unfinished(error):
         return None
     me = process_identity()
     remedy = (
-        f"until `loom participant retire --participant {me}` runs on this host"
+        f"retire it with `loom participant retire --participant {me}` on this host"
         if participant_proof()
-        else "that no command can retire: this host gives no process identity"
+        else "no command can retire it: this host gives no process identity"
     )
     return (
         f"the command returned, but its shutdown did not complete ({error_line(error)}): "
-        f"a deferred write may not have landed, and a provider change waits for participant {me} "
+        f"a deferred write may not have landed, and a provider change waits for participant {me}; "
         f"{remedy}"
     )
 

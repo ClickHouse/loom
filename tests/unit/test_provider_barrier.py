@@ -540,8 +540,8 @@ async def test_a_process_without_a_proof_counts_its_postgres_sessions_first(setu
 
 @pytest.mark.asyncio
 async def test_another_process_without_a_proof_is_refused_not_named(setup):
-    """Only a process's own missing evidence is named: a dead row with no proof
-    stays unretired for whoever can prove it."""
+    """Only a process's own missing evidence is named: another's row with no proof
+    stays unretired."""
     assert not await barrier._authority_settled(
         barrier._default_client(), uuid4(), "", end=monotonic() + 1
     )

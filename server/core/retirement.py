@@ -26,6 +26,15 @@ class Uncertifiable(RuntimeError):
     retirement needs: its row stays, and a provider change waits for it."""
 
 
+# Marks, as an exception note, a failed shutdown of a command whose body returned.
+UNFINISHED = "the command returned; its shutdown did not complete"
+
+
+def unfinished(error: BaseException) -> bool:
+    """Whether `error` carries `UNFINISHED`: `loom` prints one line for it."""
+    return UNFINISHED in getattr(error, "__notes__", ())
+
+
 class RetirementGate:
     """One event loop; checking admission and incrementing never await."""
 

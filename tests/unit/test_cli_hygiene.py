@@ -313,7 +313,7 @@ def test_a_command_refused_for_another_deployment_prints_one_line_and_exits_2(
 
 
 def _unfinished(*_: object, **_declared: object) -> int:
-    from server.insights.app.provider_command import UNFINISHED
+    from server.core.retirement import UNFINISHED
 
     error = TimeoutError()
     error.add_note(UNFINISHED)
@@ -332,13 +332,13 @@ def test_a_shutdown_failure_after_the_work_prints_one_line_and_exits_1(
     assert _dispatch(argparse.Namespace(cmd="decisions", func=_unfinished)) == 1
     me = process_identity()
     remedy = (
-        f"until `loom participant retire --participant {me}` runs on this host"
+        f"retire it with `loom participant retire --participant {me}` on this host"
         if proof
-        else "that no command can retire: this host gives no process identity"
+        else "no command can retire it: this host gives no process identity"
     )
     assert capsys.readouterr().err.strip().splitlines() == [
         "✗ the command returned, but its shutdown did not complete (TimeoutError): "
-        f"a deferred write may not have landed, and a provider change waits for participant {me} "
+        f"a deferred write may not have landed, and a provider change waits for participant {me}; "
         f"{remedy}"
     ]
 

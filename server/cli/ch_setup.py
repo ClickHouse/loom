@@ -28,6 +28,7 @@ from typing import Any, Literal, NamedTuple
 from server.cli._ch import OrgNotHeld, check_setup_stores, run_connected, writes
 from server.core.ch_errors import error_code, error_line
 from server.core.ch_names import DEFAULT_READER, database, quote, telemetry_database
+from server.core.retirement import unfinished
 from server.core.schema import preflight
 
 _PASSWORD_PLACEHOLDER = "'<LOOM_CH_PASSWORD>'"
@@ -444,9 +445,7 @@ def _write_analyst() -> None:
         print(f"· loom_analyst (insights.query): not written ({e})")
         return
     except Exception as e:  # insights.query is optional; the rest of setup stands
-        from server.insights.app.provider_command import unfinished_line
-
-        if unfinished_line(e):
+        if unfinished(e):
             raise  # `_dispatch` prints it
         line = error_line(e)
         if isinstance(e, SetupRefused):
@@ -484,9 +483,7 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         try:
             _apply_analyst()
         except Exception as error:  # administrative failures need one safe line
-            from server.insights.app.provider_command import unfinished_line
-
-            if unfinished_line(error):
+            if unfinished(error):
                 raise  # `_dispatch` prints it
             from server.insights.app.analysis import SetupRefused, shown_cause
 
