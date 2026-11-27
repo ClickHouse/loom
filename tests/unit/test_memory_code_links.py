@@ -398,6 +398,7 @@ async def test_a_pending_name_is_retried_until_the_pending_days_pass(monkeypatch
 @pytest.mark.asyncio
 async def test_the_pending_scan_retries_writes_and_wraps_despite_new_links(monkeypatch) -> None:
     monkeypatch.setattr(settings, "memory_code_links_batch", 1)
+    monkeypatch.setattr(settings, "memory_code_links_pending_days", 3)
     clock = iter((100, 101, 103))
     monkeypatch.setattr(code_link_recheck, "time_ns", clock.__next__)
     first = (99, "B" * 32)
@@ -414,7 +415,7 @@ async def test_the_pending_scan_retries_writes_and_wraps_despite_new_links(monke
         events.append(("cursor", json.loads(value)))
 
     async def pending(org, cns, *, days, after, before, limit):
-        assert (org, cns, limit) == ("o", "code-a", 1)
+        assert (org, cns, limit, days) == ("o", "code-a", 1, 3)
         reads.append((after, before))
         eligible = sorted(key for key in keys if key > (after or ()) and key[0] < before)
         return [], eligible[0] if eligible else None
