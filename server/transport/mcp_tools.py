@@ -399,7 +399,8 @@ def _curated_description(toolset: str, op_name: str) -> str | None:
 
 
 def listed_tool_names(toolset: str | None, schema_profile: str | None = None) -> set[str]:
-    """The tool names a `tools/list` on ``toolset`` and ``schema_profile`` shows."""
+    """The tool names a `tools/list` on ``toolset`` shows. ``schema_profile`` is
+    the URL's own value, as `code_only_listing` reads it."""
     from server.settings import settings
 
     resolved = resolve_toolset(toolset, settings.mcp_toolset)
@@ -409,9 +410,10 @@ def listed_tool_names(toolset: str | None, schema_profile: str | None = None) ->
     return _tool_names(ops, resolved)
 
 
-def name_ops_for_toolset(text: str, toolset: str | None) -> str:
-    """``text`` naming each op as a `tools/list` on ``toolset`` does."""
-    return name_ops_for_listing(text, listed_tool_names(toolset), writes=routes_writes(toolset))
+def name_ops_for_toolset(text: str, toolset: str | None, schema_profile: str | None = None) -> str:
+    """``text`` naming each op as the connection's `tools/list` does."""
+    listed = listed_tool_names(toolset, schema_profile)
+    return name_ops_for_listing(text, listed, writes=routes_writes(toolset))
 
 
 def mentor_namer(toolset: str | None, schema_profile: str | None = None) -> Callable[[str], str]:
@@ -549,16 +551,17 @@ _CODE_ONLY_GREP_OMITTED_ARGS = _COMPACT_CODING_GREP_OMITTED_ARGS | {
 
 
 def code_only_listing(toolset: str | None, schema_profile: str | None) -> bool:
-    """Whether this connection lists the code tools alone: the compact `coding`
-    listing on a connection bound to a repository. Every other tool stays callable
-    by name. The binding is a request header, so this listing is the client's own
-    and no shared cache may keep it."""
+    """Whether this connection lists the code tools alone: a `coding` connection
+    bound to a repository whose URL asks for the compact profile. ``schema_profile``
+    is the URL's own value: a compact profile that is only the deployment's default
+    keeps every tool listed, since the client did not ask for the narrower listing.
+    Every other tool stays callable by name. The binding is a request header, so
+    this listing is the client's own and no shared cache may keep it."""
     from server.settings import settings
-    from server.transport.mcp_schemas import resolve_schema_profile
 
     return (
         resolve_toolset(toolset, settings.mcp_toolset) == "coding"
-        and resolve_schema_profile(schema_profile, settings.mcp_schema_profile) == "compact"
+        and str(schema_profile or "").lower() == "compact"
         and current_code_scope() is not None
     )
 
@@ -582,8 +585,8 @@ async def _tools_descriptor(
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
     profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
     descriptors: list[dict[str, Any]] = []
-    code_only = code_only_listing(toolset, profile)
-    listed = listed_tool_names(toolset, profile)
+    code_only = code_only_listing(toolset, schema_profile)
+    listed = listed_tool_names(toolset, schema_profile)
     ops = [op for op in listed_ops(toolset) if op.mcp_tool_name in listed]
     writes = routes_writes(toolset)
     for op in ops:

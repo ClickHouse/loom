@@ -11,6 +11,7 @@ import re
 
 import pytest
 
+from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import (
     _MCP_ATOMIC_OPS,
@@ -390,11 +391,22 @@ def test_a_listing_build_leaves_the_source_texts_as_written():
 
 @pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
 def test_listed_tool_names_is_what_the_listing_shows(toolset: str, code: bool, monkeypatch):
-    """A refusal names ops by listed_tool_names; it must be the listing's own set."""
+    """A refusal names ops by listed_tool_names; it must be the listing's own set,
+    on a connection bound to a repository too."""
     listing = {t["name"] for t in _listing(toolset, code)}
     monkeypatch.setattr(settings, "mcp_toolset", toolset)
     monkeypatch.setattr(settings, "mcp_code_tools", code)
     assert mt.listed_tool_names(None) == listing
+    bound = set_code_scope("acme/code-repo")
+    try:
+        for profile in (None, *SCHEMA_PROFILES):
+            shown = {t["name"] for t in _listing(toolset, code, profile)}
+            assert mt.listed_tool_names(None, profile) == shown
+            # only the compact `coding` URL narrows the listing to the code tools
+            assert shown <= listing
+            assert (shown == listing) != (toolset == "coding" and profile == "compact")
+    finally:
+        reset_code_scope(bound)
 
 
 @pytest.mark.parametrize("toolset", ["core", "all", "readonly"])

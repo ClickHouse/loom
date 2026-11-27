@@ -235,10 +235,10 @@ async def _handle_request(
         )
 
     if method == "prompts/get":
-        return await _get_prompt(req_id, params, auth, client_name, toolset)
+        return await _get_prompt(req_id, params, auth, client_name, toolset, schema_profile)
 
     if method == "resources/read":
-        return await _read_resource(req_id, params, auth, toolset)
+        return await _read_resource(req_id, params, auth, toolset, schema_profile)
 
     return _err(req_id, METHOD_NOT_FOUND, f"Method not found: {method!r}")
 
@@ -443,7 +443,7 @@ def attach(app: FastAPI) -> None:
             # One read of the selectors, so routing, the screen and the call agree.
             listing = _listing_params(request)
             set_answer_run(answer_run_of(request, listing["toolset"], auth))
-            req, early = route_loom_op(req, toolset=listing["toolset"], auth=auth)
+            req, early = route_loom_op(req, auth=auth, **listing)
             if early is not None:
                 return early  # classified where its text is rendered (mcp_op._result)
             # AuthZ: identity must match the args; a namespace the JWT lacks → grants.

@@ -31,23 +31,28 @@ Query parameters on the URL select what `tools/list` shows for that connection:
   argument tree).
 
 Compact coding connections describe the common source workflows in the
-startup instructions. With no repository bound, find the other tools through
-discovery. When the `coding` toolset is bound to a repository on the `standard`
-or `full` profile, the primer uses the task context pack for prior decisions or
-procedures beyond the lessons returned with indexed source.
+startup instructions. Find the other tools through discovery. When the `coding`
+toolset is bound to a repository, the primer uses the task context pack for
+prior decisions or procedures beyond the lessons returned with indexed source.
+The listing of code tools alone, described next, has neither.
 
-A compact coding connection bound to a repository lists the code tools alone.
+A `coding` connection bound to a repository lists the code tools alone when its
+URL carries `schema_profile=compact`. A compact profile that comes only from
+`LOOM_MCP_SCHEMA_PROFILE` does not narrow the listing: a client that did not ask
+for it keeps every tool of the roster. On the listing of code tools alone,
 `loom_op`, `loom_search`, `loom_context_pack`, `loom_activate`, the memory tools
 and `loom_tracker_duplicate_check` are not listed, and `prompts/list` and
 `resources/list` are empty. Its startup instructions carry the source workflows
-and the repository binding, with no memory, workspace or `loom_op` guidance, and
-a tool result names an op outside the listing by its dotted name. Lessons linked
-to source still arrive with code results. Every other tool stays callable by
-name, but a client that calls only listed tools cannot save or recall memory on
-this connection: use the `standard` profile for that. The coding-agent plugins
-send the `X-Loom-Code-Scope` header for a checkout they resolve to a repository,
-so those connections are bound. This listing follows that header, so its
-`cacheScope` is `private`.
+and the repository binding, with no memory, workspace or `loom_op` guidance. The
+`loom` prompt, `loom://primer` and `loom_activate`, asked for by name, carry the
+same source workflows. A tool result or a refusal names an op outside the
+listing by its dotted name. Lessons linked to source still arrive with code
+results. Every other tool stays callable by name, but a client that calls only
+listed tools cannot save or recall memory on this connection: leave
+`schema_profile=compact` off the URL for that. The coding-agent plugins send the
+`X-Loom-Code-Scope` header for a checkout they resolve to a repository, so those
+connections are bound; the URLs they ship name no profile. This listing follows
+that header, so its `cacheScope` is `private`.
 
 With the automatic loading policy, compact coding connections load
 `code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
@@ -62,12 +67,12 @@ It marks tools the listing carries and adds none: on the listing of code tools
 alone, a named tool outside the code tools is not listed.
 
 Compact coding connections list grep's main inputs for reading enclosing
-definitions. Use `mode: "files"` to list matching paths. With no repository
-bound, use `loom_op` with `{"op": "help", "query": "code.grep"}` to find
-controls for match excerpts, full bodies, related source, neighbours and
-deadlines. Bound to a repository, the listing also leaves out `namespace` and
-`namespaces`, which the binding fills, and `path_prefix` and `langs`, which
-`path_globs` expresses. Calls accept the full argument set.
+definitions. Use `mode: "files"` to list matching paths. Where `loom_op` is
+listed, use it with `{"op": "help", "query": "code.grep"}` to find controls for
+match excerpts, full bodies, related source, neighbours and deadlines. The
+listing of code tools alone also leaves out `namespace` and `namespaces`, which
+the binding fills, and `path_prefix` and `langs`, which `path_globs` expresses.
+Calls accept the full argument set.
 
 On coding connections, `code.symbol` includes related indexed tests and nearby
 source with the definition. Set `include_examples: false` to omit the tests,

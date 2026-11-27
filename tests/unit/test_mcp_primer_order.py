@@ -116,15 +116,19 @@ def test_compact_coding_primer_preserves_scope_and_profile() -> None:
 
 def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) -> None:
     defaults = {"org": "project", "namespace": "history", "agent": "coding"}
+    # a compact profile the URL did not ask for: the deployment's default
+    bound = mcp_primer._coding_instructions("coding", defaults, compact=True)
     standard = mcp_primer._coding_instructions("coding", defaults)
-    assert "First step of each task" not in standard
+    assert "First step of each task" not in bound
+    assert "For prior decisions or procedures beyond linked code lessons" in bound
     assert "For prior decisions or procedures beyond linked code lessons" in standard
     reuse = "For a repeat source lookup, set `include_lessons: false`"
     activation = asyncio.run(mcp_primer._loom_primer_text(object(), toolset="coding"))
     assert "For prior decisions or procedures beyond linked code lessons" in activation
-    for primer in (standard, activation):
+    for primer in (bound, standard, activation):
         assert primer.index(reuse) < primer.index("with the task as `query`. Skip it when")
     assert "first with the task" not in activation
+    assert reuse not in mcp_primer._coding_instructions("coding", compact=True)
     set_code_scope(None)
     unbound = mcp_primer._coding_instructions("coding", defaults, compact=True)
     assert "First step of each task" in unbound
@@ -133,25 +137,54 @@ def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) 
 
 def test_bound_compact_coding_primer_routes_code_tools_alone() -> None:
     """Its listing carries the code tools alone, so the text names no other tool."""
+
+    def routing(defaults: dict[str, str] | None) -> str:
+        return mcp_primer._coding_instructions(
+            "coding", defaults, compact=True, schema_profile="compact"
+        )
+
     defaults = {"org": "project", "namespace": "history", "agent": "coding"}
     reuse = "For a repeat source lookup, set `include_lessons: false`"
-    bound = mcp_primer._coding_instructions("coding", defaults, compact=True)
+    bound = routing(defaults)
     assert bound.startswith("Use Loom first for unchanged indexed code and tests.")
     assert reuse in bound
-    code_only = mcp_primer._coding_instructions(
-        "coding", {**defaults, "namespace": ""}, compact=True
-    )
-    assert reuse not in code_only
-    assert reuse not in mcp_primer._coding_instructions("coding", compact=True)
+    no_memory_home = routing({**defaults, "namespace": ""})
+    assert reuse not in no_memory_home
+    assert reuse not in routing(None)
     started = asyncio.run(
         mcp_primer._initialize_instructions(object(), "coding", schema_profile="compact")
     )
-    for text in (bound, code_only, _split(started)[0]):
+    # the `loom` prompt, `loom://primer` and `loom_activate`, served by name
+    activation = asyncio.run(
+        mcp_primer._loom_primer_text(object(), toolset="coding", schema_profile="compact")
+    )
+    for text in (bound, no_memory_home, _split(started)[0], _split(activation)[0]):
         assert "`loom_code_edit_context`" in text
         for absent in ("loom_op", "loom_search", "loom_memory", "loom_context_pack"):
             assert absent not in text, absent
     assert "repository bound to this connection when namespace is omitted" in started
     assert "default memory namespace" not in started
+    assert _split(activation)[1] == _split(started)[1]
+
+
+def test_a_compact_deployment_default_keeps_the_bound_coding_primer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The URL names no profile: the connection lists every tool, so its
+    instructions route memory and name `loom_op`."""
+    monkeypatch.setattr(settings, "mcp_schema_profile", "compact")
+    started = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
+    rules = _split(started)[0]
+    assert "Use Loom first for unchanged indexed code and tests." in rules
+    assert "`loom_op(" in rules and "`loom_search`" in rules and "`loom_memory_set`" in rules
+    assert "For prior decisions or procedures beyond linked code lessons" in rules
+    assert "default memory namespace" in rules
+    asked = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "coding", schema_profile="compact")
+    )
+    assert "`loom_op(" not in asked and len(asked) < len(started)
+    activation = asyncio.run(mcp_primer._loom_primer_text(object(), toolset="coding"))
+    assert "**Loom-first mode active" in activation
 
 
 def test_bound_coding_activation_with_no_default_memory_home() -> None:

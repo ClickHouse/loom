@@ -11,11 +11,16 @@ Hermetic: `_caller_default_context` (which can hit ClickHouse) is patched."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+import server.transport.mcp as mcp
 import server.transport.mcp_call as mcp_call
 from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.operations.capabilities import capability_snapshot
@@ -480,7 +485,106 @@ def test_a_reply_on_the_listing_of_code_tools_alone_names_no_tool_it_leaves_out(
             )
         for toolset, profile in (("coding", "standard"), ("coding+tracker", "compact")):
             assert mt.mentor_namer(toolset, profile)(text).startswith(listed)
+        # what a hidden op's refusal offers instead follows the same listing
+        hidden = mcp_op.hidden_refusal("memory.bulk_set", "coding", "compact")
+        assert hidden and hidden["instead"].startswith("call memory.set once per fact")
+        hidden = mcp_op.hidden_refusal("memory.bulk_set", "coding", "standard")
+        assert hidden and hidden["instead"].startswith("call loom_memory_set once per fact")
     assert mt.mentor_namer("coding", "compact")(text).startswith(listed)
+
+
+def test_a_compact_deployment_default_keeps_every_tool_on_a_bound_connection(monkeypatch) -> None:
+    """The URL names no profile, so the client did not ask for the code tools alone."""
+    monkeypatch.setattr(settings, "mcp_schema_profile", "compact")
+    unbound = asyncio.run(mt._tools_descriptor(toolset="coding"))
+    names = {tool["name"] for tool in unbound}
+    assert {"loom_op", "loom_search", "loom_memory_set", "loom_context_pack"} <= names
+    text = "Save with memory.set."
+    with _bound():
+        assert asyncio.run(mt._tools_descriptor(toolset="coding")) == unbound
+        assert not mt.code_only_listing("coding", None)
+        assert not mt.code_only_listing("coding", "bogus")  # an unknown value is the default
+        assert mt.code_only_listing("coding", "compact")
+        assert mt.code_only_listing(None, "COMPACT") == (settings.mcp_toolset == "coding")
+        assert mt.listed_tool_names("coding") == names
+        assert mt.name_ops_for_toolset(text, "coding") == "Save with loom_memory_set."
+        assert mt.name_ops_for_toolset(text, "coding", "compact") == text
+    grep = next(t for t in unbound if t["name"] == "loom_code_grep")["inputSchema"]
+    assert {"namespace", "path_prefix"} <= grep["properties"].keys()
+
+
+def test_a_tool_the_listing_of_code_tools_alone_leaves_out_stays_callable(monkeypatch) -> None:
+    """`loom_op`, a memory write and grep's unlisted arguments run on a compact
+    `coding` connection bound to a repository."""
+    seen: dict[str, Any] = {}
+
+    def stub(tool: str) -> None:
+        op = mcp_call.TOOLS_BY_NAME[tool]
+
+        async def handler(inp: Any) -> Any:
+            seen[op.name] = inp
+            return op.output_model.model_construct()
+
+        monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, tool, dataclasses.replace(op, handler=handler))
+
+    async def defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return {"org": "acme", "namespace": "home", "agent": "claude-code"}
+
+    async def admitted(req_id: Any, op: Any, auth: Any) -> None:
+        return None
+
+    async def no_repo_tag(org: str, namespace: str) -> str:
+        return ""
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    monkeypatch.setattr(mcp_call, "_caller_defaults", defaults)
+    monkeypatch.setattr(mcp_call, "_session_content_refusal", admitted)
+    monkeypatch.setattr(mcp_call, "session_repo_tag", no_repo_tag)
+    stub("loom_code_grep")
+    stub("loom_memory_set")
+    app = FastAPI()
+    mcp.attach(app)
+    client = TestClient(app)
+
+    def post(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        reply = client.post(
+            "/mcp?toolset=coding&schema_profile=compact",
+            headers={"X-Loom-Code-Scope": "acme/code-repo"},
+            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+        )
+        result: dict[str, Any] = reply.json()["result"]
+        return result
+
+    def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = post("tools/call", {"name": name, "arguments": arguments})
+        assert not result.get("isError"), result
+        return result
+
+    listed = {tool["name"] for tool in post("tools/list", {})["tools"]}
+    assert "loom_code_grep" in listed
+    assert not listed & {"loom_op", "loom_memory_set", "loom_activate"}
+    call(
+        "loom_code_grep", {"pattern": "needle", "mode": "files", "cursor": "next", "langs": ["py"]}
+    )
+    grep = seen.pop("code.grep")
+    assert (grep.namespace, grep.mode, grep.cursor, grep.langs) == (
+        "code-repo",
+        "files",
+        "next",
+        ["py"],
+    )
+    fact = {"memory_key": "repo/decision/listing", "value": "kept"}
+    call("loom_memory_set", fact)
+    assert seen.pop("memory.set").memory_key == fact["memory_key"]
+    call("loom_op", {"op": "memory.set", "arguments": fact})
+    assert seen.pop("memory.set").namespace == "home"
+    help_rows = call("loom_op", {"op": "help", "query": "memory.set"})["structuredContent"]
+    assert help_rows["ops"][0]["op"] == "memory.set"
+    # the activation primer is this connection's routing: it names no tool left out
+    primer = call("loom_activate", {})["structuredContent"]["primer"]
+    assert "`loom_code_grep`" in primer
+    for absent in ("loom_op", "loom_search", "loom_memory", "loom_context_pack"):
+        assert absent not in primer, absent
 
 
 @pytest.mark.parametrize(

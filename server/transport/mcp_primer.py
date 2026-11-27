@@ -113,14 +113,18 @@ def _resources_descriptor(toolset: str | None = None) -> list[dict[str, Any]]:
 
 
 async def _read_resource(
-    req_id: Any, params: dict[str, Any], auth: Any, toolset: str | None = None
+    req_id: Any,
+    params: dict[str, Any],
+    auth: Any,
+    toolset: str | None = None,
+    schema_profile: str | None = None,
 ) -> dict[str, Any]:
     """Render `loom://primer`. Same primer text as the `loom` prompt and
     `loom_activate` — single source of truth in `_loom_primer_text`."""
     uri = params.get("uri")
     if uri != _LOOM_PRIMER_RESOURCE_URI:
         return _err(req_id, INVALID_PARAMS, f"Unknown resource: {uri!r}")
-    primer = await _loom_primer_text(auth, toolset=toolset)
+    primer = await _loom_primer_text(auth, toolset=toolset, schema_profile=schema_profile)
     return _ok(
         req_id,
         {
@@ -139,7 +143,11 @@ async def _read_resource(
 
 
 async def _render_primer_and_emit(
-    auth: Any, client_name: str | None, op_name: str, toolset: str | None = None
+    auth: Any,
+    client_name: str | None,
+    op_name: str,
+    toolset: str | None = None,
+    schema_profile: str | None = None,
 ) -> str:
     """Render the activation primer and emit one observability event + log
     line for it. Shared by the `loom` prompt and the loom_activate tool so
@@ -149,7 +157,7 @@ async def _render_primer_and_emit(
     bind_request(op_name, request_id)
     started = time.monotonic()
     defaults = await _caller_defaults(auth, client_name)
-    primer = await _loom_primer_text(auth, toolset=toolset)
+    primer = await _loom_primer_text(auth, toolset=toolset, schema_profile=schema_profile)
     latency_ms = int((time.monotonic() - started) * 1000)
     try:
         _emit_mcp_event(
@@ -182,6 +190,7 @@ async def _get_prompt(
     auth: Any,
     client_name: str | None = None,
     toolset: str | None = None,
+    schema_profile: str | None = None,
 ) -> dict[str, Any]:
     """Return the loom prompt's rendered content. Body is the same
     primer text loom_activate returns (single source of truth) wrapped
@@ -195,7 +204,9 @@ async def _get_prompt(
         # The assistant's primer inlines no profile: rendering it is no profile read.
         primer = await _loom_primer_text(auth, toolset=toolset)
     else:
-        primer = await _render_primer_and_emit(auth, client_name, "prompts.loom", toolset)
+        primer = await _render_primer_and_emit(
+            auth, client_name, "prompts.loom", toolset, schema_profile
+        )
 
     return _ok(
         req_id,
@@ -327,14 +338,23 @@ async def _profile_section(auth: Any, defaults: dict[str, Any] | None) -> str:
     )
 
 
-async def _loom_primer_text(auth: Any, *, toolset: str | None = None) -> str:
+async def _loom_primer_text(
+    auth: Any, *, toolset: str | None = None, schema_profile: str | None = None
+) -> str:
     """The Loom-first-mode primer for the `loom` prompt, the `loom://primer`
     resource and the `loom_activate` tool: the rules, then the caller's profile.
-    ``toolset`` is the connection's ``?toolset=``."""
+    ``toolset`` and ``schema_profile`` are the connection's ``?toolset=`` and
+    ``?schema_profile=``. A connection that lists the code tools alone gets the
+    code routing its startup instructions carry: the rules route memory through
+    tools it does not list."""
     if assistant_connection(toolset):
         return _assistant_primer(await _caller_defaults(auth, assistant=True))
     defaults = await _caller_defaults(auth)
-    return _loom_rules(toolset, defaults) + await _profile_section(auth, defaults)
+    if code_only_listing(toolset, schema_profile):
+        rules = _coding_instructions(toolset, defaults, compact=True, schema_profile=schema_profile)
+    else:
+        rules = _loom_rules(toolset, defaults)
+    return rules + await _profile_section(auth, defaults)
 
 
 def _tool_routing(toolset: str | None) -> str:
@@ -531,9 +551,9 @@ async def _initialize_instructions(
     """Session-start instructions for the `initialize` result: the rules, the
     code scope, the workspace, then the profile. Coding connections use fixed
     wording for implicit scopes and read usage hints during the session. Other
-    connections also get their current mentor hint. A compact coding connection
-    bound to a repository lists the code tools alone, so its instructions carry
-    no memory, workspace or `loom_op` text. Clients control display and
+    connections also get their current mentor hint. A connection that lists the
+    code tools alone (`code_only_listing`) carries no memory, workspace or
+    `loom_op` text. Clients control display and
     context limits. The profile comes only with a verified
     bearer: an anonymous probe (discovery_only / open modes) must not read
     profile content.
@@ -549,7 +569,7 @@ async def _initialize_instructions(
         resolve_schema_profile(schema_profile, settings.mcp_schema_profile) == "compact"
     )
     rules = (
-        _coding_instructions(toolset, defaults, compact=compact)
+        _coding_instructions(toolset, defaults, compact=compact, schema_profile=schema_profile)
         if coding
         else _loom_rules(toolset, defaults)
     )
@@ -586,13 +606,19 @@ def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
 
 
 def _coding_instructions(
-    toolset: str | None, defaults: dict[str, Any] | None = None, *, compact: bool = False
+    toolset: str | None,
+    defaults: dict[str, Any] | None = None,
+    *,
+    compact: bool = False,
+    schema_profile: str | None = None,
 ) -> str:
     """Code and memory routing for coding clients, including clients without hooks.
-    A compact connection bound to a repository gets the code routing alone: its
-    listing carries no memory tool and no `loom_op`."""
+    ``compact`` says the resolved profile is compact; ``schema_profile`` is the
+    URL's own value. A connection that lists the code tools alone
+    (`code_only_listing`) gets the code routing alone, since its listing carries
+    no memory tool and no `loom_op`."""
     tool = _tool_refs(toolset)
-    code_only = compact and code_only_listing(toolset, "compact")
+    code_only = code_only_listing(toolset, schema_profile)
     save = tool["memory.set"]
     memory = (
         "Recall before answering from memory: call `loom_search` once"
@@ -646,12 +672,12 @@ def _coding_instructions(
             "changes, unindexed paths, explicit requests, or evidence Loom cannot supply."
         )
     code = lead + definition_hint + route_hint + follow if routes or definition_hint else ""
-    # A code-only token can have no default memory workspace.
+    # A token that reads code alone can have no default memory workspace.
     context = ""
     if code_only:
         if defaults and defaults.get("namespace"):
             context = "\n\n" + _LINKED_LESSON_REUSE.rstrip()
-        return name_ops_for_toolset(code.lstrip("\n") + context, toolset)
+        return name_ops_for_toolset(code.lstrip("\n") + context, toolset, schema_profile)
     if defaults and defaults.get("namespace") and tool["context.pack"]:
         if _bound_coding_connection(toolset):
             context = "\n\n" + _linked_history_guidance(tool["context.pack"])

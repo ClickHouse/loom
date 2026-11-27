@@ -237,7 +237,7 @@ def test_list_results_carry_cache_hints_and_the_primer_is_private(
     for r in (tools, prompts, resources):
         assert r["cacheScope"] == "public" and r["ttlMs"] == 300_000
 
-    async def _primer(auth: Any, *, toolset: str | None = None) -> str:
+    async def _primer(auth: Any, **_selectors: Any) -> str:
         return "PRIMER"
 
     monkeypatch.setattr(mcp_primer, "_loom_primer_text", _primer)
@@ -250,12 +250,15 @@ def test_list_results_carry_cache_hints_and_the_primer_is_private(
     assert read["contents"][0]["text"] == "PRIMER"
 
 
-def test_a_listing_that_follows_the_repository_header_is_the_clients_own() -> None:
-    """The listing of code tools alone lists no prompt and no resource: the primer
-    they serve names tools it leaves out."""
+def test_a_listing_that_follows_the_repository_header_is_the_clients_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The listing of code tools alone lists no prompt and no resource. A compact
+    profile that is only the deployment's default is not that listing."""
     from server.code.domain.scope import reset_code_scope, set_code_scope
+    from server.settings import settings
 
-    def listed(method: str, profile: str) -> dict[str, Any]:
+    def listed(method: str, profile: str | None) -> dict[str, Any]:
         request = mcp._handle_request(
             _rpc(method), auth=None, toolset="coding", schema_profile=profile
         )
@@ -274,6 +277,12 @@ def test_a_listing_that_follows_the_repository_header_is_the_clients_own() -> No
         assert listed("tools/list", "compact")["tools"]
         assert listed("prompts/list", "compact")["prompts"] == []
         assert listed("resources/list", "compact")["resources"] == []
+        monkeypatch.setattr(settings, "mcp_schema_profile", "compact")
+        for method, key in lists:
+            assert listed(method, None)["cacheScope"] == "public"
+            assert listed(method, None)[key]
+        names = {tool["name"] for tool in listed("tools/list", None)["tools"]}
+        assert {"loom_op", "loom_search", "loom_memory_set"} <= names
     finally:
         reset_code_scope(bound)
 

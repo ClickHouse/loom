@@ -156,9 +156,9 @@ codex exec --json \
 
 Normal coding work needs only `?toolset=coding`; add `&schema_profile=compact` for a
 smaller tool listing ([MCP reference](../../reference/mcp.md)). With the plugin, which
-binds the connection to the checkout's repository, the compact listing carries the code
-tools alone: no memory tool, `loom_search` or `loom_op`, so a prompt that recalls or
-saves memory needs the default profile. The
+binds the connection to the checkout's repository, that URL lists the code tools alone:
+no memory tool, `loom_search` or `loom_op`, so a prompt that recalls or saves memory
+leaves `schema_profile` off the URL. The
 [headless bots guide](../../guides/headless-bots.md) covers scheduled and CI runs.
 
 ## Checking it works
