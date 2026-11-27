@@ -10,6 +10,7 @@ import pytest
 
 from server.code.app.enrich import _example_context, share_edit_example_reads
 from server.code.store.index import CodeRepo
+from server.settings import settings
 
 _DIRECT = {"path": "tests/test_routes.py", "caller": "tests::test_route", "line": 20}
 _INDIRECT = {**_DIRECT, "evidence": "indirect_call", "via": {"symbol": "register"}}
@@ -116,6 +117,33 @@ async def test_edit_batch_waiter_timeout_leaves_shared_read_available(
         release.set()
         assert (await second)["context"]["commit"] == "head"
     tracked.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_batch_retries_after_the_shared_read_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = CodeRepo()
+    retired = asyncio.Event()
+    attempts = 0
+
+    async def read(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            try:
+                await asyncio.Future()
+            finally:
+                retired.set()
+        return _rows()
+
+    monkeypatch.setattr(settings, "code_enrich_timeout_s", 0.05)
+    monkeypatch.setattr(repo, "source_chunks_for_span", read)
+    async with share_edit_example_reads():
+        assert await _read(repo) == _DIRECT
+        assert (await _read(repo, _INDIRECT))["context"]["commit"] == "head"
+        assert retired.is_set()
+    assert attempts == 2
 
 
 @pytest.mark.asyncio

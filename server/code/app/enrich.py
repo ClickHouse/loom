@@ -68,11 +68,7 @@ class _EditExampleReads:
 
     @staticmethod
     async def _load(load: Callable[[], Awaitable[_ExampleWindow | None]]) -> _ExampleWindow | None:
-        try:
-            return await load()
-        except Exception as e:  # noqa: BLE001 — a failed optional read must not cancel other windows
-            logger.debug("code enrich degraded: %s", e)
-            return None
+        return await bounded(load(), None)
 
     def close(self) -> None:
         self.closed = True
