@@ -29,13 +29,10 @@ from server.code.domain.successor import Side, Successor, close_to, successor
 from server.core.datetimes import naive_utc_now
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app import code_link_policy as policy
+from server.memory.app import code_link_reads
 from server.memory.app import code_link_rehash as rehash
 from server.memory.app import code_links as links
-from server.memory.app.code_link_reads import (
-    SERVED,
-    current,
-    memory_inputs,
-)
+from server.memory.app.code_link_reads import SERVED, memory_inputs
 from server.memory.store import code_links as store
 from server.memory.store.code_links import Former, LinkRow, PendingLink
 from server.memory.store.key_write_lock import LeaseBusy
@@ -701,17 +698,20 @@ async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
     queue replaced or dropped since the recheck read it is not moved back in."""
     if not moves:
         return []
-    heads = {
-        h["mid"]: h
-        for h in await store.memory_heads(org, [m.row["memory_id"] for m in moves])
-        if h["tombstoned_at"] is None and h["status"] in SERVED
+    heads = await store.memory_heads(org, [m.row["memory_id"] for m in moves])
+    # A path can hold many links. Keep repository resolution off the lease's event loop.
+    return await asyncio.to_thread(_moves_for_current_heads, org, moves, heads)
+
+
+def _moves_for_current_heads(
+    org: str, moves: list[Move], heads: list[dict[str, Any]]
+) -> list[Move]:
+    expected = {
+        head["mid"]: code_link_reads.inputs_now(org, head)
+        for head in heads
+        if head["tombstoned_at"] is None and head["status"] in SERVED
     }
-    out = []
-    for m in moves:
-        head = heads.get(m.row["memory_id"])
-        if head is not None and current(org, head, [m.row]):
-            out.append(m)
-    return out
+    return [m for m in moves if m.row["inputs_hash"] == expected.get(m.row["memory_id"])]
 
 
 # the earlier identities a link keeps: a branch may still have any of them

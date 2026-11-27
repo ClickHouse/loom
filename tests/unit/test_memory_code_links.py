@@ -3944,6 +3944,40 @@ async def test_a_move_of_a_memory_gone_since_it_was_read_is_dropped(monkeypatch,
     assert await code_link_recheck._current_moves("o", [move]) == [move]
 
 
+@pytest.mark.asyncio
+async def test_move_validation_checks_each_memory_off_the_event_loop(monkeypatch) -> None:
+    from threading import get_ident
+
+    heads = [_row("m1"), _row("m2")]
+    inputs_now = code_link_reads.inputs_now
+    inputs = {head["mid"]: inputs_now("o", head) for head in heads}
+    main_thread = get_ident()
+    checked = []
+
+    def read_inputs(org, head):
+        assert get_ident() != main_thread
+        checked.append(head["mid"])
+        return inputs_now(org, head)
+
+    async def memory_heads(org, ids):
+        return heads
+
+    monkeypatch.setattr(code_link_reads, "inputs_now", read_inputs)
+    monkeypatch.setattr(code_links.store, "memory_heads", memory_heads)
+    moves = []
+    for mid, path, stamp in (
+        ("m1", "a.py", inputs["m1"]),
+        ("m2", "b.py", inputs["m2"]),
+        ("m1", "c.py", "stale"),
+        ("m1", "d.py", inputs["m1"]),
+    ):
+        row = _full({"memory_id": mid, "path": path, "inputs_hash": stamp})
+        moves.append(code_link_recheck.Move(row, code_link_pass.link_of(row)))
+
+    assert await code_link_recheck._current_moves("o", moves) == [moves[0], moves[1], moves[3]]
+    assert sorted(checked) == ["m1", "m2"]
+
+
 def test_the_settle_window_has_a_floor() -> None:
     from pydantic import ValidationError
 
