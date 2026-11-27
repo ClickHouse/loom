@@ -486,31 +486,42 @@ async def pending(
     code_namespace: str,
     *,
     days: int,
-    after: tuple[str, ...] | None,
+    after: tuple[int, str] | None,
     before: int,
     limit: int,
     ch: _CHClient | None = None,
-) -> tuple[list[PendingLink], tuple[str, ...] | None]:
+) -> tuple[list[PendingLink], tuple[int, str] | None]:
     """Read pending names and pre-index markers from the current scan cycle."""
-    since = f"AND {_past(_KEY_COLUMNS, _KEY_TYPES)} " if after else ""
-    rows = _links(
-        await (ch or _default_client()).query_all(
-            f"SELECT *, checked_at < now() - INTERVAL {{days:UInt32}} DAY AS expired {_LIVE} "
-            "AND org = {org:String} AND code_namespace = {cns:String} AND state = 'pending' "
-            "AND version < {before:UInt64} "
-            f"{since}ORDER BY {_KEY} LIMIT {{lim:UInt32}} "
-            "SETTINGS optimize_move_to_prewhere_if_final = 0",
-            params={
-                "org": org,
-                "cns": code_namespace,
-                "days": int(days),
-                "before": before,
-                "lim": int(limit),
-                **_past_params(after or ()),
-            },
-        )
+    since = ""
+    params: dict[str, Any] = {
+        "org": org,
+        "cns": code_namespace,
+        "days": int(days),
+        "before": before,
+        "lim": int(limit),
+    }
+    if after:
+        since = "AND (version, scan_digest) > ({after_version:UInt64}, {after_digest:String}) "
+        params.update(after_version=after[0], after_digest=after[1])
+    # Relinking can give several rows one version. Break ties without persisting
+    # the original link key in a cursor that can outlive the memory.
+    rows = await (ch or _default_client()).query_all(
+        "SELECT *, checked_at < now() - INTERVAL {days:UInt32} DAY AS expired, "
+        "hex(sipHash128(path, qualified_name, namespace, memory_id)) AS scan_digest "
+        f"{_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
+        "AND state = 'pending' AND version < {before:UInt64} "
+        f"{since}ORDER BY version, scan_digest LIMIT {{lim:UInt32}} "
+        "SETTINGS optimize_move_to_prewhere_if_final = 0",
+        params=params,
     )
-    return cast(list[PendingLink], rows), _key(rows[-1]) if len(rows) == int(limit) else None
+    nxt = (
+        (int(rows[-1]["version"]), str(rows[-1]["scan_digest"]))
+        if len(rows) == int(limit)
+        else None
+    )
+    for row in rows:
+        row.pop("scan_digest")
+    return cast(list[PendingLink], _links(rows)), nxt
 
 
 async def lost(

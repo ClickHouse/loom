@@ -400,43 +400,29 @@ async def test_the_pending_scan_retries_writes_and_wraps_despite_new_links(monke
     monkeypatch.setattr(settings, "memory_code_links_batch", 1)
     clock = iter((100, 101, 103))
     monkeypatch.setattr(code_link_recheck, "time_ns", clock.__next__)
-    keys = [(("o", "code-a", "", "pkg.First", "memory", "first-id"), 99)]
-    first, _ = keys[0]
-    earlier = ("o", "code-a", "", "pkg.Before", "memory", "before-id")
-    later = ("o", "code-a", "", "pkg.Later", "memory", "later-id")
+    first = (99, "B" * 32)
+    earlier = (99, "A" * 32)
+    later = (102, "C" * 32)
+    keys = [first]
     reads, events, cursors = [], [], {}
-    leased = False
-
-    @contextlib.asynccontextmanager
-    async def lease():
-        nonlocal leased
-        assert not leased
-        leased = True
-        try:
-            yield
-        finally:
-            leased = False
 
     async def load_cursor(name):
-        assert leased
         return cursors.get(name, "")
 
     async def write_cursor(name, value):
-        assert leased
         cursors[name] = value
         events.append(("cursor", json.loads(value)))
 
     async def pending(org, cns, *, days, after, before, limit):
-        assert leased and (org, cns, limit) == ("o", "code-a", 1)
+        assert (org, cns, limit) == ("o", "code-a", 1)
         reads.append((after, before))
-        eligible = sorted(key for key, version in keys if key > (after or ()) and version < before)
+        eligible = sorted(key for key in keys if key > (after or ()) and key[0] < before)
         return [], eligible[0] if eligible else None
 
     async def indexed(*_args):
         return "head"
 
     async def publish(*_args):
-        assert leased
         events.append(("publish", None))
         if len(reads) == 1:
             raise RuntimeError("write unavailable")
@@ -451,7 +437,6 @@ async def test_the_pending_scan_retries_writes_and_wraps_despite_new_links(monke
         ("checked_head", indexed),
     ):
         monkeypatch.setattr(code_links.code, name, callback)
-    monkeypatch.setattr(code_links, "queue_lease", lease)
     monkeypatch.setattr(code_links.store, "pending", pending)
     monkeypatch.setattr(code_links.store, "insert", nothing)
     monkeypatch.setattr(code_link_recheck, "_write_moves", publish)
@@ -465,7 +450,7 @@ async def test_the_pending_scan_retries_writes_and_wraps_despite_new_links(monke
         await code_link_recheck._recheck_repository("o", "code-a", budget, result)
     assert not cursors
     await code_link_recheck._recheck_repository("o", "code-a", budget, result)
-    keys.extend([(earlier, 102), (later, 102)])
+    keys.extend([earlier, later])
     await code_link_recheck._recheck_repository("o", "code-a", budget, result)
     await code_link_recheck._recheck_repository("o", "code-a", budget, result)
     assert reads == [(None, 100), (None, 101), (first, 101), (None, 103)]

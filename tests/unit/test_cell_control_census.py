@@ -188,7 +188,7 @@ GENERIC_SQL_EXCLUSIONS = {
     },
     "server/erasure/store/reclaim.py": {("apply_deleted_mask", "ALTER TABLE", "{table}"): 1},
     "server/erasure/store/steps_memory.py": {
-        ("_scrub_link_cursors", "DELETE FROM", "{_CURSORS}"): 2
+        ("_scrub_link_cursors", "DELETE FROM", "{_CURSORS}"): 1
     },
     "server/erasure/store/steps_principals.py": {("_rewrite", "INSERT INTO", "{table}"): 1},
     "server/insights/domain/analysis.py": {("entity_sql", "INSERT INTO", "{db}"): 1},

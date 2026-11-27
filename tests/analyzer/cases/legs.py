@@ -622,7 +622,6 @@ async def _stale_links(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 
 async def _link_pages(ch: RecordingCH, c: dict[str, Any]) -> None:
-    from server.erasure.store.steps_memory import _scrub_link_cursors
     from server.memory.store import code_links
 
     after = (ORG, NS, AGENT, "-", "-", "k") if c["after"] else None
@@ -630,10 +629,15 @@ async def _link_pages(ch: RecordingCH, c: dict[str, Any]) -> None:
     key = (ORG, "code-a", "p.py", "f", NS, "00000000-0000-0000-0000-000000000001")
     await code_links.sweep_page(key if c["after"] else None, 5, ch=ch)
     await code_links.pending(
-        ORG, "code-a", days=14, after=key if c["after"] else None, before=10, limit=5, ch=ch
+        ORG,
+        "code-a",
+        days=14,
+        after=(1, "A" * 32) if c["after"] else None,
+        before=10,
+        limit=5,
+        ch=ch,
     )
     await code_links._heads(ch, [(ORG, NS, AGENT, "-", "-", "k")], ["code-a"])
-    await _scrub_link_cursors(ORG, {NS}, "", ch)
 
 
 def cases() -> list[Case]:

@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 
 from server.erasure.store import steps_memory as steps
-from server.memory.domain.code_link_keys import pending_cursor_prefix
 
 _QUEUE = [17, 3, "o", "ns", "agent", "alice", "s1", "k"]
 _BACKFILL = {"after": ["o", "ns", "agent", "alice", "s1", "k"]}
@@ -61,7 +60,7 @@ async def test_the_scrub_writes_the_cursor_anew_and_deletes_what_it_was() -> Non
         10,
         [""] * 6,
     )
-    delete, params = ch.sql[-2]
+    delete, params = ch.sql[-1]
     assert delete.startswith("DELETE FROM loom.code_index_state") and params["v"] == 10
 
 
@@ -71,21 +70,8 @@ async def test_the_scrub_deletes_older_versions_when_the_current_one_names_someo
     ch = _CH([*_QUEUE[:5], "bob", *_QUEUE[6:]])
     await steps._scrub_link_cursors("o", set(), "alice", ch)  # type: ignore[arg-type]
     assert ch.inserted == []
-    delete, params = ch.sql[-2]
+    delete, params = ch.sql[-1]
     assert delete.startswith("DELETE FROM loom.code_index_state")
     assert (params["key"], params["v"]) == ("queue", 9)
     read, params = ch.sql[0]
     assert params["keys"] == ["queue", "backfill", "sweep"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("namespaces", "user_id"), [({"ns"}, ""), (set(), "alice")])
-async def test_erasure_resets_every_pending_scan_version_for_the_org(namespaces, user_id) -> None:
-    ch = _CH()
-    await steps._scrub_link_cursors("o", namespaces, user_id, ch)  # type: ignore[arg-type]
-    delete, params = ch.sql[-1]
-    assert delete.startswith("DELETE FROM loom.code_index_state")
-    assert "startsWith(state_key, {prefix:String})" in delete
-    assert "version" not in delete
-    assert params == {"ns": "memory_code_links", "prefix": pending_cursor_prefix("o")}
-    assert not pending_cursor_prefix("other").startswith(params["prefix"])

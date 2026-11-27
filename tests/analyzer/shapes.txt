@@ -432,6 +432,7 @@
 32a0622ffdb7	DELETE FROM loom.memory_chunks WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS lightweight_deletes_sync = ?
 32aeaaa9dcea	SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, memory_type, if(length(toString(value_json)) > ?, toString(value_json), value) AS value, -- The stored bytes, for version rows
 32cc48140047	SELECT agent, user_id, session_id, memory_key, memory_type, content_excerpt, toString(created_at) AS created_at, toString(valid_at) AS valid_at, version FROM loom.memory_embeddings FINAL WHERE org = {
+32d939971d56	SELECT *, checked_at < now() - INTERVAL {days:UInt32} DAY AS expired, hex(sipHash128(path, qualified_name, namespace, memory_id)) AS scan_digest FROM loom.memory_code_links FINAL WHERE tombstoned_at I
 32f125aa8b0c	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 330223892c54	ALTER TABLE loom.oauth_signin_state DELETE WHERE claim_key = {k:String} AND value = {v:String} SETTINGS keeper_map_strict_mode = ?, max_execution_time = ?
 332512811b3a	SELECT chunk_id, path, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.code_chunks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND embedding_model = {model:String} A
@@ -520,7 +521,6 @@
 3d5f2761d6fe	SELECT count() AS cnt, sum(numeric_value) AS s, avg(numeric_value) AS a, min(occurred_at) AS first_at, max(occurred_at) AS last_at FROM loom.derived_facts WHERE org = {org:String} AND namespace = {ns:
 3d5ff23ff854	ALTER TABLE loom.memory_code_links DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 3d6ba2ce3958	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
-3d70c5ba661c	SELECT *, checked_at < now() - INTERVAL {days:UInt32} DAY AS expired FROM loom.memory_code_links FINAL WHERE tombstoned_at IS NULL AND org = {org:String} AND code_namespace = {cns:String} AND state =
 3d8049f7a5b0	SELECT thread_id, count() AS msg_count, min(ts) AS first_seen, max(ts) AS last_seen FROM loom.conversations WHERE org = {org:String} AND namespace = {ns:String} AND ts > now() - toIntervalDay({wd:UInt
 3d84a6e7023a	SELECT thread_id, msg_id, any(role) AS role, argMax(substringUTF8(content, ?, {listed:UInt32}), ts) AS content, max(c.saved_at) AS saved_at FROM loom.conversations AS c WHERE org = {org:String} AND na
 3db4fecd9fa4	ALTER TABLE loom.memory_exposures DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
@@ -645,6 +645,7 @@
 4a536b32504b	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, ? - cosineDistance(e.embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(e.temporal_
 4aeabb5d4edf	SELECT count() AS n FROM loom.namespace_guides WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND ?
 4b65a7bc66f1	SELECT count() AS n FROM loom.memory_records FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND user_id = {uid:String}
+4b6756f1b93f	SELECT *, checked_at < now() - INTERVAL {days:UInt32} DAY AS expired, hex(sipHash128(path, qualified_name, namespace, memory_id)) AS scan_digest FROM loom.memory_code_links FINAL WHERE tombstoned_at I
 4bcc327f9556	ALTER TABLE loom.knowledge_gaps DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 4bfcae48a0ba	ALTER TABLE loom.query_history_sources DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 4c0a0c4d2640	SELECT namespace, parent FROM loom.collections FINAL WHERE org = {org:String} AND NOT deleted
@@ -917,7 +918,6 @@
 6ae046a1eb58	ALTER TABLE loom._migration_lock DELETE WHERE name = {name:String} AND holder = {me:String} SETTINGS keeper_map_strict_mode = ?
 6af63397c87d	ALTER TABLE loom.operator_edges DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 6af71c1daf2b	SELECT length(value) AS chars FROM loom.memory FINAL WHERE org = {o:String} AND namespace = {n:String} AND user_id = {u:String} AND memory_type = ? AND tombstoned_at IS NULL ORDER BY created_at DESC L
-6b1925df5260	SELECT *, checked_at < now() - INTERVAL {days:UInt32} DAY AS expired FROM loom.memory_code_links FINAL WHERE tombstoned_at IS NULL AND org = {org:String} AND code_namespace = {cns:String} AND state =
 6b2569a87c2a	ALTER TABLE loom.shared DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 6b2f67cd11ca	SELECT path, max(computed_at) AS newest_at FROM loom.code_unit_risk WHERE org = {org:String} AND namespace = {ns:String} GROUP BY path
 6b4932fdfd22	ALTER TABLE loom.conflict_allowlist DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
@@ -1860,7 +1860,6 @@ cf7f4af684cc	SELECT c.session_id AS session_id, c.chunk_index AS chunk_index, c.
 cf9de5d03b3f	SELECT memory_key, memory_type, confidence, version, created_at, expires_at, valid_at, pinned, status, evidence_count, recall_count, last_recalled_at, tags, entities, source_trace, sensitivity, verifi
 cfb372c74ad9	SELECT memory_key, toString(memory_id) AS id, version, memory_type, toString(status) AS status, source_class, agent, user_id, session_id, actor, updated_at, sensitivity, org, namespace, redacted_at FR
 cfb97a41eb8f	SELECT count() AS n FROM loom.code_pr_history FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
-cfbb567b7e94	DELETE FROM loom.code_index_state WHERE org = ? AND namespace = {ns:String} AND startsWith(state_key, {prefix:String}) SETTINGS lightweight_deletes_sync = ?
 cfc0533b440e	SELECT count() AS n FROM loom.entity_triple_memories WHERE org = {org:String} AND namespace = {ns:String}
 cfdc9de83162	SELECT from_symbol_id, path, argMax(guards, version) AS guards, argMax(guard_kinds, version) AS guard_kinds, argMax(sites, version) AS sites, argMax(site_callees, version) AS site_callees, argMax(site
 cfee4638bfe0	SELECT tag, count() AS rows FROM (SELECT arrayJoin(tags) AS tag FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL) WHERE lower(tag) IN {names:Array(
