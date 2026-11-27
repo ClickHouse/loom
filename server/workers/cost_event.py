@@ -41,6 +41,9 @@ def emit_worker_event(
     error_code: str = "",
     args: dict[str, str] | None = None,
     latency_ms: int | None = None,
+    agent: str = "-",
+    user_id: str = "-",
+    session_id: str = "-",
 ) -> None:
     """One `kind='worker'` AgentEvent carrying `snap`'s spend (a drained
     accumulator, or None for none), and the same spend on the cost counters.
@@ -58,6 +61,9 @@ def emit_worker_event(
         error_code=error_code,
         args=args,
         latency_ms=latency_ms,
+        agent=agent,
+        user_id=user_id,
+        session_id=session_id,
     )
     get_emitter().emit(event)
     metrics.record_cost(
@@ -81,6 +87,9 @@ def _worker_event(
     error_code: str = "",
     args: dict[str, str] | None = None,
     latency_ms: int | None = None,
+    agent: str = "-",
+    user_id: str = "-",
+    session_id: str = "-",
 ) -> Any:
     from server.observability.events import AgentEvent
 
@@ -92,9 +101,9 @@ def _worker_event(
         ts=datetime.now(UTC),
         org=org,
         namespace=namespace,
-        agent="-",
-        user_id="-",
-        session_id="-",
+        agent=agent,
+        user_id=user_id,
+        session_id=session_id,
         operation=operation,
         request_id="",
         latency_ms=int((time.monotonic() - started) * 1000) if latency_ms is None else latency_ms,
@@ -117,10 +126,14 @@ def emit_worker_cost_event_for(
     namespace: str,
     operation: str,
     started: float,
+    agent: str = "-",
+    user_id: str = "-",
+    session_id: str = "-",
 ) -> None:
     """Drain the active cost accumulator into a worker event tagged with a
-    real (org, namespace), when it holds any spend. Fail-quiet: a cost-event
-    insert failing must never interrupt the worker."""
+    real (org, namespace), when it holds any spend, and with the agent, user and
+    session of the request the work was for when the worker knows them. Fail-quiet:
+    a cost-event insert failing must never interrupt the worker."""
     try:
         from server.observability import cost_accumulator
 
@@ -130,7 +143,16 @@ def emit_worker_cost_event_for(
         snap = acc.drain()
         if not spent(snap):
             return
-        emit_worker_event(snap, org=org, namespace=namespace, operation=operation, started=started)
+        emit_worker_event(
+            snap,
+            org=org,
+            namespace=namespace,
+            operation=operation,
+            started=started,
+            agent=agent,
+            user_id=user_id,
+            session_id=session_id,
+        )
     except Exception:
         log.warning("cost-event emit failed for %s", operation, exc_info=True)
 

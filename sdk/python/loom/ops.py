@@ -13043,6 +13043,7 @@ class MemorySearchHit(TypedDict, total=False):
     code_state: NotRequired[
         Union[Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal[""]]
     ]
+    code_changed_since: NotRequired[str]
     body_truncated: NotRequired[bool]
     next: NotRequired[str]
     source_resource_id: NotRequired[str]
