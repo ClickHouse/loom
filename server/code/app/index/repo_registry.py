@@ -176,33 +176,56 @@ _OPTIONS = (
 )
 
 
-async def _provision_entries(repo: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+async def provision_declared(ch: Any) -> None:
+    """Provision declarations from the server lifecycle after its cell has started."""
     from server.auth.grant_claims import account_change
+    from server.auth.tenancy import ensure_held
+    from server.code.store.index import CodeRepo
     from server.core.ch import sequential_reads
+    from server.identity.app.registration import namespace_row
 
     def taken(row: dict[str, Any] | None) -> bool:
         return bool(row and (row.get("row_kind") == "page" or row.get("index_options_json")))
 
-    latest = {(str(row["org"]), str(row["namespace"])): row for row in rows}
-    for cfg in provisioning_entries():
+    declared = provisioning_entries()
+    if not declared:
+        return
+    repo = CodeRepo(ch)
+    registered = {
+        (str(row["org"]), str(row["namespace"])): row for row in await repo.registry_rows()
+    }
+    for cfg in declared:
         key = cfg.org, cfg.namespace
-        if taken(latest.get(key)):
+        if taken(registered.get(key)):
             continue
+        await ensure_held(cfg.org, None)
         async with account_change(*key):
             with sequential_reads():
                 current = await repo.code_repo_row(*key)
-            if current and taken(current):
-                latest[key] = current
-                continue
-            row = _provisioned_row(cfg, current)
-            await repo.insert_code_repo_row(row)
-            latest[key] = row
-    return list(latest.values())
+                if taken(current):
+                    continue
+                directory = await namespace_row(*key, ch=ch)
+            await repo.insert_code_repo_row(_provisioned_row(cfg, current, directory))
 
 
-def _provisioned_row(cfg: RepoConfig, current: dict[str, Any] | None) -> dict[str, Any]:
+def _provisioned_row(
+    cfg: RepoConfig, current: dict[str, Any] | None, directory: dict[str, Any] | None
+) -> dict[str, Any]:
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     access = current if current and current.get("active") else {}
+    directory = directory or {}
+    classification = access.get("classification", cfg.classification)
+    policy = (
+        access.get("join_policy")
+        or directory.get("join_policy")
+        or ("open" if cfg.public else "approval")
+    )
+    if directory.get("classification") == "restricted":
+        classification = "restricted"
+        if directory.get("join_policy") == "closed":
+            policy = "closed"
+    if classification == "restricted" and policy == "open":
+        policy = "approval"
     options = {field: getattr(cfg, field) for field in _OPTIONS}
     remote, options["git_remote_enc"] = _stored_remote(cfg.git_remote)
     return {
@@ -215,8 +238,8 @@ def _provisioned_row(cfg: RepoConfig, current: dict[str, Any] | None) -> dict[st
         "exclude": list(cfg.exclude),
         "exclude_generated": cfg.exclude_generated,
         "scip_producer": cfg.scip_producer,
-        "classification": access.get("classification", cfg.classification),
-        "join_policy": access.get("join_policy", "open" if cfg.public else "approval"),
+        "classification": classification,
+        "join_policy": policy,
         "github_token_enc": encrypt_token(cfg.github_token),
         "git_proxy_identity": cfg.git_proxy_identity,
         "index_options_json": json.dumps(options),
@@ -256,8 +279,7 @@ async def read_registry(ch: Any | None = None) -> bool:
     try:
         from server.code.store.index import CodeRepo
 
-        repo = CodeRepo(ch)
-        rows = await _provision_entries(repo, await repo.registry_rows())
+        rows = await CodeRepo(ch).registry_rows()
         page = frozenset(
             (str(r["org"]), str(r["namespace"])) for r in rows if r.get("row_kind") == "page"
         )
@@ -300,8 +322,10 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
     ``code_repos_refresh_seconds``, so an added repository or a new restriction
     reaches every replica within that time, whichever ops it serves. The same timer
     re-reads the failing code-index tiers the health problem reports."""
-    from server.code.app.index import tier_health
+    from server.code.app.index import retire, tier_health
 
+    if ch is not None:
+        await provision_declared(ch)
     await refresh_db_repos(force=True, ch=ch)
     await tier_health.refresh_failing(ch)
 
@@ -313,6 +337,8 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
             await asyncio.sleep(max(1.0, float(settings.code_repos_refresh_seconds)))
             await refresh_db_repos(force=True, ch=ch)  # never raises
             await tier_health.refresh_failing(ch)  # never raises
+            if ch is not None:
+                await retire.resume_retirements(ch)
 
     return asyncio.create_task(_loop(), name="loom-code-repos-refresh")
 

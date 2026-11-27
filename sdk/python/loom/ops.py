@@ -7519,6 +7519,7 @@ class CodeRepoRemoveInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
     confirm: NotRequired[str]
+    confirm_namespace_purge: NotRequired[bool]
 
 
 class CodeRepoRemoveBody(TypedDict, total=False):
@@ -7527,6 +7528,7 @@ class CodeRepoRemoveBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
     confirm: NotRequired[str]
+    confirm_namespace_purge: NotRequired[bool]
 
 
 class CodeRepoRemoveOutput(TypedDict, total=False):

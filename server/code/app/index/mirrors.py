@@ -459,8 +459,6 @@ async def sweep() -> list[str]:
     every host, not only the one `code.repo.remove` reached) and clones a killed
     process left half done. Returns what it removed. One process per host sweeps at
     a time."""
-    if not settings.code_self_service_enabled:
-        return []
     root = settings.code_repos_root
     if not await asyncio.to_thread(os.path.isdir, root):
         return []

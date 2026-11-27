@@ -836,7 +836,7 @@ host that one redirects to, private and link-local addresses included, and an `s
 remote runs `ssh` with the server's `HOME` and the keys in it. Whoever names a remote
 therefore chooses what the server connects to, so Loom refuses to load the setting unless
 `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY=true` leaves those three ops to platform
-admins ([self-service repositories](../features/code-index/repositories.md#self-service-repositories)).
+admins ([self-service repositories](../features/code-index/repositories.md#add-repositories-from-the-dashboard)).
 With auth off that rule passes a call that carries no principal, so the setting is
 refused as well there (`LOOM_AUTH_REQUIRED=false` or
 `LOOM_IDENTITY_PROVIDER=single-user`). It is refused with `LOOM_MCP_AUTH_MODE=open` too,
@@ -1154,14 +1154,15 @@ has a gold question set; it is never run in CI, whose embedder is fake
   return a precondition error. It also stops the coverage import and notify workers and
   the mirror host loop; every other code worker keeps its own switch
   ([workers](../reference/workers.md)).
-- **Retire a repository.** A maintainer uses **Retire…** on the repository's Access tab
-  (`code.repo.remove` with `confirm` set to the namespace). The entry goes inactive, an
-  erasure saga purges every `loom.code_*` table for the namespace, and the bare mirror is
-  deleted when no other branch uses it. Search telemetry is kept. A retired branch
-  stays retired across restarts, including when its provisioning declaration remains.
+- **Retire a repository.** A maintainer or platform admin uses **Retire…** on the
+  repository's Access tab. With `code.repo.remove`, set `confirm` to the namespace
+  and `confirm_namespace_purge` to `true`. Loom retires the registry entry and erases
+  the whole code namespace, including its index, memories and documents. The bare
+  mirror is deleted when no other branch uses it. Search telemetry is kept. Loom
+  resumes interrupted retirements and keeps a branch retired across restarts.
   With `LOOM_CODE_INTEL_ENABLED=false` the page cannot list repositories, but
-  `code.repo.remove` over HTTP, MCP or the SDK is still served; the other replicas then
-  sweep their copy of the mirror only once code intelligence is on again.
+  `code.repo.remove` over HTTP, MCP or the SDK is still served. Other replicas sweep
+  their copy of the mirror when code intelligence is on.
 - **Erase an index.** `erasure.request` with `scope_type = namespace` on a code namespace
   also purges the `loom.code_*` tables. An entry that is still configured is re-indexed
   from scratch on the next pass, so retire it first.

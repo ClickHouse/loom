@@ -64,7 +64,9 @@ class CodeReposMixin(CodeRepoBase):
     async def insert_code_repo_row(self, row: dict[str, Any]) -> None:
         await self._ch.insert("loom.code_repos", [row])
 
-    async def deactivate_code_repo(self, org: str, ns: str) -> bool:
+    async def deactivate_code_repo(
+        self, org: str, ns: str, *, retirement_id: str = "", requester: str = ""
+    ) -> bool:
         """The active row → a new version with `active = false`, every column mirrored
         (RMT); False when the namespace has no active row. The live row is filtered in a
         subquery: a REPLACE alias is visible to the WHERE of its own SELECT, so
@@ -84,12 +86,45 @@ class CodeReposMixin(CodeRepoBase):
             INSERT INTO loom.code_repos
             SELECT * REPLACE (false AS active,
                               if(index_options_json != '', 'page', row_kind) AS row_kind,
+                              {retirement_id:String} AS retirement_id,
+                              {requester:String} AS retirement_requester,
                               now() AS updated_at, toUInt64({v:UInt64}) AS version)
             FROM (
                 SELECT * FROM loom.code_repos FINAL
                 WHERE org = {org:String} AND namespace = {ns:String} AND active
             )
             """,
-            {"org": org, "ns": ns, "v": time.time_ns()},
+            {
+                "org": org,
+                "ns": ns,
+                "v": time.time_ns(),
+                "retirement_id": retirement_id,
+                "requester": requester,
+            },
         )
         return True
+
+    async def pending_code_repo_retirements(self) -> list[dict[str, Any]]:
+        return await self._ch.query_all(
+            """
+            SELECT org, namespace, retirement_id, retirement_requester
+            FROM loom.code_repos FINAL
+            WHERE NOT active AND retirement_requester != ''
+            ORDER BY updated_at, org, namespace
+            LIMIT 20
+            """
+        )
+
+    async def mark_code_repo_erasure_started(self, org: str, ns: str, retirement_id: str) -> None:
+        await self._ch.execute(
+            """
+            INSERT INTO loom.code_repos
+            SELECT * REPLACE ('' AS retirement_requester, toUInt64({v:UInt64}) AS version)
+            FROM (
+                SELECT * FROM loom.code_repos FINAL
+                WHERE org = {org:String} AND namespace = {ns:String} AND NOT active
+                  AND retirement_id = {id:String} AND retirement_requester != ''
+            )
+            """,
+            {"org": org, "ns": ns, "id": retirement_id, "v": time.time_ns()},
+        )

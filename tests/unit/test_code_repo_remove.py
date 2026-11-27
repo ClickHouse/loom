@@ -33,6 +33,7 @@ class _CH:
         self.executed: list[str] = []
         self.inserted: list[tuple[str, list[dict[str, Any]]]] = []
         self.registry_active = True
+        self.directory_kind = "code"
         self.registry_row: dict[str, Any] = {}
         self.columns = {
             "code_files": ["org", "namespace", "path"],
@@ -45,6 +46,10 @@ class _CH:
     async def query_all(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
+        if "SELECT org, namespace, retirement_id" in sql and self.registry_row.get(
+            "retirement_requester"
+        ):
+            return [self.registry_row]
         if "system.columns" in sql:
             return [{"table": t, "cols": c} for t, c in self.columns.items()]
         return []
@@ -54,7 +59,7 @@ class _CH:
     ) -> dict[str, Any] | None:
         if "loom.code_repos" in sql:
             if sql.startswith("SELECT *"):
-                if self.registry_active and (params or {}).get("ns") == "code-widgets":
+                if (params or {}).get("ns") == "code-widgets":
                     return self.registry_row
                 return None
             return {"n": 1 if self.registry_active else 0}
@@ -63,7 +68,7 @@ class _CH:
                 "org": ORG,
                 "namespace": (params or {}).get("ns"),
                 "active": True,
-                "kind": "code",
+                "kind": self.directory_kind,
                 "updated_at": datetime(2026, 1, 1),
             }
         return None
@@ -71,7 +76,15 @@ class _CH:
     async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
         self.executed.append(" ".join(sql.split()))
         if "INSERT INTO loom.code_repos" in sql:
-            self.registry_active = False
+            if "false AS active" in sql:
+                self.registry_active = False
+                self.registry_row.update(
+                    active=False,
+                    retirement_id=(params or {}).get("retirement_id", ""),
+                    retirement_requester=(params or {}).get("requester", ""),
+                )
+            else:
+                self.registry_row["retirement_requester"] = ""
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserted.append((table, rows))
@@ -183,9 +196,9 @@ def plane(monkeypatch):
 
     ch.sagas = []
 
-    async def _detached(req):
+    async def _detached(req, *, erasure_id=None):
         ch.sagas.append(req)
-        return "era-1"
+        return erasure_id
 
     monkeypatch.setattr(erasure_mod, "run_erasure_detached", _detached)
     import contextlib
@@ -197,10 +210,11 @@ def plane(monkeypatch):
 
     @contextlib.asynccontextmanager
     async def _holding(name: str, **kw: Any):  # the document-source lease
-        ch.leases.append(name)
+        if name.startswith("knowledge-source:"):
+            ch.leases.append(name)
         yield True
-        # Both retirements ran while it was held.
-        ch.registry_active_under_lease.append(ch.registry_active)
+        if name.startswith("knowledge-source:"):
+            ch.registry_active_under_lease.append(ch.registry_active)
 
     monkeypatch.setattr(leases, "holding", _holding)
     set_current_auth(
@@ -222,14 +236,16 @@ def plane(monkeypatch):
 async def test_remove_retires_registry_directory_and_rows(plane, provisioned) -> None:
     if provisioned:
         cfg = reg.row_to_config(plane.registry_row)
-        row = reg._provisioned_row(cfg, None)
+        row = reg._provisioned_row(cfg, None, None)
         plane.registry_row.update(row)
     out = await admin.handle_code_repo_remove(
-        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        CodeRepoRemoveInput(
+            org=ORG, namespace="code-widgets", confirm="code-widgets", confirm_namespace_purge=True
+        )
     )
     assert out.registry_deactivated and out.directory_deactivated
     # The rows leave through a detached, loom-only purge saga
-    assert out.purged_tables == 2 and out.erasure_id == "era-1"
+    assert out.purged_tables == 2 and out.erasure_id == plane.registry_row["retirement_id"]
     (req,) = plane.sagas
     assert req.scope_type == "namespace_list" and req.purge and not req.external
     assert json.loads(req.scope_value) == {
@@ -255,16 +271,93 @@ async def test_remove_refusals(plane) -> None:
             CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="nope")
         )
     assert ei.value.to_detail()["code"] == "CONFIRM_REQUIRED"
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        )
+    assert ei.value.to_detail()["code"] == "CONFIRM_REQUIRED"
     with pytest.raises(ValidationError) as ei:  # a namespace without a registered row
         await admin.handle_code_repo_remove(
-            CodeRepoRemoveInput(org=ORG, namespace="code-clickhouse", confirm="code-clickhouse")
+            CodeRepoRemoveInput(
+                org=ORG,
+                namespace="code-clickhouse",
+                confirm="code-clickhouse",
+                confirm_namespace_purge=True,
+            )
         )
     assert ei.value.to_detail()["code"] == "NOT_A_REPO"
     with pytest.raises(ValidationError) as ei:
         await admin.handle_code_repo_remove(
-            CodeRepoRemoveInput(org=ORG, namespace="nothing", confirm="nothing")
+            CodeRepoRemoveInput(
+                org=ORG, namespace="nothing", confirm="nothing", confirm_namespace_purge=True
+            )
         )
     assert ei.value.to_detail()["code"] == "NOT_A_REPO"
+
+
+@pytest.mark.asyncio
+async def test_retirement_refuses_to_erase_a_memory_namespace(plane) -> None:
+    plane.directory_kind = "memory"
+    with pytest.raises(ValidationError):
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(
+                org=ORG,
+                namespace="code-widgets",
+                confirm="code-widgets",
+                confirm_namespace_purge=True,
+            )
+        )
+    assert plane.registry_active and plane.sagas == [] and plane.executed == []
+
+
+@pytest.mark.asyncio
+async def test_retirement_waits_for_older_replicas(plane, monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from server.core import instances
+    from server.core.errors import PreconditionFailedError
+
+    monkeypatch.setattr(instances, "read_live", AsyncMock(return_value=[{"schema_version": 115}]))
+    with pytest.raises(PreconditionFailedError):
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(
+                org=ORG,
+                namespace="code-widgets",
+                confirm="code-widgets",
+                confirm_namespace_purge=True,
+            )
+        )
+    assert plane.registry_active and plane.sagas == [] and plane.executed == []
+
+
+@pytest.mark.asyncio
+async def test_pending_retirement_restarts_before_the_erasure_is_registered(
+    plane, monkeypatch
+) -> None:
+    from server.core.errors import BackendUnavailableError
+    from server.identity.app import namespace
+
+    delete = namespace.delete_namespace
+
+    async def unavailable(*args, **kwargs):
+        raise BackendUnavailableError("directory read failed")
+
+    monkeypatch.setattr(namespace, "delete_namespace", unavailable)
+    with pytest.raises(BackendUnavailableError):
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(
+                org=ORG,
+                namespace="code-widgets",
+                confirm="code-widgets",
+                confirm_namespace_purge=True,
+            )
+        )
+    assert not plane.registry_active and plane.sagas == []
+    assert plane.registry_row["retirement_requester"] == "alice@x"
+    monkeypatch.setattr(namespace, "delete_namespace", delete)
+    await retire.resume_retirements(plane)
+    await retire.resume_retirements(plane)
+    assert len(plane.sagas) == 1 and plane.registry_row["retirement_requester"] == ""
 
 
 @pytest.mark.asyncio
@@ -374,7 +467,9 @@ async def test_remove_retires_the_namespaces_document_sources(plane, monkeypatch
 
     monkeypatch.setattr(plane, "query_all", _query_all)
     out = await admin.handle_code_repo_remove(
-        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        CodeRepoRemoveInput(
+            org=ORG, namespace="code-widgets", confirm="code-widgets", confirm_namespace_purge=True
+        )
     )
     assert out.sources_deactivated == ["design-decks"]
     [row] = [r for table, rows in plane.inserted if table == "loom.knowledge_sources" for r in rows]
@@ -411,7 +506,9 @@ async def test_remove_names_a_source_added_between_its_two_retirements(plane, mo
 
     monkeypatch.setattr(plane, "query_all", _query_all)
     out = await admin.handle_code_repo_remove(
-        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        CodeRepoRemoveInput(
+            org=ORG, namespace="code-widgets", confirm="code-widgets", confirm_namespace_purge=True
+        )
     )
     assert out.sources_deactivated == ["design-decks", "late-add"]
 
@@ -428,7 +525,12 @@ async def test_a_failed_source_retirement_leaves_the_repository_to_retry(
     monkeypatch.setattr(knowledge_sources, "deactivate_namespace_sources", _fail)
     with pytest.raises(RuntimeError):
         await admin.handle_code_repo_remove(
-            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+            CodeRepoRemoveInput(
+                org=ORG,
+                namespace="code-widgets",
+                confirm="code-widgets",
+                confirm_namespace_purge=True,
+            )
         )
     # Nothing of the repository was retired, so the same call can run again.
     assert plane.registry_active and plane.executed == [] and plane.inserted == []
@@ -438,7 +540,9 @@ async def test_a_failed_source_retirement_leaves_the_repository_to_retry(
 @pytest.mark.asyncio
 async def test_remove_retires_sources_and_registry_row_under_one_lease(plane) -> None:
     await admin.handle_code_repo_remove(
-        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        CodeRepoRemoveInput(
+            org=ORG, namespace="code-widgets", confirm="code-widgets", confirm_namespace_purge=True
+        )
     )
     # The lease every source write of the namespace takes, held across both
     # retirements, then again by the namespace delete, which retires any source an
@@ -466,14 +570,16 @@ async def test_remove_deactivates_the_registry_row_under_the_account_claim(
             yield
             held.remove(ns)
 
-    async def _deactivate(ch: Any, org: str, ns: str) -> bool:
+    async def _deactivate(ch: Any, org: str, ns: str, **kwargs: Any) -> bool:
         assert held == [ns]
-        return await deactivate(ch, org, ns)
+        return await deactivate(ch, org, ns, **kwargs)
 
     monkeypatch.setattr(admin, "account_change", account)
     monkeypatch.setattr(retire, "deactivate_registry_row", _deactivate)
     await admin.handle_code_repo_remove(
-        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        CodeRepoRemoveInput(
+            org=ORG, namespace="code-widgets", confirm="code-widgets", confirm_namespace_purge=True
+        )
     )
     assert plane.registry_active_under_lease == [False, False]
 
@@ -498,7 +604,12 @@ async def test_remove_refuses_without_the_lease_and_writes_nothing(
     expected = OverloadedError if lease == "busy" else leases.LeaseUnavailable
     with pytest.raises(expected):
         await admin.handle_code_repo_remove(
-            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+            CodeRepoRemoveInput(
+                org=ORG,
+                namespace="code-widgets",
+                confirm="code-widgets",
+                confirm_namespace_purge=True,
+            )
         )
     assert plane.registry_active and plane.inserted == [] and plane.sagas == []
     assert plane.states == []  # a refused removal leaves the live repository's links
@@ -521,7 +632,12 @@ async def test_remove_refuses_on_a_busy_account_claim_and_writes_nothing(
     monkeypatch.setattr(admin, "account_change", busy)
     with pytest.raises(GrantBusyError):
         await admin.handle_code_repo_remove(
-            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+            CodeRepoRemoveInput(
+                org=ORG,
+                namespace="code-widgets",
+                confirm="code-widgets",
+                confirm_namespace_purge=True,
+            )
         )
     assert plane.registry_active and plane.inserted == [] and plane.sagas == []
     assert plane.states == []
@@ -556,9 +672,9 @@ async def test_remove_empties_the_tracker_links_before_it_deactivates_or_purges(
         seen["registry"] = _links()
         return await real_registry(*a, **k)
 
-    async def _saga(req: Any) -> Any:
+    async def _saga(req: Any, **kwargs: Any) -> Any:
         seen["saga"] = _links()
-        return await real_saga(req)
+        return await real_saga(req, **kwargs)
 
     monkeypatch.setattr(sources, "deactivate_namespace_sources", _sources)
     monkeypatch.setattr(retire, "deactivate_registry_row", _registry)
@@ -571,7 +687,12 @@ async def test_remove_empties_the_tracker_links_before_it_deactivates_or_purges(
     )
     try:
         await admin.handle_code_repo_remove(
-            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+            CodeRepoRemoveInput(
+                org=ORG,
+                namespace="code-widgets",
+                confirm="code-widgets",
+                confirm_namespace_purge=True,
+            )
         )
         # this replica's snapshot drops the name at once
         assert binding.override_for(ORG, "code-widgets") is None
@@ -595,7 +716,9 @@ async def test_remove_writes_no_qa_binding_row_for_a_namespace_that_had_none(
 
     plane.stored[(ORG, "code-widgets", binding.BRANCH_OF_KEY)] = "code-root"
     await admin.handle_code_repo_remove(
-        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        CodeRepoRemoveInput(
+            org=ORG, namespace="code-widgets", confirm="code-widgets", confirm_namespace_purge=True
+        )
     )
     keys = (binding.OVERRIDE_KEY, binding.BRANCH_OF_KEY)
     assert [r for r in plane.states if r[2] in keys] == [
@@ -626,7 +749,12 @@ async def test_a_failed_link_clear_stops_the_removal_before_it_deactivates_anyth
     plane.stored[(ORG, "code-widgets", binding.OVERRIDE_KEY)] = "tracker-widgets"
     with pytest.raises(RuntimeError, match="store write failed"):
         await admin.handle_code_repo_remove(
-            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+            CodeRepoRemoveInput(
+                org=ORG,
+                namespace="code-widgets",
+                confirm="code-widgets",
+                confirm_namespace_purge=True,
+            )
         )
     assert touched == []
     assert plane.registry_active and plane.inserted == [] and plane.sagas == []

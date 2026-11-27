@@ -41,8 +41,8 @@ async def test_provisioned_repository_keeps_its_settings_and_access_after_config
             "org": org,
             "namespace": namespace,
             "repo": config.repo,
-            "classification": "restricted",
-            "join_policy": "closed",
+            "classification": "standard",
+            "join_policy": "open",
             "active": True,
             "row_kind": "access",
         }
@@ -73,8 +73,13 @@ async def test_provisioned_repository_keeps_its_settings_and_access_after_config
         finally:
             held.pop()
 
+    async def namespace_row(row_org, row_namespace, *, ch):
+        assert held == [(row_org, row_namespace)]
+        return {"classification": "restricted", "join_policy": "closed"}
+
     monkeypatch.setattr(settings, "jwt_secret", "unit")
     monkeypatch.setattr("server.auth.grant_claims.account_change", claim)
+    monkeypatch.setattr("server.identity.app.registration.namespace_row", namespace_row)
     monkeypatch.setattr("server.code.store.index.CodeRepo", Store)
     monkeypatch.setattr(repos, "_configured_from_env", lambda *_: [config])
     for field in (
@@ -87,7 +92,10 @@ async def test_provisioned_repository_keeps_its_settings_and_access_after_config
     monkeypatch.setattr(repo_registry, "_LOADED_AT", repo_registry._LOADED_AT)
 
     assert await repo_registry.read_registry()
+    assert "index_options_json" not in rows[key]
+    await repo_registry.provision_declared(None)
     assert rows[key]["row_kind"] == "access"
+    assert rows[key]["classification"] == "restricted" and rows[key]["join_policy"] == "closed"
     assert config.github_token not in str(rows[key])
     assert "credential-example" not in str(rows[key])
     monkeypatch.setattr(repos, "_configured_from_env", lambda *_: [])
@@ -106,5 +114,6 @@ async def test_provisioned_repository_keeps_its_settings_and_access_after_config
 
     rows[key] |= {"active": False, "row_kind": "page"}
     monkeypatch.setattr(repos, "_configured_from_env", lambda *_: [config])
+    await repo_registry.provision_declared(None)
     assert await repo_registry.read_registry()
     assert repos.configured_repos() == []

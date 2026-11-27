@@ -161,7 +161,12 @@ export interface CodeRepoRemoveResult {
   mirror_removed: boolean;
 }
 export async function removeCodeRepo(org: string, namespace: string): Promise<CodeRepoRemoveResult> {
-  return post<CodeRepoRemoveResult>("/v1/code.repo.remove", { org, namespace, confirm: namespace });
+  return post<CodeRepoRemoveResult>("/v1/code.repo.remove", {
+    org,
+    namespace,
+    confirm: namespace,
+    confirm_namespace_purge: true,
+  });
 }
 
 /** A maintainer sets a repository's access — classification and join policy. Opening a

@@ -23,6 +23,13 @@ from server.cli._ch import OrgFree, reads, run_connected, writes
 SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
     ("loom.signing_keys", "sealed_key", (), "signing_key", "kid != 'default'"),
     ("loom.code_repos", "github_token_enc", (), "code_repos.token", ""),
+    (
+        "loom.code_repos",
+        "index_options_json",
+        ("git_remote_enc",),
+        "code_repos.provisioned_remote",
+        "",
+    ),
     ("loom.qa_sources", "password_enc", (), "qa_sources.password", ""),
     ("loom.knowledge_sources", "credential_enc", (), "knowledge_sources.credential", ""),
     ("loom.knowledge_sources", "secret_enc", (), "knowledge_sources.secret", ""),

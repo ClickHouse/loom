@@ -661,7 +661,9 @@ async def handle_namespace_delete(
     return await delete_namespace(input.org, input.namespace)
 
 
-async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
+async def delete_namespace(
+    org: str, namespace: str, *, expected_kind: str | None = None
+) -> NamespaceDeleteOutput:
     """`namespace.delete`'s write, and `collection.delete`'s once its purge ran."""
     from server.auth.authz import identity_write
 
@@ -671,6 +673,8 @@ async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
         # SELECT * so the soft-delete row mirrors EVERY column forward; a
         # partial RMT insert would reset omitted columns to schema defaults.
         existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
+        if expected_kind and existing is not None and existing.get("kind") != expected_kind:
+            raise ValidationError(f"{namespace} is not a {expected_kind} namespace")
         # A source never outlives its namespace with its credential.
         retired = await deactivate_namespace_sources(org, namespace)
         now = naive_utc_now_seconds()

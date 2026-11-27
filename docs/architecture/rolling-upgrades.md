@@ -1063,7 +1063,11 @@ to reject failed proposals and leave passing proposals pending human review.
 ## Repository provisioning
 
 Keep the deployment's repository declarations through the rollback window. An
-imported active entry stores its indexing options with an access row so a build
-that reads an index from deployment settings still sees its options and access
-policy. Retirement writes the same inactive reservation as a dashboard-added
-branch. Both builds honor that reservation when they next read the registry.
+active provisioned entry stores its indexing options with an access row so a
+previous build can keep reading its deployment settings and registry access policy.
+
+The new build accepts repository retirement once the older replicas have stopped.
+Older builds with registry reads disabled index every branch declared in their
+deployment settings. Before rolling back to such a build, remove declarations for
+retired branches or enable its registry reads. The current build honors the inactive
+registry entries even when their declarations remain.

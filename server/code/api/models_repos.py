@@ -260,14 +260,16 @@ class CodeRepoAddBranchInput(BaseModel):
 
 class CodeRepoRemoveInput(BaseModel):
     """Retire a repository index. `confirm` must equal the namespace. The
-    registry row and the directory row go inactive at once; every code_* table keyed by
-    the namespace is purged (asynchronous mutations); the bare mirror is deleted when no
+    registry row and the code namespace go inactive. The erasure purges the namespace,
+    including any memories and documents it holds. The bare mirror is deleted when no
     other branch of the repository uses it."""
 
     org: str
     namespace: str
     # Must equal `namespace`, or the call is refused with CONFIRM_REQUIRED.
     confirm: str = ""
+    # Confirm erasure of the entire code namespace, including its memories and documents.
+    confirm_namespace_purge: bool = False
 
 
 class CodeRepoSetAccessInput(BaseModel):

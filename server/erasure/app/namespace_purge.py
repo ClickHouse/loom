@@ -61,6 +61,7 @@ async def erase_namespaces_detached(
     requester: str,
     purge: bool,
     external: bool,
+    erasure_id: str | None = None,
 ) -> str:
     """Start a namespace-list erasure in the background and return its
     erasure_id; erasure_recovery resumes it if the process dies."""
@@ -69,5 +70,16 @@ async def erase_namespaces_detached(
     return await saga.run_erasure_detached(
         _namespace_list_request(
             org, namespaces, requester=requester, purge=purge, external=external
-        )
+        ),
+        erasure_id=erasure_id,
     )
+
+
+async def namespace_erasure_pending(erasure_id: str) -> bool:
+    """Whether the saved request still has erasure work to finish."""
+    from server.core.ch import sequential_reads
+    from server.erasure.store.ledger import fetch_request_status
+
+    with sequential_reads():
+        row = await fetch_request_status(erasure_id)
+    return row is not None and row["status"] != "completed"

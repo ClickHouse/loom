@@ -58,7 +58,7 @@ module ClickHouse
         "code.repo.add" => OpSpec.new("code.repo.add", "code", "repo_add", false, false, "viewer", "stable", %w[org repo branch join_policy classification access_token git_proxy_identity path_prefixes exclude exclude_generated scip_producer branches].freeze, %w[org repo].freeze),
         "code.repo.add_branch" => OpSpec.new("code.repo.add_branch", "code", "repo_add_branch", false, false, "admin", "stable", %w[org namespace branch].freeze, %w[org namespace branch].freeze),
         "code.repo.remote_branches" => OpSpec.new("code.repo.remote_branches", "code", "repo_remote_branches", true, true, "viewer", "stable", %w[org repo access_token git_proxy_identity query limit].freeze, %w[org repo].freeze),
-        "code.repo.remove" => OpSpec.new("code.repo.remove", "code", "repo_remove", true, false, "admin", "stable", %w[org namespace confirm].freeze, %w[org namespace].freeze),
+        "code.repo.remove" => OpSpec.new("code.repo.remove", "code", "repo_remove", true, false, "admin", "stable", %w[org namespace confirm confirm_namespace_purge].freeze, %w[org namespace].freeze),
         "code.repo.set_access" => OpSpec.new("code.repo.set_access", "code", "repo_set_access", true, false, "admin", "experimental", %w[org namespace classification join_policy confirm].freeze, %w[org namespace classification join_policy].freeze),
         "code.repo.set_source" => OpSpec.new("code.repo.set_source", "code", "repo_set_source", true, false, "admin", "experimental", %w[org namespace tracker_namespaces].freeze, %w[org namespace tracker_namespaces].freeze),
         "code.repos" => OpSpec.new("code.repos", "code", "repos", true, true, "viewer", "stable", %w[org namespace agent user_id consumer repo repos fields].freeze, [].freeze),
