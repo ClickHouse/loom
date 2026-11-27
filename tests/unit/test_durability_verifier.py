@@ -1,21 +1,28 @@
 """A coding capture gets a last look before it is stored — a
 batched verifier drops a fact only when every model says drop, folds
-same-claim paraphrases into the most complete kept member, and keeps every
+same-claim paraphrases into the most complete kept member, drops a fact a
+stored memory already states (that memory is reinforced), and keeps every
 fact on any failure. Coding sessions skip speaker attribution, and a few
 content-free shapes are rules."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
 from server.llm.client import LLMResult
 from server.memory.app import durability_verifier as dv
+from server.memory.app import handlers
 from server.memory.app import pipeline as mp
 from server.memory.app import pipeline_state as pipeline_state
 from server.memory.app.trajectory_notes import TRAJECTORY_EXTRACTION_INSTRUCTIONS
 from server.memory.domain import durable_facts as df
+from server.memory.domain.extracted_facts import keep_latest_per_key
+from server.memory.domain.prompt_fence import FENCE_NOTE
 from server.settings import settings
 
 
@@ -26,9 +33,11 @@ class _Scripted:
     def __init__(self, answer: object) -> None:
         self.answer = answer
         self.calls: list[str] = []
+        self.systems: list[str] = []
 
     async def complete(self, system, user, max_tokens=1024, response_format=None):
         self.calls.append(user)
+        self.systems.append(system)
         if isinstance(self.answer, Exception):
             raise self.answer
         text = self.answer if isinstance(self.answer, str) else json.dumps(self.answer)
@@ -141,7 +150,82 @@ async def test_a_long_capture_is_judged_in_slices(monkeypatch: pytest.MonkeyPatc
     assert len(client.calls) == 3
 
 
-def test_the_prompt_names_the_fail_safe_and_both_tasks() -> None:
+# --- facts a stored memory already states -------------------------------------
+
+
+def test_parsing_reads_the_stored_restatements_in_range() -> None:
+    text = json.dumps(
+        {
+            "verdicts": [],
+            "stored": [
+                {"i": 0, "s": "S1"},
+                {"i": 1, "s": 4},
+                {"i": 9, "s": 0},
+                {"i": 2, "s": 0},
+                {"i": 2, "s": 1},
+            ],
+        }
+    )
+    v = dv.parse_verdicts(text, 3, 2)
+    assert v.ok and v.stored == {0: 1, 2: 0}  # stored 4 and fact 9 are not shown; first wins
+    assert dv.parse_verdicts(text, 3).stored == {}  # no stored memory shown: none named
+    # An S label names a stored fact and nothing else: as a fact number it is no answer.
+    text = json.dumps(
+        {
+            "verdicts": [],
+            "same_claim": [{"members": [0, "S1"], "best": "S1"}],
+            "superseded": [{"old": "S0", "new": 1}],
+            "stored": [{"i": "S0", "s": 1}],
+        }
+    )
+    v = dv.parse_verdicts(text, 3, 2)
+    assert v.ok and not v.folds and not v.stored
+
+
+@pytest.mark.asyncio
+async def test_a_fact_a_stored_memory_states_is_dropped_and_names_it() -> None:
+    facts = _facts("The list has a new entry.", "A new claim.")
+    # Fact 1 is listed against a memory read for fact 0 alone: that listing does not count.
+    restates = {**_answer(n=2), "stored": [{"i": 0, "s": 1}, {"i": 1, "s": 1}]}
+    primary, other = _Scripted(restates), _Scripted(_answer(n=2))
+    near = [("m0", "Another fact."), ("m1", "The list now has an entry.")]
+    stored = [near, near[:1]]  # each fact's nearest; a memory near both is shown once
+    res = await dv.verify(facts, [primary, other], stored=stored)
+    assert [f["key"] for f in res.kept] == ["k1"]
+    assert [(f["key"], f["_verify"], f["_stored"]) for f in res.dropped] == [
+        ("k0", dv.ALREADY_STORED, "m1")
+    ]
+    # The stored text is fenced as data, and the system prompt says what the markers mean.
+    assert primary.calls[0].count("<<memory S") == 2
+    assert "<<memory S1 " in primary.calls[0] and near[1][1] in primary.calls[0]
+    assert primary.systems[0] == f"{dv.VERIFIER_SYSTEM_PROMPT}\n\n{FENCE_NOTE}"
+    # Only the primary model names restatements, so only it is sent the stored text.
+    assert "<<memory" not in other.calls[0] and other.systems[0] == dv.VERIFIER_SYSTEM_PROMPT
+    res = await dv.verify(facts, [other, primary], stored=stored)
+    assert res.kept == facts and not res.dropped
+    # With no stored memory shown there is no fence, no note, and nothing to restate.
+    res = await dv.verify(facts, [primary])
+    assert res.kept == facts and "<<memory" not in primary.calls[-1]
+    assert primary.systems[-1] == dv.VERIFIER_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_a_slice_is_shown_the_stored_memories_of_its_own_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "memory_durability_verifier_max_facts_per_call", 2)
+    stored = [[("m0", "stored zero")], [("m1", "stored one")], [("m2", "stored two")]]
+    client = _Scripted({**_answer(n=2), "stored": [{"i": 0, "s": 0}]})
+    res = await dv.verify(_facts("a", "b", "c"), [client], stored=stored)
+    assert [[text in call for ((_, text),) in stored] for call in client.calls] == [
+        [True, True, False],
+        [False, False, True],
+    ]
+    # S0 is the first stored memory of the slice that named it.
+    assert [(f["key"], f["_stored"]) for f in res.dropped] == [("k0", "m0"), ("k2", "m2")]
+
+
+def test_the_prompt_names_the_fail_safes_and_the_three_tasks() -> None:
     p = dv.VERIFIER_SYSTEM_PROMPT
     assert (
         "useful to recall in a week" in p
@@ -149,6 +233,8 @@ def test_the_prompt_names_the_fail_safe_and_both_tasks() -> None:
         and '"same_claim"' in p
         and '"superseded"' in p
     )
+    # A fact is listed as stored only when the model is sure, in its own answer field.
+    assert "When unsure, do not list it" in p and '"stored"' in p
 
 
 # --- the pipeline step ---------------------------------------------------------
@@ -181,6 +267,218 @@ async def test_the_step_judges_coding_captures_only(monkeypatch: pytest.MonkeyPa
     assert not any(k.startswith("_") for f in st.extracted_facts for k in f)
     st = await mp._REGISTRY["loom.verify_durable"](_state([], ["x", "y"]), {})
     assert len(st.extracted_facts) == 2 and len(client.calls) == 1  # a personal chat: no call
+
+
+def test_the_captures_repository_is_its_repo_tags_or_else_its_project_tags() -> None:
+    def tags(capture: list[str]) -> list[str]:
+        return mp._repository_tags(_state(capture, []))
+
+    assert tags(["project:p", "repo:r1"]) == ["repo:r1"]  # the repository, not the folder name
+    assert tags(["source:codex", "project:p"]) == ["project:p"]
+    assert tags(["source:codex"]) == []  # a capture that names neither is not narrowed
+
+
+def _row(key: str, value: str, tags: list[str], **fields: object) -> SimpleNamespace:
+    served = {"status": "active", "tombstoned_at": None, "expires_at": None, "valid_to": None}
+    return SimpleNamespace(
+        memory_key=key, memory_id=f"id-{key}", value=value, tags=tags, **{**served, **fields}
+    )
+
+
+class _StoredWorld:
+    """The store under the step's stored-memory read, with its embedder, its policy
+    read and its usage write, in memory. `rows` are the stored rows, nearest first; a
+    search applies its tags and then its cut, as the fact leg's WHERE and LIMIT do.
+    `rows` an exception fails the read."""
+
+    model_name = "fake"
+
+    def __init__(
+        self, monkeypatch: pytest.MonkeyPatch, rows: object, policy: str = "auto_reinforce"
+    ) -> None:
+        self.rows = rows
+        self.batches: list[list[str]] = []
+        self.searches: list = []
+        self.events: list[tuple] = []
+        self.running = self.peak = 0
+
+        async def policy_of(state):
+            return policy
+
+        monkeypatch.setattr("server.memory.app.retrieval.vector_search", self.search)
+        monkeypatch.setattr("server.memory.store.get_many_by_keys", self.by_keys)
+        monkeypatch.setattr("server.memory.store.usage.record_usage_event", self.record)
+        monkeypatch.setattr(mp, "_conflict_policy", policy_of)
+        # Last: a module first imported under this patch would keep the stand-in.
+        monkeypatch.setattr("server.embedding.get_embedder", lambda: self)
+        monkeypatch.setattr(handlers, "get_embedder", lambda: self)
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        self.batches.append(list(texts))
+        return [[float(len(t))] for t in texts]
+
+    async def search(self, q):
+        self.searches.append(q)
+        if isinstance(self.rows, Exception):
+            raise self.rows
+        self.running += 1
+        self.peak = max(self.peak, self.running)
+        await asyncio.sleep(0)  # the reads that may run together are now running
+        self.running -= 1
+        found = [r for r in self.rows if not q.tags or set(q.tags) & set(r.tags)]
+        return [SimpleNamespace(memory_key=r.memory_key) for r in found[: q.top_k]]
+
+    async def by_keys(self, identity, keys, **kw):
+        # One row per key, the last listed: the store's newest in any session.
+        return list({r.memory_key: r for r in self.rows if r.memory_key in keys}.values())
+
+    async def record(self, **kw):
+        self.events.append(
+            (kw["event_type"], kw["memory_id"], kw["org"], kw["namespace"], kw["agent"])
+        )
+
+
+_RESTATED = ["The list has a new entry.", "Another claim.", "The list gained an entry."]
+
+
+@pytest.mark.asyncio
+async def test_a_fact_an_earlier_session_stored_is_not_written_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        # The same sentence stored for another repository is another claim: never shown,
+        # and three nearer rows of other repositories take none of a fact's three places.
+        _row("o2", "The list has a new entry.", ["repo:r2"]),
+        _row("o3", "The list has a new entry.", ["repo:r3"]),
+        _row("o4", "The list has a new entry.", ["repo:r4"]),
+        _row("m1", "The list now has an entry.", ["repo:r1"]),
+        _row("m2", "x" * 900, ["repo:r1", "code"]),
+    ]
+    world = _StoredWorld(monkeypatch, rows)
+    monkeypatch.setattr(settings, "bulk_conflict_check_concurrency", 2)
+    client = _Scripted({**_answer(n=3), "stored": [{"i": 0, "s": 0}, {"i": 2, "s": 0}]})
+    monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
+    st = await mp._REGISTRY["loom.verify_durable"](
+        _state(["source:claude-code", "project:p", "repo:r1"], _RESTATED), {}
+    )
+    assert [f["key"] for f in st.extracted_facts] == ["k1"] and st.skipped_unverified == 2
+    assert not any(k.startswith("_") for f in st.extracted_facts for k in f)
+    # One embed call for the capture. Each fact's nearest rows of this repository are
+    # read under the writer's agent and user with the fact's vector, two reads at a time.
+    assert world.batches == [_RESTATED]
+    assert [
+        (q.agent, q.user_id, q.query_vec, q.top_k, q.tags, q.tags_soft) for q in world.searches
+    ] == [("a", "-", [float(len(t))], mp.STORED_PER_FACT, ["repo:r1"], False) for t in _RESTATED]
+    assert world.peak == 2
+    # A row found for several facts is shown once, clipped.
+    assert client.calls[0].count("<<memory S") == 2
+    assert "x" * mp.STORED_VALUE_CHARS in client.calls[0]
+    assert "x" * (mp.STORED_VALUE_CHARS + 1) not in client.calls[0]
+    # Reinforce: one evidence event on the stored row, however many facts restated it.
+    assert world.events == [("evidence", "id-m1", "o", "n", "a")]
+
+
+@pytest.mark.asyncio
+async def test_a_restatement_stays_while_an_earlier_kept_fact_has_its_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = _StoredWorld(monkeypatch, [_row("m1", "User uses emacs.", ["repo:r1"])])
+    changed = ["User uses vim.", "User went back to emacs."]
+
+    async def written(listed: int) -> list[str]:
+        client = _Scripted({**_answer(n=2), "stored": [{"i": listed, "s": 0}]})
+        monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
+        st = _state(["source:claude-code", "repo:r1"], changed)
+        for f in st.extracted_facts:
+            f["key"] = "editor"
+        st = await mp._REGISTRY["loom.verify_durable"](st, {})
+        return [f["value"] for f in keep_latest_per_key(st.extracted_facts)[0]]
+
+    # The later fact is listed: both reach the write, whose batch rule keeps the later,
+    # so the earlier state is not written over the stored row.
+    assert await written(1) == changed[1:] and not world.events
+    # The earlier fact is listed: it is dropped, and the later still holds the key.
+    assert await written(0) == changed[1:]
+    assert world.events == [("evidence", "id-m1", "o", "n", "a")]
+
+
+_LATER = datetime(2999, 1, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "newer",
+    [
+        {"tags": ["repo:r2"]},  # the other session wrote the key for another repository
+        {"status": "superseded"},
+        {"expires_at": _LATER},  # served today, and it ends: the fact would end with it
+        {"valid_to": _LATER},
+    ],
+)
+async def test_a_key_whose_newest_row_is_not_an_endless_served_row_of_the_repository_is_not_shown(
+    monkeypatch: pytest.MonkeyPatch, newer: dict
+) -> None:
+    # Two sessions hold one key. The hit is the older row; the key read returns the newer.
+    mine = _row("k", "The list now has an entry.", ["repo:r1"])
+    other = _row("k", "The list now has an entry.", **{"tags": ["repo:r1"], **newer})
+    world = _StoredWorld(monkeypatch, [mine, other])
+    client = _Scripted({**_answer(n=3), "stored": [{"i": 0, "s": 0}]})
+    monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
+    st = await mp._REGISTRY["loom.verify_durable"](
+        _state(["source:claude-code", "repo:r1"], _RESTATED), {}
+    )
+    assert len(st.extracted_facts) == 3 and world.searches and not world.events
+    assert "<<memory" not in client.calls[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "validity",
+    [
+        {"valid_at": "2020-01-01"},
+        {"valid_to": "2020-01-01"},
+        {"foresight": {"until": None, "duration_days": 14}},
+    ],
+)
+async def test_a_fact_with_its_own_validity_is_compared_with_no_stored_memory(
+    monkeypatch: pytest.MonkeyPatch, validity: dict
+) -> None:
+    world = _StoredWorld(monkeypatch, [_row("m1", "The list now has an entry.", ["repo:r1"])])
+    # The row is read and shown for fact 1; the answer lists fact 0, which read none.
+    client = _Scripted({**_answer(n=2), "stored": [{"i": 0, "s": 0}]})
+    monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
+    st = _state(["source:claude-code", "repo:r1"], _RESTATED[:2])
+    st.extracted_facts[0].update(validity)
+    st = await mp._REGISTRY["loom.verify_durable"](st, {})
+    assert world.batches == [_RESTATED[1:2]] and len(world.searches) == 1
+    assert client.calls[0].count("<<memory S") == 1
+    assert len(st.extracted_facts) == 2 and not world.events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["append_only", ""])  # "": the policy read failed
+async def test_an_append_only_or_unread_policy_keeps_every_restatement(
+    monkeypatch: pytest.MonkeyPatch, policy: str
+) -> None:
+    world = _StoredWorld(monkeypatch, [_row("m1", "The list now has an entry.", [])], policy=policy)
+    client = _Scripted({**_answer(n=3), "stored": [{"i": 0, "s": 0}]})
+    monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
+    st = await mp._REGISTRY["loom.verify_durable"](_state(["source:claude-code"], _RESTATED), {})
+    assert len(st.extracted_facts) == 3
+    assert not world.batches and not world.searches and not world.events
+    assert "<<memory" not in client.calls[0]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_stored_memory_read_keeps_every_fact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = _StoredWorld(monkeypatch, RuntimeError("store down"))
+    client = _Scripted({**_answer(n=3), "stored": [{"i": 0, "s": 0}]})
+    monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
+    st = await mp._REGISTRY["loom.verify_durable"](_state(["source:claude-code"], _RESTATED), {})
+    assert len(st.extracted_facts) == 3 and world.searches and not world.events
+    assert "<<memory" not in client.calls[0]
 
 
 def test_no_verifier_on_a_fake_stack_or_for_a_keyless_model(

@@ -43,7 +43,7 @@ flowchart LR
    | `loom.drop_session_echoes`        | Drops facts that restate what the session's own Loom calls wrote, asked or got (`session_values`). |
    | `loom.drop_activity_narration`    | Drops narration of tool activity with no outcome ("User read lines 1-1000 of X").                  |
    | `loom.drop_non_durable`           | Coding captures only: drops status snapshots, housekeeping, first-person plans, in-batch repeats.  |
-   | `loom.verify_durable`             | Coding captures only: a model pass that drops what every verifier calls non-durable. Fails open.   |
+   | `loom.verify_durable`             | Coding captures only: a model pass drops non-durable facts and facts already stored. Fails open.   |
    | `loom.hash_dedup`                 | Drops facts whose canonical content hash is already stored.                                        |
    | `loom.bulk_write`                 | Writes through `memory.bulk_set`, with verdicts and one hash-only audit row per write.             |
 
@@ -64,6 +64,19 @@ registered (at most 16; an HTTP `hook.*` step is refused). See the
 session that states the same attribute lands on the same key and revises the row. When
 the user asks to forget something, the matching rows are retired and named in
 `forgotten` / `forgotten_keys` (a window's latest 50 requests are matched by content).
+
+**A stored fact said again** by a later coding capture is dropped when the verifier
+finds the memory that states it. `loom.verify_durable` reads the stored memories nearest
+each remaining fact: the writer's agent and user, any session, the capture's repository
+(its `repo:` tag, or its `project:` tag when it has none; a capture with neither is not
+narrowed), never a `high` row, and only served rows with no `valid_to` and no expiry. Only
+the first verifier model is sent them. A fact that it lists as stated in full by one of
+its own is dropped, and that memory gets one `evidence` usage event instead. A listed fact
+stays when an earlier fact the step keeps has its key, so the write sees both statements
+of that key. Every fact the step keeps goes on to the
+[write-time conflict check](conflicts-and-refusal.md).
+A fact the extractor gave a `valid_at`, a `valid_to` or a `foresight` window is compared
+with no stored memory, and an `append_only` namespace skips this read.
 
 **Coding captures** are requests whose `extra_tags` carry `source:claude-code`,
 `source:codex` or `source:cursor` (the plugins tag every capture), or a trajectory replay

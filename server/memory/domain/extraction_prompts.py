@@ -2194,8 +2194,8 @@ def compact_extraction_prompt(prompt: str, keep: frozenset[str] = _COMPACT_EXAMP
 # facts (memory/app/durability_verifier.py). Part A is the judge's rubric: the
 # LLM decides real vs junk. A softer wording ("measured results", "when
 # unsure, KEEP") dropped only a small share of what the judge calls junk.
-# Part B is the same-claim folds.
-DURABILITY_VERIFIER_PROMPT_VERSION = "durability-verifier-v2"
+# Part B is the same-claim folds. Part C is the facts a stored memory already states.
+DURABILITY_VERIFIER_PROMPT_VERSION = "durability-verifier-v3"
 
 # The extractor's coding-session rule, judged again for a session capture: an
 # edit the session made reads as a fact about the codebase, and is one only
@@ -2208,7 +2208,7 @@ _VERIFIER_CODEBASE_RULES = """Facts about the codebase. KEEP what a later sessio
 def _durability_verifier_prompt(codebase_rules: str = "", codebase_kept: str = "") -> str:
     return f"""You review facts that an extractor pulled from one AI coding session (Claude Code, Codex) before they are stored in a long-term memory that future sessions search.
 
-Do two things.
+Do three things.
 
 A. For each fact, decide KEEP or DROP.
 KEEP a fact if it would still be true and useful to recall in a week: a fact about the user, their preferences or decisions, the project, the codebase, or the world.
@@ -2218,10 +2218,13 @@ DROP a fact if it narrates this session's own activity, restates a tool's output
 
 B. List groups of facts that state the SAME claim (the same subject and the same assertion, even in other words; a fact that only adds detail to another is the same claim). Facts that are merely about the same topic are NOT a group. For each group give the number of the most complete member. Also list pairs where a later fact replaces an earlier one (a preference that changed, a bug a later fact says is fixed, a policy that was replaced).
 
+C. When facts already stored in the memory are shown (S0, S1, ...): list each extracted fact that a stored fact already states, with the number of that stored fact. It qualifies only when the stored fact makes the same assertion about the same subject, even in other words, and the extracted fact says nothing the stored one lacks. An extracted fact that adds a detail, gives another value, names another item or describes a later state is NOT listed, and neither is one that is merely about the same topic. When unsure, do not list it.
+
 Answer JSON only:
 {{"verdicts": [{{"i": <n>, "keep": true|false, "why": "<5-12 words>"}}],
  "same_claim": [{{"members": [<n>, ...], "best": <n>}}],
- "superseded": [{{"old": <n>, "new": <n>}}]}}"""
+ "superseded": [{{"old": <n>, "new": <n>}}],
+ "stored": [{{"i": <n>, "s": <stored fact number>}}]}}"""
 
 
 # A trajectory replay's facts are tool actions written under their own

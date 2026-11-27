@@ -315,9 +315,10 @@ settings:
   # memory_ask_mid_model: ""
 
   # The durability check on a coding capture: one batched call per capture per listed
-  # model (CSV) judges each fact durable or not and folds same-claim paraphrases and
-  # replaced states. A fact is dropped only when every model says drop; folds come from
-  # the first. Fails open. "" turns it off. [restart]
+  # model (CSV) judges each fact durable or not, folds same-claim paraphrases and
+  # replaced states, and names the facts a stored memory already states. A fact is
+  # dropped as non-durable only when every model says drop; folds and stored
+  # restatements come from the first. Fails open. "" turns it off. [restart]
   # memory_extract_verify_models: "claude-opus-5-5"
 
   # The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence
@@ -3413,7 +3414,9 @@ settings:
   # [live]
   # memory_bulk_follow_max_pairs: 1024
 
-  # Bulk-path conflict checks run at once (at least 1). [restart]
+  # Similarity reads one request runs at once (at least 1): a bulk write's conflict
+  # checks, and a coding capture's reads of the stored memories nearest its facts.
+  # [restart]
   # bulk_conflict_check_concurrency: 8
 
   # Facts per batched candidate lookup (conflict and value-update peers) on the write

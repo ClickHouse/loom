@@ -2898,7 +2898,8 @@ class MemorySettings(BaseModel):
     # Supersession pairs one bulk write follows on the triple plane in the request; the
     # rest are recorded for the projection repair to follow. 0 = the repair follows all.
     memory_bulk_follow_max_pairs: Annotated[int, LIVE] = Field(default=1024, ge=0)
-    # Bulk-path conflict checks run at once (at least 1).
+    # Similarity reads one request runs at once (at least 1): a bulk write's conflict
+    # checks, and a coding capture's reads of the stored memories nearest its facts.
     bulk_conflict_check_concurrency: int = Field(default=8, ge=1)
     # Facts per batched candidate lookup (conflict and value-update peers) on
     # the write path; matches the per-fact concurrency so wall time stays flat.
@@ -4164,9 +4165,10 @@ class ModelSettings(BaseModel):
     # mid answer escalates to strong once.
     memory_ask_mid_model: str = ""
     # The durability check on a coding capture: one batched call per capture per
-    # listed model (CSV) judges each fact durable or not and folds same-claim
-    # paraphrases and replaced states. A fact is dropped only when every model says
-    # drop; folds come from the first. Fails open. "" turns it off.
+    # listed model (CSV) judges each fact durable or not, folds same-claim
+    # paraphrases and replaced states, and names the facts a stored memory already
+    # states. A fact is dropped as non-durable only when every model says drop; folds
+    # and stored restatements come from the first. Fails open. "" turns it off.
     memory_extract_verify_models: str = "claude-opus-5-5"
     # The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence
     # thresholds were set on this model; a cheaper one is only safe for clears.

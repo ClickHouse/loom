@@ -4,17 +4,19 @@ The rules in `durable_facts` catch the shapes a session's junk takes by
 construction: a status line, a tool's answer restated, a housekeeping step.
 What is left needs judgment — a fact that restates the session's own
 activity in words no rule knows, a paraphrase of another fact in the same
-capture, an earlier state a later fact replaces, a garbled attribute. One
-batched call per capture, per verifier model, answers three things for the
-whole list: keep or drop each fact, which facts state the same claim (and
-which member is the most complete), and which earlier fact a later one
-replaces.
+capture, an earlier state a later fact replaces, a garbled attribute, a
+claim an earlier session already stored. One batched call per capture, per
+verifier model, answers four things for the whole list: keep or drop each
+fact, which facts state the same claim (and which member is the most
+complete), which earlier fact a later one replaces, and which facts a stored
+memory already states.
 
 A fact is dropped as non-durable only when EVERY verifier model says drop:
 models disagree on the boundary (a second judge disagreed with the labelled
 eval on 73 of its 77 stored-junk rows), and a lost real fact costs more than
 a stored junk one. Same-claim groups and replacements come from the primary
-(first) model: its folds were checked equal on the eval. Every failure —
+(first) model: its folds were checked equal on the eval. Restatements of a
+stored memory come from it too, and it alone is shown them. Every failure —
 an error, a timeout, an unparseable answer — keeps every fact.
 """
 
@@ -35,6 +37,7 @@ from server.memory.domain.extraction_prompts import (
 from server.memory.domain.extraction_prompts import (
     DURABILITY_VERIFIER_SYSTEM_PROMPT as VERIFIER_SYSTEM_PROMPT,
 )
+from server.memory.domain.prompt_fence import FENCE_NOTE, fence, new_nonce
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -54,6 +57,7 @@ class Verdicts:
 
     drop: dict[int, str] = field(default_factory=dict)
     folds: dict[int, int] = field(default_factory=dict)  # member -> kept rep
+    stored: dict[int, int] = field(default_factory=dict)  # fact -> the stored one it restates
     ok: bool = False
     tokens_in: int = 0
     tokens_out: int = 0
@@ -113,7 +117,22 @@ def _key(fact: dict[str, Any]) -> str:
     return f"({key}) " if key else ""
 
 
-def _user_prompt(facts: list[dict[str, Any]], context: CaptureContext | None = None) -> str:
+def _stored_block(stored: list[str]) -> str:
+    """The stored memories a fact may restate, each fenced under its `S<n>` label:
+    their text was written by agents and is read here as data."""
+    if not stored:
+        return ""
+    values = [" ".join(v.split()) for v in stored]
+    nonce = new_nonce("verify", *values)
+    shown = "\n".join(fence(f"S{i}", v, nonce) for i, v in enumerate(values))
+    return f"Facts already stored in the memory:\n{shown}\n\n"
+
+
+def _user_prompt(
+    facts: list[dict[str, Any]],
+    context: CaptureContext | None = None,
+    stored: list[str] | None = None,
+) -> str:
     lines = "\n".join(
         f"{i}. {_role(f)}{_key(f)}{' '.join(_fact_value(f).split())}" for i, f in enumerate(facts)
     )
@@ -126,6 +145,7 @@ def _user_prompt(facts: list[dict[str, Any]], context: CaptureContext | None = N
             shown = "\n".join(f"- {v}" for v in context.lookups)
             parts.append(f"What the session's tools and lookups returned (clipped):\n{shown}")
         head = "\n\n".join(parts) + "\n\n"
+    head += _stored_block(stored or [])
     return f"{head}Facts extracted from one coding session:\n{lines}\n\nReturn the JSON object now."
 
 
@@ -137,9 +157,9 @@ def _int(x: Any, n: int) -> int | None:
     return i if 0 <= i < n else None
 
 
-def parse_verdicts(text: str, n: int) -> Verdicts:
-    """Read a verifier answer for `n` facts. Anything unreadable is an empty,
-    not-ok answer — the caller keeps every fact."""
+def parse_verdicts(text: str, n: int, n_stored: int = 0) -> Verdicts:
+    """Read a verifier answer for `n` facts shown beside `n_stored` stored ones.
+    Anything unreadable is an empty, not-ok answer — the caller keeps every fact."""
     out = Verdicts()
     a, b = (text or "").find("{"), (text or "").rfind("}")
     if a < 0 or b <= a:
@@ -171,6 +191,13 @@ def parse_verdicts(text: str, n: int) -> Verdicts:
         old, new = _int(p.get("old"), n), _int(p.get("new"), n)
         if old is not None and new is not None and old != new:
             out.folds.setdefault(old, new)
+    for r in payload.get("stored") or []:
+        if not isinstance(r, dict):
+            continue
+        s = r.get("s")  # "S2" names stored fact 2; no extracted fact has such a label
+        i, at = _int(r.get("i"), n), _int(s.lstrip("Ss") if isinstance(s, str) else s, n_stored)
+        if i is not None and at is not None:
+            out.stored.setdefault(i, at)
     out.ok = True
     return out
 
@@ -214,12 +241,14 @@ async def _ask(
     timeout_s: float,
     context: CaptureContext | None,
     system: str,
+    stored: list[str] | None = None,
 ) -> Verdicts:
     try:
         result = await asyncio.wait_for(
             client.complete(
-                system=system,
-                user=_user_prompt(facts, context),
+                # The note that says what the markers mean, only when something is fenced.
+                system=system + (f"\n\n{FENCE_NOTE}" if stored else ""),
+                user=_user_prompt(facts, context, stored),
                 max_tokens=90 * len(facts) + 400,
                 response_format={"type": "json_object"},
             ),
@@ -228,10 +257,14 @@ async def _ask(
     except Exception as exc:  # noqa: BLE001 — fail open: keep every fact
         log.warning("durability verifier call failed (%s); keeping all facts", type(exc).__name__)
         return Verdicts()
-    v = parse_verdicts(getattr(result, "text", "") or "", len(facts))
+    v = parse_verdicts(getattr(result, "text", "") or "", len(facts), len(stored or []))
     v.tokens_in = int(getattr(result, "tokens_in", 0) or 0)
     v.tokens_out = int(getattr(result, "tokens_out", 0) or 0)
     return v
+
+
+# The reason on a fact dropped because a stored memory already states it.
+ALREADY_STORED = "already_stored"
 
 
 @dataclass
@@ -250,11 +283,15 @@ async def verify(
     timeout_s: float = 45.0,
     context: CaptureContext | None = None,
     session_capture: bool = False,
+    stored: list[list[tuple[str, str]]] | None = None,
 ) -> VerifyResult:
     """Judge `facts` with every client in `clients` (the first is primary).
     A dropped fact carries `_verify` (the reason) and, when folded,
     `_duplicate_of` (the key of the fact that carries its claim). A plugin's
-    `session_capture` is also judged by the codebase rules."""
+    `session_capture` is also judged by the codebase rules. `stored` holds,
+    for each fact, the `(memory id, text)` of the stored memories nearest it; a fact
+    the primary lists against one of them is dropped with `_stored`, that memory's id,
+    unless an earlier kept fact has its key."""
     if len(facts) < 1 or not clients:
         return VerifyResult(kept=list(facts), dropped=[])
     system = VERIFIER_SESSION_PROMPT if session_capture else VERIFIER_SYSTEM_PROMPT
@@ -262,18 +299,36 @@ async def verify(
     dropped: list[dict[str, Any]] = []
     t_in = t_out = 0
     answered = False
-    for start in range(0, len(facts), settings.memory_durability_verifier_max_facts_per_call):
-        chunk = facts[start : start + settings.memory_durability_verifier_max_facts_per_call]
+    size = settings.memory_durability_verifier_max_facts_per_call
+    for start in range(0, len(facts), size):
+        chunk = facts[start : start + size]
+        # The stored memories nearest this slice's facts, each once, for the primary alone.
+        own = (stored or [])[start : start + size]
+        near = list(dict.fromkeys(m for of_fact in own for m in of_fact))
+        texts = [text for _, text in near]
         answers = list(
-            await asyncio.gather(*(_ask(c, chunk, timeout_s, context, system) for c in clients))
+            await asyncio.gather(
+                *(
+                    _ask(c, chunk, timeout_s, context, system, None if n else texts)
+                    for n, c in enumerate(clients)
+                )
+            )
         )
         t_in += sum(a.tokens_in for a in answers)
         t_out += sum(a.tokens_out for a in answers)
         answered = answered or answers[0].ok
         drops = decide(len(chunk), answers)
+        restated = answers[0].stored if answers[0].ok else {}
         for i, f in enumerate(chunk):
             if i not in drops:
-                kept.append(f)
+                # A listing counts only for a memory read for that fact, and not while an
+                # earlier kept fact has its key: the write decides between a key's facts.
+                key = str(f.get("key") or "").strip()
+                contested = key and any(str(k.get("key") or "").strip() == key for k in kept)
+                if i in restated and near[restated[i]] in own[i] and not contested:
+                    dropped.append(dict(f, _verify=ALREADY_STORED, _stored=near[restated[i]][0]))
+                else:
+                    kept.append(f)
                 continue
             reason, rep = drops[i]
             g = dict(f, _verify=reason)

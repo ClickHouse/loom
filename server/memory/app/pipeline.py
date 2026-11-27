@@ -8,6 +8,7 @@ reorder or skip steps. Each step is addressed by a registered step ID
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -659,8 +660,9 @@ async def _step_drop_non_durable(
 
 
 def _verify_clients(state: WorkflowState) -> list[Any]:
-    """The durable-fact verifier models, primary first; cached like the
-    extractor's clients so a replayed capture is not re-billed."""
+    """The durable-fact verifier models, primary first, behind the extractor's response
+    cache when it is on. A replayed capture is answered from it unless the primary
+    model is shown other stored memories than before."""
     names = [m.strip() for m in str(settings.memory_extract_verify_models).split(",")]
     if settings.llm_provider == "fake":  # a dev/test stack: no model to ask
         return []
@@ -680,13 +682,102 @@ def _verify_clients(state: WorkflowState) -> list[Any]:
     return clients
 
 
+# Stored memories read for each fact the verifier judges, and how much of each it sees.
+STORED_PER_FACT = 3  # not a setting: a restated memory is among a fact's nearest or absent
+STORED_VALUE_CHARS = 400
+
+
+def _repository_tags(state: WorkflowState) -> list[str]:
+    """The tags that name the capture's repository: its `repo:` tags, or its
+    `project:` tags when it has none. The same sentence about another repository is
+    another claim, and a read scoped to this one would not find it."""
+    for prefix in ("repo:", "project:"):
+        mine = [str(t) for t in state.extra_tags if str(t).startswith(prefix)]
+        if mine:
+            return mine
+    return []
+
+
+async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) -> list[list[Any]]:
+    """For each fact, the served rows with no end nearest it among this agent's and
+    user's in any session, of the capture's repository when its tags name one: what an
+    earlier session may already have stored of this capture's claims. One `embed_many`
+    call for the capture, and the reads bounded like the conflict checks of the write
+    that follows. None for a fact that carries `valid_at`, `valid_to` or `foresight`:
+    the verifier compares text and sees no validity. None under `append_only`, where
+    every write is its own event, or under a policy that could not be read. Fail-open:
+    with none, no fact is dropped as already stored."""
+    import server.memory.store as memory_repo
+    from server.embedding import get_embedder
+    from server.memory.app.handlers import nearest_existing_rows
+    from server.memory.app.restore import served_now
+    from server.memory.domain.conflicts import APPEND_ONLY_POLICY
+
+    if await _conflict_policy(state) in (APPEND_ONLY_POLICY, ""):
+        return []
+    identity = memory_repo.Identity(
+        org=state.org,
+        namespace=state.namespace,
+        agent=state.agent,
+        user_id=state.user_id,
+        session_id=state.session_id,
+    )
+    tags = _repository_tags(state)
+    dated = ("valid_at", "valid_to", "foresight")
+    texts = [
+        "" if any(f.get(k) for k in dated) else str(f.get("value") or "").strip()[:1024]
+        for f in facts
+    ]
+    wanted = list(dict.fromkeys(t for t in texts if t))
+    sem = asyncio.Semaphore(int(settings.bulk_conflict_check_concurrency))
+
+    async def _near(text: str, vec: list[float]) -> list[Any]:
+        async with sem:
+            rows = await nearest_existing_rows(
+                identity, text, STORED_PER_FACT, query_vec=vec, tags=tags
+            )
+        # A hit is read back as its key's newest row in any session, which may be a
+        # retired one. A row that ends is not shown either: a fact dropped for it would
+        # stop being served when it does.
+        return [r for r in rows if served_now(r) and r.valid_to is None and r.expires_at is None]
+
+    try:
+        # Document vectors, the space the stored rows are in.
+        vectors = await get_embedder().embed_many(wanted)
+        found = dict(zip(wanted, await asyncio.gather(*map(_near, wanted, vectors)), strict=True))
+    except Exception as e:  # noqa: BLE001 — a failed read must not fail the extraction
+        log.warning("verify_durable: stored-memory read failed (non-fatal): %s", e)
+        return []
+    return [found.get(t, []) for t in texts]
+
+
+async def _reinforce_restated(state: WorkflowState, memory_ids: list[str]) -> None:
+    """Reinforce: one `evidence` usage event on each stored row a dropped fact
+    restated, as a merge at the write records. Fail-open."""
+    from server.memory.store.usage import record_usage_event
+
+    for memory_id in dict.fromkeys(memory_ids):
+        try:
+            await record_usage_event(
+                memory_id=memory_id,
+                org=state.org,
+                namespace=state.namespace,
+                event_type="evidence",
+                event_count=1,
+                agent=state.agent,
+            )
+        except Exception as e:  # noqa: BLE001 — a usage bump; the drop stands
+            log.warning("verify_durable: restatement reinforcement failed (non-fatal): %s", e)
+
+
 async def _step_verify_durable(
     state: WorkflowState,
     config: dict[str, Any],
 ) -> WorkflowState:
     """The durability verifier over a coding capture's
-    remaining facts. Drops a fact every verifier model calls non-durable and
-    folds same-claim paraphrases into the most complete member.
+    remaining facts. Drops a fact every verifier model calls non-durable, folds
+    same-claim paraphrases into the most complete member, and drops a fact a
+    stored memory already states, reinforcing that memory.
     `state.skipped_unverified` counts the drops. Fails open."""
     del config
     facts = list(state.extracted_facts or [])
@@ -697,6 +788,7 @@ async def _step_verify_durable(
         return state
     from server.memory.app import durability_verifier
 
+    near = await _stored_neighbours(state, facts)
     result = await durability_verifier.verify(
         facts,
         clients,
@@ -704,7 +796,12 @@ async def _step_verify_durable(
         # The goal and what the lookups returned
         context=durability_verifier.capture_context(state.messages, state.session_values),
         session_capture=_is_session_capture(state),
+        stored=[
+            [(str(r.memory_id), str(r.value or "")[:STORED_VALUE_CHARS]) for r in rows]
+            for rows in near
+        ],
     )
+    await _reinforce_restated(state, [f["_stored"] for f in result.dropped if "_stored" in f])
     state.extracted_facts = [
         {k: v for k, v in f.items() if not k.startswith("_")} for f in result.kept
     ]
@@ -753,18 +850,22 @@ async def _step_hash_dedup(
     return state
 
 
-async def _newest_wins(state: WorkflowState) -> bool:
-    """Whether the namespace's conflict policy is `newest_wins`; False when
-    the lookup fails, so the batch falls back to `_2` disambiguation."""
+async def _conflict_policy(state: WorkflowState) -> str:
+    """The namespace's conflict policy; "" when the lookup fails."""
     try:
         from server.core.ch import get_client
         from server.memory.app.conflicts import namespace_conflict_policy
 
-        policy = await namespace_conflict_policy(state.org, state.namespace, ch=get_client())
-        return policy == "newest_wins"
-    except Exception as e:  # noqa: BLE001 — policy unknown: keep `_2` disambiguation
-        log.debug("conflict policy lookup failed; keeping `_2` disambiguation: %s", e)
-        return False
+        return await namespace_conflict_policy(state.org, state.namespace, ch=get_client())
+    except Exception as e:  # noqa: BLE001 — policy unknown: the caller keeps its default
+        log.debug("conflict policy lookup failed: %s", e)
+        return ""
+
+
+async def _newest_wins(state: WorkflowState) -> bool:
+    """Whether the namespace's conflict policy is `newest_wins`; False when
+    the lookup fails, so the batch falls back to `_2` disambiguation."""
+    return await _conflict_policy(state) == "newest_wins"
 
 
 # Stored confidence for facts the coverage sweep added.
