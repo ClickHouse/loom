@@ -56,8 +56,17 @@ async def test_search_and_file_follow_reviewed_content(control_plane_url, mint_t
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fields", "status"),
+    [
+        ({"quarantined": {"reason": "failed runs"}}, "quarantined"),
+        ({"tags": ["irrelevant" * 300, "mined"]}, "candidate"),
+        ({"template": {"details": "x" * 3000}}, "template"),
+        ({"run_stats": ["x" * 3000]}, "unknown"),
+    ],
+)
 async def test_file_recall_classifies_procedure_beyond_the_preview(
-    control_plane_url, mint_test_token
+    control_plane_url, mint_test_token, fields, status
 ):
     from loom import Agent
 
@@ -73,12 +82,12 @@ async def test_file_recall_classifies_procedure_beyond_the_preview(
             {
                 "situation": "catalog " * 200,
                 "steps": ["Import rows", "Refresh the index"],
-                "quarantined": {"reason": "failed runs"},
+                **fields,
             },
             memory_type="procedural",
             files=[path],
         )
         file = await agent.call("memory.for_file", {"path": path})
         hit = next(hit for hit in file["hits"] if hit["memory_key"] == "catalog_refresh")
-        assert hit["use_guidance"]["lifecycle"]["procedure_status"] == "quarantined"
+        assert hit["use_guidance"]["lifecycle"]["procedure_status"] == status
         assert "failed runs" not in file["rendered"]

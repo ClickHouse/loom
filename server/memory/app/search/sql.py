@@ -112,6 +112,7 @@ def anchor_pool_sql(where_sql: str) -> str:
                        e.tags AS tags,
                        e.agent AS agent,
                        e.user_id AS user_id,
+                       e.session_id AS session_id,
                        e.version AS version,
                        e.content_sha256 AS content_sha256,
                        e.scope AS scope

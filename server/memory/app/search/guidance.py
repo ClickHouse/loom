@@ -129,6 +129,7 @@ def _memory_evidence(
             evidence[i] = dict(row, namespace=key[1], user_id=key[3])
             if not parked and hit._row_chunk is None and is_content_hash(digest):
                 hit._guidance_content_sha256 = digest
+                hit._guidance_head_version = int(row.get("version") or 0)
 
     return denied, evidence
 
@@ -299,6 +300,6 @@ async def attach_search_guidance(
             )
             if parked:
                 # Link state can change while the served memory revision stays the same.
-                hit.code_state = worst([hit.use_guidance.freshness.code]) or hit.code_state
+                hit.code_state = worst([hit.use_guidance.freshness.code])
         kept.append(hit)
     return kept

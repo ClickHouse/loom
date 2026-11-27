@@ -176,7 +176,7 @@ async def test_a_hot_files_links_are_bound_in_slices_and_the_best_of_all_are_kep
     class _Sliced:
         async def query_all(self, sql: str, params: dict[str, Any] | None = None):
             nonlocal file_scans
-            if "arrayExists" in sql:
+            if "arrayExists(f ->" in sql:
                 file_scans += 1
                 assert "linked" not in (params or {})
                 return [_row("named", "v", confidence=0.99)]

@@ -14,24 +14,57 @@ SERVED_VALUE = "if(length(toString(value_json)) > 2, toString(value_json), value
 _PROCEDURE_BODY = SERVED_VALUE.replace(", value)", ", memory.value)")
 
 
-def _procedure_field(path: str) -> str:
-    return f"ifNull(nullIf(JSONExtractRaw({_PROCEDURE_BODY}, {path}), ''), 'null')"
+# Preserve short scalar values for the classifier without transferring arbitrary JSON.
+PROCEDURE_FIELD_MAX_BYTES = 128
+# The default Python integer conversion limit for decimal strings.
+PROCEDURE_TOTAL_MAX_DIGITS = 4300
 
+
+def _procedure_field(path: str, oversized: str) -> str:
+    raw = f"JSONExtractRaw({_PROCEDURE_BODY}, {path})"
+    substitute = oversized.format(raw=raw, string=f"trimBoth(JSONExtractString({raw}))")
+    return (
+        f"if(length({raw}) > {PROCEDURE_FIELD_MAX_BYTES}, {substitute}, "
+        f"ifNull(nullIf({raw}, ''), 'null'))"
+    )
+
+
+_PROCEDURE_TEMPLATE = _procedure_field(
+    "'template'", "if(toFloat64OrNull({raw}) = 0, 'false', 'true')"
+)
+_PROCEDURE_TOTAL = _procedure_field(
+    "'run_stats', 'total'",
+    f"""multiIf(
+        isNotNull(toFloat64OrNull({{raw}})), if(toFloat64OrNull({{raw}}) >= 1, '1', '0'),
+        match({{string}}, '^[+-]?[0-9]+(_[0-9]+)*$')
+            AND length(replaceRegexpAll({{string}}, '[+_-]', '')) <= {PROCEDURE_TOTAL_MAX_DIGITS},
+            if(NOT startsWith({{string}}, '-') AND match({{string}}, '[1-9]'), '1', '0'),
+        '"invalid"')""",
+)
+_PROCEDURE_TAGS = _procedure_field("'tags'", "'true'")
 
 PROCEDURE_GUIDANCE_FIELDS = f"""
     if(memory_type = 'procedural' AND JSONType({_PROCEDURE_BODY}) = 'Object',
         concat(
             '{{"quarantined":',
                 if(JSONType({_PROCEDURE_BODY}, 'quarantined') = 'Object', '{{}}', 'null'),
-            ',"template":', {_procedure_field("'template'")},
+            ',"template":', {_PROCEDURE_TEMPLATE},
             ',"run_stats":',
                 if(JSONType({_PROCEDURE_BODY}, 'run_stats') = 'Object',
-                   concat('{{"total":', {_procedure_field("'run_stats', 'total'")}, '}}'),
-                   {_procedure_field("'run_stats'")}),
-            ',"tags":', {_procedure_field("'tags'")},
+                   concat('{{"total":', {_PROCEDURE_TOTAL}, '}}'),
+                   {_procedure_field("'run_stats'", "'true'")}),
+            ',"tags":',
+                if(JSONType({_PROCEDURE_BODY}, 'tags') IN ('Array', 'Object', 'String'),
+                    if(arrayExists(tag -> JSONExtractString(tag) = 'mined',
+                                   JSONExtractArrayRaw({_PROCEDURE_BODY}, 'tags'))
+                       OR JSONHas({_PROCEDURE_BODY}, 'tags', 'mined')
+                       OR position(JSONExtractString({_PROCEDURE_BODY}, 'tags'), 'mined') > 0,
+                       '["mined"]', '[]'),
+                    {_PROCEDURE_TAGS}),
             '}}'
         ), '') AS procedure_fields
 """
+
 
 # A high row is reachable by key, never pushed into a code or edit prompt.
 FILE_LISTING_VISIBLE = """

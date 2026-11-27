@@ -91,7 +91,7 @@ async def test_parked_hit_refreshes_cached_code_state(
     assert parked is not None
     assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == [parked]
     assert parked.use_guidance is not None and parked.use_guidance.freshness.code == state
-    assert parked.code_state == (state if state in ("changed", "fresh") else "missing")
+    assert parked.code_state == (state if state in ("changed", "fresh") else "")
 
 
 @pytest.mark.asyncio
@@ -315,27 +315,46 @@ async def test_parked_hit_keeps_review_when_a_metadata_write_advances_the_versio
 
 
 @pytest.mark.parametrize("matches", [True, False])
-async def test_fresh_vector_uses_current_review_only_for_matching_content(monkeypatch, matches):
+@pytest.mark.parametrize("as_bytes", [True, False])
+async def test_fresh_vector_uses_current_review_only_for_matching_content(
+    monkeypatch, matches, as_bytes
+):
+    from server.memory.app.retrieval.search import _fact_rows_to_hits
     from server.memory.app.search.vector_legs import _stamp_row_fields
-    from server.memory.domain.search_types import SearchHit
+    from server.memory.domain.search_types import SearchQuery
 
     async def heads(keys):
         return {_KEY: _head(version=43)}
 
     monkeypatch.setattr(guidance, "guidance_heads", heads)
-    hit = _stamp_row_fields(
-        SearchHit(
-            _KEY[-1],
-            "semantic",
-            "a deployed excerpt",
-            0,
-            content_sha256=("a" if matches else "b") * 64,
+    digest = ("a" if matches else "b") * 64
+    (vector_hit,) = _fact_rows_to_hits(
+        [
+            {
+                "memory_key": _KEY[-1],
+                "memory_type": "semantic",
+                "content_excerpt": "a deployed excerpt",
+                "distance": 0,
+                "rank_score": 1,
+                "content_sha256": digest.encode() if as_bytes else digest,
+            }
+        ],
+        SearchQuery(
+            org="o",
+            namespace="n",
+            scope="private",
+            agent="a",
+            embedding_model="test",
+            query_vec=[1.0],
+            top_k=1,
         ),
-        _hit(),
+        "0.0",
     )
+    hit = _stamp_row_fields(vector_hit, _hit())
     assert await guidance.attach_search_guidance(_INPUT, [hit]) == [hit]
     assert hit.use_guidance is not None
     assert hit.use_guidance.review == ("human" if matches else "unknown")
+    assert hit._guidance_head_version == (43 if matches else 0)
 
 
 @pytest.mark.parametrize("history_fails", [False, True])

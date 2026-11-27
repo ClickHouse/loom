@@ -542,6 +542,7 @@ class _MemorySearchHit(BaseModel):
     # Digest recorded by the leg that retrieved this body and digest confirmed by the head.
     _row_content_sha256: str = ""
     _guidance_content_sha256: str = ""
+    _guidance_head_version: int = 0
     # The hit's code links in repositories the caller may read, as the search's code
     # annotation read them; None = not read (memory.ask reads them itself then).
     _code_links: list[dict[str, Any]] | None = None

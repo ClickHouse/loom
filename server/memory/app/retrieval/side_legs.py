@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from server.core.ch_params import fitting
+from server.core.hashing import hash_text
 from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.search_parsing import _iso_date, _record_excerpt, _record_query_tokens
 from server.memory.domain.search_sql import _build_where
@@ -170,7 +171,7 @@ async def _lexical_recall_fallback(
                 session_id=str(r.get("session_id") or ""),
                 identity=row_identity(r),
                 version=int(r.get("version") or 0),
-                content_sha256=str(r.get("content_sha256") or ""),
+                content_sha256=hash_text(r.get("content_sha256")),
                 # The row's tags ride so the post-fusion belt
                 # can check the hard filter without a second read.
                 tags=[str(t) for t in (r.get("tags") or []) if t],
@@ -498,7 +499,7 @@ async def _fetch_unmatched_candidates(
                 session_id=str(r.get("session_id") or ""),
                 identity=row_identity(r),
                 version=int(r.get("version") or 0),
-                content_sha256=str(r.get("content_sha256") or ""),
+                content_sha256=hash_text(r.get("content_sha256")),
                 tags=[str(t) for t in (r.get("tags") or []) if t],
                 score_components={
                     "unmatched_confidence": 0.05 * confidence,

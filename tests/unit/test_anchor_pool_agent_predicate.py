@@ -130,6 +130,7 @@ def test_every_additive_arm_keeps_the_fact_legs_liveness_window() -> None:
 
 def test_anchor_pool_statement_selects_the_rows_agent_and_scope() -> None:
     sql = anchor_pool_sql(" AND ".join(_anchor_pool_where(_inp(agent="bot"), {})))
+    assert "e.session_id AS session_id" in sql
     assert "e.agent AS agent" in sql and "e.scope AS scope" in sql
     assert AGENT in sql
 

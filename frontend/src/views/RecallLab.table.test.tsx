@@ -154,6 +154,21 @@ describe("Recall Lab: the scores table", () => {
     expect(useStore.getState().inspectedMemoryKey).toBe("deploy_note");
   });
 
+  it("keeps chunk and shared hits visible without opening a namesake", async () => {
+    searchMemory.mockResolvedValue({
+      results: [
+        hit("chunk:s:0", 0.9, { source: "chunk", agent: "writer", user_id: "u", session_id: "s" }),
+        hit("definition", 0.8, { agent: "_shared", user_id: "-", session_id: "-" }),
+      ],
+    });
+    render(<RecallLab />);
+    const table = within(await score());
+    expect(table.getByRole("button", { name: "chunk:s:0" })).toBeDisabled();
+    expect(table.getByRole("button", { name: "definition" })).toBeDisabled();
+    fireEvent.click(table.getByText("excerpt of definition"));
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+  });
+
   it("opens the selected namesake using its complete identity", async () => {
     searchMemory.mockResolvedValue({
       results: [

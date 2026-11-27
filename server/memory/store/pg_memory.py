@@ -51,6 +51,7 @@ from server.memory.store.rows import (
     memory_head_state,
     parse_memory_value,
 )
+from server.memory.store.sql import PROCEDURE_FIELD_MAX_BYTES, PROCEDURE_TOTAL_MAX_DIGITS
 from server.observability import pg_pipeline
 from server.settings import settings
 
@@ -1669,12 +1670,39 @@ async def guidance_heads(
                CASE WHEN body.fields IS NOT NULL THEN jsonb_build_object(
                    'quarantined', CASE WHEN jsonb_typeof(body.fields->'quarantined') = 'object'
                                        THEN '{{}}'::jsonb END,
-                   'template', body.fields->'template',
-                   'run_stats', CASE WHEN jsonb_typeof(body.fields->'run_stats') = 'object'
-                                     THEN jsonb_build_object(
-                                         'total', body.fields->'run_stats'->'total')
-                                     ELSE body.fields->'run_stats' END,
-                   'tags', body.fields->'tags'
+                   'template', CASE
+                       WHEN octet_length((body.fields->'template')::text)
+                            > {PROCEDURE_FIELD_MAX_BYTES}
+                           THEN to_jsonb(body.fields->'template' <> '0'::jsonb)
+                       ELSE body.fields->'template' END,
+                   'run_stats', CASE
+                       WHEN jsonb_typeof(body.fields->'run_stats') = 'object'
+                           THEN jsonb_build_object('total', CASE
+                               WHEN octet_length(total.value::text) <= {PROCEDURE_FIELD_MAX_BYTES}
+                                   THEN total.value
+                               WHEN total.value IS NULL THEN NULL
+                               WHEN jsonb_typeof(total.value) = 'number'
+                                   THEN to_jsonb((total.value >= '1'::jsonb)::int)
+                               WHEN jsonb_typeof(total.value) = 'string'
+                                   AND total.text ~ '^[+-]?[0-9]+(_[0-9]+)*$'
+                                   AND length(translate(total.text, '+_-', ''))
+                                       <= {PROCEDURE_TOTAL_MAX_DIGITS}
+                                   THEN to_jsonb((left(total.text, 1) <> '-'
+                                       AND total.text ~ '[1-9]')::int)
+                               ELSE '"invalid"'::jsonb END)
+                       WHEN octet_length((body.fields->'run_stats')::text)
+                            > {PROCEDURE_FIELD_MAX_BYTES}
+                           THEN 'true'::jsonb
+                       ELSE body.fields->'run_stats' END,
+                   'tags', CASE
+                       WHEN jsonb_typeof(body.fields->'tags') IN ('array', 'object', 'string')
+                           THEN CASE WHEN (body.fields->'tags') ? 'mined'
+                               OR (jsonb_typeof(body.fields->'tags') = 'string'
+                                   AND strpos(body.fields->>'tags', 'mined') > 0)
+                               THEN '["mined"]'::jsonb ELSE '[]'::jsonb END
+                       WHEN octet_length((body.fields->'tags')::text) > {PROCEDURE_FIELD_MAX_BYTES}
+                           THEN 'true'::jsonb
+                       ELSE body.fields->'tags' END
                )::text END AS procedure_fields
         {_EXACT_KEYS}
         CROSS JOIN LATERAL (
@@ -1687,6 +1715,10 @@ async def guidance_heads(
             SELECT CASE WHEN pg_input_is_valid(proc.encoded, 'jsonb')
                               AND proc.encoded IS JSON OBJECT THEN proc.encoded::jsonb END AS fields
         ) AS body
+        CROSS JOIN LATERAL (
+            SELECT body.fields->'run_stats'->'total' AS value,
+                   btrim(body.fields->'run_stats'->>'total') AS text
+        ) AS total
         """,
         *_key_arrays(keys),
         list(columns),

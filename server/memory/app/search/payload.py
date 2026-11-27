@@ -388,7 +388,8 @@ async def _expand_unit_bodies(
         if spent + cost <= budget:
             try:
                 if getattr(h, "use_guidance", None) is not None and (
-                    served_content_sha256(v) != h._guidance_content_sha256
+                    body_row.version != h._guidance_head_version
+                    or served_content_sha256(v) != h._guidance_content_sha256
                 ):
                     h.use_guidance = None
                 h.content_excerpt = text

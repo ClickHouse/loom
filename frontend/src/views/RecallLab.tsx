@@ -277,6 +277,10 @@ function hasWriter(row: RecallRow["writer"]): boolean {
   return Boolean(row.agent && row.agent !== "*" && row.user_id && row.session_id);
 }
 
+function canInspect(row: RecallRow): boolean {
+  return hasWriter(row.writer) && row.writer.agent !== "_shared" && !row.key.startsWith("chunk:");
+}
+
 function recallRowId(
   namespace: string,
   row: Pick<SearchHit, "namespace" | "agent" | "user_id" | "session_id" | "memory_key">,
@@ -321,7 +325,7 @@ function scoreRow(row: RecallRow, i: number, top: number, open: (row: RecallRow)
     onClick: (e) => {
       if (!e.defaultPrevented) open(row);
     },
-    className: hasWriter(row.writer) ? "cursor-pointer" : undefined,
+    className: canInspect(row) ? "cursor-pointer" : undefined,
     items: [
       { className: CARD, label: <span className={`${NUMERIC} text-text-muted`}>{i + 1}</span> },
       {
@@ -330,7 +334,7 @@ function scoreRow(row: RecallRow, i: number, top: number, open: (row: RecallRow)
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <button
               type="button"
-              disabled={!hasWriter(row.writer)}
+              disabled={!canInspect(row)}
               onClick={(e) => {
                 e.stopPropagation();
                 open(row);
@@ -436,8 +440,9 @@ export function RecallLab() {
   const [attempt, setAttempt] = useState(0);
   const inspect = useStore((s) => s.inspect);
   const open = useCallback(
-    ({ key, writer }: RecallRow) => {
-      if (!hasWriter(writer)) return;
+    (row: RecallRow) => {
+      if (!canInspect(row)) return;
+      const { key, writer } = row;
       inspect(key, {
         agent: writer.agent,
         userId: writer.user_id,
