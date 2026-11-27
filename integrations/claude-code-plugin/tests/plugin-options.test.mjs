@@ -216,15 +216,15 @@ test("applyPluginOptions saves the token of the file LOOM_API_KEY_FILE names whe
   assert.equal(JSON.stringify(saved).includes("key.tok"), false, "the plan holds no token");
   assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), { token: "key.tok", url: "https://loom.test" });
   assertMode(configPath, 0o600);
-  // the saved copy outranks the named file for the hooks too: once the file changes, the primer says both send it
+  // the saved copy is never replaced: once the file changes, the primer says the helper sends another token
   fs.writeFileSync(named, "new.tok\n");
   const rotated = applyPluginOptions(env, paths, { envHidden: true });
   assert.equal(rotated.reason, "config has a token");
   assert.equal(rotated.helperFinds, "another");
   assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).token, "key.tok");
   const stale = installTokenNotice(rotated, { ...env, LOOM_CONFIG_FILE: configPath });
-  assert.ok(stale.includes(`the hooks and the loom MCP tools send the token saved in ${configPath}, not`), stale);
-  assert.ok(stale.includes("to use the file's token, save it as `token` in"), stale);
+  assert.ok(stale.includes("the hooks use LOOM_API_KEY_FILE, which Claude Code"), stale);
+  assert.ok(stale.includes(`save the LOOM_API_KEY_FILE token as \`token\` in ${configPath}`), stale);
   assert.equal(/key\.tok|new\.tok/.test(stale), false);
   // the option outranks both for the hooks: the named file is not compared
   const optioned = { ...env, CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok" };
@@ -327,10 +327,11 @@ test("the hook saves the install URL and whether it ran as the plugin's for the 
   }
 });
 
-test("resolvers: the option ranks after the env var and before the files", async () => {
+test("resolvers: the option ranks after the env var and before the files, the named file before the config", async () => {
   const dir = tmp();
   fs.mkdirSync(path.join(dir, ".loom"));
   fs.writeFileSync(path.join(dir, ".loom", "config.json"), JSON.stringify({ token: "cfg.tok", url: "https://cfg" }));
+  fs.writeFileSync(path.join(dir, "secret"), "key.tok\n");
   const saved = { ...process.env };
   try {
     process.env.LOOM_CONFIG_FILE = path.join(dir, ".loom", "config.json");
@@ -342,7 +343,12 @@ test("resolvers: the option ranks after the env var and before the files", async
     assert.equal(m.resolveToken(), "opt.tok");
     assert.equal(m.tokenLookup().kind, "option");
     assert.equal(m.resolveServerUrl(), "https://opt");
+    process.env.LOOM_API_KEY_FILE = path.join(dir, "secret");
+    assert.equal(m.resolveToken(), "opt.tok");
     delete process.env.CLAUDE_PLUGIN_OPTION_TOKEN;
+    assert.deepEqual(m.tokenLookup(), { token: "key.tok", kind: "file" });
+    // a named file that holds no token leaves the config's
+    process.env.LOOM_API_KEY_FILE = path.join(dir, "absent");
     assert.equal(m.resolveToken(), "cfg.tok");
     assert.equal(m.tokenLookup().kind, "config");
     process.env.LOOM_API_KEY = "env.tok";

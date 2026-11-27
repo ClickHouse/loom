@@ -256,10 +256,10 @@ loom mint-token --subject you --org <your-org> --namespaces coding --roles write
 
 ### Where the token is read
 
-| Reader                                 | Reads, in order                                                                                                                 |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| the hooks                              | `LOOM_API_KEY` → the `token` install option → `token` in `~/.loom/config.json` → `~/.loom/token` (`LOOM_API_KEY_FILE` moves it) |
-| the MCP header helper (the Loom tools) | `token` in `~/.loom/config.json` (`LOOM_CONFIG_FILE` moves it) → `~/.loom/token`                                                |
+| Reader                                 | Reads, in order                                                                                                                                                        |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the hooks                              | `LOOM_API_KEY` → the `token` install option → the file `LOOM_API_KEY_FILE` names → `token` in `~/.loom/config.json` → `~/.loom/token` (with `LOOM_API_KEY_FILE` unset) |
+| the MCP header helper (the Loom tools) | `token` in `~/.loom/config.json` (`LOOM_CONFIG_FILE` moves it) → `~/.loom/token`                                                                                       |
 
 Claude Code gives a plugin's header helper neither the install option nor
 `LOOM_API_KEY` or `LOOM_API_KEY_FILE` (measured on Claude Code 2.1.332). So the
@@ -270,12 +270,10 @@ saved there or in `~/.loom/token`; a helper with no token waits up to 5 s for
 that save, and the `loom` CLI and the SDK read the file too. A saved token is
 never replaced: when the hooks use another one, from `LOOM_API_KEY` or the
 named file, the Loom tools send the saved one and the SessionStart primer says
-to save the hooks' token in `~/.loom/config.json`. A token saved in
-`~/.loom/config.json` also outranks the named file for the hooks: when they
-send it and that file holds another token, as after the file is rotated, the
-primer says so. The hook saves `LOOM_API_KEY` or the named file's token, and
-the primer says either line, only where Claude Code runs it for the plugin
-(`CLAUDE_PLUGIN_ROOT` set): not for a hand-wired client, Codex or an agent.
+to save the hooks' token in `~/.loom/config.json`. The hook saves
+`LOOM_API_KEY` or the named file's token, and the primer says that line, only
+where Claude Code runs it for the plugin (`CLAUDE_PLUGIN_ROOT` set): not for a
+hand-wired client, Codex or an agent.
 
 ### Hosted / remote Loom — one config file
 

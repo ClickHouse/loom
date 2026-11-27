@@ -168,9 +168,7 @@ Every option is optional; Claude Code asks once, and an empty answer falls back 
   It does so only when no token is saved (`config.json`, `~/.loom/token`), and never
   replaces one: when the hooks use another token, from `LOOM_API_KEY` or the named file,
   the Loom tools send the saved one and the primer says to save the hooks' token in
-  `config.json`. A token in `config.json` also outranks the named file for the hooks:
-  when they send it and that file holds another token, as after the file is rotated, the
-  primer says so.
+  `config.json`.
 - **No credential at all.** On a server with `LOOM_SELF_SIGNUP=open`, the first session
   signs the machine up: token to `~/.loom/config.json`, a claim code to
   `~/.loom/claim-<namespace>.txt`, and the primer says how to claim the namespace (once,
@@ -382,13 +380,13 @@ hook matching, request execution, nonempty context and delivery to the agent.
 option, then `~/.loom/config.json`, then the token's claims, then the defaults
 (`lib/loom-client.mjs`: `resolveServerUrl`, `resolveToken`, `resolveScope`):
 
-| What      | Lookup order                                                                                             |
-| --------- | -------------------------------------------------------------------------------------------------------- |
-| server    | `LOOM_BASE_URL` → `server_url` option → `config.json` `url` → `http://localhost:7777`                    |
-| token     | `LOOM_API_KEY` → `token` option → `config.json` `token` → `~/.loom/token` (moved by `LOOM_API_KEY_FILE`) |
-| org       | `LOOM_ORG` → `config.json` `org` → the token's `org` claim → `default`                                   |
-| namespace | `LOOM_NAMESPACE` → `config.json` `namespace` → the token's first non-wildcard namespace → `coding`       |
-| agent     | `LOOM_AGENT` → `config.json` `agent` → `claude-code`                                                     |
+| What      | Lookup order                                                                                                                                    |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| server    | `LOOM_BASE_URL` → `server_url` option → `config.json` `url` → `http://localhost:7777`                                                           |
+| token     | `LOOM_API_KEY` → `token` option → the file `LOOM_API_KEY_FILE` names → `config.json` `token` → `~/.loom/token` (with `LOOM_API_KEY_FILE` unset) |
+| org       | `LOOM_ORG` → `config.json` `org` → the token's `org` claim → `default`                                                                          |
+| namespace | `LOOM_NAMESPACE` → `config.json` `namespace` → the token's first non-wildcard namespace → `coding`                                              |
+| agent     | `LOOM_AGENT` → `config.json` `agent` → `claude-code`                                                                                            |
 
 For a remote server the hooks and the header helper need only one file
 (`LOOM_CONFIG_FILE` moves it):

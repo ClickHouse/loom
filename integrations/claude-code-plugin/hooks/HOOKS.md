@@ -108,9 +108,7 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   agent): it keeps both variables from the plugin's helper. None replaces a
   saved token: when the hooks use another token than the helper will send,
   from LOOM_API_KEY or the named file, or the helper will find none, the
-  primer says to save the hooks' token in the config. A config token outranks
-  the named file for the hooks too: when they send it and that file holds
-  another token, the primer says so. There too,
+  primer says to save the hooks' token in the config. There too,
   when that helper will send the config's token and the config names another
   server than the MCP entry's, the primer says so. The `server_url` option
   and whether the hook ran for the plugin are saved to a tmp state file
@@ -281,8 +279,9 @@ Install-time options (`claude plugin install loom@loom --config key=value`)
 reach the hooks as `CLAUDE_PLUGIN_OPTION_<KEY>`: `server_url` and `token`
 (read by `lib/loom-client.mjs`), `toolset` (the MCP URL only),
 `local_first` and `code_repo` (`CLAUDE_PLUGIN_OPTION_CODE_REPO`). Resolution order: the environment, then the option, then
+the file `LOOM_API_KEY_FILE` names (token only), then
 ~/.loom/config.json (`LOOM_CONFIG_FILE`), then ~/.loom/token
-(`LOOM_API_KEY_FILE`, token only), then the plugin's `plugin-defaults.json`
+(token only, with `LOOM_API_KEY_FILE` unset), then the plugin's `plugin-defaults.json`
 (URL only), then http://localhost:7777. Claude Code gives the MCP headers
 helper of a plugin neither the options nor `LOOM_API_KEY` or
 `LOOM_API_KEY_FILE`: there it reads ~/.loom/config.json, then ~/.loom/token.

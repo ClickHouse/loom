@@ -24,8 +24,11 @@ const CODEX = [CODEX_HOOK, "SessionStart", "codex"];
 const GENERIC = [HOOK, "SessionStart"];
 const SAVED_FOR = "https://a.example";
 
+/** A Loom stand-in; `sent` holds the Authorization header of each request. */
 async function server() {
+  const sent = [];
   const srv = http.createServer((req, res) => {
+    sent.push(req.headers.authorization);
     req.resume();
     req.on("end", () => {
       res.writeHead(200, { "content-type": "application/json" });
@@ -35,7 +38,7 @@ async function server() {
     });
   });
   await new Promise((r) => srv.listen(0, "127.0.0.1", r));
-  return { srv, url: `http://127.0.0.1:${srv.address().port}` };
+  return { srv, url: `http://127.0.0.1:${srv.address().port}`, sent };
 }
 
 /** A home holding `config`, or no ~/.loom at all without one. */
@@ -136,7 +139,7 @@ test("an install token written over a config that named another server is saved 
 });
 
 test("LOOM_API_KEY is saved for the helper of Claude Code's plugin, never over a saved token and never printed", async () => {
-  const { srv, url } = await server();
+  const { srv, url, sent } = await server();
   const dirs = [];
   const session = (config, env, command) => {
     const dir = home(config);
@@ -171,12 +174,15 @@ test("LOOM_API_KEY is saved for the helper of Claude Code's plugin, never over a
     const keyFile = await session(null, { LOOM_API_KEY: "", LOOM_API_KEY_FILE: named });
     assert.deepEqual(JSON.parse(fs.readFileSync(config(keyFile.dir), "utf8")), { token: "key.tok", url });
     assert.equal(keyFile.out.includes("key.tok"), false);
-    // the saved copy outranks the named file for the hooks too: once the file changes, the primer says so
+    // the hooks keep reading the named file: once it changes they send its token, and the primer says the tools send another
     fs.writeFileSync(named, "new.tok\n");
+    sent.length = 0;
     const rotated = await run(keyFile.dir, { LOOM_BASE_URL: url, LOOM_API_KEY_FILE: named });
+    assert.ok(sent.includes("Bearer new.tok"), String(sent));
+    assert.equal(sent.includes("Bearer key.tok"), false);
     assert.equal(JSON.parse(fs.readFileSync(config(keyFile.dir), "utf8")).token, "key.tok");
-    const saved = `send the token saved in ${config(keyFile.dir)}, not the other one in the file LOOM_API_KEY_FILE names.`;
-    assert.ok(rotated.includes(saved), rotated);
+    assert.ok(rotated.includes("the hooks use LOOM_API_KEY_FILE, which Claude Code does not pass"), rotated);
+    assert.ok(rotated.includes("and send another token saved there."), rotated);
     assert.equal(/key\.tok|new\.tok/.test(rotated), false);
     // Codex, a hand-wired client and an agent keep the variable to themselves
     const codex = await session(null, {}, CODEX);

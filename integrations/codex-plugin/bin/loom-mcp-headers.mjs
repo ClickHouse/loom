@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // The MCP entry's headers helper. It authenticates from the places the hooks
 // do that reach it: LOOM_API_KEY; for an agent (LOOM_CLIENT_ID with a
-// workload token) its exchanged token and nothing else; otherwise
-// ~/.loom/config.json, then ~/.loom/token. Claude Code gives a plugin's helper
-// neither the install option nor LOOM_API_KEY or LOOM_API_KEY_FILE, so there
-// the token comes from the two files; the SessionStart hook saves it in the
-// first.
+// workload token) its exchanged token and nothing else; otherwise the file
+// LOOM_API_KEY_FILE names, ~/.loom/config.json, then ~/.loom/token. Claude
+// Code gives a plugin's helper neither the install option nor LOOM_API_KEY or
+// LOOM_API_KEY_FILE, so there the token comes from the last two; the
+// SessionStart hook saves it in the config.
 //
 // It also names the code namespace of the session's checkout. Claude Code
 // starts a plugin's helper in the plugin root, so the plugin's entry carries

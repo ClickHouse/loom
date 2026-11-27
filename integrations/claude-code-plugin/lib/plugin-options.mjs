@@ -154,14 +154,6 @@ export function installTokenNotice(plan, env = process.env) {
   if (plan.helperFinds) {
     const config = loomConfigPath(env);
     const name = String(env.LOOM_API_KEY || "").trim() ? "LOOM_API_KEY" : "LOOM_API_KEY_FILE";
-    // A config token outranks the named file in the hooks' lookup too.
-    if (name === "LOOM_API_KEY_FILE" && plan.configHasToken) {
-      return (
-        `Loom: the hooks and the loom MCP tools send the token saved in ${config}, not the other one in ` +
-        `the file LOOM_API_KEY_FILE names. Tell the user once: to use the file's token, save it as ` +
-        `\`token\` in ${config} and restart Claude Code.`
-      );
-    }
     const found = plan.helperFinds === "another" ? "send another token saved there" : "find no token there";
     return (
       `Loom: the hooks use ${name}, which Claude Code does not pass to the loom MCP tools. The tools ` +
