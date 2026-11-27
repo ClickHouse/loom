@@ -6,6 +6,7 @@ import pytest
 
 from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput
 from server.code.app.grep_bodies import definitions_for
+from server.code.domain.search_scope import SearchScope
 
 COMMIT = "a" * 40
 
@@ -86,12 +87,12 @@ def test_saved_match_rows_leave_revisions_for_the_page_reader(monkeypatch):
     matches = [{"path": "a.py", "line": line, "text": "target()"} for line in (3, 8)]
     captured = []
     monkeypatch.setattr(search_cursor, "enabled", lambda: True)
-    monkeypatch.setattr(search_cursor, "encode", lambda **_kwargs: "cursor")
     monkeypatch.setattr(
         search_cursor, "put_pool", lambda *args, **_kwargs: captured.append(args[3])
     )
+    request = CodeGrepInput(pattern="target")
     cursor = grep._issue_grep_cursor(
-        CodeGrepInput(pattern="target"),
+        request,
         "org",
         "repo",
         matches,
@@ -100,8 +101,10 @@ def test_saved_match_rows_leave_revisions_for_the_page_reader(monkeypatch):
         chunks_matched=2,
         truncated=True,
         match_commits=_verified(matches),
+        scope=SearchScope(),
     )
-    assert cursor == "cursor"
+    fields = search_cursor.decode(cursor, kind="g", params=grep._grep_params_hash(request))
+    assert fields["o"] == 1
     assert captured[0]["matches"] == matches
     assert captured[0]["match_commits"] == [COMMIT, COMMIT]
 

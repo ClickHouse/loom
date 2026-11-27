@@ -17,6 +17,7 @@ from server.code.app import grep
 from server.code.app import search_cursor as paging
 from server.code.app.search import handler as h
 from server.code.app.search import shared
+from server.code.domain.search_scope import SearchScope
 from server.code.domain.units import CodeUnit
 from server.core.errors import ValidationError
 from server.settings import settings
@@ -565,6 +566,91 @@ def test_grep_cursor_for_another_pattern_is_a_400(monkeypatch: pytest.MonkeyPatc
         asyncio.run(grep.handle_code_grep(CodeGrepInput(pattern="needle", cursor=c)))
 
 
+def test_grep_cursor_validates_saved_path_filters(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _GrepRepo([_chunk("src/main.py", 3)])
+    monkeypatch.setattr(grep, "CodeRepo", lambda: repo)
+    pools: dict[str, dict[str, Any]] = {}
+    monkeypatch.setattr(
+        paging, "put_pool", lambda org, ns, key, payload, **kw: pools.update({key: payload})
+    )
+
+    async def _get_pool(org, ns, key):
+        return {"payload": pools[key], "indexed_commit": "", "created_at": None}
+
+    async def _as_of(*args):
+        return {}
+
+    monkeypatch.setattr(paging, "get_pool", _get_pool)
+    monkeypatch.setattr(grep, "index_as_of", _as_of)
+    initial = CodeGrepInput(
+        pattern="needle", limit=1, include_body=False, path_globs=["src/*.py", "other/**"]
+    )
+    first = asyncio.run(grep.handle_code_grep(initial))
+    assert first.next_cursor
+    params = grep._grep_params_hash(initial)
+    fields = paging.decode(first.next_cursor, kind="g", params=params)
+    trace_id, _, scope_digest = fields["r"].partition(".")
+    assert trace_id == first.trace_run_id and len(scope_digest) == 64
+    same_scope = initial.model_copy(
+        update={"cursor": first.next_cursor, "path_globs": ["other/**", "src/*.py"], "limit": 2}
+    )
+    page = asyncio.run(grep.handle_code_grep(same_scope))
+    assert [hit["line"] for hit in page.matches] == [2, 3]
+    assert page.as_of["page_offset"] == 1
+    for filters in (
+        {"path_globs": ["other/**"]},
+        {"path_globs": []},
+        {"exclude_globs": ["src/main.py"]},
+        {"langs": ["go"]},
+    ):
+        changed = initial.model_copy(update={"cursor": first.next_cursor, **filters})
+        with pytest.raises(ValidationError, match="different path filters"):
+            asyncio.run(grep.handle_code_grep(changed))
+
+    # An old pool identifier cannot prove the scope that made its offset meaningful.
+    legacy = paging.encode(kind="g", run_id=trace_id, offset=1, params=params, indexed_commit="")
+    for filters in (initial.path_globs, []):
+        request = same_scope.model_copy(update={"cursor": legacy, "path_globs": filters})
+        restarted = asyncio.run(grep.handle_code_grep(request))
+        assert [hit["line"] for hit in restarted.matches] == [1, 2]
+        assert restarted.as_of["page_offset"] == 0
+        assert restarted.as_of["page_fallback"] == "path_scope_unrecorded"
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_grep_cursor_rerun_keeps_the_exact_path(
+    monkeypatch: pytest.MonkeyPatch, expired: bool
+) -> None:
+    path = "src/main.py"
+
+    class _ExactRepo(_GrepRepo):
+        async def grep_chunks(self, org, ns, pattern, **kw):
+            assert kw["scope"].exact_path == path
+            return self._chunks
+
+    async def _as_of(*args):
+        return {}
+
+    async def _no_pool(*args):
+        return None
+
+    repo = _ExactRepo([_chunk(path, 3)])
+    monkeypatch.setattr(grep, "CodeRepo", lambda: repo)
+    monkeypatch.setattr(grep, "index_as_of", _as_of)
+    monkeypatch.setattr(grep, "_read_pool_settling", _no_pool)
+    monkeypatch.setattr(paging, "put_pool", lambda *args, **kw: None)
+    monkeypatch.setattr(paging, "expired", lambda fields: expired)
+    initial = CodeGrepInput(pattern="needle", limit=1, include_body=False, path_prefix=path)
+    first = asyncio.run(grep.handle_code_grep(initial, exact_path=path))
+    assert first.next_cursor
+    followup = initial.model_copy(update={"cursor": first.next_cursor})
+    with pytest.raises(ValidationError, match="different path filters"):
+        asyncio.run(grep.handle_code_grep(followup))
+    second = asyncio.run(grep.handle_code_grep(followup, exact_path=path))
+    assert [(hit["path"], hit["line"]) for hit in second.matches] == [(path, 2)]
+    assert second.as_of["page_fallback"] == ("expired" if expired else "pool_not_found")
+
+
 @pytest.mark.parametrize("related_fails", [False, True])
 def test_grep_cursor_retains_exact_evidence_after_optional_scan(
     monkeypatch: pytest.MonkeyPatch, related_fails: bool
@@ -642,8 +728,17 @@ def test_grep_reruns_pools_without_the_current_source_mapping(
         return {"payload": payload, "indexed_commit": "", "created_at": None}
 
     monkeypatch.setattr(paging, "get_pool", _get_pool)
-    cursor = paging.encode(
-        kind="g", run_id="old", offset=1, params=grep._grep_params_hash(inp), indexed_commit=""
+    cursor = grep._issue_grep_cursor(
+        inp,
+        "o",
+        "n",
+        payload["matches"],
+        served=1,
+        run_id="old",
+        chunks_matched=1,
+        truncated=False,
+        match_commits={},
+        scope=SearchScope(),
     )
     out = asyncio.run(grep.handle_code_grep(inp.model_copy(update={"cursor": cursor})))
     assert [hit["line"] for hit in out.matches] == [11, 12]
