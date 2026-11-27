@@ -147,7 +147,7 @@ Each line is the short form of what the plugins teach, or of what Loom's answers
 
 The block's last memory line stands for the end-of-task review; to spell it out, copy
 its questions from the [agent-integration
-guide](../../guides/agent-integration.md#7-follow-the-memory-skills-review) under the
+guide](../../guides/agent-integration.md) under the
 block. The skills carry the detail the block leaves out: the receipt fields, documents
 versus memories, the stop rules. The `loom` and `loom-code` skills can be installed
 beside the block for that detail ([coding agents](index.md#coding-agents)); `loom`

@@ -1,9 +1,8 @@
 """A documentation page's title and the first sentence of its opening paragraph.
 
-`llms.txt` (scripts/codegen/docs_reference.py) lists this sentence for every page, and the
-documentation site (scripts/docs_site/hooks.py) uses it as the page's meta description,
-cut to the length a search engine shows, so both start with the same answer. Standard
-library only: the site build imports it without the server's dependencies.
+The documentation site uses this sentence as the page's meta description, cut to the
+length a search engine shows. Standard library only: the site build imports it without the
+server's dependencies.
 """
 
 from __future__ import annotations
@@ -11,8 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-# The docs sections, as (title, folder under docs/), in the documentation site's sidebar
-# order; llms.txt picks its own lead order from them (scripts/codegen/docs_reference.py).
+# The docs sections, as (title, folder under docs/), in the documentation site's sidebar order.
 SECTIONS = (
     ("Getting started", "getting-started"),
     ("Use cases", "use-cases"),
@@ -27,7 +25,7 @@ SECTIONS = (
 )
 
 # The pages that open their section right after its index page (Getting started's is its
-# overview.md): llms.txt and the documentation site's sidebar list them in this order.
+# overview.md): the documentation site's sidebar lists them in this order.
 LEAD_PAGES = ("getting-started/quickstart.md",)
 
 

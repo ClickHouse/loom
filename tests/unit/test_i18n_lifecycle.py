@@ -62,8 +62,6 @@ def publish(root: pathlib.Path, source: str) -> None:
 def test_subset_retires_its_landing_and_preserves_other_readme_navigation(
     repo: pathlib.Path, monkeypatch: pytest.MonkeyPatch, preferred: str
 ) -> None:
-    from scripts.docs_site import locales
-
     put(repo, "README.md", "# Loom\n\n<!-- languages -->\n<!-- /languages -->\n")
     landings = {preferred, "docs/use-cases/index.md"}
     for source in landings:
@@ -106,8 +104,6 @@ def test_subset_retires_its_landing_and_preserves_other_readme_navigation(
     assert calls == [("docs/extra.md", "ja")]
     assert not (repo / t.target_path("ja", preferred)).exists()
     assert (repo / t.target_path("es", preferred)).is_file()
-    retained_uri = locales.localized_uri("es", preferred.removeprefix("docs/"))
-    assert locales.translations(repo)[retained_uri]["obsolete"]
     assert spanish.read_bytes() == retained
     assert not t.language_lines_differ()
     assert t.check(skip_stale=True) == 0
@@ -119,7 +115,7 @@ def test_subset_retires_its_landing_and_preserves_other_readme_navigation(
 
 
 def test_retiring_the_last_native_landing_removes_the_readme_site_link(repo: pathlib.Path) -> None:
-    from scripts.docs_site import indexnow
+    from scripts.i18n import site
 
     put(repo, "README.md", "# Loom\n\n<!-- languages -->\n<!-- /languages -->\n")
     put(repo, "docs/index.md", "# Alpha\n")
@@ -127,10 +123,10 @@ def test_retiring_the_last_native_landing_removes_the_readme_site_link(repo: pat
     for source in ("README.md", "docs/index.md"):
         publish(repo, source)
     t.write_language_lines()
-    assert indexnow.SITE in t.language_line("i18n/ja/README.md")
+    assert site.SITE in t.language_line("i18n/ja/README.md")
     (repo / "docs/index.md").unlink()
     assert lc.retire_obsolete(["ja"]) == (1, 0)
-    assert indexnow.SITE not in (repo / "i18n/ja/README.md").read_text()
+    assert site.SITE not in (repo / "i18n/ja/README.md").read_text()
     assert not t.language_lines_differ()
     assert t.check(skip_stale=True) == 0
 

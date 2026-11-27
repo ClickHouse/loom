@@ -262,7 +262,7 @@ key-less provider makes `/v1/health` report `degraded` before you spend a run.
 | Evaluation reads           | `measurement_fields()` sends `auto_touch: false` / `reinforce: false`; `--credit` opts in; on a namespace read before, pass `reinforcement_weight: 0` or use fresh rows            |
 | Fresh namespaces           | One throwaway namespace per item or conversation, erased at the end                                                                                                                |
 | Warm-up                    | `search_latency.py --warm 1` discards the first call per query, so embedding-cache misses do not count as retrieval                                                                |
-| Token lifetime             | Mint a token that outlives the run ([running](./running.md#2-mint-a-token-that-outlives-the-run))                                                                                  |
+| Token lifetime             | Mint a token that outlives the run ([running](./running.md))                                                                                                                       |
 
 ### Bench namespaces
 

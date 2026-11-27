@@ -471,10 +471,10 @@ def test_a_new_language_is_linked_from_every_readme_without_translating(
 
 
 def test_translated_readme_links_to_its_existing_site_landing(tmp_path, monkeypatch) -> None:
-    from scripts.docs_site import indexnow
+    from scripts.i18n import site
 
     monkeypatch.setattr(t, "ROOT", tmp_path)
-    monkeypatch.setattr(indexnow, "SITE", "https://example.com/docs/")
+    monkeypatch.setattr(site, "SITE", "https://example.com/docs/")
     for source in ("README.md", "docs/index.md", "docs/use-cases/index.md"):
         path = tmp_path / source
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -501,15 +501,13 @@ def test_translated_readme_links_to_its_existing_site_landing(tmp_path, monkeypa
     assert "https://example.com" not in t.language_line("i18n/es/README.md")
 
 
-def test_generated_readme_uses_the_mkdocs_default_site_base() -> None:
-    import yaml
+def test_generated_readme_uses_the_documentation_site_base() -> None:
+    from scripts.i18n import site
 
-    from scripts.docs_site import indexnow
-
-    config = yaml.compose((ROOT / "mkdocs.yml").read_text())
-    site_url = next(value for key, value in config.value if key.value == "site_url")
-    assert site_url.tag == "!ENV"
-    assert [item.value for item in site_url.value] == ["LOOM_LEGACY_DOCS_URL", indexnow.SITE]
+    config = (ROOT / "docs/blume.config.ts").read_text()
+    assert "site: new URL(siteUrl).origin" in config
+    assert 'base: "/docs"' in config
+    assert site.SITE == "https://loom.clickhouse.com/docs/"
 
 
 @pytest.mark.parametrize(
@@ -530,11 +528,11 @@ def test_readme_keeps_a_native_site_link_without_a_translated_index(
 ) -> None:
     from html.parser import HTMLParser
 
-    from scripts.docs_site import indexnow, locales
+    from scripts.i18n import site
 
     class Links(HTMLParser):
         def handle_starttag(self, tag, attrs):
-            if tag == "a" and dict(attrs).get("href", "").startswith(indexnow.SITE):
+            if tag == "a" and dict(attrs).get("href", "").startswith(site.SITE):
                 links.append(dict(attrs))
 
     monkeypatch.setattr(t, "ROOT", tmp_path)
@@ -546,11 +544,10 @@ def test_readme_keeps_a_native_site_link_without_a_translated_index(
         target = tmp_path / t.target_path(language.code, source)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(t.header(source, language, t.DEFAULT_MODEL, t.blob(source)) + "# Loom\n")
-    uri = locales.landing_uri(language.code, locales.translations(tmp_path))
-    assert uri == language.code + "/" + expected
+    assert site.landing_sources(sources)[0] == expected
     links = []
     Links().feed(t.language_line("i18n/ja/README.md"))
-    assert links == [{"href": indexnow.SITE + "ja/" + route}]
+    assert links == [{"href": site.SITE + "ja/" + route}]
 
 
 def _translations() -> list[tuple[str, t.Language]]:

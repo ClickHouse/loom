@@ -337,9 +337,7 @@ def language_line(current: str, *, available: set[str] | None = None) -> str:
 
 def readme_documentation(current: str) -> str:
     """Link a translated README to an existing documentation landing in its language."""
-    from scripts.docs_site import indexnow
-    from scripts.docs_site.messages import COPY
-    from scripts.docs_site.paths import landing_sources
+    from scripts.i18n.site import DOCUMENTATION, SITE, landing_sources, page_path
 
     language = next((lg for lg in LANGUAGES if current == target_path(lg.code, "README.md")), None)
     if language is None:
@@ -353,8 +351,8 @@ def readme_documentation(current: str) -> str:
     for source in landing_sources(available):
         target = available[source]
         if lifecycle.owner(target, (ROOT / target).read_text()) is not None:
-            url = indexnow.SITE + language.code + "/" + quote(indexnow.page_path("docs/" + source))
-            return f'\n  <br>\n  <a href="{url}">{COPY[language.code]["documentation"]}</a>'
+            url = SITE + language.code + "/" + quote(page_path("docs/" + source))
+            return f'\n  <br>\n  <a href="{url}">{DOCUMENTATION[language.code]}</a>'
     return ""
 
 

@@ -211,4 +211,4 @@ Loom 是面向 AI agent 的记忆、文档和代码索引服务器，数据存�
 
 ## 另请参阅
 
-[术语表](https://github.com/ClickHouse/loom/blob/main/docs/glossary.md)：Loom 的术语，每个只定义一次。[常见问题](faq.md)：最先会遇到的问题，每个问题一段回答。[`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt)：为 agent 生成的文档索引；[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt) 将说明 Loom 是什么以及如何开始使用的页面合并在一个文件中。
+[术语表](https://github.com/ClickHouse/loom/blob/main/docs/glossary.md)：Loom 的术语，每个只定义一次。[常见问题](faq.md)：最先会遇到的问题，每个问题一段回答。[`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt)：为 agent 生成的文档索引；[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt) 将说明 Loom 是什么以及如何开始使用的页面合并在一个文件中。

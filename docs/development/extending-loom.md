@@ -44,7 +44,7 @@ flowchart LR
 
 - **The code is the registry.** Transports iterate `ALL_OPERATIONS`, the supervisor iterates `_WORKERS`, and the settings reference is generated from `server/settings/`. Each registry has a snapshot or census test that fails until you regenerate it.
 - **Generated files.** `make lint` runs every generator with `--check`: the SDK op tables (`scripts/codegen/sdk_py_gen.py`, `sdk_ts_gen.py`), the reach manifest (`op_reach_census.py`), the reference pages (`docs_reference.py`, `settings_reference.py`) and the Codex plugin copies (`agent_plugin_sync.py`). See [code generation](code-generation.md).
-- **Maturity.** A new op declares `maturity="experimental"` unless it replaces a stable one ([adding an operation](adding-an-operation.md#5-check-reach-and-maturity)).
+- **Maturity.** A new op declares `maturity="experimental"` unless it replaces a stable one ([adding an operation](adding-an-operation.md)).
 - **Measurement.** A change to ranking, extraction or a provider default runs the relevant bench before and after ([performance tuning](../guides/performance-tuning.md#measure-first)).
 - **Foundational shapes are not extension points.** The engine (ClickHouse), the identity tuple, per-row content-hash audit and the five belief-revision operations change only with a design rationale in the PR and in the architecture docs ([system overview](../architecture/system-overview.md)).
 

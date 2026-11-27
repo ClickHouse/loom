@@ -228,4 +228,4 @@ TypeScript SDK, 그리고 대시보드를 통해 Loom에 접근합니다. 이 �
 
 ## 함께 보기
 
-[용어집](glossary.md): Loom의 용어를 한곳에 정리했습니다. [자주 묻는 질문](faq.md): 가장 먼저 나오는 질문과 한 단락짜리 답변입니다. [`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt): 에이전트를 위해 생성한 문서 색인입니다. [`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt)에는 Loom이 무엇인지, 어떻게 시작하는지를 설명하는 페이지가 하나의 파일에 담겨 있습니다.
+[용어집](glossary.md): Loom의 용어를 한곳에 정리했습니다. [자주 묻는 질문](faq.md): 가장 먼저 나오는 질문과 한 단락짜리 답변입니다. [`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt): 에이전트를 위해 생성한 문서 색인입니다. [`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt)에는 Loom이 무엇인지, 어떻게 시작하는지를 설명하는 페이지가 하나의 파일에 담겨 있습니다.

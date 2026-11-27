@@ -29,12 +29,12 @@ ENDPOINT = "https://api.indexnow.org/indexnow"
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from scripts.docs_site.paths import page_path  # noqa: E402
+from scripts.i18n.site import page_path  # noqa: E402
 
 DOCS = ROOT / "docs"
 PUBLIC_PAGES_PATH = "docs/scripts/public-pages.json"
 HOME_LOCALES_PATH = "docs/scripts/home-locales.json"
-LEGACY_SITEMAP_TEMPLATE = "scripts/docs_site/overrides/sitemap.xml"
+LANGUAGES = ("zh-CN", "ja", "ko", "pt-BR", "es")
 PUBLIC_PAGE_URLS = {
     f"docs/pages/{destination.removeprefix('/docs/')}.astro": ORIGIN + route
     for route, destination in json.loads((ROOT / PUBLIC_PAGES_PATH).read_text()).items()
@@ -64,6 +64,7 @@ PUBLIC_BUILD_INPUTS = (
 )
 BUILD_INPUTS = (
     *SITE_BUILD_INPUTS,
+    "scripts/i18n/site.py",
     "docs/components.ts",
     "docs/components/DocsBreadcrumb.astro",
     "docs/components/DocsFooter.astro",
@@ -72,15 +73,6 @@ BUILD_INPUTS = (
     "docs/components/DocsPagination.astro",
     "docs/components/DocsSearch.astro",
     "docs/components/DocsSearchMarkup.astro",
-    "mkdocs.yml",
-    "scripts/codegen/page_summary.py",
-    "scripts/docs_site/hooks.py",
-    "scripts/docs_site/locales.py",
-    "scripts/docs_site/messages.py",
-    "scripts/docs_site/video_labels.py",
-    "scripts/docs_site/paths.py",
-    "scripts/docs_site/requirements.txt",
-    "scripts/docs_site/overrides/",
 )
 
 
@@ -96,8 +88,6 @@ def page_url(path: str) -> str | None:
     if path in PUBLIC_PAGE_URLS:
         return PUBLIC_PAGE_URLS[path]
     if path.startswith("i18n/"):
-        from scripts.docs_site.locales import localized_page_path
-
         localized = localized_page_path(path)
         return SITE + localized if localized is not None else None
     if not (path.startswith("docs/") and path.endswith(".md")):
@@ -107,8 +97,6 @@ def page_url(path: str) -> str | None:
 
 def every_page() -> list[str]:
     """The published documentation routes, including translations."""
-    from scripts.docs_site.locales import translations
-
     paths = [p.relative_to(DOCS) for p in DOCS.rglob("*.md")]
     english = [
         url
@@ -117,15 +105,11 @@ def every_page() -> list[str]:
         and path.parts[0] not in {"dist", "node_modules"}
         and (url := page_url(f"docs/{path.as_posix()}"))
     ]
-    localized = [
-        SITE + urllib.parse.quote(page_path(f"docs/{uri}")) for uri in translations(DOCS.parent)
-    ]
+    localized = [SITE + route for route in translated_page_paths()]
     return sorted([*english, *localized])
 
 
 def urls_for(changes: Mapping[str, str], previous_public_routes: Iterable[str] = ()) -> list[str]:
-    from scripts.docs_site.locales import LANGUAGES, localized_page_path
-
     changed = {u for p in changes if (u := page_url(p))}
     topology = [p for p, status in changes.items() if status != "M"]
     # When a route appears or disappears, alternate sets and translated links can change.
@@ -133,10 +117,7 @@ def urls_for(changes: Mapping[str, str], previous_public_routes: Iterable[str] =
         any(p.startswith("docs/") and p.endswith(".md") for p in topology)
         and any(any((DOCS.parent / "i18n" / lang / "docs").rglob("*.md")) for lang in LANGUAGES)
     )
-    # The legacy sitemap template changes a different host.
-    if locale_change or _changed_build_input(
-        changes.keys() - {LEGACY_SITEMAP_TEMPLATE}, BUILD_INPUTS
-    ):
+    if locale_change or _changed_build_input(changes, BUILD_INPUTS):
         # A deleted page is no longer in the tree, so keep the changed paths' URLs too.
         changed.update(every_page())
     if locale_change:
@@ -155,6 +136,30 @@ def _changed_build_input(paths: Iterable[str], inputs: tuple[str, ...]) -> bool:
         for path in paths
         for item in inputs
     )
+
+
+def localized_page_path(path: str) -> str | None:
+    """The published route for an existing or deleted tracked translation."""
+    parts = path.split("/", 3)
+    if (
+        len(parts) != 4
+        or parts[0] != "i18n"
+        or parts[1] not in LANGUAGES
+        or parts[2] != "docs"
+        or not parts[3].endswith(".md")
+    ):
+        return None
+    return urllib.parse.quote(page_path(f"docs/{parts[1]}/{parts[3]}"))
+
+
+def translated_page_paths() -> list[str]:
+    """Return routes for every tracked translation the site prepares."""
+    return [
+        localized
+        for language in LANGUAGES
+        for path in (DOCS.parent / "i18n" / language / "docs").rglob("*.md")
+        if (localized := localized_page_path(path.relative_to(DOCS.parent).as_posix())) is not None
+    ]
 
 
 def payload(urls: list[str], k: str) -> dict:

@@ -126,7 +126,7 @@ with `loom install`) so the tools the block names are listed.
 
 ## Share a team namespace with separate credentials
 
-Use an [authenticated multi-user deployment](quickstart.md#2-open-the-dashboard)
+Use an [authenticated multi-user deployment](quickstart.md)
 with TLS for remote clients. Single-user mode does not enforce team access boundaries.
 The server must support create-if-absent memory writes through
 `if_match_sha256: "absent"`, and its session-protection policy must admit the write.

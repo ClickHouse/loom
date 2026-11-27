@@ -1,8 +1,18 @@
-"""Routes shared by the HTML, Markdown and IndexNow documentation outputs."""
+"""Documentation-site routes used when generated README links name a translation."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+
+SITE = "https://loom.clickhouse.com/docs/"
+DOCUMENTATION = {
+    "en": "Documentation",
+    "zh-CN": "文档",
+    "ja": "ドキュメント",
+    "ko": "문서",
+    "pt-BR": "Documentação",
+    "es": "Documentación",
+}
 
 
 def landing_sources(sources: Iterable[str]) -> list[str]:
@@ -12,7 +22,7 @@ def landing_sources(sources: Iterable[str]) -> list[str]:
 
 
 def page_path(path: str) -> str:
-    """The path under the site a docs/ Markdown file is served at ("" for the home page)."""
+    """Return the path under the site for a docs-relative Markdown file."""
     rel = path[len("docs/") : -len(".md")]
     if rel == "index":
         return ""

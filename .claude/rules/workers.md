@@ -11,5 +11,5 @@ paths:
 - A pass that reaches ClickHouse retries a transient failure within its pass budget rather than waiting for the next interval.
 - A worker whose written orgs come only from a log table (`LOG_TABLES` in `server/cli/cell_scan.py`) writes a log table too: its table joins `LOG_TABLES`, so the first attach never places an org a caller only typed.
 - An intended change to the enabled set, order, cadence or deadline updates the snapshot: `LOOM_UPDATE_WORKER_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_worker_registry_snapshot.py`.
-- Two copies can briefly overlap (a lease handover, an `on` process, two colours during a deploy): a pass is harmless when it runs twice at once — idempotent writes, leased claims, cursors in the store ([where it runs](../../docs/development/adding-a-worker.md#5-understand-where-it-runs)).
+- Two copies can briefly overlap (a lease handover, an `on` process, two colours during a deploy): a pass is harmless when it runs twice at once — idempotent writes, leased claims, cursors in the store ([where it runs](../../docs/development/adding-a-worker.md)).
 - Guide: [adding-a-worker](../../docs/development/adding-a-worker.md).

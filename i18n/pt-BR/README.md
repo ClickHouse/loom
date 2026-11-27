@@ -32,7 +32,7 @@
   <a href="#get-started">Primeiros passos</a> ·
   <a href="#why-loom">Recursos</a> ·
   <a href="#integrations">Integrações</a> ·
-  <a href="https://loom.clickhouse.com/docs/">Documentação</a>
+  <a href="https://clickhouse.github.io/loom/">Documentação</a>
 </p>
 
 <p>
@@ -321,12 +321,12 @@ além dos protocolos completos, modelos e artefatos.
 ## Documentação e contribuição
 
 Para contexto compartilhado de agentes, inteligência de código e recuperação com controle de permissões, comece pela
-[documentação](https://loom.clickhouse.com/docs/). Para os requisitos de implantação, consulte os
+[documentação](https://clickhouse.github.io/loom/). Para os requisitos de implantação, consulte os
 [pré-requisitos](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites).
 
 [Implantação](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md) · [Perguntas frequentes](https://github.com/ClickHouse/loom/blob/main/docs/faq.md) ·
 [Como contribuir](https://github.com/ClickHouse/loom/blob/main/CONTRIBUTING.md) · [Reporte de segurança](https://github.com/ClickHouse/loom/blob/main/SECURITY.md) ·
-[`llms.txt`](https://loom.clickhouse.com/docs/llms.txt) ·
-[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt)
+[`llms.txt`](https://clickhouse.github.io/loom/llms.txt) ·
+[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt)
 
 Apache-2.0 · [Licença](https://github.com/ClickHouse/loom/blob/main/LICENSE) · [Aviso](https://github.com/ClickHouse/loom/blob/main/NOTICE)

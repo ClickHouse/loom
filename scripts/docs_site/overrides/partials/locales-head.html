@@ -1,8 +1,0 @@
-{% if page %}
-  {% if page.meta.og_locale %}
-  <meta property="og:locale" content="{{ page.meta.og_locale }}">
-  {% endif %}
-  {% for alternate in page.meta.alternates %}
-  <link rel="alternate" hreflang="{{ alternate.lang }}" href="{{ alternate.url | e }}">
-  {% endfor %}
-{% endif %}

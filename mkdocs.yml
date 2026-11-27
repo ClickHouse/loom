@@ -1,6 +1,6 @@
-# The documentation site, built from docs/ by .github/workflows/docs-site.yml.
+# Legacy documentation configuration used by the translation parser.
 site_name: ClickHouse Loom
-site_url: !ENV [LOOM_LEGACY_DOCS_URL, https://loom.clickhouse.com/docs/]
+site_url: https://loom.clickhouse.com/docs/
 site_description: >-
   Self-hosted MCP server that gives AI agents shared long-term memory, document search
   with citations and a code index, stored in ClickHouse.
@@ -9,7 +9,6 @@ edit_uri: edit/main/docs/
 docs_dir: docs
 theme:
   name: material
-  custom_dir: scripts/docs_site/overrides
   features: [navigation.sections, search.suggest, content.code.copy, content.action.edit]
 markdown_extensions:
   - admonition
@@ -21,9 +20,6 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
-hooks:
-  - scripts/docs_site/locales.py
-  - scripts/docs_site/hooks.py
 validation:
   links:
     not_found: warn

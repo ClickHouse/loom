@@ -33,7 +33,7 @@ nothing is close enough. This page explains each leg, how the rank is computed, 
 which settings move it.
 ```
 
-`llms.txt` lists the first sentence of that paragraph for the page, and the documentation site uses it as the page's search description. Then, where they apply: the user-visible behaviour, the interfaces (operations, CLI, settings), how it works, limits and failure modes, and "Related" links. Architecture pages add **Source entry points** (paths and symbols) and **Invariants**.
+The documentation site uses the first sentence of that paragraph as the page's search description and generates `llms.txt` from it. Then, where they apply: the user-visible behaviour, the interfaces (operations, CLI, settings), how it works, limits and failure modes, and "Related" links. Architecture pages add **Source entry points** (paths and symbols) and **Invariants**.
 
 ## Prerequisites
 
@@ -82,21 +82,22 @@ Use these spellings everywhere; the [glossary](../glossary.md) defines them.
 
 ## Generated pages
 
-These pages are rendered from the code. Edit the source, then run the generator. `make lint` runs each with `--check`, so a stale page fails CI.
+These pages are generated from the code or documentation source. Edit the source, then run the generator. `make lint` runs each with `--check`, so a stale page fails CI.
 
-| Page                                                                                  | Source                                                                                 | Generator                                      |
-| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| [reference/configuration.md](../reference/configuration.md)                           | comments above fields in `server/settings/`                                            | `python scripts/codegen/settings_reference.py` |
-| [reference/operations.md](../reference/operations.md)                                 | `server.operations.registry.ALL_OPERATIONS`                                            | `python scripts/codegen/docs_reference.py`     |
-| [`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt) (repository root) | every page's title and the first sentence of its opening paragraph                     | `python scripts/codegen/docs_reference.py`     |
-| `reference/operations/<group>.md` (one per group)                                     | the op input/output models and the comments above their fields                         | `python scripts/codegen/docs_reference.py`     |
-| [reference/workers.md](../reference/workers.md)                                       | `server/workers/registry.py` (`_WORKERS`)                                              | `python scripts/codegen/docs_reference.py`     |
-| [reference/cli.md](../reference/cli.md)                                               | the `loom` parser snapshot `tests/unit/snapshots/cli_tree.json`                        | `python scripts/codegen/docs_reference.py`     |
-| [reference/errors.md](../reference/errors.md)                                         | `server/core/errors.py`                                                                | `python scripts/codegen/docs_reference.py`     |
-| [reference/status.md](../reference/status.md)                                         | op `maturity` and the boolean settings of `server/settings/catalog.py` that load false | `python scripts/codegen/docs_reference.py`     |
-| [reference/schema.md](../reference/schema.md)                                         | `schemas/schema.sql`                                                                   | `python scripts/codegen/docs_reference.py`     |
+| Page                                                        | Source                                                                                 | Generator                                      |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| [reference/configuration.md](../reference/configuration.md) | comments above fields in `server/settings/`                                            | `python scripts/codegen/settings_reference.py` |
+| [reference/operations.md](../reference/operations.md)       | `server.operations.registry.ALL_OPERATIONS`                                            | `python scripts/codegen/docs_reference.py`     |
+| `llms.txt` (documentation site)                             | the docs' page titles and opening paragraphs                                           | Blume site build                               |
+| `reference/operations/<group>.md` (one per group)           | the op input/output models and the comments above their fields                         | `python scripts/codegen/docs_reference.py`     |
+| [reference/workers.md](../reference/workers.md)             | `server/workers/registry.py` (`_WORKERS`)                                              | `python scripts/codegen/docs_reference.py`     |
+| [reference/cli.md](../reference/cli.md)                     | the `loom` parser snapshot `tests/unit/snapshots/cli_tree.json`                        | `python scripts/codegen/docs_reference.py`     |
+| [reference/errors.md](../reference/errors.md)               | `server/core/errors.py`                                                                | `python scripts/codegen/docs_reference.py`     |
+| [reference/status.md](../reference/status.md)               | op `maturity` and the boolean settings of `server/settings/catalog.py` that load false | `python scripts/codegen/docs_reference.py`     |
+| [reference/schema.md](../reference/schema.md)               | `schemas/schema.sql`                                                                   | `python scripts/codegen/docs_reference.py`     |
 
-On the documentation site, `scripts/docs_site/hooks.py` serves each page's Markdown copy beside the page, at its URL plus `index.html.md` and, for a section index, at `<folder>.md`, named by a `<link rel="alternate" type="text/markdown">` tag on the page; `llms.txt` with its links pointing at those copies; `llms-full.txt` (the pages that say what Loom is and how to start); and the repository's `llms-install.md`.
+On the documentation site, Blume serves each page's Markdown copy beside the page and
+publishes `llms.txt` and `llms-full.txt`. `llms-install.md` remains in the repository.
 
 The site publishes generated pages from `i18n/<language>/docs/` under `/<language>/`. English is the canonical default. Each page keeps its docs-relative path under `/<language>/`, so the homepage and use-case index have distinct routes. The English homepage links to each available translated homepage, or to its translated use-case index when the homepage is unavailable. Each translated page links to its English source and to the available equivalent translations. A notice marks translations whose source blob differs from the current English page. Translation generation stays in `scripts/i18n/translate.py`; the site build does not call a translation provider.
 
@@ -110,6 +111,5 @@ The SDK op tables (`sdk/python/loom/ops.py`, `sdk/typescript/src/generated/ops.t
 make format                                   # Prettier formats the Markdown, ruff its Python blocks
 uv run pytest tests/unit/test_doc_links.py tests/unit/test_public_copy.py -q
 python scripts/codegen/docs_reference.py --check
-pip install --require-hashes --no-deps --only-binary=:all: -r scripts/docs_site/requirements.txt  # once, in a virtualenv
-mkdocs build --strict                         # the docs site build CI runs
+npm --prefix docs run build                    # builds the deployed documentation site
 ```

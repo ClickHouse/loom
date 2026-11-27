@@ -409,13 +409,15 @@ def test_hosted_finalizer_respects_reviews_and_merges_only_exact_successful_head
 
     monkeypatch.setattr(a, "api", api)
     calls: list[tuple[str, ...]] = []
+    build_environments: list[dict[str, str] | None] = []
     actual = a.command
 
     def command(*args: str, **kwargs: Any) -> str:
-        if args[0] == "mkdocs":
+        if args[0] == "npm":
             calls.append(args)
+            build_environments.append(kwargs.get("env"))
             if site_raises:
-                raise RuntimeError("strict site build failed")
+                raise RuntimeError("documentation build failed")
             return ""
         if args[0] != "gh":
             return actual(*args, **kwargs)
@@ -433,17 +435,29 @@ def test_hosted_finalizer_respects_reviews_and_merges_only_exact_successful_head
     monkeypatch.setattr(a, "command", command)
     permitted = published_code in (approved.split() or list(a.t.ROLLOUT_LANGUAGES))
     if merged and permitted and site_raises:
-        with pytest.raises(RuntimeError, match="strict site build failed"):
+        with pytest.raises(RuntimeError, match="documentation build failed"):
             a.finalize()
     else:
         a.finalize()
     merge_calls = [call for call in calls if call[1:3] == ("pr", "merge")]
     if merged and permitted and not site_raises:
         assert len(merge_calls) == 1
-        assert calls.index(("mkdocs", "build", "--strict")) < calls.index(merge_calls[0])
+        assert calls.index(("npm", "--prefix", "docs", "run", "build")) < calls.index(
+            merge_calls[0]
+        )
         assert merge_calls[0][-2:] == ("--match-head-commit", sha)
         assert "--admin" not in merge_calls[0] and "--auto" not in merge_calls[0]
-        assert calls[-1] == ("gh", "workflow", "run", "docs-site.yml", "--ref", "main")
+        assert calls[-2:] == [
+            merge_calls[0],
+            ("gh", "workflow", "run", "docs-site.yml", "--ref", "main"),
+        ]
+        assert build_environments == [
+            {
+                key: value
+                for key, value in os.environ.items()
+                if key not in {"GH_TOKEN", "GITHUB_TOKEN"}
+            }
+        ]
     else:
         assert merge_calls == []
         assert not any(call[1:3] == ("workflow", "run") for call in calls)
@@ -473,51 +487,6 @@ def test_unchanged_pending_data_keeps_the_reviewed_commit(
     monkeypatch.setattr(a, "command", command)
     a.publish()
     assert calls[-1][-1] == f"expected_sha={previous}"
-
-
-@pytest.mark.parametrize(
-    "site_result,expected_dispatch", [(None, True), ("failure", True), ("success", False)]
-)
-def test_scheduled_reconciliation_retries_suppressed_or_failed_site_deployment(
-    repository: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    site_result: str | None,
-    expected_dispatch: bool,
-) -> None:
-    sha = a.git("rev-parse", "HEAD")
-    runs = (
-        []
-        if site_result is None
-        else [
-            {
-                "head_branch": "main",
-                "head_sha": sha,
-                "status": "completed",
-                "conclusion": site_result,
-            }
-        ]
-    )
-
-    def api(path: str) -> Any:
-        if "/pulls?" in path:
-            return [{"merged_at": "one", "merge_commit_sha": sha}]
-        return {"workflow_runs": runs}
-
-    monkeypatch.setattr(a, "api", api)
-    actual = a.command
-    calls: list[tuple[str, ...]] = []
-
-    def command(*args: str, **kwargs: Any) -> str:
-        if args[0] == "gh":
-            calls.append(args)
-            return ""
-        return actual(*args, **kwargs)
-
-    monkeypatch.setattr(a, "command", command)
-    a.sync_site("ClickHouse/loom")
-    assert bool(calls) is expected_dispatch
-    if expected_dispatch:
-        assert calls == [("gh", "workflow", "run", "docs-site.yml", "--ref", "main")]
 
 
 @pytest.mark.parametrize(
@@ -667,31 +636,6 @@ def test_publisher_refuses_changes_outside_requested_batch_before_push(
     monkeypatch.setattr(a, "command", command)
     with pytest.raises(ValueError, match="outside the selected batch"):
         a.publish()
-
-
-def test_finalize_retries_merged_site_while_next_translation_pr_waits_for_ci(
-    repository: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("GITHUB_REPOSITORY", "ClickHouse/loom")
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "schedule")
-    sha = a.git("rev-parse", "HEAD")
-    calls: list[tuple[str, ...]] = []
-
-    def api(path: str) -> Any:
-        if "/pulls?state=closed" in path:
-            return [{"merged_at": "one", "merge_commit_sha": sha}]
-        if "/pulls?state=open" in path:
-            return [
-                {"draft": False, "head": {"sha": sha, "repo": {"full_name": "ClickHouse/loom"}}}
-            ]
-        if "/actions/workflows/" in path:
-            return {"workflow_runs": []}
-        raise AssertionError(path)
-
-    monkeypatch.setattr(a, "api", api)
-    monkeypatch.setattr(a, "command", lambda *args: calls.append(args) or "")
-    a.finalize()
-    assert calls == [("gh", "workflow", "run", "docs-site.yml", "--ref", "main")]
 
 
 def test_rollout_scope_preserves_generic_language_capability() -> None:

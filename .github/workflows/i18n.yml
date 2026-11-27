@@ -9,9 +9,6 @@ on:
       - "README.md"
       - "docs/**"
       - "scripts/i18n/**"
-      - "scripts/docs_site/messages.py"
-      - "scripts/docs_site/indexnow.py"
-      - "scripts/docs_site/paths.py"
       - ".github/workflows/i18n.yml"
   schedule:
     - cron: "37 */6 * * *"
@@ -106,7 +103,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      actions: write # Dispatch the docs deployment after merge.
+      actions: write # Read validating CI and dispatch IndexNow after the translation merge.
       contents: write # Write the validated squash merge to main.
       pull-requests: write # Squash-merge the validated translation pull request.
     steps:
@@ -118,10 +115,15 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - name: Install the site builder
+      - name: Install the translation parser
         run: |
           python -m pip install --require-hashes --no-deps --only-binary=:all: -r scripts/docs_site/requirements.txt
-      - name: Merge the successful exact head and publish the site
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.19"
+      - name: Install the documentation builder
+        run: npm ci --prefix docs
+      - name: Merge the successful exact head
         env:
           GH_TOKEN: ${{ github.token }}
           LOOM_I18N_LANGUAGES: ${{ vars.LOOM_I18N_LANGUAGES }}

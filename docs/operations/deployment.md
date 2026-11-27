@@ -883,7 +883,7 @@ LOOM_JWT_SECRET=<...>
 When switching an installed local stack, edit `~/.loom/.env` (or the checkout's `.env`)
 and keep its existing random `LOOM_JWT_SECRET`; replacing it would invalidate tokens and
 sealed credentials. Recreate the Loom container to load the changes, as shown in the
-[quickstart](../getting-started/quickstart.md#2-open-the-dashboard). Preserve the data
+[quickstart](../getting-started/quickstart.md). Preserve the data
 volumes. Signing up does not automatically give a new account access to existing local
 memories: provision the appropriate namespace grants through an operator.
 

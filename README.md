@@ -139,7 +139,7 @@ Results are specific to the tested workloads.
 
 Both modes support the same Loom features, including configured LLMs and embeddings.
 Single-user is not a reduced-feature edition. You can also
-[switch an existing installation without deleting its data](./docs/getting-started/quickstart.md#2-open-the-dashboard);
+[switch an existing installation without deleting its data](./docs/getting-started/quickstart.md);
 grant new accounts access to the existing namespaces.
 
 To try it with nothing installed, open it in a codespace:

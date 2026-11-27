@@ -217,7 +217,7 @@ Start the [single-user quickstart](../getting-started/quickstart.md#fast-path-re
 The calls below use its loopback HTTP endpoint with authentication off. They save a
 disposable example rule, not a claim about your repository's test policy. No model key
 is needed for this exact-key check. An authenticated deployment instead needs the
-[token and identity fields](../getting-started/quickstart.md#4-first-memory-over-http)
+[token and identity fields](../getting-started/quickstart.md)
 for the caller's permitted namespace; do not expose the single-user endpoint to a team.
 
 Save the review rule for an example coding task:

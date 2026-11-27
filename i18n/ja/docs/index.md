@@ -211,4 +211,4 @@ Loom は、AI エージェント向けのメモリ、ドキュメント、コー
 
 ## 関連ページ
 
-[用語集](glossary.md)：Loom の用語を一か所にまとめて定義しています。[よくある質問](faq.md)：最初に出てくる質問に、それぞれ一段落で答えます。[`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt)：エージェント向けに生成されたドキュメントの索引です。[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt) には、Loom とは何か、どう始めるかを説明するページが 1 つのファイルにまとめられています。
+[用語集](glossary.md)：Loom の用語を一か所にまとめて定義しています。[よくある質問](faq.md)：最初に出てくる質問に、それぞれ一段落で答えます。[`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt)：エージェント向けに生成されたドキュメントの索引です。[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt) には、Loom とは何か、どう始めるかを説明するページが 1 つのファイルにまとめられています。

@@ -32,7 +32,7 @@
   <a href="#get-started">快速开始</a> ·
   <a href="#why-loom">功能</a> ·
   <a href="#integrations">集成</a> ·
-  <a href="https://loom.clickhouse.com/docs/">文档</a>
+  <a href="https://clickhouse.github.io/loom/">文档</a>
 </p>
 
 <p>
@@ -234,11 +234,11 @@ Langfuse 和 ClickStack 是可选集成，不是 Docker 技术栈中自带的服
 
 ## 文档与贡献
 
-如需了解共享 agent 上下文、代码智能和带权限的检索，请从[文档](https://loom.clickhouse.com/docs/)开始。有关部署要求，请参阅[前提条件](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites)。
+如需了解共享 agent 上下文、代码智能和带权限的检索，请从[文档](https://clickhouse.github.io/loom/)开始。有关部署要求，请参阅[前提条件](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites)。
 
 [部署](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md) · [常见问题](https://github.com/ClickHouse/loom/blob/main/docs/faq.md) ·
 [参与贡献](https://github.com/ClickHouse/loom/blob/main/CONTRIBUTING.md) · [安全问题报告](https://github.com/ClickHouse/loom/blob/main/SECURITY.md) ·
-[`llms.txt`](https://loom.clickhouse.com/docs/llms.txt) ·
-[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt)
+[`llms.txt`](https://clickhouse.github.io/loom/llms.txt) ·
+[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt)
 
 Apache-2.0 · [许可证](https://github.com/ClickHouse/loom/blob/main/LICENSE) · [声明](https://github.com/ClickHouse/loom/blob/main/NOTICE)

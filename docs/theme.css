@@ -335,3 +335,17 @@ blume-mermaid .edgeLabel p {
     visibility: visible;
   }
 }
+
+/* Keep procedural steps legible without borrowing the site's yellow accent. */
+.not-prose[style*="--blume-step-title-size"] {
+  border-color: rgb(0 0 0 / 0.3);
+}
+
+[data-blume-step] > span {
+  background-color: #fff;
+  color: #181818;
+}
+
+:root[data-theme="dark"] .not-prose[style*="--blume-step-title-size"] {
+  border-color: rgb(255 255 255 / 0.4);
+}

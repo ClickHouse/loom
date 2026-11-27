@@ -40,12 +40,6 @@ def test_every_group_field_page_is_current() -> None:
     assert not stale, f"stale field pages {stale}: run {gen.COMMAND}"
 
 
-def test_llms_txt_is_current() -> None:
-    assert gen.LLMS_TXT.read_text(encoding="utf-8") == gen.render_llms_txt(), (
-        f"llms.txt is stale: run {gen.COMMAND}"
-    )
-
-
 def test_listed_under_all_column_matches_the_mcp_listing(monkeypatch) -> None:
     from server.operations import registry
     from server.operations.toolsets import _MCP_HIDDEN_OPS, SYNTHETIC_TOOL_OPS
@@ -99,23 +93,3 @@ def test_status_ops_lists_each_experimental_op_once_and_counts_the_rest() -> Non
     listed = [name for _, names in rows.values() for name in names]
     assert sum(stable for stable, _ in rows.values()) + len(listed) == total
     assert rendered[0] == f"{total} operations, {len(listed)} of them experimental."
-
-
-def test_llms_txt_puts_install_faq_and_contributor_pages_where_readers_expect() -> None:
-    text = gen.render_llms_txt()
-    sections = [line for line in text.splitlines() if line.startswith("## ")]
-    # Contributor pages are last, in the section the llms.txt format lets a reader skip.
-    assert sections[-1] == "## Optional"
-    # What Loom is for leads: an agent that cuts the file short still reads it.
-    assert sections[:4] == [
-        "## Getting started",
-        "## Use cases",
-        "## FAQ and glossary",
-        "## Concepts",
-    ]
-    assert "## Development" not in sections
-    getting_started = text.split("## Getting started\n", 1)[1].split("\n## ", 1)[0]
-    entries = [line for line in getting_started.splitlines() if line.startswith("- [")]
-    # The plugin-free install route closes Getting started, after the section's own pages.
-    assert entries[-1].startswith("- [Install Loom as an MCP server](llms-install.md): ")
-    assert "docs/development/" in text.split("## Optional\n", 1)[1]
