@@ -100,6 +100,61 @@ class TestContributorLab(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(rows, [{"track": "functional", "tests": 0, "skipped": 0, "passed": False}])
 
+    def test_invalid_report_counts_leave_the_count_unknown(self) -> None:
+        for attributes in (
+            'tests="unknown" skipped="0"',
+            'tests="2" skipped="unknown"',
+            'tests="-1" skipped="0"',
+            'tests="2" skipped="-1"',
+            'tests="2" skipped="3"',
+            'skipped="0"',
+        ):
+            with self.subTest(attributes=attributes):
+
+                def completed(
+                    command: list[str], report_attributes: str = attributes, **_kwargs: object
+                ) -> SimpleNamespace:
+                    report = next(arg for arg in command if arg.startswith("--junitxml="))
+                    Path(report.removeprefix("--junitxml=")).write_text(
+                        f"<testsuites><testsuite {report_attributes}/></testsuites>"
+                    )
+                    return SimpleNamespace(returncode=1)
+
+                status, rows = _run_lab("functional", Mock(side_effect=completed))
+                self.assertEqual(status, 1)
+                self.assertEqual(
+                    rows, [{"track": "functional", "passed": False, "error": "invalid report"}]
+                )
+
+    def test_a_report_without_test_suites_has_no_known_count(self) -> None:
+        for text in ("<testsuites/>", "<unexpected/>"):
+            with self.subTest(text=text):
+
+                def completed(
+                    command: list[str], report_text: str = text, **_kwargs: object
+                ) -> SimpleNamespace:
+                    report = next(arg for arg in command if arg.startswith("--junitxml="))
+                    Path(report.removeprefix("--junitxml=")).write_text(report_text)
+                    return SimpleNamespace(returncode=1)
+
+                status, rows = _run_lab("functional", Mock(side_effect=completed))
+                self.assertEqual(status, 1)
+                self.assertEqual(
+                    rows, [{"track": "functional", "passed": False, "error": "invalid report"}]
+                )
+
+    def test_reports_without_optional_skipped_count_are_valid(self) -> None:
+        def completed(command: list[str], **_kwargs: object) -> SimpleNamespace:
+            report = next(arg for arg in command if arg.startswith("--junitxml="))
+            Path(report.removeprefix("--junitxml=")).write_text(
+                '<testsuites><testsuite tests="2"/></testsuites>'
+            )
+            return SimpleNamespace(returncode=0)
+
+        status, rows = _run_lab("functional", Mock(side_effect=completed))
+        self.assertEqual(status, 0)
+        self.assertEqual(rows, [{"track": "functional", "tests": 2, "skipped": 0, "passed": True}])
+
     def test_completed_quality_results_keep_the_exit_status(self) -> None:
         for returncode in (0, 1):
             with self.subTest(returncode=returncode):

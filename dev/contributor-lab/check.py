@@ -52,10 +52,15 @@ def check(track: str, directory: Path) -> dict[str, object]:
             return {"track": track, "passed": False, "error": "missing report"}
         try:
             suites = ET.parse(report).getroot().findall(".//testsuite")
-        except ET.ParseError:
+            counts = [
+                (int(suite.get("tests", "-1")), int(suite.get("skipped", "0"))) for suite in suites
+            ]
+            if not counts or any(not 0 <= skipped <= total for total, skipped in counts):
+                raise ValueError("invalid test counts")
+        except (ET.ParseError, ValueError):
             return {"track": track, "passed": False, "error": "invalid report"}
-        total = sum(int(suite.get("tests", "0")) for suite in suites)
-        skipped = sum(int(suite.get("skipped", "0")) for suite in suites)
+        total = sum(total for total, _ in counts)
+        skipped = sum(skipped for _, skipped in counts)
         passed = result.returncode == 0 and total > skipped
         return {"track": track, "tests": total, "skipped": skipped, "passed": passed}
 
