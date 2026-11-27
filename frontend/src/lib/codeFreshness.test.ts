@@ -44,7 +44,8 @@ describe("freshness", () => {
   );
 
   it.each(["", "ready"])("keeps a readable empty repository without active work unindexed (%s)", (stage) => {
-    expect(freshness({ ...base, readable: true, git_head: "", indexed_at: "", stage }).label).toBe("Not indexed");
+    const empty = { ...base, readable: true, git_head: "", indexed_at: "", stage };
+    expect(freshness(empty).label).toBe("Not indexed");
   });
 
   it("says the first index has not finished, and who runs it for a configured repository", () => {
@@ -63,10 +64,14 @@ describe("freshness", () => {
     expect(f.detail).toBe("Search matches the last commit Loom fetched; exact cross-file calls are 1 commit behind it");
   });
 
-  it("names an operator's step when nothing was indexed in 6 hours", () => {
-    const f = freshness({ ...base, indexed_at: at(7) });
-    expect(f.label).toBe("No recent indexing");
-    expect(f.detail).toContain("an operator of this deployment can check the repository's sync");
+  it("shows a quiet branch as current when the mirror is current", () => {
+    const quiet = { ...base, indexed_at: at(24 * 7), fetch_overdue: false };
+    expect(freshness(quiet)).toMatchObject({ label: "Up to date", tone: "ok" });
+  });
+
+  it("warns when the mirror fetch is overdue even if the last indexed commit matches", () => {
+    const stale = { ...base, fetch_overdue: true };
+    expect(freshness(stale)).toMatchObject({ label: "Mirror fetch overdue", tone: "warn" });
   });
 
   it("says the index matches the last fetched commit when it does", () => {
