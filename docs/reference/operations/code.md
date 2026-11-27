@@ -964,8 +964,8 @@ Health of the code index: indexed head commit, compiler-tier commit, row counts,
 | `pr_cursor` | `str` | The PR-history poller's cursor: the newest `updated_at` (ISO-8601) of the merged PRs it fetched; '' before its first pass. |
 | `commit_coverage` | `CodeCommitCoverage \| None` | Set when the request named a `commit`. |
 | `clone_head` | `str` | Freshness. clone_head is the bare clone's branch tip as of the last poller fetch (<= interval old); *_lag = first-parent commits between a watermark and that tip, -1 when a watermark is unset or the clone is unreadable. 0 everywhere ==… |
-| `clone_fetched_at` | `str` | When the ingest pass last fetched this entry's mirror (the `clone_head` row's updated_at, ISO-8601 UTC; '' unknown) and whether that is older than `code_fetch_stale_after_seconds`. |
-| `fetch_overdue` | `bool` | True when `clone_fetched_at` is older than `code_fetch_stale_after_seconds`. |
+| `clone_fetched_at` | `str` | When the ingest pass last fetched this entry's mirror (the `clone_head` row's updated_at, ISO-8601 UTC; '' with no fetch on record). |
+| `fetch_overdue` | `bool` | True when the last fetch, or with none on record the `git_head` write, is older than `code_fetch_stale_after_seconds`. |
 | `fast_tier_lag` | `int` | First-parent commits between `git_head` and `clone_head`; -1 when either is unknown. |
 | `scip_lag` | `int` | First-parent commits between `scip_commit` and `clone_head`; -1 when either is unknown. |
 | `scip_py_lag` | `int` | First-parent commits between `scip_commit_py` and `clone_head`; -1 when either is unknown. |

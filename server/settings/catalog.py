@@ -1169,8 +1169,9 @@ class CodeSettings(BaseModel):
     # warning) and the issue mirror is skipped.
     code_github_token: str = ""
     # Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files →
-    # tree-sitter symbols/edges → context pack → advance watermark.
-    code_ingest_enabled: bool = False
+    # tree-sitter symbols/edges → context pack → advance watermark. It polls every
+    # configured repository; False = nothing polls, and `code.refresh` is the only trigger.
+    code_ingest_enabled: bool = True
     # Seconds between fast-tier ingest passes; extra-branch fetches of a shared mirror
     # are spaced by 0.9 of it (at least 30 s).
     code_ingest_interval_seconds: int = 120

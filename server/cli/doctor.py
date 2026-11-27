@@ -545,16 +545,21 @@ def _doctor_problems() -> list[Any]:
     problem is graded as the server grades it; otherwise the environment's values.
     Empty when settings do not load (the `settings_load` check already says so)."""
     try:
-        from server.code.app.index.sandbox import layout_refusal, sandbox_available
+        from server.code.app.index.sandbox import job_owed, layout_refusal, sandbox_available
+        from server.code.domain.index.repos import known_repo_count
         from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
         tiers = _doctor_tier_failures()  # first: it adopts the runtime overrides
         status, detail = _doctor_reader_probe(settings)
+        # Probed on every host: the probe's warning, printed above the checks, is where a
+        # refused add sends the operator. A problem only where a repository job is owed.
+        sandboxed = sandbox_available()
         problems = collect_problems(
             settings,
             HealthState(
-                repo_sandbox=sandbox_available(),
+                repo_sandbox=sandboxed if job_owed() else None,
+                code_repos=known_repo_count(),
                 repo_sandbox_refusal=layout_refusal(),
                 ch_reader_ok={"ok": True, "failing": False}.get(status),
                 ch_reader_error=detail if status == "failing" else "",

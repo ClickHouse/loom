@@ -300,19 +300,24 @@ def test_the_pace_learns_the_seconds_per_file_it_observes() -> None:
 
 
 class _AsOfRepo:
-    def __init__(self, fetched: datetime | None) -> None:
-        self.fetched = fetched
+    def __init__(self, fetched: datetime | None, indexed: datetime) -> None:
+        self.fetched, self.indexed = fetched, indexed
 
     async def all_state(self, org: str, ns: str) -> dict[str, Any]:
-        st: dict[str, Any] = {
-            "git_head": {"value": "a" * 40, "updated_at": datetime(2026, 9, 24, 13, 23)}
-        }
+        st: dict[str, Any] = {"git_head": {"value": "a" * 40, "updated_at": self.indexed}}
         if self.fetched is not None:
             st["clone_head"] = {"value": "a" * 40, "updated_at": self.fetched}
         return st
 
 
-def _as_of(monkeypatch: pytest.MonkeyPatch, fetched: datetime | None) -> dict[str, Any]:
+def _ago(**delta: int) -> datetime:
+    """A naive UTC time that long ago, as ClickHouse hands `updated_at` back."""
+    return (datetime.now(UTC) - timedelta(**delta)).replace(tzinfo=None)
+
+
+def _as_of(
+    monkeypatch: pytest.MonkeyPatch, fetched: datetime | None, indexed: datetime | None = None
+) -> dict[str, Any]:
     cfg = SimpleNamespace(git_dir="loom.git", git_branch="main")
     monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda org, ns: cfg)
 
@@ -322,7 +327,8 @@ def _as_of(monkeypatch: pytest.MonkeyPatch, fetched: datetime | None) -> dict[st
     monkeypatch.setattr(cc, "_lag_commits_cached", lag)
     cc.invalidate_index_as_of("o", "code-loom")
     try:
-        return asyncio.run(cc.index_as_of(_AsOfRepo(fetched), "o", "code-loom"))  # type: ignore[arg-type]
+        repo = _AsOfRepo(fetched, indexed or _ago(days=60))
+        return asyncio.run(cc.index_as_of(repo, "o", "code-loom"))  # type: ignore[arg-type]
     finally:
         cc.invalidate_index_as_of("o", "code-loom")
 
@@ -330,7 +336,7 @@ def _as_of(monkeypatch: pytest.MonkeyPatch, fetched: datetime | None) -> dict[st
 def test_a_mirror_that_has_not_fetched_for_an_hour_reads_stale_not_fresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    three_h = (datetime.now(UTC) - timedelta(hours=3, minutes=28)).replace(tzinfo=None)
+    three_h = _ago(hours=3, minutes=28)
     block = _as_of(monkeypatch, three_h)
     assert block["lag_commits"] == 0
     assert block["stale"] is True and block["status"] == "stale"
@@ -338,25 +344,46 @@ def test_a_mirror_that_has_not_fetched_for_an_hour_reads_stale_not_fresh(
     assert block["fetched_at"] == three_h.isoformat()
 
 
-def test_a_recent_fetch_or_no_row_keeps_todays_block(monkeypatch: pytest.MonkeyPatch) -> None:
-    recent = (datetime.now(UTC) - timedelta(minutes=14)).replace(tzinfo=None)
-    for fetched in (recent, None):
-        block = _as_of(monkeypatch, fetched)
+def test_a_recent_fetch_keeps_the_block_without_freshness_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # a recorded fetch, or with none on record an index that reached its head lately
+    for fetched, indexed in ((_ago(minutes=14), None), (None, _ago(minutes=14))):
+        block = _as_of(monkeypatch, fetched, indexed)
         assert block["status"] == "fresh" and block["stale"] is False
         assert "stale_reason" not in block and "fetched_at" not in block, (
             "no tokens on a healthy answer"
         )
     monkeypatch.setattr(settings, "code_fetch_stale_after_seconds", 0)
     assert _as_of(monkeypatch, datetime(2026, 1, 1))["status"] == "fresh", "0 disables"
+    assert _as_of(monkeypatch, None, datetime(2026, 1, 1))["status"] == "fresh", "0 disables"
+
+
+def test_an_index_no_pass_ever_fetched_for_reads_stale_once_its_head_is_old(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No `clone_head` row: a backfill built the index and nothing polls or refreshes
+    it. Its lag is 0 against a mirror nobody fetches, which is not fresh."""
+    block = _as_of(monkeypatch, None, _ago(hours=2))
+    assert block["lag_commits"] == 0
+    assert block["stale"] is True and block["status"] == "stale"
+    assert block["stale_reason"] == "mirror_not_fetched" and block["fetched_at"] == ""
 
 
 def test_mirror_fetch_overdue_reads_naive_clickhouse_utc() -> None:
     now = datetime(2026, 9, 24, 16, 45, tzinfo=UTC)
     assert cc.mirror_fetch_overdue(datetime(2026, 9, 24, 13, 17), now) is True
     assert cc.mirror_fetch_overdue(datetime(2026, 9, 24, 16, 30), now) is False
+    # no index and no fetch on record: nothing to be stale
     assert (
         cc.mirror_fetch_overdue(None, now) is False and cc.mirror_fetch_overdue("x", now) is False
     )
+    # no fetch on record: the time the index reached its head stands in
+    old, recent = datetime(2026, 9, 24, 13, 17), datetime(2026, 9, 24, 16, 30)
+    assert cc.mirror_fetch_overdue(None, now, indexed_at=old) is True
+    assert cc.mirror_fetch_overdue(None, now, indexed_at=recent) is False
+    # a recorded fetch decides alone, however old the index head is
+    assert cc.mirror_fetch_overdue(recent, now, indexed_at=old) is False
 
 
 def test_run_repo_skips_the_fetch_its_mirror_did_and_leaves_the_commits_pending(
