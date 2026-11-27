@@ -248,6 +248,10 @@ For `code.search` and `code.grep` in matches mode, pass the returned `next_curso
 `cursor` with the original search arguments to get the next page. Omit `cursor`
 when starting a new search with a different query, pattern or filters.
 
+When a `code.grep` cursor has no record of its path filters, Loom restarts at the
+first page and includes a note. The HTTP response sets `as_of.page_fallback` to
+`path_scope_unrecorded`. Clear any accumulated results before consuming the restarted page.
+
 `code.grep` includes linked lessons when available. Set `include_lessons: false`
 for a follow-up lookup when the relevant notes are already in context.
 
