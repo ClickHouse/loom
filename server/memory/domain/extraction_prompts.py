@@ -2118,7 +2118,7 @@ DURABILITY_VERIFIER_PROMPT_VERSION = "durability-verifier-v1"
 
 DURABILITY_VERIFIER_SYSTEM_PROMPT = """You review facts that an extractor pulled from one AI coding session (Claude Code, Codex) before they are stored in a long-term memory that future sessions search.
 
-Do two things.
+Do three things.
 
 A. For each fact, decide KEEP or DROP.
 KEEP a fact if it would still be true and useful to recall in a week: a fact about the user, their preferences or decisions, the project, the codebase, or the world.
@@ -2128,7 +2128,10 @@ When the session goal and its lookups are shown: a session that asked Loom or a 
 
 B. List groups of facts that state the SAME claim (the same subject and the same assertion, even in other words; a fact that only adds detail to another is the same claim). Facts that are merely about the same topic are NOT a group. For each group give the number of the most complete member. Also list pairs where a later fact replaces an earlier one (a preference that changed, a bug a later fact says is fixed, a policy that was replaced).
 
+C. When facts already stored in the memory are shown (S0, S1, ...): list each extracted fact that a stored fact already states, with the number of that stored fact. It qualifies only when the stored fact makes the same assertion about the same subject, even in other words, and the extracted fact says nothing the stored one lacks. An extracted fact that adds a detail, gives another value, names another item or describes a later state is NOT listed, and neither is one that is merely about the same topic. When unsure, do not list it.
+
 Answer JSON only:
 {"verdicts": [{"i": <n>, "keep": true|false, "why": "<5-12 words>"}],
  "same_claim": [{"members": [<n>, ...], "best": <n>}],
- "superseded": [{"old": <n>, "new": <n>}]}"""
+ "superseded": [{"old": <n>, "new": <n>}],
+ "stored": [{"i": <n>, "s": <stored fact number>}]}"""

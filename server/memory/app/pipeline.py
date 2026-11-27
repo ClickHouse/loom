@@ -8,6 +8,7 @@ reorder or skip steps. Each step is addressed by a registered step ID
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -672,13 +673,83 @@ def _verify_clients(state: WorkflowState) -> list[Any]:
     return clients
 
 
+# Stored memories read for each fact the verifier judges, and how much of each it sees.
+STORED_PER_FACT = 3  # not a setting: a restated memory is among a fact's nearest or absent
+STORED_VALUE_CHARS = 400
+
+
+def _same_repository(state: WorkflowState, row_tags: list[str]) -> bool:
+    """Whether a stored row is of the capture's repository: it shares one of the
+    capture's `repo:` tags, or of its `project:` tags when the capture names no
+    repository. The same sentence about another repository is another claim, and a
+    read scoped to this one would not find it."""
+    for prefix in ("repo:", "project:"):
+        mine = {str(t) for t in state.extra_tags if str(t).startswith(prefix)}
+        if mine:
+            return bool(mine.intersection(row_tags))
+    return True
+
+
+async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) -> list[Any]:
+    """The live rows nearest each fact among this agent's and user's in the capture's
+    repository, any session, each once: what an earlier session may already have
+    stored of this capture's claims. None under `append_only`, where every write is
+    its own event. Fail-open: with none, every fact goes on to the write."""
+    import server.memory.store as memory_repo
+    from server.memory.app.handlers import nearest_existing_rows
+    from server.memory.domain.conflicts import APPEND_ONLY_POLICY
+
+    if await _conflict_policy(state) == APPEND_ONLY_POLICY:
+        return []
+    identity = memory_repo.Identity(
+        org=state.org,
+        namespace=state.namespace,
+        agent=state.agent,
+        user_id=state.user_id,
+        session_id=state.session_id,
+    )
+    texts = [str(f.get("value") or "").strip()[:1024] for f in facts]
+    try:
+        found = await asyncio.gather(
+            *(nearest_existing_rows(identity, t, STORED_PER_FACT) for t in texts if t)
+        )
+    except Exception as e:  # noqa: BLE001 — a failed read must not fail the extraction
+        log.warning("verify_durable: stored-memory read failed (non-fatal): %s", e)
+        return []
+    rows: dict[str, Any] = {}
+    for r in (r for near in found for r in near):
+        if _same_repository(state, list(r.tags or [])):
+            rows.setdefault(str(r.memory_id), r)
+    return list(rows.values())
+
+
+async def _reinforce_restated(state: WorkflowState, memory_ids: list[str]) -> None:
+    """Reinforce: one `evidence` usage event on each stored row a dropped fact
+    restated, as a merge at the write records. Fail-open."""
+    from server.memory.store.usage import record_usage_event
+
+    for memory_id in dict.fromkeys(memory_ids):
+        try:
+            await record_usage_event(
+                memory_id=memory_id,
+                org=state.org,
+                namespace=state.namespace,
+                event_type="evidence",
+                event_count=1,
+                agent=state.agent,
+            )
+        except Exception as e:  # noqa: BLE001 — a usage bump; the drop stands
+            log.warning("verify_durable: restatement reinforcement failed (non-fatal): %s", e)
+
+
 async def _step_verify_durable(
     state: WorkflowState,
     config: dict[str, Any],
 ) -> WorkflowState:
     """The durability verifier over a coding capture's
-    remaining facts. Drops a fact every verifier model calls non-durable and
-    folds same-claim paraphrases into the most complete member.
+    remaining facts. Drops a fact every verifier model calls non-durable, folds
+    same-claim paraphrases into the most complete member, and drops a fact a
+    stored memory already states, reinforcing that memory.
     `state.skipped_unverified` counts the drops. Fails open."""
     del config
     facts = list(state.extracted_facts or [])
@@ -689,12 +760,17 @@ async def _step_verify_durable(
         return state
     from server.memory.app import durability_verifier
 
+    stored = await _stored_neighbours(state, facts)
     result = await durability_verifier.verify(
         facts,
         clients,
         timeout_s=float(settings.memory_extract_verify_timeout_s),
         # The goal and what the lookups returned
         context=durability_verifier.capture_context(state.messages, state.session_values),
+        stored=[str(r.value or "")[:STORED_VALUE_CHARS] for r in stored],
+    )
+    await _reinforce_restated(
+        state, [str(stored[f["_stored"]].memory_id) for f in result.dropped if "_stored" in f]
     )
     state.extracted_facts = [
         {k: v for k, v in f.items() if not k.startswith("_")} for f in result.kept
@@ -744,18 +820,22 @@ async def _step_hash_dedup(
     return state
 
 
-async def _newest_wins(state: WorkflowState) -> bool:
-    """Whether the namespace's conflict policy is `newest_wins`; False when
-    the lookup fails, so the batch falls back to `_2` disambiguation."""
+async def _conflict_policy(state: WorkflowState) -> str:
+    """The namespace's conflict policy; "" when the lookup fails."""
     try:
         from server.core.ch import get_client
         from server.memory.app.conflicts import namespace_conflict_policy
 
-        policy = await namespace_conflict_policy(state.org, state.namespace, ch=get_client())
-        return policy == "newest_wins"
-    except Exception as e:  # noqa: BLE001 — policy unknown: keep `_2` disambiguation
-        log.debug("conflict policy lookup failed; keeping `_2` disambiguation: %s", e)
-        return False
+        return await namespace_conflict_policy(state.org, state.namespace, ch=get_client())
+    except Exception as e:  # noqa: BLE001 — policy unknown: the caller keeps its default
+        log.debug("conflict policy lookup failed: %s", e)
+        return ""
+
+
+async def _newest_wins(state: WorkflowState) -> bool:
+    """Whether the namespace's conflict policy is `newest_wins`; False when
+    the lookup fails, so the batch falls back to `_2` disambiguation."""
+    return await _conflict_policy(state) == "newest_wins"
 
 
 # Stored confidence for facts the coverage sweep added.

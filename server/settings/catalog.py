@@ -4158,9 +4158,10 @@ class ModelSettings(BaseModel):
     # mid answer escalates to strong once.
     memory_ask_mid_model: str = ""
     # The durability check on a coding capture: one batched call per capture per
-    # listed model (CSV) judges each fact durable or not and folds same-claim
-    # paraphrases and replaced states. A fact is dropped only when every model says
-    # drop; folds come from the first. Fails open. "" turns it off.
+    # listed model (CSV) judges each fact durable or not, folds same-claim
+    # paraphrases and replaced states, and names the facts a stored memory already
+    # states. A fact is dropped as non-durable only when every model says drop; folds
+    # and stored restatements come from the first. Fails open. "" turns it off.
     memory_extract_verify_models: str = "claude-opus-5-5"
     # The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence
     # thresholds were set on this model; a cheaper one is only safe for clears.
