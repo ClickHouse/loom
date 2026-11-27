@@ -1024,6 +1024,10 @@ class CodeSettings(BaseModel):
     # Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without
     # it the gc waits another interval.
     code_mirror_gc_margin_gb: float = 5.0
+    # Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its
+    # working tree, not a second copy. An older build's git jobs could write the shared
+    # packs: turn it on only once no older replica serves, and off before a rollback.
+    code_compiler_share_mirror_packs: bool = False
     # Resource limits (rlimits) for each process of a sandboxed repository job
     # (clone, fetch, dependency install, compiler-tier harness;
     # code/app/index/sandbox.py). They bound each process, not a job's total

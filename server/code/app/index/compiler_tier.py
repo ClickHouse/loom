@@ -270,8 +270,126 @@ def _checkout_metadata_error(checkout: Path) -> str | None:
     return None
 
 
-def _prepare_checkout(checkout: Path) -> str | None:
-    """Initialize only empty directories; an existing tree must own its Git root."""
+# The `.keep` beside a pack a checkout shares with its mirror by hard link: no gc in the
+# checkout rewrites a kept pack, and the text tells it from an operator's own `.keep`.
+SHARED_PACK_KEEP = "loom: a hard link of the entry's mirror pack\n"
+_LINKED = (".pack", ".rev", ".idx")  # in this order: git uses a pack once its .idx is there
+_unshared_logged: set[str] = set()
+
+
+def _shared_stems(pack_dir: Path) -> set[str]:
+    stems = set()
+    for keep in pack_dir.glob("pack-*.keep"):
+        try:
+            if keep.read_text() == SHARED_PACK_KEEP:
+                stems.add(keep.stem)
+        except OSError:
+            continue
+    return stems
+
+
+def shared_packs(checkout: Path) -> list[Path]:
+    """The checkout's pack files that another directory holds too, by hard link: the
+    mirror's packs. Chosen by link count, which a job cannot forge as it can a `.keep`;
+    a git job in the checkout mounts them read-only, so it cannot change the mirror's
+    packs. An older version's git jobs mount none of them."""
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    return sorted(p for p in pack_dir.glob("pack-*") if p.suffix in _LINKED and _linked(p))
+
+
+def _linked(path: Path) -> bool:
+    try:
+        return path.stat().st_nlink > 1
+    except FileNotFoundError:
+        return False  # gone since the listing: nothing to mount
+
+
+def _drop_partial_links(pack_dir: Path) -> None:
+    """Remove what a killed pass left: a link temporary, and a shared pack (our `.keep`,
+    written before any file is renamed into place) with no `.idx`. Git never uses such
+    a pack and no gc removes it, so it would hold a dead mirror pack's blocks for good.
+    A pack without our `.keep` is not ours: git may be writing it (`.idx` comes last)."""
+    for tmp in pack_dir.glob(".loom-link-*"):
+        tmp.unlink()
+    for stem in _shared_stems(pack_dir):
+        if not (pack_dir / f"{stem}.idx").exists():
+            for ext in (".pack", ".rev", ".keep"):
+                (pack_dir / f"{stem}{ext}").unlink(missing_ok=True)
+
+
+def _link_pack(mirror_dir: Path, pack_dir: Path, stem: str) -> bool:
+    """Hard-link one mirror pack into the checkout, kept by our `.keep`, replacing a copy
+    of the same name (pack names are content hashes); False when it is linked already.
+    Every file is linked to a temporary name before any is renamed into place, so a
+    failed link leaves nothing behind."""
+    files = [
+        (src, pack_dir / src.name)
+        for src in (mirror_dir / f"{stem}{ext}" for ext in _LINKED)
+        if src.suffix != ".rev" or src.exists()
+    ]
+    keep = pack_dir / f"{stem}.keep"
+    if all(dst.exists() and os.path.samefile(src, dst) for src, dst in files):
+        if not keep.exists():  # a marker that went missing comes back
+            keep.write_text(SHARED_PACK_KEEP)
+        return False
+    tmps = [pack_dir / f".loom-link-{dst.name}" for _src, dst in files]
+    try:
+        for (src, _dst), tmp in zip(files, tmps, strict=True):
+            os.link(src, tmp)
+        if not keep.exists():  # an operator's own `.keep` stays theirs
+            keep.write_text(SHARED_PACK_KEEP)
+    except OSError:
+        for tmp in tmps:
+            tmp.unlink(missing_ok=True)
+        raise
+    for (_src, dst), tmp in zip(files, tmps, strict=True):
+        os.replace(tmp, dst)
+    return True
+
+
+def _share_mirror_packs(checkout: Path, bare: Path) -> None:
+    """Make the checkout's packs the mirror's files: hard-link each mirror pack it lacks,
+    then drop the `.keep` of a shared pack the mirror's gc or a new clone removed. When
+    the checkout may now hold objects twice (its own packs, a copy an older version
+    fetched, or a pack the mirror dropped), its gc mark goes, so `_gc_checkout`'s
+    `gc_if_due` runs after this pass and keeps only what the shared packs lack. The
+    checkout stays a standalone repository, so an older version's jobs, which mount
+    only the checkout, still read it. Where no pack can be linked (another filesystem,
+    a link the kernel refuses under `fs.protected_hardlinks`, a mirror with no pack),
+    nothing is marked and the checkout keeps its own copy, gc'd as on every interval.
+    Housekeeping: a failure is logged, never returned."""
+    from server.code.app.index.mirrors import _GC_MARK
+
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    mirror_dir = bare / "objects" / "pack"
+    try:
+        _drop_partial_links(pack_dir)
+        shared = _shared_stems(pack_dir)
+        mirror = sorted(p.stem for p in mirror_dir.glob("pack-*.idx"))
+        own = {p.stem for p in pack_dir.glob("pack-*.pack")} - shared - set(mirror)
+        linked, missed = [], False
+        for stem in mirror:
+            try:
+                if _link_pack(mirror_dir, pack_dir, stem):
+                    linked.append(stem)
+            except FileNotFoundError:
+                missed = True  # the mirror's gc removed it a moment ago; the next pass sees why
+        # With a mirror pack unlinked, a stale pack may hold what only that one holds now.
+        stale = set() if missed else shared.difference(mirror)
+        for stem in stale:
+            (pack_dir / f"{stem}.keep").unlink(missing_ok=True)
+        if stale or (linked and own):
+            (checkout / ".git" / _GC_MARK).unlink(missing_ok=True)
+    except OSError as e:
+        if str(checkout) not in _unshared_logged:
+            _unshared_logged.add(str(checkout))
+            logger.warning("compiler tier: %s keeps its own objects: %s", checkout, e)
+
+
+def _prepare_checkout(checkout: Path, bare: Path) -> str | None:
+    """Initialize only empty directories; an existing tree must own its Git root. With
+    `code_compiler_share_mirror_packs`, a valid checkout shares the mirror `bare`'s
+    packs (`_share_mirror_packs`)."""
     from server.code.app.index.gitrepo import auth_env
 
     if not checkout.exists():
@@ -295,12 +413,16 @@ def _prepare_checkout(checkout: Path) -> str | None:
             )
             if init.returncode:
                 return f"git init: {init.stderr.strip()}"
-        return _checkout_metadata_error(checkout)
+        if error := _checkout_metadata_error(checkout):
+            return error
     except OSError as e:
         logger.warning("compiler tier: checkout %s unavailable: %s", checkout, e)
         return f"checkout unavailable: {caller_text(e)}"
     except subprocess.TimeoutExpired:
         return "checkout Git command timed out"
+    if settings.code_compiler_share_mirror_packs:
+        _share_mirror_packs(checkout, bare)
+    return None
 
 
 def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | None]:
@@ -313,7 +435,7 @@ def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | 
     bare = Path(cfg.git_dir)
     if not bare.exists():
         return checkout, bare, f"bare clone missing at {bare}"
-    if reason := _prepare_checkout(checkout):
+    if reason := _prepare_checkout(checkout, bare.resolve()):
         return checkout, bare, f"checkout missing at {checkout} ({reason})"
     return checkout, bare.resolve(), None
 
@@ -493,13 +615,15 @@ async def git(
     proxy_identity: str = "",
 ) -> None:
     """Run one git command in a checkout, as a repository job: the checkout writable,
-    `local_remote` (the bare clone a fetch reads) read-only, the network only with
-    `network`. `token` authenticates to the owner of `remote` (the repository's own
-    https remote), so a private submodule of that owner can be fetched; with an
-    operator's git proxy the network job goes through it as `proxy_identity` (the
-    entry's git_proxy_identity). On timeout, name the command (a bare TimeoutError says
-    nothing) and retry `retries` times — a stall is usually transient contention on
-    the shared bare clone."""
+    `local_remote` (the bare clone a fetch reads) and the packs the checkout shares with
+    it read-only, the network only with `network`. `token` authenticates to the owner of
+    `remote` (the repository's own https remote), so a private submodule of that owner
+    can be fetched; with an operator's git proxy the network job goes through it as
+    `proxy_identity` (the entry's git_proxy_identity). On timeout, name the command (a
+    bare TimeoutError says nothing) and retry `retries` times — a stall is usually
+    transient contention on the shared bare clone."""
+    import asyncio
+
     from server.code.app.index.gitrepo import auth_env
 
     # The file transport follows the bare clone alone, never the entry's remote.
@@ -511,7 +635,10 @@ async def git(
         "env": env,
         "timeout_s": timeout_s,
         "writable": [cwd],
-        "readonly": [local_remote] if local_remote else [],
+        "readonly": [
+            *([local_remote] if local_remote else []),
+            *await asyncio.to_thread(shared_packs, cwd),
+        ],
         "network": network,
         "merge_stderr": True,
     }
