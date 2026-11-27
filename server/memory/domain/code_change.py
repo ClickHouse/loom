@@ -18,7 +18,8 @@ Under every policy, a memory that a search still serves ranks lower than its mat
 A memory a person pinned, locked or verified is only flagged.
 
 A link that sits at another name or path than the memory was written against is named
-on every read (`relocation`, `note`): the text still says the old name.
+on the reads that serve its links (`relocation`, `note`): the text still says the old
+name.
 """
 
 from __future__ import annotations

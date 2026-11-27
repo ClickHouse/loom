@@ -573,9 +573,9 @@ async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) 
     """One grounding note for the strongest memories whose linked code has moved,
     changed or gone since they were written, read from their code links
     (`server.memory.app.code_links`); synthesis then prefers the current code. A link
-    now at another path or symbol than its memory was written against is named as every
-    reader names it (`code_change.moved_note`). None when no such memory is in the
-    pool. Fail-open."""
+    now at another path or symbol than its memory was written against is named with the
+    clause the other readers carry (`code_change.moved_note`). None when no such memory
+    is in the pool. Fail-open."""
     from server.memory.api.models_search import _MemorySearchHit
     from server.memory.app.code_link_reads import hit_memories, readable_namespaces, relocated
 

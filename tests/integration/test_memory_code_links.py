@@ -726,8 +726,8 @@ async def test_a_rename_alone_moves_the_link(env) -> None:
     (link,) = await _links(mid)
     assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "moved")
 
-    # Loom wrote no new text, so every reader names where the code is now and what the
-    # memory still calls it
+    # Loom wrote no new text, so the reads that serve the link name where the code is now
+    # and what the memory still calls it
     path, now, was = "src/widgets/io.py", link["symbol"], link["was_symbol"]
     assert (link["path"], link["start_line"], link["end_line"]) == (path, 1, 3)
     assert (link["was_path"], was.rsplit("::", 1)[-1]) == (path, "fetch_rows")
