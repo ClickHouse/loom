@@ -14,6 +14,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from server.core.background import gather_or_cancel
@@ -354,14 +355,16 @@ async def _pack_profile(st: _PackState) -> None:
 async def _pack_startup_recall(st: _PackState) -> None:
     """Zero-query startup recall: at session start an agent wants cheap
     pins + recency, not a paid semantic search. Pull pinned memories first,
-    then the most-recent active ones (recency-ordered), dedup, and render
-    the memories block — no embedding round-trip. Fires only for
-    mode='startup' with no query; real queries still go through search."""
+    then the most-recent active ones (recency-ordered), dedup, read their code
+    links as a search does, and render the memories block — no embedding
+    round-trip. Fires only for mode='startup' with no query; real queries still
+    go through search."""
     input = st.input
     default_section_tokens = st.default_section_tokens
     import json as _json
 
     import server.memory.store as memory_repo
+    from server.memory.app.code_link_reads import annotate_hits
 
     def _vtext(v: Any) -> str:
         # Stored values are often JSON-encoded strings ('"…"'); decode those
@@ -403,16 +406,24 @@ async def _pack_startup_recall(st: _PackState) -> None:
         return
 
     seen: set[str] = set()
-    rows: list[Any] = []
+    hits: list[Any] = []
     for r in [*pinned, *recent]:  # pins first, then recency; dedup by key
         if r.memory_key in seen or r.status not in ("active", "conflicted"):
             continue
         seen.add(r.memory_key)
-        rows.append(r)
-        if len(rows) >= k:
-            break
-    if not rows:
+        hits.append(
+            SimpleNamespace(
+                row=r, memory_key=r.memory_key, _row_identity=(r.agent, r.user_id, r.session_id)
+            )
+        )
+    # Before the cut to k: a memory left out because its code is gone gives its place to
+    # the next row.
+    await annotate_hits(input, hits)
+    hits = hits[:k]
+    if not hits:
         return
+    rows = [h.row for h in hits]
+    code_state = {h.memory_key: code_change.label(*_code_state_and_commit(h)) for h in hits}
 
     evidence = [
         EvidenceItem(
@@ -430,6 +441,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
             ),
             conflict=(r.status == "conflicted"),
             author=author_label([getattr(r, "actor", "")]),
+            code_state=code_state[r.memory_key],
         )
         for r in rows
     ]

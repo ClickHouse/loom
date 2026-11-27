@@ -496,7 +496,8 @@ not show in it; `results` keeps the move.
 `memory.ask` re-sorts the search's rows by similarity and recency while
 `memory_ask_recency_weight` is above 0 (0.2 by default), and its identifier
 lookups place their own rows; a `context.pack` startup read with no query does not
-search. A move does not show in any of these.
+search: it lists pinned, then recent memories, and leaves out and labels them by the
+rules above. A move does not show in any of these.
 
 `revise` judges a changed link once per edit, within a per-pass budget
 (`memory_code_links_revise_per_pass`). A memory labelled `high` sensitivity is never sent

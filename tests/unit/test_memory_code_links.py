@@ -923,6 +923,114 @@ async def test_a_pending_link_keeps_a_memory_whose_other_code_is_gone(served) ->
     assert [h.code_state for h in hits] == ["missing"]
 
 
+async def _startup_lines(monkeypatch, served, *, pinned=(), recent=(), top_k=2) -> list[str]:
+    """The memory lines of a zero-query startup pack whose two listings return the served
+    heads under these keys."""
+    from server.memory.api.models_context import ContextPackInput
+    from server.memory.app.context_pack import handle_context_pack
+
+    rows = {
+        h["memory_key"]: SimpleNamespace(
+            **h, confidence=1.0, valid_at=None, created_at=datetime(2026, 1, 1)
+        )
+        for h in served.heads
+    }
+
+    async def listing(ident, *, pinned_only=False, **kw):
+        return [rows[k] for k in (pinned if pinned_only else recent)]
+
+    class NoClickHouse:
+        def __getattr__(self, name):
+            async def refuse(*a, **k):
+                raise RuntimeError("no ClickHouse in a unit test")
+
+            return refuse
+
+    monkeypatch.setattr("server.memory.store.list_by_namespace", listing)
+    monkeypatch.setattr("server.core.ch._ch", NoClickHouse())
+    out = await handle_context_pack(
+        ContextPackInput(
+            org="o",
+            namespace="agent-a",
+            agent="a",
+            mode="startup",
+            top_k=top_k,
+            only_sections=["memories"],
+        )
+    )
+    return out.sections.get("memories", "").splitlines()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("held", "state", "policy", "kept_current", "label"),
+    [
+        ({}, "missing", "", True, None),  # the code is gone and nobody holds the memory
+        ({"pinned": 1}, "missing", "", True, "code_state=missing@c0ffeec0ffee]"),
+        ({}, "changed", "", True, "code_state=changed@c0ffeec0ffee]"),
+        ({}, "missing", code_change.FLAG, True, "code_state=missing@c0ffeec0ffee]"),
+        ({}, "missing", "", False, "code_state=missing@c0ffeec0ffee]"),
+    ],
+)
+async def test_a_startup_pack_with_no_query_reads_code_state_as_a_search_does(
+    served, monkeypatch, held, state, policy, kept_current, label
+) -> None:
+    monkeypatch.setattr(settings, "memory_code_links_enabled", kept_current)
+    served.heads += [_row("m", **held), _row("other")]
+    served.links["m"] = [{**_link("m", state), "changed_since": "c0ffee" * 7}]
+    if policy:
+        served.policy["agent-a"] = policy
+    lines = await _startup_lines(
+        monkeypatch, served, pinned=["m"] if held else [], recent=["m", "other"]
+    )
+    mine = [ln for ln in lines if "memory:agent-a/m " in ln]
+    if label is None:
+        assert mine == []
+    else:
+        assert len(mine) == 1 and label in mine[0]
+    # a memory with no link reads as it did
+    assert [ln for ln in lines if "memory:agent-a/other " in ln and "code_state" not in ln]
+
+
+@pytest.mark.asyncio
+async def test_a_startup_pack_serves_its_rows_unlabelled_when_the_links_cannot_be_read(
+    served, monkeypatch
+) -> None:
+    async def down(org, idents):
+        raise RuntimeError("link store down")
+
+    monkeypatch.setattr(code_links.store, "live_links", down)
+    served.heads.append(_row("gone"))
+    served.links["gone"] = [_link("gone", "missing")]
+    lines = await _startup_lines(monkeypatch, served, recent=["gone"])
+    assert len(lines) == 1 and "memory:agent-a/gone " in lines[0]
+    assert "code_state" not in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_a_startup_row_left_out_for_gone_code_gives_its_place_to_the_next(
+    served, monkeypatch
+) -> None:
+    served.heads += [_row("gone"), _row("a"), _row("b"), _row("c")]
+    served.links["gone"] = [_link("gone", "missing")]
+    lines = await _startup_lines(monkeypatch, served, recent=["gone", "a", "b", "c"], top_k=2)
+    assert [ln.split()[1] for ln in lines] == ["[memory:agent-a/a", "[memory:agent-a/b"]
+
+
+@pytest.mark.asyncio
+async def test_a_startup_pack_reads_no_link_where_no_repository_is_indexed(
+    served, monkeypatch
+) -> None:
+    async def unread(org, idents):
+        raise AssertionError("no link read without an indexed repository")
+
+    monkeypatch.setattr(code_links.store, "live_links", unread)
+    monkeypatch.setattr(code_links.code, "code_namespaces", list)
+    served.heads.append(_row("m"))
+    lines = await _startup_lines(monkeypatch, served, recent=["m"])
+    assert len(lines) == 1 and "memory:agent-a/m " in lines[0]
+
+
 @pytest.mark.asyncio
 async def test_revise_judges_every_changed_definition_and_keeps_the_unjudged_due(
     world, monkeypatch
