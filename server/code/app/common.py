@@ -265,7 +265,7 @@ async def index_as_of(repo: CodeRepo, org: str, ns: str) -> dict[str, Any]:
         else:
             lag = _published_lag(state, cfg, commit)
         fetched = (state.get("clone_head") or {}).get("updated_at")
-        unfetched = mirror_fetch_overdue(fetched)
+        unfetched = mirror_fetch_overdue(fetched, indexed_at=updated)
         stale = lag > settings.code_stale_after_commits or unfetched
         # Freshness on the span wherever as_of is emitted (search, ask, grep):
         # "was the index stale when it served this" joins latency and quality.
@@ -321,25 +321,34 @@ def failing_tiers(
     return out
 
 
-def fetch_freshness(fetched_at: Any, now: datetime | None = None) -> tuple[str, bool]:
+def fetch_freshness(
+    fetched_at: Any, now: datetime | None = None, *, indexed_at: Any = None
+) -> tuple[str, bool]:
     """The mirror's last fetch as ISO-8601 UTC ('' when the `clone_head` row is missing)
     and whether it is overdue by `mirror_fetch_overdue`'s rule: what `code.index_status`
     and `code.repos` carry so a client's freshness verdict sees a stalled mirror."""
+    overdue = mirror_fetch_overdue(fetched_at, now, indexed_at=indexed_at)
     if not isinstance(fetched_at, datetime):
-        return "", False
+        return "", overdue
     ts = fetched_at if fetched_at.tzinfo else fetched_at.replace(tzinfo=UTC)
-    return ts.isoformat(), mirror_fetch_overdue(fetched_at, now)
+    return ts.isoformat(), overdue
 
 
-def mirror_fetch_overdue(fetched_at: Any, now: datetime | None = None) -> bool:
+def mirror_fetch_overdue(
+    fetched_at: Any, now: datetime | None = None, *, indexed_at: Any = None
+) -> bool:
     """The entry's mirror has not fetched for longer than
     `code_fetch_stale_after_seconds`. `fetched_at` is the `clone_head` row's `updated_at`
-    (UTC, naive from ClickHouse); unknown is never overdue, so a deployment without the
-    row keeps the lag-only verdict."""
+    (UTC, naive from ClickHouse). Every pass that fetches writes that row, so an entry
+    without it has an index no pass ever fetched for (a backfill with no poller and no
+    `code.refresh`): `indexed_at`, the `git_head` row's `updated_at`, stands in as the
+    last moment the mirror is known to have matched its remote. With neither there is no
+    index to be stale."""
     limit = int(settings.code_fetch_stale_after_seconds)
-    if limit <= 0 or not isinstance(fetched_at, datetime):
+    at = fetched_at if isinstance(fetched_at, datetime) else indexed_at
+    if limit <= 0 or not isinstance(at, datetime):
         return False
-    ts = fetched_at if fetched_at.tzinfo else fetched_at.replace(tzinfo=UTC)
+    ts = at if at.tzinfo else at.replace(tzinfo=UTC)
     return ((now or datetime.now(UTC)) - ts).total_seconds() > limit
 
 

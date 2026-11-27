@@ -27,9 +27,9 @@ dashboard. It is Apache-2.0. This page helps you decide whether it fits.
 Memory and the code index are separate planes on one server. Use either alone or both.
 Memory needs a server and a writer token. The code index also needs a repository added
 (`LOOM_CODE_REPOS_JSON`, or **Repositories → Add repository** in the dashboard where the
-[repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox) runs) and
-`LOOM_CODE_INGEST_ENABLED=true`. The [Claude Code and Codex plugins](connect-a-coding-agent.md)
-use both.
+[repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox) runs);
+the `code_ingest` worker, on by default, then follows every push. The
+[Claude Code and Codex plugins](connect-a-coding-agent.md) use both.
 
 ## Where namespaces fit
 

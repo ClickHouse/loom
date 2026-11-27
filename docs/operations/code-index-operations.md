@@ -1,9 +1,9 @@
 # Code index operations
 
-This page covers how to enable the code index workers, configure repositories and keep
-the index current; the code index runs only when an operator enables its workers and
-configures repositories. Every `code_*` worker except `code_coverage_notify` and
-`code_backport_gaps` is off by default. What the `code.*` operations answer is in the
+This page covers how to configure repositories, enable the code index workers and keep
+the index current; the code index runs once an operator configures a repository. The
+`code_ingest` poller is on by default; the [workers reference](../reference/workers.md)
+lists every worker's default. What the `code.*` operations answer is in the
 [code index overview](../features/code-index/overview.md); how the index is built is in
 [code index architecture](../architecture/code-index-architecture.md).
 
@@ -314,7 +314,7 @@ cadence setting and default is in the [workers reference](../reference/workers.m
 
 | Worker                 | Flag                                     | Does                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ---------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `code_ingest`          | `LOOM_CODE_INGEST_ENABLED`               | every `LOOM_CODE_INGEST_INTERVAL_SECONDS`: fetch, then per first-parent commit re-chunk only changed content, refresh symbols and edges, tombstone deletions, build the merged PR's context pack, advance `git_head`. Hourly it also finds indexed files whose chunks predate their content at head and heals up to `LOOM_CODE_RECONCILE_HEAL_PER_PASS` per pass. Builds self-service first indexes. |
+| `code_ingest`          | `LOOM_CODE_INGEST_ENABLED` (on)          | every `LOOM_CODE_INGEST_INTERVAL_SECONDS`: fetch, then per first-parent commit re-chunk only changed content, refresh symbols and edges, tombstone deletions, build the merged PR's context pack, advance `git_head`. Hourly it also finds indexed files whose chunks predate their content at head and heals up to `LOOM_CODE_RECONCILE_HEAL_PER_PASS` per pass. Builds self-service first indexes. |
 | `code_embed_recovery`  | `LOOM_CODE_EMBED_RECOVERY_ENABLED`       | embeds chunks left without a vector (provider outage, `--phase index`)                                                                                                                                                                                                                                                                                                                               |
 | `code_pr_history`      | `LOOM_CODE_PR_HISTORY_ENABLED`           | syncs newly merged PRs from GitHub                                                                                                                                                                                                                                                                                                                                                                   |
 | `code_graph_stats`     | `LOOM_CODE_GRAPH_STATS_ENABLED`          | weekly: PageRank over the include graph, per-file degrees, the test ↔ source map                                                                                                                                                                                                                                                                                                                     |
@@ -330,10 +330,13 @@ after a merge. It runs the same ingest pass immediately for that namespace on th
 that received it, under the namespace's lease (`code_refresh:<org>/<namespace>`), so
 triggers landing on different replicas coalesce into one pass. It answers 404 for a
 namespace no entry configures, so the pusher never decides what gets indexed. It works
-with the poller disabled. After the pass it rechecks the memories linked to the
-namespace's code under the link worker's per-repository lease, with no model call, so
-link state does not wait for the `memory_code_links` interval; a busy lease or a failed
-recheck is logged and left to that worker.
+with the poller disabled (`LOOM_CODE_INGEST_ENABLED=false`); a repository of such a
+deployment that no CI job has refreshed is the `code_repos_untriggered` health error
+([trigger-only deployments](../features/code-index/freshness.md#trigger-only-deployments)).
+After the pass it rechecks the memories linked to the namespace's code under the link
+worker's per-repository lease, with no model call, so link state does not wait for the
+`memory_code_links` interval; a busy lease or a failed recheck is logged and left to
+that worker.
 
 Open pull requests are not indexed; the working tree stays the client's own.
 
@@ -818,8 +821,13 @@ sandbox. `seccomp=unconfined` and `apparmor=unconfined` also work where the host
 restrict user namespaces, but they drop the whole profile.
 
 **Without the sandbox** Loom probes once per process, logs a warning and reports
-`repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. With
-`LOOM_CODE_SANDBOX_REQUIRED=true` every repository job is refused (above). Otherwise:
+`repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. With no repository configured
+and no `LOOM_CODE_SANDBOX_REQUIRED`, `loom doctor` prints the probe's warning and lists
+no problem, and a server process probes only when it serves an add from the page. Until
+then its `/v1/health` says nothing of the sandbox, so after a refused add replicas
+differ, and the Repositories page offers the add whenever one that has not probed
+answers. With `LOOM_CODE_SANDBOX_REQUIRED=true` every repository job is refused (above).
+Otherwise:
 
 - operator repositories (`LOOM_CODE_REPOS_JSON`) keep every tier, and their build steps
   run as plain processes on the host, as before;

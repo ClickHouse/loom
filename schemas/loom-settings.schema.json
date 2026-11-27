@@ -1330,9 +1330,9 @@
           "description": "Size cap of the dependents re-extraction overflow queue; paths past it are dropped and counted."
         },
         "code_ingest_enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean",
-          "description": "Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark."
+          "description": "Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. It polls every configured repository; False = nothing polls, and `code.refresh` is the only trigger."
         },
         "code_ingest_exclude": {
           "default": "",

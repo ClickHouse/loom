@@ -12,7 +12,7 @@ them through refactors, and flags a memory when its code changes. By default, se
 out a memory whose code is all gone unless a person pinned, locked or verified it, and every
 read that serves a lesson says when its code changed or is gone. It runs over MCP, HTTP and
 the SDKs on the repositories a self-hosted Loom indexes (the
-[code index](code-intelligence.md), `LOOM_CODE_INGEST_ENABLED=true`), and the
+[code index](code-intelligence.md)), and the
 `memory_code_links` worker that keeps the links is on by default.
 
 To see the change in a read response, [save a lesson, edit its source and check the
