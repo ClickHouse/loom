@@ -105,6 +105,7 @@ test("projects only an in-progress period with every completed day represented",
       grain: "week",
       operations: 120,
       days_reported: 3,
+      complete_days_reported: 3,
       forecast_eligible: true,
       active: 8,
       reporting: 11,
@@ -128,7 +129,9 @@ test("projects only an in-progress period with every completed day represented",
     ],
   );
   assert.equal(activityForRange(rows, filters, "2026-11-20")[1].estimate, null);
-  assert.equal(adoptionCsv("activity", data, [], [])[2][5], 280);
+  const [header, , forecast] = adoptionCsv("activity", data, [], []);
+  assert.equal(forecast[header.indexOf("projected_requests")], 280);
+  assert.ok(!header.includes("reporting_installations"));
   assert.equal(adoptionCsv("unknown", [], [], []), null);
 });
 
@@ -173,6 +176,14 @@ test("keeps a reported opening calendar month that overlaps the rolling window",
     ]),
     [["2026-12-01", 2, 0, 0, true]],
   );
+});
+
+test("exports lifecycle thresholds at the selected interval", () => {
+  const weekly = { grain: "week", bucket: "2026-11-09", new: 1, retained: 0, reactivated: 0, inactive: 0 };
+  const monthly = { ...weekly, grain: "month", bucket: "2026-11-01" };
+  const rows = adoptionCsv("lifecycle", [], [{ entity: "domain", threshold: 50_000, rows: [weekly, monthly] }], []);
+  assert.equal(rows[1][2], 11_666);
+  assert.equal(rows[2][2], 50_000);
 });
 
 test("exports every usage period with coverage, exact zeros, and blank missing values", () => {

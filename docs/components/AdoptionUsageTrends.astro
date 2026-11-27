@@ -5,7 +5,12 @@ import { usageMetricGroups } from "../lib/adoption-view.mjs";
 import AdoptionMetricPair from "./AdoptionMetricPair.astro";
 
 type Metric = (typeof usageMetricGroups)[number]["metrics"][number][0];
-type ActivityRow = { period: string; days_reported: number; current: boolean } & Partial<Record<Metric, number | null>>;
+type ActivityRow = {
+  period: string;
+  days_reported: number;
+  complete_days_reported?: number;
+  current: boolean;
+} & Partial<Record<Metric, number | null>>;
 
 interface Props {
   rows: ActivityRow[];

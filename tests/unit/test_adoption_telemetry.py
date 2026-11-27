@@ -279,6 +279,7 @@ def test_public_adoption_query_publishes_only_measured_company_activity() -> Non
             ('old-id', 1, 3, 12, '1.1.0', '26.1.0', 'long-running.example', 12, 4, 4),
             ('second-id', 1, 3, 12, '1.1.0', '26.0.0', 'long-running.example', 20, 7, 7),
             ('names-only', 1, 2, 12, '1.1.0', '26.1.0', 'names-only.example', 17, NULL, NULL),
+            ('legacy', 1, 1, 0, '1.0.2', '26.1.5', 'private.example', 0, NULL, NULL),
             ('noon', 1, 3, 0, '1.2.0', '26.1.0', 'long-running.example', 0, 999, 999),
             ('internal', 1, 3, 12, '1.2.0', '26.1.0', 'long-running.example', 99, 99, 99),
             ('smoke-ch', 1, 3, 12, '1.2.0', '0.0.0-smoke', 'long-running.example', 99, 99, 99),
@@ -400,15 +401,83 @@ def test_public_adoption_query_publishes_only_measured_company_activity() -> Non
     assert processes["day", "2026-11-25"] == (0, 1, 1)
     assert processes["week", "2026-11-23"] == (11, 3, 2)
 
+    current_versions = [
+        (row["loom_version"], row["clickhouse_version"], row["active_installations"])
+        for row in map(json.loads, report["versions"])
+    ]
+    assert current_versions == [
+        ("1.1.0", "26.1.0", 5),
+        ("1.0.0", "25.12", 1),
+        ("1.1.0", "26.0.0", 1),
+    ]
     versions = {
-        (row["grain"], row["period"], row["product"], row["version"]): row["installations"]
+        (row["grain"], row["period"], row["product"], row["version"]): row["active_installations"]
         for row in map(json.loads, report["version_trends"])
     }
-    assert all(version != "0.0.0-smoke" for _, _, _, version in versions)
+    assert all(
+        version not in {"0.0.0-smoke", "1.2.0", "1.0.2", "26.1.5"} for _, _, _, version in versions
+    )
+    assert all((grain, period) != ("day", "2026-11-25") for grain, period, _, _ in versions)
     assert versions["day", "2026-11-24", "loom", "1.0.1"] == 1
     assert ("week", "2026-11-23", "loom", "1.0.1") not in versions
-    assert versions["week", "2026-11-23", "loom", "1.1.0"] == 4
-    assert versions["day", "2026-11-26", "clickhouse", "26.1.0"] == 3
+    assert versions["week", "2026-11-23", "loom", "1.1.0"] == 3
+    assert versions["day", "2026-11-26", "clickhouse", "26.1.0"] == 2
+    assert versions["month", "2026-11-01", "loom", "1.1.0"] == 6
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_public_adoption_coverage_distinguishes_observed_days_from_complete_days() -> None:
+    warehouse = (
+        (ROOT / "deploy" / "telemetry" / "warehouse.sql").read_text().strip().removesuffix(";")
+    )
+    rows = run(
+        [
+            warehouse.replace("now('UTC')", "toDateTime('2026-11-24 18:00:00', 'UTC')"),
+            """
+            INSERT INTO loom_product_analytics.adoption_reports
+                (installation_id, window_start, window_end, day, schema_version, loom_version, clickhouse_version)
+            WITH toDateTime('2026-11-09', 'UTC') + toIntervalDay(number) + toIntervalHour(hours) AS start
+            SELECT if(hours = 0, 'morning', 'afternoon'), start, start + INTERVAL 12 HOUR,
+                   toDate(start), 2, '1.2.3', '26.1.0'
+            FROM numbers(14)
+            ARRAY JOIN [0, 12] AS hours
+            WHERE hours = 0 OR number >= 7
+            """,
+            """
+            INSERT INTO loom_product_analytics.adoption_reports
+                (installation_id, window_start, window_end, day, schema_version, loom_version, clickhouse_version,
+                 daily_successful_requests)
+            VALUES ('final-only', '2026-11-23 12:00:00', '2026-11-24 00:00:00', '2026-11-23',
+                    3, '1.2.3', '26.1.0', 0)
+            """,
+        ],
+        """
+        SELECT * FROM (
+            SELECT 'activity' AS series, grain, period, days_reported, complete_days_reported
+            FROM loom_product_analytics.public_adoption_activity
+            UNION ALL
+            SELECT 'domain' AS series, grain, period, days_reported, complete_days_reported
+            FROM loom_product_analytics.public_adoption_company_activity
+        )
+        WHERE (grain = 'week' AND period < toDate('2026-11-23'))
+           OR (grain = 'day' AND period = toDate('2026-11-23'))
+        """,
+    )
+
+    assert {
+        (row["series"], row["grain"], row["period"]): (
+            row["days_reported"],
+            row["complete_days_reported"],
+        )
+        for row in rows
+    } == {
+        ("activity", "week", "2026-11-09"): (7, 0),
+        ("activity", "week", "2026-11-16"): (7, 7),
+        ("activity", "day", "2026-11-23"): (1, 0),
+        ("domain", "week", "2026-11-09"): (7, 0),
+        ("domain", "week", "2026-11-16"): (7, 7),
+        ("domain", "day", "2026-11-23"): (1, 1),
+    }
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

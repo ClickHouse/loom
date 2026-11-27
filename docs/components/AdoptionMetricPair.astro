@@ -23,6 +23,7 @@ interface Props {
   observedLabel?: string;
   growthLabel?: string;
   growthRows?: ChartPoint[];
+  growthFirst?: boolean;
   observedMode?: "line" | "bars";
   compact?: boolean;
 }
@@ -38,6 +39,7 @@ const {
   observedLabel = kind === "gauge" ? "Reported level" : "Per " + grain,
   growthLabel = kind === "gauge" ? "Change from prior " + grain : "Cumulative observed",
   growthRows,
+  growthFirst = false,
   observedMode = kind === "gauge" ? "line" : "bars",
   compact = false,
 } = Astro.props;
@@ -53,7 +55,15 @@ const start = chosenStart && (!first || chosenStart < first) ? chosenStart : fir
 const end = chosenEnd && (!last || chosenEnd > last) ? chosenEnd : last;
 const partial = observed.some(({ current, partial }) => current || partial);
 const missing = start && end && observed.length < periodOffset(start, end, grain) + 1;
-const changeNote = "Change needs two consecutive complete reporting periods.";
+const signedChange = kind === "gauge" && !growthRows;
+const observedPlot = { rows: observed, label: observedLabel, mode: observedMode };
+const growthPlot = {
+  rows: growth,
+  label: growthLabel,
+  mode: signedChange ? ("bars" as const) : ("line" as const),
+  emptyMessage: signedChange ? "Change needs two consecutive complete reporting periods." : undefined,
+};
+const plots = growthFirst ? [growthPlot, observedPlot] : [observedPlot, growthPlot];
 ---
 
 <Panel className="metric-pair" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
@@ -61,35 +71,21 @@ const changeNote = "Change needs two consecutive complete reporting periods.";
   {description && <Text size="sm" color="muted">{description}</Text>}
   {observed.length > 0 ? (
     <div class="paired-plots">
-      <div class="pair-plot">
-        <Text size="sm">{observedLabel}</Text>
-        <AdoptionTrend
-          rows={observed}
-          label={label + " · " + observedLabel}
-          {grain}
-          mode={observedMode}
-          axisStart={start}
-          axisEnd={end}
-          {compact}
-          showDates={false}
-          showNotes={false}
-        />
-      </div>
-      <div class="pair-plot">
-        <Text size="sm">{growthLabel}</Text>
-        <AdoptionTrend
-          rows={growth}
-          label={label + " · " + growthLabel}
-          {grain}
-          mode={kind === "gauge" && !growthRows ? "bars" : "line"}
-          color="info"
-          axisStart={start}
-          axisEnd={end}
-          {compact}
-          showNotes={false}
-          emptyMessage={kind === "gauge" && !growthRows ? changeNote : undefined}
-        />
-      </div>
+      {plots.map((plot, index) => (
+        <div class="pair-plot">
+          <Text size="sm">{plot.label}</Text>
+          <AdoptionTrend
+            {...plot}
+            label={label + " · " + plot.label}
+            {grain}
+            color={index === 0 ? "accent" : "info"}
+            axisStart={start}
+            axisEnd={end}
+            {compact}
+            showNotes={false}
+          />
+        </div>
+      ))}
     </div>
   ) : (
     <Text size="sm" color="muted">No observations in this window.</Text>

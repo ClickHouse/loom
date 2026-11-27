@@ -128,6 +128,7 @@ SELECT
     sum(input_tokens) AS input_tokens,
     sum(output_tokens) AS output_tokens,
     sum(embedding_tokens) AS embedding_tokens,
+    groupBitOr(toUInt8(if(window_start = toDateTime(day, 'UTC'), 1, 2))) AS report_windows,
     maxOrNullIf(active_accounts, complete_day) AS active_accounts,
     maxOrNullIf(serving_processes, complete_day) AS serving_processes
 FROM loom_product_analytics.loom_completed_adoption_windows AS report
@@ -142,7 +143,7 @@ WHERE installation_id NOT IN (
 
 -- Complete-day reports can cover the same requests as earlier half-day reports.
 CREATE OR REPLACE VIEW loom_product_analytics.loom_adoption_domain_daily AS
-WITH schema_version = 3 AND window_end = toDateTime(day + 1, 'UTC') AS complete_day
+WITH schema_version = 3 AND window_end = toDateTime(day + 1, 'UTC') AND daily_successful_requests IS NOT NULL AS complete_day
 SELECT
     installation_id,
     day,
@@ -156,6 +157,10 @@ SELECT
         sumIf(counts.successful_requests, schema_version = 2),
         maxIf(counts.successful_requests, complete_day)
     ) AS disclosed_requests,
+    groupBitOrIf(
+        toUInt8(multiIf(complete_day, 3, window_start = toDateTime(day, 'UTC'), 1, 2)),
+        schema_version = 2 OR complete_day
+    ) AS disclosed_windows,
     countIf(schema_version = 2 OR complete_day) > 0 AS disclosure_reports
 FROM loom_product_analytics.loom_external_adoption_windows
 LEFT ARRAY JOIN user_domains AS counts
@@ -255,10 +260,14 @@ SELECT
     multiIf(grain = 'day', day, grain = 'week', toStartOfWeek(day, 1), toStartOfMonth(day)) AS period,
     multiIf(grain = 'day', addDays(period, 1), grain = 'week', addWeeks(period, 1), addMonths(period, 1)) AS period_end,
     uniqExactIf(domain, disclosed_requests > 0) AS companies,
-    uniqExact(day) AS days_reported
-FROM loom_product_analytics.loom_adoption_domain_daily
+    uniqExact(day) AS days_reported,
+    uniqExactIf(day, day_windows = 3) AS complete_days_reported
+FROM (
+    SELECT day, domain, disclosed_requests, groupBitOr(disclosed_windows) OVER (PARTITION BY day) AS day_windows
+    FROM loom_product_analytics.loom_adoption_domain_daily
+    WHERE disclosure_reports AND day >= today_utc - 365 AND day < today_utc
+)
 ARRAY JOIN ['day', 'week', 'month'] AS grain
-WHERE disclosure_reports AND day >= today_utc - 365 AND day < today_utc
 GROUP BY grain, period;
 
 -- The public website reads these aggregate views with a separate read-only user.
@@ -301,15 +310,16 @@ ARRAY JOIN [30, 90, 365] AS range_days
 WHERE daily.day >= today_utc - 2 * range_days AND daily.day <= today_utc
 GROUP BY range_days, comparison;
 
-CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_versions
+CREATE OR REPLACE VIEW loom_product_analytics.public_adoption_versions
 SQL SECURITY DEFINER AS
-SELECT loom_version, clickhouse_version, count() AS installations
+-- Keep the saved Query API's sort field during a warehouse rollout.
+SELECT loom_version, clickhouse_version, count() AS active_installations, active_installations AS installations
 FROM (
     SELECT installation_id,
            argMax(loom_version, day) AS loom_version,
            argMax(clickhouse_version, day) AS clickhouse_version
     FROM loom_product_analytics.loom_external_adoption_daily
-    WHERE day >= toDate(now('UTC')) - 30 AND day < toDate(now('UTC'))
+    WHERE day >= toDate(now('UTC')) - 30 AND day < toDate(now('UTC')) AND successful_requests > 0
     GROUP BY installation_id
 )
 GROUP BY loom_version, clickhouse_version;
@@ -329,7 +339,7 @@ SELECT
     multiIf(grain = 'day', addDays(period, 1), grain = 'week', addWeeks(period, 1), addMonths(period, 1)) AS period_end,
     reported_version.1 AS product,
     reported_version.2 AS version,
-    count() AS installations
+    count() AS active_installations
 FROM (
     SELECT
         grain,
@@ -338,7 +348,7 @@ FROM (
         argMax(tuple(loom_version, clickhouse_version), day) AS versions
     FROM loom_product_analytics.loom_external_adoption_daily
     ARRAY JOIN ['day', 'week', 'month'] AS grain
-    WHERE day >= toDate(now('UTC')) - 365 AND day < toDate(now('UTC'))
+    WHERE day >= toDate(now('UTC')) - 365 AND day < toDate(now('UTC')) AND successful_requests > 0
     GROUP BY grain, period, installation_id
 )
 ARRAY JOIN [('loom', versions.1), ('clickhouse', versions.2)] AS reported_version
@@ -429,6 +439,7 @@ SELECT
     uniqExactIf(installation_id, successful_requests > 0) AS active,
     sum(successful_requests) AS operations,
     uniqExact(day) AS days_reported,
+    uniqExactIf(day, day_windows = 3) AS complete_days_reported,
     multiIf(grain = 'day', addDays(period, 1), grain = 'week', addWeeks(period, 1), addMonths(period, 1)) AS period_end,
     period >= first_report AS forecast_eligible,
     sum(requests) AS requests,
@@ -461,6 +472,7 @@ SELECT
 FROM (
     SELECT
         *,
+        groupBitOr(report_windows) OVER (PARTITION BY day) AS day_windows,
         sumOrNull(active_accounts) OVER (PARTITION BY day) AS daily_active_accounts,
         count(active_accounts) OVER (PARTITION BY day) AS daily_account_installations,
         sumOrNull(serving_processes) OVER (PARTITION BY day) AS daily_serving_processes,

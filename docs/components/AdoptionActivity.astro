@@ -8,8 +8,8 @@ interface Props {
     period: string;
     operations: number;
     active: number;
-    reporting: number;
     days_reported: number;
+    complete_days_reported?: number;
     current: boolean;
     active_accounts?: number | null;
     accounts_days_reported?: number;
@@ -19,16 +19,16 @@ interface Props {
   grain: ChartGrain;
   rangeStart?: string;
   rangeEnd?: string;
-  showAccounts?: boolean;
+  view: "activity" | "accounts" | "requests";
   showProcesses?: boolean;
 }
 
-const { rows, grain, rangeStart, rangeEnd, showAccounts, showProcesses } = Astro.props;
+const { rows, grain, rangeStart, rangeEnd, view, showProcesses } = Astro.props;
 const accountPoints = activityPoints(rows, "active_accounts", grain, "accounts_days_reported");
 const processPoints = activityPoints(rows, "serving_processes", grain, "processes_days_reported");
 ---
 
-<div class="activity-charts">
+{view === "activity" && (
   <AdoptionMetricPair
     label="Active installations"
     description="Distinct installations with a successful request."
@@ -38,27 +38,23 @@ const processPoints = activityPoints(rows, "serving_processes", grain, "processe
     axisStart={rangeStart}
     axisEnd={rangeEnd}
   />
-  <AdoptionMetricPair
-    label="Reporting installations"
-    description="Distinct installations that sent an adoption report."
-    rows={activityPoints(rows, "reporting", grain)}
-    {grain}
-    kind="gauge"
-    axisStart={rangeStart}
-    axisEnd={rangeEnd}
-  />
+)}
+{view === "requests" && (
   <AdoptionMetricPair
     label="Successful requests"
-    description="Successful requests across reporting installations."
     rows={activityPoints(rows, "operations", grain)}
     {grain}
+    growthLabel="Cumulative requests"
+    growthFirst
     axisStart={rangeStart}
     axisEnd={rangeEnd}
   />
-  {(showAccounts || accountPoints.length > 0) && (
+)}
+{view === "accounts" && (
     <AdoptionMetricPair
       label="Active accounts"
-      description="Reported active account counts across participating installations."
+      description="Counts across installations that report account activity."
+      observedLabel={grain === "day" ? "Daily total" : "Peak daily total"}
       rows={accountPoints}
       {grain}
       kind="gauge"
@@ -66,7 +62,7 @@ const processPoints = activityPoints(rows, "serving_processes", grain, "processe
       axisEnd={rangeEnd}
     />
   )}
-  {(showProcesses || processPoints.length > 0) && (
+{view === "activity" && (showProcesses || processPoints.length > 0) && (
     <AdoptionMetricPair
       label="Serving processes"
       description="Processes that handled successful requests. Restarts and workers can contribute."
@@ -77,15 +73,3 @@ const processPoints = activityPoints(rows, "serving_processes", grain, "processe
       axisEnd={rangeEnd}
     />
   )}
-</div>
-
-<style>
-  .activity-charts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.9rem;
-  }
-  .activity-charts > :global(.metric-pair) {
-    flex: 1 1 min(100%, 24rem);
-  }
-</style>

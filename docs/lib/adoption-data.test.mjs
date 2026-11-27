@@ -179,10 +179,10 @@ test("reads measured company activity and excludes smoke versions and private fi
   const day = "2026-11-09";
   const period = { grain: "day", period: day, period_end: "2026-11-10" };
   const total = { range_days: 30, comparison: "current", reporting: 6 };
-  const versions = { loom_version: "1.2.3", clickhouse_version: "26.1", installations: 4 };
+  const versions = { loom_version: "1.2.3", clickhouse_version: "26.1", active_installations: 4 };
   const firstObservation = { day: "2026-09-11", loom_version: "1.0.0", clickhouse_version: "25.12" };
-  const versionTrend = { ...period, product: "loom", version: "1.2.3", installations: 4 };
-  const companyTrend = { ...period, companies: 0, days_reported: 1 };
+  const versionTrend = { ...period, product: "loom", version: "1.2.3", active_installations: 4 };
+  const companyTrend = { ...period, companies: 0, days_reported: 1, complete_days_reported: 1 };
   const measurements = {
     day,
     active_accounts: 0,
@@ -198,6 +198,7 @@ test("reads measured company activity and excludes smoke versions and private fi
     totals: [{ ...total, verified_companies: 5 }],
     versions: [
       versions,
+      { loom_version: "1.2.2", clickhouse_version: "26.1", installations: 5 },
       { ...versions, loom_version: "0.0.0-smoke" },
       { ...versions, clickhouse_version: "0.0.0-smoke" },
     ],

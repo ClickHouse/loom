@@ -1,5 +1,6 @@
 ---
 import { BigStat } from "@clickhouse/click-ui/BigStat";
+import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
 import { Panel } from "@clickhouse/click-ui/Panel";
 import { Table } from "@clickhouse/click-ui/Table";
@@ -25,6 +26,7 @@ import AdoptionLifecycle from "./AdoptionLifecycle.astro";
 import AdoptionMetricPair from "./AdoptionMetricPair.astro";
 import AdoptionPicker from "./AdoptionPicker.astro";
 import AdoptionTrend from "./AdoptionTrend.astro";
+import AdoptionState from "./AdoptionState.astro";
 import AdoptionUsageTrends from "./AdoptionUsageTrends.astro";
 import SiteFrame from "./SiteFrame.astro";
 
@@ -84,16 +86,26 @@ const overview = [
   { label: "Successful requests", value: summary?.operations, note: "Across all Loom features" },
 ];
 
+const growthMetrics = [
+  { value: "installations", label: "Installations" },
+  { value: "accounts", label: "Accounts" },
+  { value: "requests", label: "Requests" },
+] as const;
+const selectedGrowth = growthMetrics.find(({ value }) => value === input("growth"))?.value ?? "installations";
+
 const domainSeries = (selfHosted.companyTrends ?? [])
   .filter(
     ({ grain: periodGrain, period, period_end }) => grain === periodGrain && period_end > cutoff && period < today,
   )
-  .map(({ period, period_end, companies, days_reported }) => ({
+  .map(({ period, period_end, companies, days_reported, complete_days_reported }) => ({
     day: period,
     value: companies,
     days: days_reported,
     current: period_end > today,
-    partial: period < cutoff || days_reported == null || days_reported < periodOffset(period, period_end, "day"),
+    partial:
+      period < cutoff ||
+      complete_days_reported == null ||
+      complete_days_reported < periodOffset(period, period_end, "day"),
   }));
 const growth = adoptionGrowthForRange(selfHosted.growth, filters, today);
 const observation = selfHosted.firstObservation;
@@ -123,16 +135,23 @@ const versionOptions = [
 ].sort((a, b) => b.group.localeCompare(a.group) || b.label.localeCompare(a.label, "en", { numeric: true }));
 const selectedVersion = versionOptions.find(({ value }) => value === input("version")) ?? versionOptions[0];
 const versionPeriods = Map.groupBy(versionHistory, ({ period }) => period);
-const reportingDays = new Map(events.map(({ period, days_reported }) => [period, days_reported]));
-const versionSeries = Array.from(versionPeriods, ([day, rows]) => {
-  const days = reportingDays.get(day);
+const eventPeriods = new Map(events.map((row) => [row.period, row]));
+const versionDates = new Set([...versionPeriods.keys(), ...eventPeriods.keys()]);
+const versionSeries = Array.from(versionDates, (day) => {
+  const rows = versionPeriods.get(day) ?? [];
+  const activity = eventPeriods.get(day);
   const end = periodEnd(day, grain);
   return {
     day,
-    value: rows.find(({ product, version }) => product + "/" + version === selectedVersion?.value)?.installations ?? 0,
-    days,
+    value:
+      rows.find(({ product, version }) => product + "/" + version === selectedVersion?.value)?.active_installations ??
+      0,
+    days: activity?.days_reported,
     current: end > today,
-    partial: day < cutoff || days == null || days < periodOffset(day, end, "day"),
+    partial:
+      day < cutoff ||
+      activity?.complete_days_reported == null ||
+      activity.complete_days_reported < periodOffset(day, end, "day"),
   };
 });
 
@@ -187,6 +206,7 @@ const state = Object.fromEntries(
     cohort: filters.cohort,
     installation: filters.installation,
     domain: filters.domain,
+    growth: selectedGrowth,
     usage: selectedUsage?.value,
     version: selectedVersion?.value,
     sdk: selectedSdk?.id,
@@ -231,12 +251,30 @@ const state = Object.fromEntries(
           ))}
         </div>
         <div class="coverage">
-          {summary?.reporting != null && <Text size="sm" color="muted">
-            {showCount(summary.reporting)} installations sent telemetry, including idle installations{summary.last_reported === today && " and reports received today"}.
-          </Text>}
+          {summary?.last_reported === today && <Text size="sm" color="muted">Totals include completed reporting windows today.</Text>}
           {observation && <Text size="sm" color="muted">Earliest retained report {showDay(observation.day)} UTC · Loom {observation.loom_version} · ClickHouse {observation.clickhouse_version}</Text>}
           <Link size="sm" href="/telemetry">Telemetry definitions</Link>
         </div>
+      </section>
+
+      <section aria-labelledby="growth-title" class="growth-section" id="growth">
+        <div class="section-heading">
+          <Title type="h2" size="lg" id="growth-title">Self-hosted growth</Title>
+          <Link href="#reported-contact-domains" size="sm">Browse domains</Link>
+        </div>
+        <form method="post" action={path + "#growth"} class="growth-controls" aria-label="Growth metric">
+          <AdoptionState {state} omit={["growth"]} />
+          {growthMetrics.map(({ value, label }) => <Button
+            {...{ name: "growth", value }}
+            htmlType="submit"
+            type={selectedGrowth === value ? "secondary" : "empty"}
+            aria-pressed={selectedGrowth === value}
+            {label}
+          />)}
+        </form>
+        {selectedGrowth === "installations"
+          ? <AdoptionGrowth rows={growth} {grain} rangeStart={cutoff} rangeEnd={lastDay} />
+          : <AdoptionActivity rows={events} {grain} view={selectedGrowth} rangeStart={cutoff} rangeEnd={lastDay} />}
       </section>
 
       <AdoptionDomainDirectory
@@ -251,14 +289,13 @@ const state = Object.fromEntries(
 
       <section class="adoption-section" aria-labelledby="activity-title" id="activity">
         <div class="section-heading">
-          <Title type="h2" size="lg" id="activity-title">Self-hosted trends</Title>
+          <Title type="h2" size="lg" id="activity-title">Activity over time</Title>
           {events.length > 0 && <AdoptionDownload {path} {state} dataset="activity" label="Export activity CSV" />}
         </div>
         {(events.some(({ opening }) => opening) || domainSeries.some(({ day }) => day < cutoff)) && <Text className="coverage" size="sm" color="muted">
           The first calendar period starts before the selected window.
         </Text>}
-        <div class="two-column">
-          <AdoptionGrowth rows={growth} {grain} rangeStart={cutoff} rangeEnd={lastDay} />
+        <div class="activity-details">
           <AdoptionMetricPair
             label="Active domains"
             description="Each domain counts once per period across its active installations."
@@ -268,10 +305,9 @@ const state = Object.fromEntries(
             axisStart={cutoff}
             axisEnd={lastDay}
           />
+          <AdoptionActivity rows={events} {grain} view="activity" rangeStart={cutoff} rangeEnd={lastDay}
+            showProcesses={selfHosted.activity.some(({ serving_processes }) => Number.isFinite(serving_processes))} />
         </div>
-        <AdoptionActivity rows={events} {grain} rangeStart={cutoff} rangeEnd={lastDay}
-          showAccounts={selfHosted.activity.some(({ active_accounts }) => Number.isFinite(active_accounts))}
-          showProcesses={selfHosted.activity.some(({ serving_processes }) => Number.isFinite(serving_processes))} />
       </section>
 
       <section class="adoption-section" aria-labelledby="usage-title" id="usage">
@@ -331,21 +367,21 @@ const state = Object.fromEntries(
               rows={versionSeries}
               {grain}
               kind="gauge"
-              observedLabel="Reporting installations"
+              observedLabel="Active installations"
               axisStart={cutoff}
               axisEnd={lastDay}
             />
           </>}
           {versionRows.length > 0 && <details class="version-detail" open={!selectedVersion}>
-            <summary>Reported versions · last 30 complete days</summary>
+            <summary>Versions in use · last 30 complete days</summary>
             <Table
               size="sm"
-              aria-label="Reported software versions"
+              aria-label="Versions in use by active installations"
               mobileLayout="scroll"
-              headers={[{ label: "Loom" }, { label: "ClickHouse" }, { label: "Reporting installations" }]}
-              rows={versionRows.map(({ loom_version, clickhouse_version, installations }) => ({
+              headers={[{ label: "Loom" }, { label: "ClickHouse" }, { label: "Active installations" }]}
+              rows={versionRows.map(({ loom_version, clickhouse_version, active_installations }) => ({
                 id: loom_version + "/" + clickhouse_version,
-                items: [{ label: loom_version }, { label: clickhouse_version }, { label: showCount(installations) }],
+                items: [{ label: loom_version }, { label: clickhouse_version }, { label: showCount(active_installations) }],
               }))}
             />
           </details>}
@@ -462,8 +498,21 @@ const state = Object.fromEntries(
   .sdk-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .counters, .two-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .two-column > :only-child { grid-column: 1 / -1; }
-  .two-column:empty { display: none; }
-  .two-column + :global(.activity-charts) { margin-block-start: 0.75rem; }
+  .growth-section { display: grid; min-inline-size: 0; margin-block-end: clamp(1.6rem, 4vw, 3.2rem); }
+  .growth-controls {
+    display: flex;
+    flex-wrap: wrap;
+    justify-self: start;
+    gap: 0.15rem;
+    padding: 0.15rem;
+    margin-block-end: 0.8rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+  .growth-controls :global(button) { min-block-size: 2.5rem; padding-inline: 0.7rem; border-color: transparent; font-size: 0.875rem; }
+  .growth-controls :global(button[aria-pressed="false"]) { color: var(--muted); }
+  .growth-controls :global(button[aria-pressed="true"]) { background: var(--surface-raised); color: var(--click-global-color-text-default); }
+  .activity-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: 0.75rem; }
   .adoption :global(.adoption-stat) { min-inline-size: 0; overflow-wrap: anywhere; }
   .adoption :global(.metric-value) { padding: 0; border: 0; background: transparent; font-variant-numeric: tabular-nums; }
   .coverage { margin-block-start: 0.65rem; }

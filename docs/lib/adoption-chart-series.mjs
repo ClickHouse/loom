@@ -51,7 +51,7 @@ export function groupDailySeries(history, grain, { start, end, kind = "additive"
       value,
       days: rows.length,
       current: next > end,
-      partial: kind === "additive" && rows.length < expected,
+      partial: kind === "additive" ? rows.length < expected : last.day !== daysBefore(next, 1),
     };
   });
 }
@@ -91,7 +91,7 @@ export function metricGrowth(rows, grain, kind) {
 
 /**
  * @template {string} Metric
- * @param {ReadonlyArray<{period: string, days_reported: number, accounts_days_reported?: number, processes_days_reported?: number, current: boolean} & Partial<Record<Metric, number | null>>>} rows
+ * @param {ReadonlyArray<{period: string, days_reported: number, complete_days_reported?: number, accounts_days_reported?: number, processes_days_reported?: number, current: boolean} & Partial<Record<Metric, number | null>>>} rows
  * @param {Metric} key
  * @param {ChartGrain} grain
  * @param {"days_reported" | "accounts_days_reported" | "processes_days_reported"} [coverage]
@@ -103,13 +103,14 @@ export function activityPoints(rows, key, grain, coverage = "days_reported") {
     if (typeof value !== "number" || !Number.isFinite(value)) return [];
     const { period: day, current } = row;
     const days = row[coverage];
+    const completeDays = coverage === "days_reported" ? row.complete_days_reported : days;
     return [
       {
         day,
         value,
         days,
         current,
-        partial: days === undefined || days < periodOffset(day, periodEnd(day, grain), "day"),
+        partial: completeDays === undefined || completeDays < periodOffset(day, periodEnd(day, grain), "day"),
       },
     ];
   });

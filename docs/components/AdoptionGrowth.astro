@@ -12,18 +12,19 @@ interface Props {
 const { rows, grain, rangeStart, rangeEnd } = Astro.props;
 const includesOpeningPeriod = rows[0]?.period < rangeStart;
 const description =
-  "Each installation enters the cumulative total at its first successful Loom request in retained telemetry." +
+  "Each installation counts once at its first successful request in retained telemetry." +
   (includesOpeningPeriod ? " The first period starts before the selected window." : "");
 ---
 
 <AdoptionMetricPair
-  label="Observed installations over time"
+  label="Self-hosted installation growth"
   {description}
   {grain}
   rows={rows.map(({ period, first_active, current }) => ({ day: period, value: first_active, current }))}
   growthRows={rows.map(({ period, cumulative_active, current }) => ({ day: period, value: cumulative_active, current }))}
   axisStart={rangeStart}
   axisEnd={rangeEnd}
-  observedLabel="First observed per period"
-  growthLabel="Cumulative observed installations"
+  observedLabel={"First observed per " + grain}
+  growthLabel="Cumulative installations"
+  growthFirst
 />

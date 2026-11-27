@@ -63,9 +63,45 @@ test("gauge change preserves signed and zero deltas between comparable reports",
   ]);
 });
 
+test("gauge deltas require closing snapshots in both periods", () => {
+  const points = groupDailySeries(
+    [
+      { day: "2026-08-03", value: 100 },
+      { day: "2026-08-16", value: 160 },
+      { day: "2026-08-23", value: 175 },
+    ],
+    "week",
+    { start: "2026-08-03", end: "2026-08-24", kind: "gauge" },
+  );
+  assert.deepEqual(
+    points.map(({ partial }) => partial),
+    [true, false, false],
+  );
+  assert.deepEqual(
+    metricGrowth(points, "week", "gauge").map(({ value }) => value),
+    [15],
+  );
+});
+
+test("activity compares only days with both reporting windows", () => {
+  const points = activityPoints(
+    [
+      { period: "2026-01-05", active: 1, days_reported: 7, complete_days_reported: 0, current: false },
+      { period: "2026-01-12", active: 2, days_reported: 7, complete_days_reported: 7, current: false },
+    ],
+    "active",
+    "week",
+  );
+  assert.deepEqual(
+    points.map(({ partial }) => partial),
+    [true, false],
+  );
+  assert.deepEqual(metricGrowth(points, "week", "gauge"), []);
+});
+
 test("missing activity fields stay unknown while observed zero still plots", () => {
   const rows = [
-    { period: "2026-01-05", requests: 0, days_reported: 7, current: false },
+    { period: "2026-01-05", requests: 0, days_reported: 7, complete_days_reported: 7, current: false },
     { period: "2026-01-12", requests: null, days_reported: 7, current: false },
     { period: "2026-01-19", requests: 4, days_reported: 2, current: true },
     { period: "2026-01-26", days_reported: 7, current: false },

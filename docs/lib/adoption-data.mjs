@@ -118,23 +118,32 @@ function decodeFirstObservation(encoded) {
 
 function decodeVersionTrends(encoded) {
   return (
-    decodeRows(encoded, ({ grain, period, period_end, product, version, installations }) =>
+    decodeRows(encoded, ({ grain, period, period_end, product, version, active_installations }) =>
       isPeriod({ grain, period, period_end }) &&
       ["loom", "clickhouse"].includes(product) &&
       (isVersion(version) || version === smokeVersion) &&
-      isCount(installations)
-        ? { grain, period, period_end, product, version, installations }
+      isCount(active_installations)
+        ? { grain, period, period_end, product, version, active_installations }
         : null,
     )?.filter(({ version }) => version !== smokeVersion) ?? null
   );
 }
 
 function decodeCompanyTrends(encoded) {
-  return decodeRows(encoded, ({ grain, period, period_end, companies, days_reported }) =>
+  return decodeRows(encoded, ({ grain, period, period_end, companies, days_reported, complete_days_reported }) =>
     isPeriod({ grain, period, period_end }) &&
     isCount(companies) &&
-    (days_reported === undefined || isCount(days_reported))
-      ? { grain, period, period_end, companies, ...(days_reported !== undefined && { days_reported }) }
+    (days_reported === undefined || isCount(days_reported)) &&
+    (complete_days_reported === undefined ||
+      (isCount(complete_days_reported) && complete_days_reported <= days_reported))
+      ? {
+          grain,
+          period,
+          period_end,
+          companies,
+          ...(days_reported !== undefined && { days_reported }),
+          ...(complete_days_reported !== undefined && { complete_days_reported }),
+        }
       : null,
   );
 }
@@ -179,7 +188,8 @@ async function loadWarehouse(env) {
       const aggregates = Object.fromEntries(datasets.map((name) => [name, row[name].map((json) => JSON.parse(json))]));
       for (const total of aggregates.totals) delete total.verified_companies;
       const versions = aggregates.versions.filter(
-        ({ loom_version, clickhouse_version }) => isVersion(loom_version) && isVersion(clickhouse_version),
+        ({ loom_version, clickhouse_version, active_installations }) =>
+          isVersion(loom_version) && isVersion(clickhouse_version) && isCount(active_installations),
       );
       const domains = Array.isArray(row.domains) ? row.domains.filter((domain) => typeof domain === "string") : null;
       const domainDirectories = decodeDomainDirectories(row.domain_directories);

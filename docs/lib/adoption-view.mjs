@@ -117,7 +117,7 @@ export function activityForRange(rows, filters, today) {
       const elapsed = (Date.parse(today) - Date.parse(row.period)) / dayMs;
       const duration = (Date.parse(row.period_end) - Date.parse(row.period)) / dayMs;
       const estimate =
-        current && row.forecast_eligible && elapsed > 0 && row.days_reported === elapsed
+        current && row.forecast_eligible && elapsed > 0 && row.complete_days_reported === elapsed
           ? Math.round((row.operations / elapsed) * duration)
           : null;
       return { ...row, estimate, current, opening };
@@ -173,7 +173,6 @@ export function adoptionCsv(dataset, activity, lifecycle, oss) {
         [
           "period_start_utc",
           "period_end_utc",
-          "reporting_installations",
           "active_installations",
           "successful_requests",
           "projected_requests",
@@ -187,7 +186,6 @@ export function adoptionCsv(dataset, activity, lifecycle, oss) {
         ...activity.map((row) => [
           row.period,
           row.period_end,
-          row.reporting,
           row.active,
           row.operations,
           row.estimate,
@@ -224,7 +222,15 @@ export function adoptionCsv(dataset, activity, lifecycle, oss) {
           "became_inactive",
         ],
         ...lifecycle.flatMap(({ entity, threshold, rows }) =>
-          rows.map((row) => [entity, row.bucket, threshold, row.new, row.retained, row.reactivated, row.inactive]),
+          rows.map((row) => [
+            entity,
+            row.bucket,
+            row.grain === "week" ? Math.floor((threshold * 7) / 30) : threshold,
+            row.new,
+            row.retained,
+            row.reactivated,
+            row.inactive,
+          ]),
         ),
       ];
     case "downloads":
