@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
@@ -60,6 +60,31 @@ describe("Settings", () => {
     expect(document.title).toBe("Tokens · Settings · Loom");
     await userEvent.click(screen.getByRole("tab", { name: "Memory" }));
     expect(document.title).toBe("Memory · Settings · Loom");
+  });
+
+  it("keeps the history entry when a tab changes and leaves Tokens out of the URL", async () => {
+    const state = { loomNamespace: "team", loomBack: "agent setup" };
+    window.history.replaceState(state, "", "/settings?namespace=team");
+    const length = window.history.length;
+    seed("team");
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Memory" }, WAIT));
+    expect(window.location.search).toBe("?namespace=team&tab=memory");
+    expect(window.history.state).toEqual(state);
+    await userEvent.click(screen.getByRole("tab", { name: "Tokens" }));
+    expect(window.location.search).toBe("?namespace=team");
+    expect(window.history.state).toEqual(state);
+    expect(window.history.length).toBe(length);
+  });
+
+  it("selects Tokens when Back restores a Settings address with no tab", async () => {
+    seed("team");
+    window.history.replaceState(null, "", "/settings?tab=memory");
+    render(<Setup />);
+    expect(await screen.findByRole("tab", { name: "Memory" }, WAIT)).toHaveAttribute("aria-selected", "true");
+    window.history.replaceState(null, "", "/settings");
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Tokens" })).toHaveAttribute("aria-selected", "true"));
   });
 
   it("announces a missing namespace from the alert itself, with no wrapper", async () => {

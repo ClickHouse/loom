@@ -19,7 +19,7 @@ import {
   type OnboardingStep,
 } from "../lib/onboarding";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
-import { DOCS_MCP_URL } from "../flows/TokenGate";
+import { DOCS_MCP_URL } from "../lib/docsLinks";
 import { ExternalLink, Loading, Panel } from "./ui";
 import type { Identity } from "../api";
 

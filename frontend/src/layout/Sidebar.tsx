@@ -11,41 +11,13 @@ import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../li
 import { roleOnNamespace } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { isMemoryNamespace } from "../lib/namespace";
+import { LoomBrand } from "./LoomBrand";
 
 // How long a remembered badge answer is shown before the idle refresh replaces it — one
 // poll interval.
 const BADGE_SESSION_TTL_MS = 60_000;
 // The agents badge reads every fifth minute tick
 const AGENTS_EVERY_N_TICKS = 5;
-
-// Loom mark inlined so currentColor inherits from the sidebar's text color.
-function LoomMark({ size = 32 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 40 40"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className="shrink-0 text-accent"
-      aria-hidden="true"
-    >
-      {/* spokes */}
-      <line x1="20" y1="20" x2="20" y2="6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <line x1="20" y1="20" x2="34" y2="20" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <line x1="20" y1="20" x2="20" y2="34" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <line x1="20" y1="20" x2="6" y2="20" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      {/* peripheral tool nodes */}
-      <circle cx="20" cy="6" r="3" fill="currentColor" />
-      <circle cx="34" cy="20" r="3" fill="currentColor" />
-      <circle cx="20" cy="34" r="3" fill="currentColor" />
-      <circle cx="6" cy="20" r="3" fill="currentColor" />
-      {/* center memory node — larger, anchoring */}
-      <circle cx="20" cy="20" r="6" fill="currentColor" />
-      <circle cx="20" cy="20" r="2.4" fill="var(--color-surface)" />
-    </svg>
-  );
-}
 
 export interface NavItem {
   id: View;
@@ -64,26 +36,15 @@ export interface NavItem {
   badgeTone?: "default" | "warn" | "accent";
 }
 
-// The rail is three labelled groups around the questions a user brings — what does my AI
-// know (Memory), what has it been doing (Activity), what can it reach (Sources) — with
-// Profile on top as the identity surface and Settings at the foot. Recall is a tab of
-// Memories (MemoryTabs), Namespaces in your org (browse/join) is reached from the namespace
-// picker, Graph is a drill-down from an entity, Flow is in the admin drawer.
-//
-// RAIL_GROUPS, SETTINGS_ITEM, adminItems and NavBadge are exported for the phone's "More"
-// sheet, which is generated from them, so a section added here appears there under the same label.
-// MAIN is the flat rail the tests read.
+// The phone's More dialog uses the same destinations so route labels stay in sync.
 interface NavGroup {
-  label: string | null;
+  label: string;
   items: NavItem[];
 }
 
 export const RAIL_GROUPS: NavGroup[] = [
-  // Profile sits first — it's the user's identity surface (the
-  // always-loaded context every AI sees).
-  { label: null, items: [{ id: "profile", label: "Profile", icon: "cards", scope: "namespace" }] },
   {
-    label: "Memory",
+    label: "Context",
     items: [
       { id: "memories", label: "Memories", icon: "clock", scope: "namespace" },
       {
@@ -93,32 +54,25 @@ export const RAIL_GROUPS: NavGroup[] = [
         scope: "namespace",
         hint: "in the namespace picked above, or a collection you read",
       },
-      // Route id stays "sessions" (stable deep links); the label matches the
-      // view it renders — Conversations (threads), not the run-session that
-      // groups runs in the Runs view.
-      { id: "sessions", label: "Conversations", icon: "chat", scope: "namespace" },
+      { id: "profile", label: "Profile", icon: "cards", scope: "namespace" },
     ],
   },
   {
-    label: "Activity",
+    label: "Agent activity",
     items: [
-      // Runs: the ledger of agent executions — goal, what was recalled and
-      // relied on, what was written, what it cost, how it ended.
+      { id: "sessions", label: "Conversations", icon: "chat", scope: "namespace" },
       { id: "runs", label: "Runs", icon: "list-numbered", scope: "namespace" },
-      // Tasks: the inbox plane — work one agent handed another, triaged, claimed under a
-      // lease, and edited by a person on a board.
       { id: "tasks", label: "Tasks", icon: "email", scope: "org" },
     ],
   },
   {
     label: "Sources",
-    // Code: the indexed-repo plane. Not memory — read-only reference data
-    // with its own health pipeline, hence a section rather than a namespace.
     items: [{ id: "code", label: "Repositories", icon: "code", scope: "org" }],
   },
 ];
 export const MAIN: NavItem[] = RAIL_GROUPS.flatMap((g) => g.items);
 export const SETTINGS_ITEM: NavItem = { id: "setup", label: "Settings", icon: "gear", scope: "namespace" };
+export const DOCS_ITEM: NavItem = { id: "help", label: "Documentation", icon: "book" };
 
 // Admin drawer items. Review queue is HIDDEN by default — it's a
 // usually-empty surface (conflicts/learnings only appear on
@@ -246,6 +200,10 @@ export function Sidebar() {
   const collapsed = useStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useStore((s) => s.toggleSidebar);
   const [adminOpen, setAdminOpen] = useState(isDrawerView(view));
+  const adminDrawerId = useId();
+  useEffect(() => {
+    if (isDrawerView(view)) setAdminOpen(true);
+  }, [view]);
   // Lean notification surface: badge admin items that have actionable state right now. The
   // answer is kept in the store, where the phone's More sheet reads it too.
   const badges = useStore((s) => s.adminBadges);
@@ -266,6 +224,7 @@ export function Sidebar() {
   const pollsBadges = roleHere === "admin" && isMemoryNamespace(identity?.namespace ?? "", myNamespaces);
 
   const visibleAdmin = adminItems(whoami, myNamespaces, identity?.namespace ?? "", badges);
+  const conflicts = visibleAdmin.find((item) => item.id === "admin:review_queue")?.badge;
 
   // Fetch conflict count + recent auto-resolutions + budget + agents activity on identity
   // change and refresh every 60s. All four are fail-quiet — a missing
@@ -381,11 +340,13 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`hidden md:flex shrink-0 border-r border-border bg-surface flex-col ${collapsed ? "w-[60px]" : "w-[244px]"}`}
+      className={`workspace-rail hidden md:flex shrink-0 border-r border-border flex-col ${collapsed ? "w-[60px]" : "w-[244px]"}`}
     >
       {/* Brand + collapse — brand is an anchor: cmd-click opens Memories in a new tab. The
           toggle is one button in both states, so it keeps the focus when pressed. */}
-      <div className={`pt-5 flex items-center justify-between ${collapsed ? "px-3 pb-2 flex-col gap-4" : "px-5 pb-4"}`}>
+      <div
+        className={`workspace-rail-brand flex items-center justify-between ${collapsed ? "flex-col gap-2 px-2 py-3" : "min-h-14 px-4"}`}
+      >
         <a
           href={viewHref("memories")}
           onClick={(e) => {
@@ -393,11 +354,10 @@ export function Sidebar() {
             e.preventDefault();
             setView("memories");
           }}
-          className="flex items-center gap-2.5 rounded-sm hover:opacity-80 transition-opacity no-underline hover:no-underline"
+          className="rounded-sm no-underline hover:no-underline"
           aria-label="Loom — go to Memories"
         >
-          <LoomMark size={32} />
-          {!collapsed && <span className="text-xl font-semibold text-text leading-none">Loom</span>}
+          <LoomBrand compact={collapsed} />
         </a>
         <IconButton
           icon={collapsed ? "slide-in" : "slide-out"}
@@ -410,18 +370,18 @@ export function Sidebar() {
 
       {/* Main nav — anchors so cmd-click opens in a new tab. Padded, not margined, so the
           scroll box leaves room for the first and last items' focus ring. */}
-      <nav className="flex-1 px-3 py-1 overflow-y-auto" aria-label="Sections">
+      <nav className="flex-1 px-3 pt-3 pb-2 overflow-y-auto" aria-label="Sections">
         {RAIL_GROUPS.map((g, gi) => (
           <div
-            key={g.label ?? "top"}
+            key={g.label}
             className={`${NAV_LIST} ${gi === 0 ? "" : collapsed ? "pt-2 mt-2 border-t border-border" : "pt-4"}`}
           >
-            {g.label && !collapsed && <GroupLabel>{g.label}</GroupLabel>}
+            {!collapsed && <GroupLabel>{g.label}</GroupLabel>}
             {g.items.map((item) => (
               <NavBtn
                 key={item.id}
                 item={item}
-                active={view === item.id}
+                active={view === item.id || (item.id === "memories" && view === "recall")}
                 collapsed={collapsed}
                 onActivate={() => setView(item.id)}
               />
@@ -436,6 +396,7 @@ export function Sidebar() {
               onClick={() => setAdminOpen((v) => !v)}
               className={`${NAV_ITEM} w-full justify-between`}
               aria-expanded={adminOpen}
+              aria-controls={adminOpen ? adminDrawerId : undefined}
             >
               <span className={`flex items-center ${NAV_GAP}`}>
                 <span className={NAV_ICON}>
@@ -443,18 +404,28 @@ export function Sidebar() {
                 </span>
                 Admin
               </span>
-              <Icon
-                name="chevron-down"
-                size="sm"
-                aria-hidden="true"
-                className={`transition-transform ${adminOpen ? "rotate-180" : ""}`}
-              />
+              <span className="flex items-center gap-2">
+                {!!conflicts && !adminOpen && (
+                  <span>
+                    <span className="sr-only">, {conflicts} open conflicts</span>
+                    <span aria-hidden="true">
+                      <NavBadge count={conflicts} tone="warn" collapsed={false} />
+                    </span>
+                  </span>
+                )}
+                <Icon
+                  name="chevron-down"
+                  size="sm"
+                  aria-hidden="true"
+                  className={`transition-transform ${adminOpen ? "rotate-180" : ""}`}
+                />
+              </span>
             </button>
 
             {adminOpen && (
-              <div className="ml-1 pl-3 border-l border-border mt-0.5 animate-fade-in">
+              <div id={adminDrawerId} className="ml-1 pl-3 border-l border-border mt-0.5">
                 {groupAdminItems(visibleAdmin).map((g, gi) => (
-                  <div key={g.label ?? gi} className={`${NAV_LIST} ${gi > 0 ? "pt-2" : ""}`}>
+                  <div key={g.label} className={`${NAV_LIST} ${gi > 0 ? "pt-2" : ""}`}>
                     <GroupLabel>{g.label}</GroupLabel>
                     {g.items.map((item) => (
                       <NavBtn
@@ -490,15 +461,15 @@ export function Sidebar() {
         )}
       </nav>
 
-      {/* Settings at the foot: tokens, clients, what is remembered, privacy filters */}
-      <div className={`border-t border-border ${collapsed ? "p-2" : "p-3"}`}>
+      <nav aria-label="Workspace" className={`border-t border-border ${NAV_LIST} ${collapsed ? "p-2" : "p-3"}`}>
+        <NavBtn item={DOCS_ITEM} active={view === "help"} collapsed={collapsed} onActivate={() => setView("help")} />
         <NavBtn
           item={SETTINGS_ITEM}
           active={view === "setup" || view === "connected-accounts"}
           collapsed={collapsed}
           onActivate={() => setView("setup")}
         />
-      </div>
+      </nav>
     </aside>
   );
 }
@@ -510,21 +481,17 @@ export function Sidebar() {
 const NAV_LIST = "flex flex-col gap-(--click-sidebar-navigation-item-global-gap)";
 const NAV_GAP = "gap-(--click-sidebar-navigation-item-default-space-gap)";
 const NAV_ITEM = [
-  "relative flex items-center min-w-0 rounded-(--click-sidebar-navigation-item-radii-all)",
-  "py-(--click-sidebar-navigation-item-default-space-y) pl-4 pr-(--click-sidebar-navigation-item-default-space-right)",
+  "workspace-nav-item relative flex items-center min-w-0 rounded-(--click-sidebar-navigation-item-radii-all)",
+  "min-h-9 py-(--click-sidebar-navigation-item-default-space-y) px-3 pointer-coarse:min-h-11",
   NAV_GAP,
   "[font:var(--click-sidebar-navigation-item-typography-default)]",
-  "text-(--click-sidebar-main-navigation-item-color-text-default) hover:text-(--click-sidebar-main-navigation-item-color-text-hover)",
-  "bg-(--click-sidebar-main-navigation-item-color-background-default) hover:bg-(--click-sidebar-main-navigation-item-color-background-hover)",
-  "aria-[current=page]:bg-(--click-sidebar-main-navigation-item-color-background-active)",
   "no-underline hover:no-underline",
 ].join(" ");
 const NAV_ICON = "inline-flex shrink-0 text-(--click-sidebar-main-navigation-item-color-icon-default)";
 const NAV_TITLE =
-  "pl-4 pb-1 select-none [font:var(--click-sidebar-navigation-title-typography-default)] text-(--click-sidebar-main-navigation-title-color-default)";
+  "pl-3 pb-1 select-none [font:var(--click-sidebar-navigation-title-typography-default)] text-text-muted";
 
-function GroupLabel({ children }: { children: string | null }) {
-  if (!children) return null;
+function GroupLabel({ children }: { children: string }) {
   return <div className={NAV_TITLE}>{children}</div>;
 }
 

@@ -12,7 +12,8 @@ import SiteFrame from "../components/SiteFrame.astro";
     Self-hosted Loom reports aggregate usage so we can see which features people use
     and how installations adopt them.
   </p>
-  <div class="details">
+  <div class="telemetry-grid">
+    <div class="details">
     <section>
       <h2>What Loom sends</h2>
       <p>
@@ -27,27 +28,28 @@ import SiteFrame from "../components/SiteFrame.astro";
         The server sends reports over HTTPS to <code>loom.clickhouse.com/api/v1/adoption</code>.
         Reports are retained for 400 days.
       </p>
-      <p>
-        The public adoption page lists namespace contact domain names from version 2
-        reports with successful requests in the last 90 complete UTC days.
-      </p>
+      <p>The <a href="/adoption#reported-contact-domains">public adoption page</a> lists namespace contact domain names from version 2 reports with successful requests in the last 90 complete UTC days.</p>
     </section>
-    <section>
+    <a class="text-link" href="/docs/features/observability/telemetry#self-hosted-adoption">Read the telemetry field reference <span class="link-arrow" aria-hidden="true">→</span></a>
+    </div>
+    <section class="site-panel sharing">
       <h2>Control sharing</h2>
-      <p>Set this on every server and worker replica to disable adoption reports.</p>
+      <p>Set these options on every server and worker replica.</p>
+      <h3>Disable adoption reports</h3>
       <pre><code>LOOM_ADOPTION_TELEMETRY_ENABLED=false</code></pre>
-      <p>Reports include namespace contact domains and aggregate counts by default. Set this on every server and worker replica to omit domains while sending usage totals.</p>
+      <h3>Share counts only</h3>
+      <p>Reports include namespace contact domains and aggregate counts by default. Use this setting to omit domains.</p>
       <pre><code>LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false</code></pre>
     </section>
   </div>
-  <a href="/docs/features/observability/telemetry#self-hosted-adoption">Read the telemetry field reference</a>
 </SiteFrame>
 
 <style>
-  .details { max-width: 43rem; margin-block: 2.5rem; }
-  section { padding-block: 1.35rem; border-top: 1px solid var(--line); }
+  .telemetry-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); align-items: start; gap: clamp(1.4rem, 4vw, 4rem); margin-block: 2rem; }
+  .details section { padding-block: 1.35rem; border-top: 1px solid var(--line); }
   section p { margin-top: 0.6rem; }
   code { overflow-wrap: anywhere; }
-  pre { background: #20201b; padding: 1rem; overflow: auto; border-radius: 0.35rem; }
-  main > a { color: var(--accent); }
+  pre { background: var(--page); padding: 0.75rem 0.9rem; white-space: pre-wrap; border-radius: var(--radius); }
+  .sharing h3 { margin-top: 1.2rem; }
+  @media (max-width: 54rem) { .telemetry-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>
