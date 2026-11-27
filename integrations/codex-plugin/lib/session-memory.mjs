@@ -13,6 +13,10 @@ const MAX_TURNS = 200; // last N real turns of the session
 const MAX_MESSAGE_CHARS = 6000; // per turn
 const MAX_TOTAL_CHARS = 120000; // the whole payload's message text
 const MIN_TURNS = 2; // one prompt and one reply, or nothing to remember
+// Less user and assistant text than this is a greeting or a one-word reply. The
+// server's extractor expects no fact from input that short, and reading it still
+// costs a model call that carries the whole extraction prompt.
+const MIN_TEXT_CHARS = 40;
 // What the session's own Loom tool calls said and heard.
 const ECHO_MAX_VALUES = 80; // strings handed to the extractor
 const ECHO_MAX_CHARS = 8000; // per string (a context pack's procedures sit past 4K)
@@ -177,7 +181,8 @@ function clip(text, max) {
 }
 
 /** Body for memory.set_from_messages at SessionEnd, or null when the session
- *  holds fewer than MIN_TURNS real turns or no user prompt. The tail of the
+ *  holds fewer than MIN_TURNS real turns, no user prompt, or under
+ *  MIN_TEXT_CHARS of user and assistant text. The tail of the
  *  session is kept (the latest turns carry the outcome), each turn and the
  *  whole payload bounded. `defer: true` so the hook returns as soon as the
  *  request is queued; the extraction worker does the model work. */
@@ -188,6 +193,8 @@ export function sessionMemoryBody(scope, payload, turns, opts = {}) {
   if (!sessionId) return null;
   let tail = (turns || []).slice(-maxTurns);
   if (!tail.some((t) => t.role === "user") || tail.length < MIN_TURNS) return null;
+  const said = tail.filter((t) => t.role === "user" || t.role === "assistant");
+  if (said.reduce((n, t) => n + String(t.content || "").length, 0) < MIN_TEXT_CHARS) return null;
   // Bound the total from the newest turn backwards: drop the oldest turns
   // until the payload fits, never the latest.
   // Redact each captured turn (transcript or journal) before it is clipped and sent.
