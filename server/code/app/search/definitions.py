@@ -21,9 +21,10 @@ _SYMBOLS_PER_NAME = 32
 # A name defined in more places than this does not say where: `get`, `save`.
 _MAX_DEFINITIONS_PER_NAME = 3
 # Definitions the leg adds. Reciprocal rank is nearly flat this high, so each scores
-# like a top hit of a content leg and takes a place from the legs' own answers. A query
-# names its subject first: past the first few, a name is context (a reproducer, a
-# traceback) and its definition is rarely the code asked about.
+# like a top hit of a content leg and takes a place from the legs' own answers. Three
+# is a measured choice, not a property of queries: on the one issue set the leg was
+# measured on (Python, parser tier), a definition among the first three an issue names
+# is in a changed file about four times as often as one named fourth to tenth.
 _MAX_DEFINITIONS = 3
 # Symbol rows tried for them: a field or a constant has a row and no chunk of its own.
 _MAX_CANDIDATES = 4 * _MAX_DEFINITIONS

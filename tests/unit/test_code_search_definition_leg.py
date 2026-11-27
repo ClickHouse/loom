@@ -227,8 +227,10 @@ def test_the_definition_list_is_an_uncapped_reciprocal_rank_list() -> None:
     assert fused["b"] == pytest.approx(1 / 62 + 1 / 61) == pytest.approx(fused["a"])
     assert fused["b"] > fused["c"]
     only = dict((r["chunk_id"], s) for r, s in _rrf_fuse(lex, vec, definition_rows=[_row("d")]))
-    # one neither content leg found scores as a content leg's first hit
+    # one neither content leg found scores as a content leg's first hit, below a chunk
+    # both content legs found
     assert only["d"] == pytest.approx(1 / 61) == pytest.approx(only["c"])
+    assert only["a"] > only["d"]
     # the capped lists' ceiling is still the two content legs' top
     capped = _rrf_fuse(lex, vec, [_row("h")], history_cap=0.25, definition_rows=[_row("b")])
     assert dict((r["chunk_id"], s) for r, s in capped)["h"] == pytest.approx(
@@ -344,7 +346,8 @@ def test_named_definitions_join_the_fusion_in_the_order_the_query_names_them() -
     ]
     assert repo.kw["scope"] is None
     # b: lexical #2 and a named definition, now above vector-only c; d, which only
-    # the definition leg found, enters level with c, a content leg's first hit
+    # the definition leg found, enters level with c, a content leg's first hit, and
+    # below a, which both content legs found
     assert [u.unit_id for u in plain.units] == ["a", "c", "b"]
     assert [u.unit_id for u in res.units] == ["a", "b", "c", "d"]
     assert {u.unit_id: u.score for u in res.units}["d"] == pytest.approx(1 / 61, abs=1e-4)

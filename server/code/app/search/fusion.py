@@ -104,8 +104,9 @@ def _rrf_fuse(
     contributes at most `history_cap` x the top two-leg score: a file the history names
     is lifted among the content legs' candidates, never above the best of them on its
     own. The definition list has no cap: the definition of a name the query spells out
-    scores as a content leg's hit at its rank, above a chunk that only mentions the
-    name on the same evidence."""
+    adds a content leg's score at its rank to what the content legs gave it. One that
+    neither content leg found scores as one leg's top hit, so a chunk both legs rank
+    high still scores above it."""
     scores: dict[str, float] = {}
     rep: dict[str, dict[str, Any]] = {}
     # The lexical list may weigh less than the vector list (a responsibility question's
