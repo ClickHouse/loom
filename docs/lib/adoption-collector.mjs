@@ -59,7 +59,7 @@ function isReport(report, now) {
     return false;
   }
   if (
-    report.schema_version !== 1 ||
+    ![1, 2].includes(report.schema_version) ||
     !matches(installationPattern, report.installation_id) ||
     !matches(versionPattern, report.loom_version) ||
     !matches(versionPattern, report.clickhouse_version) ||

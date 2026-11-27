@@ -31,6 +31,10 @@ SELECT
         )
     ) AS lifecycle,
     (
+        SELECT arraySort(groupArray(domain))
+        FROM loom_product_analytics.public_adoption_domains
+    ) AS domains,
+    (
         SELECT groupArray(payload) FROM (
             SELECT formatRowNoNewline('JSONEachRow', *) AS payload
             FROM loom_product_analytics.public_oss_adoption

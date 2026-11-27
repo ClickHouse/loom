@@ -10,7 +10,7 @@ view deduplicate retries. The same Vercel project serves the aggregate dashboard
 ## Provision the warehouse
 
 1. Apply [warehouse.sql](warehouse.sql) to the analytics ClickHouse service. It creates
-   the report, enrollment, and distribution tables and the aggregate views for the
+   the report, enrollment, and distribution tables and the public views for the
    adoption site. Apply it as the warehouse owner. Reapplying updates view
    definitions and preserves the report table. Reports expire 400 days after
    receipt.
@@ -45,9 +45,10 @@ to exercise the two endpoints locally.
 
 ## Publish adoption metrics
 
-The dashboard reads aggregates with a dedicated ClickHouse Cloud Query API key.
-Save [public-adoption.sql](public-adoption.sql) in the SQL console and create a Query
-API endpoint for it. Give the endpoint's database role `SELECT` on these views in
+The dashboard reads aggregate metrics and reported contact domain names with a
+dedicated ClickHouse Cloud Query API key. Save [public-adoption.sql](public-adoption.sql)
+in the SQL console and create or update its Query API endpoint. Give the endpoint's
+database role `SELECT` on these views in
 `loom_product_analytics`:
 
 - `public_adoption_totals`
@@ -55,6 +56,7 @@ API endpoint for it. Give the endpoint's database role `SELECT` on these views i
 - `public_adoption_retention`
 - `public_adoption_activity`
 - `public_adoption_lifecycle`
+- `public_adoption_domains`
 - `public_oss_adoption`
 
 The views run with the schema owner's privileges. Set `readonly = 2` on the
@@ -75,6 +77,11 @@ every date.
 The public page supports 30-, 90-, and 365-day windows. Its chart links preserve
 the selected filters. CSV links export aggregate activity, lifecycle, download,
 and star data for that selection.
+
+The domain list shows distinct names from version 2 reports with attributed
+successful requests in the last 90 complete UTC days. Apply the view and its
+grant before updating the Query API query. Deploy the collector that accepts
+version 2 before releasing workers that send it.
 
 Grant the restricted `loom_adoption_top_domains_30d` view only to authorized
 analytics staff. Its rows contain reported contact domains and attributed counts.
