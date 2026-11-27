@@ -155,6 +155,8 @@ def describe_key(prompt: tuple[str, str, int]) -> str:
 
 @staged("code_describe")
 async def _describe_chunk(llm: Any, chunk: Chunk, *, card: str = "", hints: Any = None) -> str:
+    if getattr(llm, "provider", None) == "fake":
+        return ""
     prompt = describe_prompt(chunk, card)
     if hints is not None:
         hit = hints.get(describe_key(prompt))
@@ -163,6 +165,8 @@ async def _describe_chunk(llm: Any, chunk: Chunk, *, card: str = "", hints: Any 
     system, user, max_tokens = prompt
     try:
         res = await llm.complete(system, user, max_tokens=max_tokens)
+        if getattr(res, "provider", None) == "fake":
+            return ""
         return describe_line(system, res.text)
     except customer.HOLDS:
         raise  # the org's model calls are held: the repository waits

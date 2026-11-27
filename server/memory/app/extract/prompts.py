@@ -8,7 +8,10 @@ from __future__ import annotations
 from server.memory.app.extract.turns import _format_messages
 from server.memory.domain.extraction_prompts import (
     _AGENT_LEARNINGS_PROMPT_BLOCK,
+    _CODING_SESSION_PROMPT_BLOCK,
+    _CODING_SESSION_RETRY_ADDENDUM,
     _EXTRACTION_SYSTEM_PROMPT,
+    _RETRY_PROMPT_ADDENDUM,
     _STRUCTURED_ANSWER_PROMPT_BLOCK,
     compact_extraction_prompt,
 )
@@ -25,7 +28,9 @@ def _use_compact_prompt(messages: list[dict[str, object]]) -> bool:
     return sum(len(str(m.get("content", "") or "")) for m in messages) <= limit
 
 
-def _extraction_base_prompt(compact: bool, *, agent_learnings: bool = False) -> str:
+def _extraction_base_prompt(
+    compact: bool, *, agent_learnings: bool = False, coding_session: bool = False
+) -> str:
     """The extraction system prompt before the preamble: the full or the
     compact examples, plus the flag-gated blocks."""
     base_prompt = (
@@ -41,7 +46,15 @@ def _extraction_base_prompt(compact: bool, *, agent_learnings: bool = False) -> 
     # A standing rule is one short sentence, so a compact input gets the block too.
     if agent_learnings:
         base_prompt = base_prompt + "\n\n" + _AGENT_LEARNINGS_PROMPT_BLOCK
+    # Last, because it replaces rules above it for a coding session's turns.
+    if coding_session:
+        base_prompt = base_prompt + "\n\n" + _CODING_SESSION_PROMPT_BLOCK
     return base_prompt
+
+
+def _retry_addendum(coding_session: bool) -> str:
+    """What the retry of a misfired call appends to the base prompt."""
+    return _CODING_SESSION_RETRY_ADDENDUM if coding_session else _RETRY_PROMPT_ADDENDUM
 
 
 def _build_extraction_user_prompt(

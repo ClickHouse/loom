@@ -78,8 +78,9 @@ def existing_context_limit(msgs: list[dict[str, str]], limit: int) -> int:
     target ranks 1st or 2nd of the namespace's facts, so it gets
     `memory_extract_existing_short_limit` rows (`limit` when that is 0). A long transcript
     gets none: shown the namespace's facts, the extractor links a later session's details to
-    them instead of writing them, and the write path's conflict and canonical-merge checks
-    already catch the true duplicates."""
+    them instead of writing them. The write path's checks catch the exact and near-exact
+    repeats, and `loom.verify_durable` drops a coding capture's restatements of a stored
+    memory."""
 
     short = int(settings.memory_extract_existing_short_limit)
     tier = int(settings.memory_extract_compact_prompt_max_chars)
@@ -102,9 +103,6 @@ async def _fetch_relevant_existing_memories(
     Returns `{memory_key, value, content_sha256}` dicts. Fail-open:
     caller wraps in try/except; we never block extraction.
     """
-    import server.memory.store as memory_repo
-    from server.memory.app import retrieval as memory_search
-
     query_text = (
         " ".join(str(m.get("content", "")).strip() for m in msgs if m.get("role") == "user")[:1024]
         or " ".join(str(m.get("content", "")).strip() for m in msgs)[:1024]
@@ -115,8 +113,36 @@ async def _fetch_relevant_existing_memories(
     top_k = existing_context_limit(msgs, limit)
     if top_k <= 0:
         return []
+    return [
+        {
+            "memory_key": r.memory_key,
+            "value": str(r.value)[:200] if r.value is not None else "",
+            # sha over canonical JSON so the caller can hash-dedup extractions.
+            "content_sha256": served_content_sha256(r.value),
+        }
+        for r in await nearest_existing_rows(identity, query_text, top_k)
+    ]
+
+
+async def nearest_existing_rows(
+    identity: Any,  # memory_repo.Identity
+    query_text: str,
+    top_k: int,
+    *,
+    query_vec: list[float] | None = None,
+    tags: list[str] | None = None,
+) -> list[Any]:
+    """The rows read back for the fact hits of `identity`'s agent and user, in any
+    session, nearest `query_text` (`query_vec` when the caller has its vector), nearest
+    first: each hit's key as its newest row in any session, which may be a retired one.
+    With `tags`, only hits and rows that carry one of them. Never a row that is or reads
+    'high': the callers show these rows to an LLM provider."""
+    import server.memory.store as memory_repo
+    from server.memory.app import retrieval as memory_search
+
     embedder = get_embedder()
-    query_vec = await embedder.embed(query_text)
+    if query_vec is None:
+        query_vec = await embedder.embed(query_text)
     search_query = memory_search.SearchQuery(
         org=identity.org,
         namespace=identity.namespace,
@@ -128,9 +154,10 @@ async def _fetch_relevant_existing_memories(
         user_id=identity.user_id,
         query_text=query_text,
         search_mode="semantic",
-        # The extractor can only update a fact key. Chunk hits would take about half of the
-        # 50 slots and resolve to nothing, and the chunk leg would be a second query on every
-        # extraction.
+        tags=tags or [],
+        # Only a fact row can be updated or restated. Chunk hits would take about half of
+        # the slots and resolve to nothing, and the chunk leg would be a second query on
+        # every extraction.
         execution_planes=["fact"],
         chunk_max_share=0.0,
     )
@@ -156,29 +183,22 @@ async def _fetch_relevant_existing_memories(
         user_id=identity.user_id,
         session_id="*",
     )
-    # A 'high' row never goes into the extraction prompt, which is sent to the LLM provider;
-    # the read leaves them out before it picks one per key, so another session's 'high' row
-    # hides no plain one.
+    # A 'high' row never goes into a prompt, which is sent to the LLM provider; the read
+    # leaves them out before it picks one per key, so another session's 'high' row hides
+    # no plain one.
     rows = await memory_repo.get_many_by_keys(
         any_session, hit_keys, scope=request_scope(), exclude_high_sensitivity=True
     )
     by_key = {r.memory_key: r for r in rows}
-    out: list[dict[str, str]] = []
-    for h in hits:
-        r = by_key.get(h.memory_key)
-        # A row whose value reads as high, whatever its label, is not shown to the model.
-        if r is None or value_reads_high(r.value):
-            continue
-        # sha over canonical JSON so the caller can hash-dedup extractions.
-        sha = served_content_sha256(r.value)
-        out.append(
-            {
-                "memory_key": h.memory_key,
-                "value": str(r.value)[:200] if r.value is not None else "",
-                "content_sha256": sha,
-            }
-        )
-    return out
+    found = [by_key.get(h.memory_key) for h in hits]
+    # The read takes a key's newest row in any session, which may carry none of `tags`
+    # where the hit did. A row whose value reads as high, whatever its label, is not
+    # shown to the model.
+    return [
+        r
+        for r in found
+        if r is not None and (not tags or set(tags) & set(r.tags)) and not value_reads_high(r.value)
+    ]
 
 
 def split_chunk_key(memory_key: str) -> tuple[str, int | None]:

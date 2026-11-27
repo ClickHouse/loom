@@ -27,6 +27,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from server.cli._proc import run_interruptible
+
 if TYPE_CHECKING:
     from server.core.ch import CHClient, ExternalCHClient
 
@@ -399,7 +401,7 @@ def run_connected[T](
 ) -> T:
     """`asyncio.run(run(ch))` on a connected client (`connect_checked`, with the orgs the
     command writes), disconnected on every path — an open client at loop close leaks its
-    HTTP session."""
+    HTTP session. Ctrl-C reaches it at once (`run_interruptible`)."""
     from server import boot
     from server.auth.account_lifecycle import bind
     from server.core.background import register_buffer_drainer
@@ -426,7 +428,7 @@ def run_connected[T](
             await disconnect(ch)
             return result
 
-    return asyncio.run(_go())
+    return run_interruptible(_go())
 
 
 def run_control_connected[T](run: Callable[[CHClient], Awaitable[T]], *, org_free: OrgFree) -> T:
@@ -453,4 +455,4 @@ def run_control_connected[T](run: Callable[[CHClient], Awaitable[T]], *, org_fre
             await disconnect(ch)
             return result
 
-    return asyncio.run(go())
+    return run_interruptible(go())

@@ -322,7 +322,7 @@ async def test_real_person_queries_report_their_physical_work(
     before = await people.client.query_one("SELECT now64(6) AS started")
     assert before is not None
     assert not await people.refused("owner")
-    await people.client.execute("SYSTEM FLUSH LOGS")
+    await people.client.execute("SYSTEM FLUSH LOGS query_log")
     rows = await people.client.query_all(
         "SELECT query_duration_ms, read_rows, read_bytes, memory_usage FROM system.query_log "
         "WHERE type = 'QueryFinish' AND log_comment = 'auth.scim_people' "
