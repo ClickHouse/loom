@@ -147,7 +147,7 @@ impl Client {
             query,
             body,
         } = request;
-        let not_a_path = || Error::Input(format!("not a path on this server: {path}"));
+        let not_a_path = || Error::Input("not a path on this server".into());
         // The credential goes to this server only. A second leading slash, or
         // its backslash form, names another authority.
         if !path.starts_with('/') || path.starts_with("//") {

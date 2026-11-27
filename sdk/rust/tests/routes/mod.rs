@@ -314,7 +314,7 @@ async fn a_path_must_stay_on_this_server() {
     let server = Server::new(vec![unused_response()]);
     let client = server.client();
     for path in [
-        "v1/whoami",
+        "v1/whoami?sample=query-marker#fragment-marker",
         // A tab or a backslash is dropped or read as a slash before the path is resolved.
         "/\t//127.0.0.1:1/whoami",
         "/\\\\127.0.0.1:1/whoami",
@@ -326,6 +326,10 @@ async fn a_path_must_stay_on_this_server() {
             matches!(&error, Error::Input(message) if message.contains("not a path on this server")),
             "{path}"
         );
+        for text in [error.to_string(), format!("{error:?}")] {
+            assert!(!text.contains("query-marker"));
+            assert!(!text.contains("fragment-marker"));
+        }
     }
     assert!(
         tokio::time::timeout(Duration::from_millis(300), server.request())
