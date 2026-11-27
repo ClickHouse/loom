@@ -417,11 +417,12 @@ const preservedFilters =
 </script>
 
 <style>
+  :global(#content):has(.switcher) { padding-block-start: clamp(2rem, 4vw, 4rem); }
   .switcher {
     display: flex;
     flex-wrap: wrap;
     gap: 0.65rem;
-    margin-block: 2.4rem 1rem;
+    margin-block: 1.9rem 1rem;
     border-bottom: 1px solid var(--line);
   }
   .switcher a {
@@ -438,20 +439,21 @@ const preservedFilters =
   .switcher a[aria-current] { border-bottom-color: var(--accent); }
   .filters {
     display: flex;
-    inline-size: fit-content;
-    max-inline-size: 100%;
+    inline-size: 100%;
     flex-wrap: wrap;
     align-items: end;
     gap: 0.65rem 0.85rem;
-    margin-bottom: 2rem;
+    margin-block-end: 1.5rem;
     padding: 0.95rem;
     border: 1px solid var(--line);
     border-radius: var(--radius);
     background: var(--surface);
   }
   .filters[hidden] { display: none; }
-  .filters :global(.adoption-filter) { flex: auto; min-inline-size: min(10.5rem, 100%); }
-  .native-filters label { display: grid; flex: auto; min-inline-size: 0; gap: 0.4rem; }
+  .filters:has(> input[name="tab"][value="oss"]) { max-inline-size: 27rem; }
+  .filters :global(.adoption-filter), .native-filters label { flex: 1 1 11rem; min-inline-size: 0; }
+  .filters > button { flex: none; justify-self: start; }
+  .native-filters label { display: grid; gap: 0.4rem; }
   .native-filters select {
     min-inline-size: 0;
     min-block-size: 2.75rem;
@@ -462,8 +464,16 @@ const preservedFilters =
     color: var(--click-global-color-text-default);
     font: inherit;
   }
-  @media (max-width: 34rem) { .filters { inline-size: 100%; } }
-  @media (max-width: 28rem) { .filters :global(.adoption-filter) { flex-basis: 100%; } }
+  @media (max-width: 76rem) {
+    .filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .filters:has(> input[name="tab"][value="oss"]) { grid-template-columns: minmax(0, 1fr) auto; }
+  }
+  @media (max-width: 46rem) {
+    .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 34rem) {
+    .filters, .filters:has(> input[name="tab"][value="oss"]) { grid-template-columns: minmax(0, 1fr); }
+  }
   .card-title { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem 1rem; }
   .chart-links { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
   .card-title a, .card p a { color: var(--accent); font-size: 0.86rem; }

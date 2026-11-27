@@ -1,4 +1,5 @@
 import { Select } from "@clickhouse/click-ui/Select";
+import { Provider as TooltipProvider } from "@radix-ui/react-tooltip";
 import { createElement, Fragment, useEffect, useState } from "react";
 
 export default function AdoptionFilters({ fields, form, fallback }) {
@@ -22,8 +23,8 @@ export default function AdoptionFilters({ fields, form, fallback }) {
   }, [fallback, fields, form]);
 
   return createElement(
-    Fragment,
-    null,
+    TooltipProvider,
+    { delayDuration: 300 },
     ...fields.map(({ name, label, options }) =>
       createElement(
         Fragment,
