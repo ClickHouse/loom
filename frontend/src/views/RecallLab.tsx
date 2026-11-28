@@ -557,9 +557,11 @@ export function RecallLab() {
             if (!writer || ac.signal.aborted) continue;
             const named = rowIdentity(identity.namespace, { ...h, ...writer });
             setRows((cur) =>
-              cur?.some((x) => x.id === named)
-                ? cur.filter((x) => x.id !== id)
-                : cur?.map((x) => (x.id === id ? { ...x, id: named, writer: { ...x.writer, ...writer } } : x)),
+              cur === null
+                ? cur
+                : cur.some((x) => x.id === named)
+                  ? cur.filter((x) => x.id !== id)
+                  : cur.map((x) => (x.id === id ? { ...x, id: named, writer: { ...x.writer, ...writer } } : x)),
             );
           }
         };
