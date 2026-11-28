@@ -393,7 +393,75 @@ def chain_update(chain, index, value):
     chain.update(raw)
 
 
-async def verify_pages(conn, ch, context, workload, codec, native_hash):
+class _ProofProgress:
+    """Optional numeric evidence; its storage never decides the proof outcome."""
+
+    def __init__(self, path, *, budget=False):
+        self.budget = budget
+        self.limit = 2 if budget else 3217
+        self.emitted = self.dropped = self.bytes = self.page = self.verified = 0
+        self.wall, self.cpu = time.perf_counter_ns(), time.process_time_ns()
+        self.stream = None
+        self.disabled = False
+        try:
+            self.stream = path.open("x", encoding="ascii")
+            os.fchmod(self.stream.fileno(), 0o600)
+        except OSError:
+            self.disabled = True
+
+    def __enter__(self):
+        if not self.budget:
+            self.emit([0, 1, 100, 45500])
+        return self
+
+    def emit(self, row):
+        if self.disabled:
+            return
+        if not all(type(n) is int and 0 <= n < 2**63 for n in row):
+            self.disabled = True
+            return
+        data = json.dumps(row, separators=(",", ":")) + "\n"
+        reserve = int(not self.budget and row[0] != 2)
+        if (
+            len(data) > 256
+            or self.bytes + len(data) > 823552
+            or self.emitted >= self.limit - reserve
+        ):
+            self.dropped += 1
+            return
+        try:
+            self.stream.write(data)
+            self.stream.flush()
+            self.bytes += len(data)
+            self.emitted += 1
+        except (OSError, ValueError):
+            self.disabled = True
+
+    def mark(self, phase, page=None, verified=None):
+        if page is not None:
+            self.page, self.verified = page, verified
+        self.emit(
+            [
+                1,
+                phase,
+                self.page,
+                self.verified,
+                time.perf_counter_ns() - self.wall,
+                time.process_time_ns() - self.cpu,
+            ]
+        )
+
+    def __exit__(self, *exc):
+        if not self.budget:
+            self.emit([2, self.emitted, self.dropped, int(self.disabled)])
+        if self.stream is not None:
+            try:
+                self.stream.close()
+            except (OSError, ValueError):
+                pass
+
+
+async def verify_pages(conn, ch, context, workload, codec, native_hash, *, progress=None):
     db = database(context["databases"]["ch_schema"])
     seen_seq = set()
     seen_hash = set()
@@ -402,10 +470,26 @@ async def verify_pages(conn, ch, context, workload, codec, native_hash):
     observed_chain = hashlib.sha256()
     authority_chain = hashlib.sha256()
     raw_keys = hashlib.sha256()
-    for page in workload.pages():
+    page_number = 1
+    verified = 0
+
+    def mark(phase):
+        if progress is not None:
+            progress(phase, page_number, verified)
+
+    def pages():
+        nonlocal page_number
+        mark(1)  # Input iteration includes the existing stream's final trailer checks.
+        for page in workload.pages():
+            yield page
+            page_number += 1
+            mark(1)
+
+    for page in pages():
         need(0 < len(page) <= 100, "fixed proof page")
         ids = [item["memory_id"] for item in page]
         complete_ids(ids, ids)
+        mark(2)  # PG page query.
         fetched = await conn.fetch(
             pg_page_sql(),
             context["org"],
@@ -413,6 +497,7 @@ async def verify_pages(conn, ch, context, workload, codec, native_hash):
             [uuid.UUID(value) for value in ids],
             len(page) + 1,
         )
+        mark(3)  # PG decoding, comparisons and independent hash/chain checks.
         need(len(fetched) == len(page), "PG page exact cardinality/overflow")
         values = [pg_record(row, PG_FIELDS) for row in fetched]
         complete_ids([identifier(row["c_memory_id"]) for row in values], ids)
@@ -468,6 +553,7 @@ async def verify_pages(conn, ch, context, workload, codec, native_hash):
             chain_update(raw_keys, count, dict(head=sorted(head), revision=sorted(revision)))
             count += 1
         fields = codec.p["memory_fields"]
+        mark(4)  # CH memory query.
         data = await ch_result(
             ch,
             "SELECT "
@@ -485,11 +571,13 @@ async def verify_pages(conn, ch, context, workload, codec, native_hash):
             fields,
             len(page) + 1,
         )
+        mark(5)  # CH memory comparison.
         complete_ids([identifier(row[fields.index("memory_id")]) for row in data], ids)
         for value in data:
             row = codec.row(dict(zip(fields, value, strict=True)), origin="ch", comparison=True)
             equal(row, checked[row["memory_id"]])
         fields = codec.p["audit_fields"]
+        mark(6)  # CH audit query.
         data = await ch_result(
             ch,
             "SELECT "
@@ -504,10 +592,13 @@ async def verify_pages(conn, ch, context, workload, codec, native_hash):
             fields,
             len(page) + 1,
         )
+        mark(7)  # CH audit comparison: only its successful completion verifies a page.
         complete_ids([hex64(row[fields.index("row_hash")], native=True) for row in data], hashes)
         for value in data:
             audit = codec.audit(dict(zip(fields, value, strict=True)), origin="ch")
             equal(audit, audits[audit["row_hash"]])
+        verified += len(page)
+    mark(8)  # Complete workload counts and chain equality.
     need(count == len(seen_seq) == len(seen_hash) == 45500, "complete exact workload identities")
     need(
         expected_chain.hexdigest() == observed_chain.hexdigest(),
@@ -544,33 +635,50 @@ def codec_contract():
 
 
 async def independent_provenance(context, output):
+    with _ProofProgress(output.with_name("provenance-progress.jsonl")) as progress:
+        await _independent_provenance(context, output, progress)
+
+
+async def _independent_provenance(context, output, progress):
     from server.observability.audit import row_matches_hash
 
+    progress.mark(10)  # Codec contract.
     codec = codec_contract()
+    progress.mark(11)  # Bound serving-process receipt.
     context = dict(
         context, _api_server=read(Path(context["workdir"]) / "serving-cell/launch.json")["server"]
     )
     first = None
     summary = None
     try:
+        progress.mark(12)  # Input/token/receipt validation.
         with Workload(context, codec) as workload:
+            progress.mark(13)  # Connection entry.
             async with connections(context) as (conn, ch):
                 try:
+                    progress.mark(14)  # First PG snapshot.
                     page = await begin_observation(conn, context, "repeatable read")
+                    progress.mark(15)  # Initial CH census.
                     initial_ch = await ch_census(ch, context)
+                    progress.mark(16)  # Enter the unchanged page proof.
                     checked = await verify_pages(
-                        conn, ch, context, workload, codec, row_matches_hash
+                        conn, ch, context, workload, codec, row_matches_hash, progress=progress.mark
                     )
+                    progress.mark(17)  # Close page snapshot.
                     await end_observation(conn, page)
+                    progress.mark(18)  # Final PG snapshot.
                     final = await begin_observation(
                         conn, context, "read committed", backend=page["backend_pid"]
                     )
+                    progress.mark(19)  # Close final PG snapshot.
                     await end_observation(conn, final)
                     need(
                         conn.is_in_transaction() is False,
                         "final CH checks outside both PG snapshots",
                     )
+                    progress.mark(20)  # Final CH census.
                     final_ch = await ch_census(ch, context)
+                    progress.mark(21)  # Construct the unchanged proof receipt.
                     summary = dict(
                         schema=2,
                         fixture_id=context["fixture_id"],
@@ -603,12 +711,118 @@ async def independent_provenance(context, output):
                         first = error if first is None else first
                 if first is not None:
                     raise first
+                progress.mark(22)  # Close connections, only after a successful proof.
+            progress.mark(23)  # Close input streams without overwriting a failing phase.
     except BaseException as error:  # noqa: BLE001 — owned cleanup must finish while retaining the first failure.
         first = error if first is None else first
     if first is not None:
         raise first
+    progress.mark(24)
     need(summary is not None, "complete proof before closure")
+    progress.mark(25)  # Final proof receipt write.
     write(output, summary)
+
+
+def _observe_request_phase(function, stage, sample_var, origin, emit, tag, *, asynchronous):
+    from contextlib import contextmanager
+    from functools import wraps
+
+    @contextmanager
+    def observation(sample):
+        started = cpu = None
+        try:
+            started, cpu = time.perf_counter_ns(), time.process_time_ns()
+        except Exception:  # noqa: BLE001 — optional clocks cannot prevent the original call.
+            pass
+        try:
+            yield
+        finally:
+            failed = int(sys.exc_info()[0] is not None)
+            if started is not None and cpu is not None:
+                try:
+                    # _begin_request binds its request tag inside the original call.
+                    current = tag()
+                    correlation = (
+                        int.from_bytes(hashlib.sha256(current.encode()).digest()) if current else 0
+                    )
+                    emit(
+                        [
+                            1,
+                            sample["ordinal"],
+                            stage,
+                            started - origin,
+                            time.perf_counter_ns() - started,
+                            time.process_time_ns() - cpu,
+                            correlation,
+                            0,
+                            failed,
+                            sample["done"],
+                            0,
+                        ]
+                    )
+                except Exception:  # noqa: BLE001 — optional diagnostics cannot replace a result or failure.
+                    pass
+
+    if asynchronous:
+
+        @wraps(function)
+        async def async_phase(*args, **kwargs):
+            sample = sample_var.get()
+            if sample is None:
+                return await function(*args, **kwargs)
+            with observation(sample):
+                return await function(*args, **kwargs)
+
+        return async_phase
+
+    @wraps(function)
+    def sync_phase(*args, **kwargs):
+        sample = sample_var.get()
+        if sample is None:
+            return function(*args, **kwargs)
+        with observation(sample):
+            return function(*args, **kwargs)
+
+    return sync_phase
+
+
+def _observe_http_phases(http, sample_var, origin, emit, tag):
+    # These are existing endpoint boundaries, not replacement admission decisions.
+    names = (
+        "_begin_request",
+        "_extract_auth",
+        "_read_body",
+        "_authorize",
+        "_bind_context_and_policy",
+        "_idempotency_gate",
+        "_start_telemetry",
+        "_run_handler",
+        "_finish_success",
+    )
+    saved = []
+
+    def restore():
+        for name, original in reversed(saved):
+            setattr(http, name, original)
+
+    try:
+        for stage, name in enumerate(names, start=10):
+            original = getattr(http, name)
+            observed = _observe_request_phase(
+                original,
+                stage,
+                sample_var,
+                origin,
+                emit,
+                tag,
+                asynchronous=name != "_begin_request",
+            )
+            setattr(http, name, observed)
+            saved.append((name, original))
+    except BaseException:  # Partial instrumentation restores before propagating setup failure.
+        restore()
+        raise
+    return restore
 
 
 def api(context: dict, output: Path) -> None:
@@ -714,6 +928,7 @@ def api(context: dict, output: Path) -> None:
 
     emit_cost([0, 1, *samples])
     original_traced = otel.traced
+    restore_http_phases = None
 
     def measured_traced(name, **attrs):
         sample = sample_var.get()
@@ -750,8 +965,20 @@ def api(context: dict, output: Path) -> None:
         return measured_span()
 
     def measured_application():
+        nonlocal restore_http_phases
         # Uvicorn still imports the normal app on its running loop, before lifespan.
         from server.main import app
+
+        if restore_http_phases is None:
+            from importlib import import_module
+
+            restore_http_phases = _observe_http_phases(
+                import_module("server.transport.http"),
+                sample_var,
+                origin,
+                emit_cost,
+                current_query_tag,
+            )
 
         async def measured(scope, receive, send):
             nonlocal ordinal
@@ -821,6 +1048,8 @@ def api(context: dict, output: Path) -> None:
             reload=False,
         )
     finally:
+        if restore_http_phases is not None:
+            restore_http_phases()
         otel.traced = original_traced
         emit_cost([3, ordinal, emitted, dropped, int(disabled)])
         if stream is not None:
@@ -2410,7 +2639,32 @@ class Fixture:
         }
 
     def provenance(self) -> None:
-        self.action("provenance", settings=self.cli_settings)
+        started = time.monotonic()
+        returned = 0
+        with _ProofProgress(self.w / "provenance-budget.jsonl", budget=True) as progress:
+
+            def snapshot(terminal):
+                now = time.monotonic()
+                elapsed = max(0, int((now - self.o.started) * 1000))
+                progress.emit(
+                    [
+                        0,
+                        1,
+                        terminal,
+                        elapsed,
+                        max(0, 7020000 - elapsed),
+                        max(0, int((now - started) * 1000)),
+                        returned,
+                    ]
+                )
+
+            snapshot(0)
+            try:
+                self.action("provenance", settings=self.cli_settings)
+                returned = 1
+            finally:
+                # This is the observed action exit, not the exact monitor refusal instant.
+                snapshot(1)
 
     def block_teardown(self, error: BaseException) -> None:
         # Retain the mutation barrier even if the negative receipt cannot be created.
