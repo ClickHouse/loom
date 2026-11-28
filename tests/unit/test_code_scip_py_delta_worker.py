@@ -216,14 +216,88 @@ async def test_a_refused_delta_holds_the_tier_until_the_cap_is_raised(monkeypatc
         monkeypatch.setattr(w.settings, "code_scip_delta_max_nodes", 6_000_000)
         raised = await w.run_pass()
     assert refused.errors and "FileRefused" in refused.errors[0]
-    assert held.skipped == [
-        f"code-py: delta refused at {'b' * 12}; held until a cap or the target changes"
-    ]
+    assert held.skipped == [f"code-py: delta refused at {'b' * 12}; held until its inputs change"]
     assert not held.errors and runs == ["b" * 40, "b" * 40]
     assert (health["kind"], health["failed_passes"]) == ("file_refused", 1)
     assert raised.deltas_applied == 1 and not raised.errors
     assert state["scip_commit_py"] == "b" * 40
     assert json.loads(state["tier_health:python"])["state"] == "ok"
+
+
+def _held_tier(monkeypatch, tmp_path: Path, state: dict[str, str]) -> tuple[AsyncMock, list[str]]:
+    """A Python entry whose harness writes a delta over the node cap at `b…` and an
+    empty one at any other commit; `state` is the entry's `code_index_state`."""
+    for d in ("checkout", "repo.git"):
+        (tmp_path / d).mkdir()
+    monkeypatch.setattr(w.settings, "code_scip_checkout_dir", str(tmp_path / "checkout"))
+    monkeypatch.setattr(w.settings, "code_git_dir", str(tmp_path / "repo.git"))
+    monkeypatch.setattr(w.settings, "code_scip_python_path", sys.executable)
+    monkeypatch.setattr(w.settings, "code_scip_delta_max_nodes", 10)
+    runs: list[str] = []
+
+    async def fake_git(cwd, *args, **kw):
+        return None
+
+    async def fake_harness(co, base, head, delta_path):
+        runs.append(head)
+        n = 5 if head == "b" * 40 else 0
+        files = [{"path": f"pkg/m{i}.py", "symbols": [], "edges": []} for i in range(n)]
+        delta_path.write_text(json.dumps({"delta_version": 1, "commit": head, "files": files}))
+
+    async def fake_apply(repo, org, ns, delta):
+        from server.code.app.index.scip_delta import ScipApplyStats
+
+        return ScipApplyStats(files=0)
+
+    monkeypatch.setattr(w, "git", fake_git)
+    monkeypatch.setattr(w, "_run_harness", fake_harness)
+    monkeypatch.setattr("server.code.app.index.scip_delta.apply_delta", fake_apply)
+    repo = _repo("", "")
+
+    async def get_state(org, ns, key):
+        return state.get(key, "")
+
+    async def set_state(org, ns, key, value, detail=""):
+        state[key] = value
+
+    repo.get_state.side_effect = get_state
+    repo.set_state.side_effect = set_state
+    return repo, runs
+
+
+@pytest.mark.asyncio
+async def test_a_moved_base_releases_the_hold(monkeypatch, tmp_path: Path):
+    """A refusal over the window `a…b` holds; once another writer moves the watermark
+    (a full run, a batch apply, a cleared base), the window is another one and runs."""
+    state = {"git_head": "b" * 40, "scip_commit_py": "a" * 40}
+    repo, runs = _held_tier(monkeypatch, tmp_path, state)
+    p1, p2 = _patched(repo, [_Cfg()])
+    with p1, p2:
+        refused = await w.run_pass()
+        held = await w.run_pass()
+        held_runs = list(runs)
+        state["scip_commit_py"] = "g" * 40
+        moved = await w.run_pass()
+    assert refused.errors and "FileRefused" in refused.errors[0]
+    assert held.skipped and held_runs == ["b" * 40]
+    assert not moved.skipped and runs == ["b" * 40, "b" * 40]
+
+
+@pytest.mark.asyncio
+async def test_a_branch_pushed_back_to_a_refused_commit_is_not_held(monkeypatch, tmp_path: Path):
+    """Refused at `b…`, applied at `c…`, then the branch is force-pushed back to `b…`:
+    the tier's index is `c…`'s, so the window `c…b` runs instead of the old hold."""
+    state = {"git_head": "b" * 40, "scip_commit_py": "a" * 40}
+    repo, runs = _held_tier(monkeypatch, tmp_path, state)
+    p1, p2 = _patched(repo, [_Cfg()])
+    with p1, p2:
+        await w.run_pass()
+        state["git_head"] = "c" * 40
+        applied = await w.run_pass()
+        state["git_head"] = "b" * 40
+        back = await w.run_pass()
+    assert applied.deltas_applied == 1 and state["scip_commit_py"] == "c" * 40
+    assert not back.skipped and runs == ["b" * 40, "c" * 40, "b" * 40]
 
 
 def test_harness_env_and_registry(monkeypatch, tmp_path: Path):

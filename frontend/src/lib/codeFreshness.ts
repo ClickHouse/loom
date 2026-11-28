@@ -1,6 +1,6 @@
 import type { CodeRepoSummary } from "../api/code";
 import { BUILDING_STAGES } from "./codeStage";
-import { fmtInt, parseChTime } from "./format";
+import { fmtInt } from "./format";
 export type FreshTone = "ok" | "info" | "warn" | "bad" | "muted";
 export type Fresh = { tone: FreshTone; label: string; detail: string };
 
@@ -24,10 +24,9 @@ export function freshness(
   r: {
     fast_tier_lag: number;
     scip_lag: number;
-    indexed_at?: string;
     git_head: string;
     stage?: string;
-  } & Pick<CodeRepoSummary, "readable" | "unreadable_reason">,
+  } & Pick<CodeRepoSummary, "fetch_overdue" | "readable" | "unreadable_reason">,
   /** The current stage's explanation, as the branch card words it (`stageLabel`). */
   stageDetail?: string,
 ): Fresh {
@@ -54,8 +53,6 @@ export function freshness(
       label: "Not indexed",
       detail: "The first index hasn't finished yet; for an operator-configured repository, an operator runs it",
     };
-  const indexed = parseChTime(r.indexed_at);
-  const ageMs = indexed ? Date.now() - indexed.getTime() : 0;
   if (r.fast_tier_lag > 0) {
     return {
       tone: r.fast_tier_lag > 20 ? "bad" : "warn",
@@ -63,6 +60,12 @@ export function freshness(
       detail: `${commits(r.fast_tier_lag)} merged but not yet indexed`,
     };
   }
+  if (r.fetch_overdue)
+    return {
+      tone: "warn",
+      label: "Mirror fetch overdue",
+      detail: "Loom has not fetched the branch on schedule. A maintainer can try Refresh now on the Health tab.",
+    };
   if (r.fast_tier_lag === 0 && r.scip_lag > 0) {
     // The fast tier is at the last fetched commit here, and the compiler tier's lag is counted from it.
     return {
@@ -71,20 +74,12 @@ export function freshness(
       detail: `Search matches the last commit Loom fetched; exact cross-file calls are ${commits(r.scip_lag)} behind it`,
     };
   }
-  if (r.fast_tier_lag === 0) {
-    if (ageMs > 6 * 3600_000)
-      return {
-        tone: "warn",
-        label: "No recent indexing",
-        detail:
-          "The index matches the last commit Loom fetched, but nothing was indexed in 6 hours; if the branch has newer commits, they aren't being picked up: Refresh now on the repository's Health tab fetches the branch, and an operator of this deployment can check the repository's sync",
-      };
+  if (r.fast_tier_lag === 0)
     return {
       tone: "ok",
       label: "Up to date",
       detail: "The index matches the last commit Loom fetched from the branch",
     };
-  }
   return {
     tone: "muted",
     label: "Freshness unknown",

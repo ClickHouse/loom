@@ -28,6 +28,12 @@ Two content rules, checked after the path layers:
     `linguist-generated` / `linguist-vendored` patterns — its own statement
     of what is generated — join the ignore-file layer, always.
 
+One rule keeps a path in the index but out of the embedder: the entry's
+`embed_exclude` globs (`LOOM_CODE_EMBED_EXCLUDE` for the scalar entry), the
+same glob semantics. Such a path is chunked, its symbols, edges and test map
+derived, and its chunks are found by name, grep and the lexical leg, but they
+are neither described nor embedded (`embed_excluded`).
+
 `ingest_file` is the single choke point: the worker, the backfill CLI, the
 reconcile heal and the extractor re-chunk all pass through it, so an
 excluded path's existing rows are tombstoned by whichever of them next
@@ -194,6 +200,7 @@ class Denylist:
     include_contrib: bool = False
     patterns: tuple[str, ...] = ()  # registry exclude + ignore-file globs
     exclude_generated: bool = False  # The content rule, per repo entry
+    embed_patterns: tuple[str, ...] = ()  # registry embed_exclude: indexed, never embedded
 
     def refusal(self, path: str, source: bytes) -> str:
         """Why the file is not indexed — its path (`reason`), then its
@@ -222,6 +229,10 @@ class Denylist:
                 rest_dirs = path[len(pre) :].split("/")[:-1]
                 return not any(seg in OPT_IN_DIRS or seg in DEFAULT_DIRS for seg in rest_dirs)
         return False
+
+    def embed_excluded(self, path: str) -> bool:
+        """Whether `path`'s chunks are indexed without a description or a vector."""
+        return any(_pattern_hits(path, pattern) for pattern in self.embed_patterns)
 
     def reason(self, path: str) -> str:
         """Why `path` is not indexed; '' when it is."""
@@ -258,6 +269,7 @@ def default_denylist() -> Denylist:
         builtin=bool(settings.code_ingest_denylist_builtin),
         include_contrib=False,
         patterns=_split(settings.code_ingest_exclude),
+        embed_patterns=_split(settings.code_embed_exclude),
     )
 
 
@@ -267,8 +279,8 @@ def _split(raw: str) -> tuple[str, ...]:
 
 def denylist_for(cfg: Any, ignore_text: str = "", attributes_text: str = "") -> Denylist:
     """Denylist for one repo entry: its `exclude` globs, the ignore file's globs, the
-    `.gitattributes` linguist patterns, the built-in rules per the settings flag, and
-    the entry's generated-content rule."""
+    `.gitattributes` linguist patterns, the built-in rules per the settings flag, the
+    entry's generated-content rule and its `embed_exclude` globs."""
     from server.settings import settings
 
     exclude = tuple(cfg.exclude)
@@ -288,6 +300,7 @@ def denylist_for(cfg: Any, ignore_text: str = "", attributes_text: str = "") -> 
         patterns=(*exclude, *from_repo),
         exclude_generated=cfg.exclude_generated,
         contrib_paths=contrib_paths,
+        embed_patterns=tuple(cfg.embed_exclude),
     )
 
 

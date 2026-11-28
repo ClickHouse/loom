@@ -201,8 +201,10 @@ def _json_request(body: bytes):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", ["direct", "loom_op"])
-@pytest.mark.parametrize("entry", ["single", "batch", "version"])
+@pytest.mark.parametrize("entry", ["single", "batch", "version", "surrogate"])
 async def test_live_mcp_refuses_invalid_id_at_the_endpoint(monkeypatch, tool, entry) -> None:
+    import json
+
     import httpx
     from fastapi import FastAPI
 
@@ -213,7 +215,7 @@ async def test_live_mcp_refuses_invalid_id_at_the_endpoint(monkeypatch, tool, en
         UNSUPPORTED_PROTOCOL_VERSION,
     )
 
-    request_id = 1 << 128
+    request_id = "\ud800" if entry == "surrogate" else 1 << 128
     screen = AsyncMock(return_value={"jsonrpc": "2.0", "id": request_id, "result": {}})
     monkeypatch.setattr(mcp, "_verify_bearer", AsyncMock(return_value=object()))
     monkeypatch.setattr(mcp, "_screen_tool_call", screen)
@@ -228,13 +230,15 @@ async def test_live_mcp_refuses_invalid_id_at_the_endpoint(monkeypatch, tool, en
     )
     request = {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": params}
     ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
-    headers = {"MCP-Protocol-Version": "2099-01-01"} if entry == "version" else {}
+    headers = {"Content-Type": "application/json"}
+    if entry == "version":
+        headers["MCP-Protocol-Version"] = "2099-01-01"
     app = FastAPI()
     mcp.attach(app)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as client:
         response = await client.post(
             "http://test/mcp",
-            json=[request, ping] if entry == "batch" else request,
+            content=json.dumps([request, ping] if entry == "batch" else request, ensure_ascii=True),
             headers=headers,
         )
 

@@ -188,10 +188,15 @@ export function searchBody(repo, prompt, { topK = 3, token } = {}) {
   };
 }
 
-/** Gate on the index's own verdict, not on the caller's optimism. */
-export function accept(res, minConfidence = 0.4) {
+/** Gate on the index's own verdict, not on the caller's optimism: the answer
+ *  it labels low-risk (`retrieval_risk`, banded by the deployment's own
+ *  settings), or `minConfidence` when the caller names one. The model re-reads
+ *  the pointers on every later request, so an answer the index itself rates a
+ *  medium or high risk sends none. */
+export function accept(res, minConfidence = null) {
   if (!res || res.abstain) return false;
   if (!Array.isArray(res.results) || !res.results.length) return false;
+  if (minConfidence === null) return res.retrieval_risk === "low";
   return Number(res.retrieval_confidence || 0) >= minConfidence;
 }
 
@@ -204,6 +209,7 @@ export function pointerOf(unit) {
 /**
  * Render at most `cap` distinct pointers from this response.
  * Later prompts may need fresh evidence at the same indexed span.
+ * The pointers are candidates: the text never tells the model to stop looking.
  */
 export function renderPack(res, { cap = 3, header } = {}) {
   const seenSet = new Set();
@@ -219,13 +225,9 @@ export function renderPack(res, { cap = 3, header } = {}) {
   }
   if (!lines.length) return { text: "" };
   const conf = Number(res.retrieval_confidence || 0).toFixed(2);
-  const text =
-    (header || `Loom's code index, asked this prompt (confidence ${conf}), ranks these units first:`) +
-    "\n" +
-    `${lines.join("\n")}\n` +
-    `This is the index's answer for this prompt: do not run the search again. To check one, ` +
-    `Read only its line range; call another code tool only for what these leave open.`;
-  return { text };
+  // The default lead opens with a prefix the server knows as Loom's own words.
+  const lead = header || `Loom index pointers for this prompt (confidence ${conf}); Read a line range to check one:`;
+  return { text: `${lead}\n${lines.join("\n")}` };
 }
 
 export function packPayload(text) {

@@ -241,10 +241,17 @@ async def distributed_drain(transition: UUID) -> bool:
 async def _authority_settled(
     ch: Any, participant: UUID, proof: str, *, end: float, own: bool = False
 ) -> bool:
-    """Fresh authority selection and positive absence, under one caller-owned end."""
+    """Fresh authority selection and positive absence, under one caller-owned end.
+    `own`: no record under ClickHouse authority, or an empty proof once the authority
+    answered settled, raises `Uncertifiable`."""
     try:
         async with asyncio.timeout_at(end):
             recorded = await pg_profile.recorded_authority(ch)
+            if own and recorded is None and settings.storage_authority == "clickhouse":
+                raise retirement.Uncertifiable(
+                    "this ClickHouse has not recorded its storage authority yet "
+                    "(a boot with LOOM_BOOT_MIGRATE on records it)"
+                )
             if (
                 recorded is None
                 or recorded.get("authority") not in ("clickhouse", "postgres")
@@ -261,19 +268,30 @@ async def _authority_settled(
                 legacy = False
             elif len(parts) in (6, 7, 8):
                 legacy = True
+            elif own and not proof:
+                legacy = False  # nothing to certify with; the authority is still asked
             else:
                 return False
             if recorded["authority"] == "clickhouse":
-                return not own or not pg.authority_state_present()
-            if not settings.pg_dsn:
-                return False
-            return await pg.retirement_settled(participant, recorded, legacy=legacy, end=end)
+                settled = not own or not pg.authority_state_present()
+            else:
+                settled = bool(settings.pg_dsn) and await pg.retirement_settled(
+                    participant, recorded, legacy=legacy, end=end
+                )
+            if settled and own and not proof:
+                raise retirement.Uncertifiable(
+                    "this host gives no process identity (no readable /proc)"
+                )
+            return settled
+    except retirement.Uncertifiable:
+        raise
     except Exception:  # noqa: BLE001 — missing or inconsistent authority evidence refuses retirement.
         return False
 
 
 async def retire_process(ch: Any, *, end: float) -> bool:
-    """Certify permanent local ownership and both stores' positive settlement."""
+    """Certify permanent local ownership and both stores' positive settlement.
+    Raises `Uncertifiable` once everything but the certificate's evidence holds."""
     gate = retirement.get_gate()
     gate.close()
     _HEARTBEAT.signal_stop()
@@ -293,16 +311,22 @@ async def retire_process(ch: Any, *, end: float) -> bool:
             return False
         if not await pg.close_pool_until(end=end) or not gate.quiescent:
             return False
-        if not await _authority_settled(
-            ch, process_identity(), participant_proof(), end=end, own=True
-        ):
-            return False
+        uncertifiable: retirement.Uncertifiable | None = None
+        try:
+            if not await _authority_settled(
+                ch, process_identity(), participant_proof(), end=end, own=True
+            ):
+                return False
+        except retirement.Uncertifiable as e:
+            uncertifiable = e  # raised once this process's writes are known settled
         if not await _server_side_settled(ch=ch):
             return False
         if _HEARTBEAT.running or await running_queries(str(process_identity()), ch=ch) != 0:
             return False
         if not gate.quiescent or get_model_work_gate().active:
             return False
+        if uncertifiable is not None:
+            raise uncertifiable
         _, _, version = _OWN.stamp(UUID(int=0), "retired")
         proof = retirement.guarded_proof(process_identity(), version=version)
         with query_tag(_TAG["log_comment"]):

@@ -31,6 +31,8 @@ dependencies = [
   "dnspython>=2.6",          # a cancellable lookup for names a tenant chooses: server.core.hosts
   "tenacity>=9.0",
   "pyjwt[crypto]>=2.10",
+  # Application Default Credentials for the native Vertex AI client.
+  "google-auth[requests]>=2.40,<3",
   # OpenTelemetry: ship spans + logs to HyperDX / ClickStack's OTLP
   # collector. ClickStack is the OTel consumer in the Loom stack
   # (docs/features/integrations/clickstack.md); this wires the producer side.

@@ -21,7 +21,8 @@ changed what, with tamper evidence.
 
 Loom enables self-hosted adoption telemetry by default. It measures deployment and
 feature usage to inform product development. The server aggregates activity locally
-and sends one event per completed 12-hour UTC window.
+and sends one event per completed 12-hour UTC window, with eligible contact domains
+and aggregate daily activity.
 
 ### Where telemetry is sent
 
@@ -36,31 +37,45 @@ Replicas sharing that authority report under one UUID. If the worker detail show
 `missing_deployment_id` on a deployment that applies migrations manually, start the
 server once with `LOOM_BOOT_MIGRATE=true` to record its authority. Windows start at midnight
 and noon UTC. The worker allows an hour for ledger rows to arrive before reporting.
-It reports idle windows and retries an unsuccessful delivery while that window is
-still the most recent completed one. An unreachable collector does not interrupt
-the application.
+When it acquires the worker lease, it attempts delivery immediately if the latest
+completed window has no acknowledgement. It checks for reports hourly, including idle windows,
+and retries failed deliveries while the window is still the most recent completed one.
+On an upgrade, a window already acknowledged under version 2 keeps its existing
+report. Daily measurements begin with the next version 3 report.
 
 ### What is sent
 
-| Columns                                                                                                                | Meaning                                                                                                                                                                                 |
-| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema_version`, `installation_id`, `day`                                                                             | Report format version, installation UUID and UTC usage date                                                                                                                             |
-| `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                           |
-| `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                            |
-| `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                  |
-| `user_domains`                                                                                                         | Up to 30 namespace contact domains with distinct contact counts and successful requests. Domain sharing is enabled by default. Restricted namespaces and private mirrors are excluded.  |
-| `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                             |
-| `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace. |
-| `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                 |
-| `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                        |
-| `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                |
+| Columns                                                                                                                | Meaning                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`, `installation_id`, `day`                                                                             | Report format version, installation UUID and UTC usage date                                                                                                                                                                              |
+| `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                                                                            |
+| `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                                                                             |
+| `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                                                                   |
+| `user_domains`                                                                                                         | Contact domains from standard namespaces with distinct contact counts and successful requests. The noon UTC report includes up to 30 domains. The midnight report includes domains with successful requests across the complete UTC day. |
+| `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                                                                              |
+| `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace.                                                  |
+| `daily_successful_requests`                                                                                            | Total eligible successful requests in the complete UTC day. Included in the second report of that day.                                                                                                                                   |
+| `active_accounts`                                                                                                      | Distinct authenticated users per organization with at least one eligible successful request in the complete UTC day. Included in the second report of that day.                                                                          |
+| `serving_processes`                                                                                                    | Distinct known server processes with at least one eligible successful request in the complete UTC day. Included in the second report of that day.                                                                                        |
+| `domain_activity`                                                                                                      | Daily active users, successful requests, and serving processes in standard namespaces grouped by shared contact domain. Included in the second report of the UTC day.                                                                    |
+| `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                                                                  |
+| `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                                                                         |
+| `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                                                                 |
 
 The report excludes private mirror events, benchmark traffic, background traffic, and
 unclassified routes. It contains no full email addresses, names, operation strings,
-actor identifiers, customer content, or credentials. Email domains come from contact
+actor identifiers, process identifiers, customer content, or credentials. Email domains come from contact
 addresses on active standard namespaces, including self-reported addresses from password
-signup. Verified companies enroll separately. A reporting installation with zero
-successful requests is idle for that window. A missing report leaves its activity unknown.
+signup. Active users include service identities. Loom counts each authenticated identity
+once per organization and installation per UTC day. The public totals add these counts
+across installations, so an identity shared by multiple installations can count more than once.
+Serving process counts include web workers and can include more than one process when a
+server restarts during the day. A reporting installation with zero successful requests is idle
+for that window. A missing report leaves its activity unknown.
+
+If a report exceeds 1 MiB, Loom omits optional domain activity details first. It
+then includes as many domain names as fit, starting with the most successful
+requests. The report still includes aggregate usage.
 
 ### Can I disable telemetry?
 
@@ -68,15 +83,23 @@ Set `LOOM_ADOPTION_TELEMETRY_ENABLED=false` on every server and worker replica.
 With a settings file, set `adoption_telemetry_enabled: false`. In the Helm chart, put
 that setting under `settingsFile`.
 
-Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false` on every server and worker replica
-to omit domains while sending aggregate usage. In a settings file, set
-`adoption_telemetry_share_domains: false`.
+This switch stops all future adoption reports. Before upgrading, set it to
+`false` if your deployment must continue withholding contact domains or their
+activity.
 
 ### Adoption dashboard
 
 The [collector deployment guide](../../../deploy/telemetry/README.md) covers the
 warehouse and dashboard setup. The public [adoption page](https://loom.clickhouse.com/adoption)
-shows aggregate self-hosted usage and open-source distribution metrics.
+shows aggregate self-hosted usage and open-source distribution metrics. The
+self-hosted summary includes today's completed reporting windows. The directory
+shows contact domains from version 2 and 3 reports with attributed successful requests
+in the public directory's lookback period and orders names by those requests. The
+one-year view uses the 90-day directory. Completed daily reports provide successful
+requests, active installations, active users, serving processes, the latest reported
+Loom version, and first retained and latest activity dates for each domain.
+Only standard namespaces with a contact domain in the same report contribute to
+those counts.
 `loom_adoption_windows` contains one report per
 `(installation_id, window_start)`. The daily rollup adds request counts and
 uses the peak half-day distinct count for each installation.
@@ -96,41 +119,52 @@ columns:
 
 Track the managed stage from pilot requests and conversations with the company. A company
 can enroll several installations under one company ID. The Self-hosted tab shows
-reporting coverage, activity, feature usage, versions, weekly retention, and the
-number of verified companies with an active installation. Monthly and weekly
-activity count distinct installations with a successful request and sum
-successful requests. Lifecycle charts count arrivals, consecutive activity,
-returns after gaps, and absence of qualifying activity in completed periods.
-An installation that stops reporting can appear inactive. Domain lifecycle
-uses only attributed requests from deployments with domain sharing enabled.
-Choose a 30-, 90-, or 365-day lookback. Activity shows daily, weekly, or
-monthly buckets. Lifecycle thresholds apply to each selected week or month.
-Projected request volume uses the daily average when every completed day in
-the current period has data. Chart links carry the selection, and CSV exports
-contain aggregate values.
+reporting coverage, deployment growth, activity, feature and transport usage,
+model usage, installation size, versions, and retention. Growth, activity and period comparisons
+use complete UTC days. Growth counts each installation once at its first
+successful request in retained telemetry. Changes to coverage and report expiration
+can change the observed total. Activity counts installations with a successful
+request in each period and sums successful requests.
+Installation size uses the median of the daily counts for active installations.
+Lifecycle compares complete UTC weeks or months. Both the displayed period and
+the previous period need adoption reports in every reporting window. An instance
+is new when it first reaches the selected successful-request threshold in
+retained telemetry. It is retained when it meets the threshold in consecutive
+periods, reactivated when it returns after a break, and inactive when it qualified
+in the previous period only. An installation that stops reporting can appear inactive.
+
+Domain lifecycle applies the same definitions to successful requests attributed
+to each reported domain, summed across installations. An instance can change
+while its domain stays active. All qualifying domains count, including shared
+email providers. The weekly threshold is seven thirtieths of the monthly threshold.
+Net change is new plus reactivated minus newly inactive. The activity CSV
+uses the average through the most recent completed day to project request volume
+when every completed day in the current period has data.
 
 The restricted `loom_adoption_top_domains_30d` view ranks the top 50 domains by
 attributed successful requests and includes the number of active installations
-and the sum of latest account counts across installations. An address reported
-by several installations can contribute more than once. Company records, domain
-rankings, and pilot stages stay in the access-controlled warehouse.
+and the sum of latest contact counts across installations. A contact reported
+by several installations can contribute more than once. Enrollment records,
+report-level contact counts, and pilot stages stay in the access-controlled warehouse.
 
 ## Open-source adoption
 
-The OSS tab shows distribution metrics collected outside the Loom server. The
-site fetches repository and release counts from GitHub and daily SDK
-downloads from PyPI Stats and npm. Load other registry metrics into `oss_metrics`. The `loom_oss_metrics_daily` view returns one row per
+The Open source tab shows distribution metrics collected outside the Loom
+server. The site fetches repository and release counts from GitHub and daily SDK
+downloads from PyPI Stats, npm, and crates.io. Load registry history into
+`oss_metrics`. The `loom_oss_metrics_daily` view returns one row per
 `(day, source, artifact, metric)`. Use a UTC `Date` for `day`, `String` for
 dimensions and `UInt64` for `value`. The collector snapshots GitHub stars and
 forks daily.
 
-| Source                                | Artifact                  | Metrics                                          |
-| ------------------------------------- | ------------------------- | ------------------------------------------------ |
-| GitHub repository API                 | `ClickHouse/loom`         | `stars`, `forks` snapshots                       |
-| GitHub releases API                   | `ClickHouse/loom`         | `release_asset_downloads_total` snapshots        |
-| Python Package Index download dataset | `clickhouse-loom`         | `sdk_downloads` per UTC day                      |
-| npm downloads API                     | `@clickhouse/loom`        | `sdk_downloads` per UTC day                      |
-| Container registry statistics         | `ghcr.io/clickhouse/loom` | `container_pulls_total` snapshots when available |
+| Source                                | Artifact                  | Metrics                                           |
+| ------------------------------------- | ------------------------- | ------------------------------------------------- |
+| GitHub repository API                 | `ClickHouse/loom`         | `stars`, `forks` snapshots                        |
+| GitHub releases API                   | `ClickHouse/loom`         | `release_asset_downloads_total` snapshots         |
+| Python Package Index download dataset | `clickhouse-loom`         | `sdk_downloads` per UTC day                       |
+| npm downloads API                     | `@clickhouse/loom`        | `sdk_downloads` per UTC day                       |
+| crates.io downloads API               | `clickhouse-loom`         | `sdk_downloads` per UTC day across crate versions |
+| Container registry statistics         | `ghcr.io/clickhouse/loom` | `container_pulls_total` snapshots when available  |
 
 For snapshot counters, use the date the source was read. For download increments,
 use the date the registry reports. Leave missing observations absent. Package
@@ -465,6 +499,8 @@ Per namespace.
 | `loom.code.pr_cursor_age_seconds`                                       | gauge              | how far the PR-history sync trails GitHub                                                                                                                       |
 | `loom.code.files_errored`, `loom.code.embed_backlog`                    | gauge              | files with an index error; chunks waiting for a vector                                                                                                          |
 | `loom.code.symbols`                                                     | gauge              | live symbols by `tier` (`treesitter`, `scip`); a drop is a bad apply                                                                                            |
+| `loom.memory.code_link_lag_commits`, `code_link_lag_seconds`            | gauge              | commits from the commit a repository's memory links were checked at to its indexed head, and the oldest one's age; per repository with a live link              |
+| `loom.memory.code_links`                                                | gauge              | live memory links per repository and `state` (`fresh`, `moved`, `changed`, `unresolved`, `missing`, `pending`), on the code counts clock                        |
 | `loom.code.edges_unqualified`, `loom.code.edges_low_confidence`         | gauge              | parser-tier call edges bound by name only; compare with `loom.code.symbols`                                                                                     |
 | `loom.code.grep.wrong_abstain_24h`                                      | gauge              | `code.grep` abstains on a literal the corpus contains; top 8 consumers + `other` (recounted every `LOOM_OTEL_CODE_GREP_REPLAY_CACHE_S`; 0 = off)                |
 | `loom.code.repos_config_errors`                                         | gauge              | unusable entries in `LOOM_CODE_REPOS_JSON` (0 = parsed clean)                                                                                                   |
@@ -489,6 +525,7 @@ caller.
 | `loom.audit.checkpoint_lag_windows` rising for several hours                                                             | the audit sealer is stalled                                                                                                                          |
 | `loom.code.index_lag_commits` above the per-pass commit budget for 15 minutes                                            | code ingest is falling behind                                                                                                                        |
 | `loom.code.tier_lag_seconds` above 1800 for 10 minutes                                                                   | a compiler tier is stuck (the "code tier lag" alert in `deploy/dashboards/code_plane.json`; set the threshold above the slowest tier's normal cycle) |
+| `loom.memory.code_link_lag_seconds` above 900 for 10 minutes                                                             | a repository's memory links are not following its index: reads serve link states of an older commit                                                  |
 | `loom.auth.agents_provisioned{outcome=made}` per trust above its control plane's normal rate (start at 50 in 10 minutes) | a trust is naming new agents faster than its fleet grows: a leaked issuer key or a runaway control plane                                             |
 | `loom.auth.trust_agents_used_ratio` above 0.8                                                                            | the trust nears `--max-agents`                                                                                                                       |
 | `loom.auth.agents_provisioned{outcome=at_cap}` increase above 0 over 10 minutes                                          | new agents of the trust are refused                                                                                                                  |

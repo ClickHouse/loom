@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from server.memory.api.models_common import MemoryType, _Identity
+from server.memory.api.models_crud import CodeLink
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.rerank_names import RerankName
 from server.memory.domain.search_types import ChunkRef
@@ -646,6 +647,13 @@ class _MemorySearchHit(BaseModel):
     # `changed` (that code changed since the memory was written: check it), `unresolved`
     # (renamed or removed, and not followed: check it) or `missing`.
     code_state: CodeState | Literal[""] = ""
+    # The commit that put `code_state` at `changed`, `unresolved` or `missing`; '' for any
+    # other state, and when no commit is known.
+    code_changed_since: str = ""
+    # The hit's links that are now at another path or symbol than the memory was written
+    # against, each with where the code is (`path`, `symbol`, `start_line`, `end_line`) and
+    # what the text still calls it (`was_path`, `was_symbol`); empty for nearly every hit.
+    code_moved: list[CodeLink] = Field(default_factory=list)
     # bodies="unit": true when the whole value did not fit the budget and
     # content_excerpt is still the clip; `next` is the one call that fetches it.
     body_truncated: bool = False

@@ -84,6 +84,7 @@ function productDatesAt(repository, revision, publicPages, dates) {
     "docs/components/documentation-link.ts",
     "docs/components/site-locales.ts",
     "docs/scripts/home-locales.json",
+    "docs/lib/documentation-routes.mjs",
     "docs/lib/site-identity.mjs",
   ].map((path) => dates.get(path));
   for (const [route, destination] of Object.entries(publicPages)) {

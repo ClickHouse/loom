@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx
@@ -15,12 +16,63 @@ from server.core.pg_profile import recorded_authority
 from server.identity.app.directory import configured_restricted_pairs
 from server.insights.store.adoption_telemetry import window_report
 from server.settings import settings
-from server.workers import pass_context
+from server.workers import pass_context, status_store
 
 _COLLECTOR_URL = "https://loom.clickhouse.com/api/v1/adoption"
 _WINDOW = timedelta(hours=12)
+# not a setting: the collector accepts reports up to one MiB.
+_MAX_REPORT_BYTES = 1_048_576
 # not a setting: bounds reads of the collector acknowledgement record.
 _MAX_ACK_BYTES = 4096
+
+
+def _report_body(report: dict[str, Any]) -> bytes:
+    encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    body = bytearray()
+    for part in encoder.iterencode(report):
+        chunk = part.encode("utf-8")
+        if len(body) + len(chunk) > _MAX_REPORT_BYTES:
+            break
+        body.extend(chunk)
+    else:
+        return bytes(body)
+
+    # Preserve totals and prioritise names over optional activity details.
+    totals = {name: value for name, value in report.items() if name != "user_domains"}
+    if "domain_activity" in totals:
+        totals["domain_activity"] = []
+    body = bytearray(encoder.encode(totals).encode("utf-8")[:-1])
+    body.extend(b',"user_domains":[')
+    if len(body) + 2 > _MAX_REPORT_BYTES:
+        raise ValueError("adoption totals exceed the collector report size limit")
+    names = sorted(
+        report["user_domains"],
+        key=lambda row: (-row["successful_requests"], -row["user_count"], row["domain"]),
+    )
+    for index, row in enumerate(names):
+        chunk = encoder.encode(row).encode("utf-8")
+        if len(body) + len(chunk) + bool(index) + 2 > _MAX_REPORT_BYTES:
+            break
+        if index:
+            body.extend(b",")
+        body.extend(chunk)
+    body.extend(b"]}")
+    return bytes(body)
+
+
+def _reporting_window() -> tuple[datetime, datetime]:
+    # Give the ledger time to flush before reading the previous window.
+    cutoff = utc_now() - timedelta(hours=1)
+    end = cutoff.replace(hour=cutoff.hour // 12 * 12, minute=0, second=0, microsecond=0)
+    return end - _WINDOW, end
+
+
+async def first_pass_due() -> bool:
+    """Give the latest unacknowledged window a chance on each lease acquisition."""
+    if not settings.adoption_telemetry_enabled:
+        return False
+    start, _ = _reporting_window()
+    return await status_store.resume_cursor("adoption_telemetry") < start.isoformat()
 
 
 async def run_pass() -> None:
@@ -36,24 +88,25 @@ async def run_pass() -> None:
     installation_id = uuid5(NAMESPACE_URL, f"loom/adoption/v1/{UUID(authority['deployment_id'])}")
     pass_context.record_outcome("adoption_telemetry", {"installation_id": str(installation_id)})
 
-    # Give the ledger time to flush before reading the previous window.
-    cutoff = utc_now() - timedelta(hours=1)
-    end = cutoff.replace(hour=cutoff.hour // 12 * 12, minute=0, second=0, microsecond=0)
-    start = end - _WINDOW
+    start, end = _reporting_window()
     cursor = start.isoformat()
     if pass_context.resume_cursor() >= cursor:
         return
 
-    restricted = (
-        configured_restricted_pairs() if settings.adoption_telemetry_share_domains else None
+    report = await window_report(
+        start,
+        end,
+        installation_id,
+        restricted=configured_restricted_pairs(),
+        ch=ch,
     )
-    report = await window_report(start, end, installation_id, restricted=restricted, ch=ch)
     pass_context.check_stop()
     try:
         async with get_http_client().stream(
             "POST",
             _COLLECTOR_URL,
-            json=report,
+            content=_report_body(report),
+            headers={"Content-Type": "application/json"},
             follow_redirects=False,
             timeout=8.0,  # not a setting: allows the collector's six-second insert budget.
         ) as response:

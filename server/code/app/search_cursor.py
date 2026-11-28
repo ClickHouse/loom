@@ -39,6 +39,7 @@ import logging
 import time
 from typing import Any
 
+from server.code.domain.search_scope import SearchScope
 from server.code.domain.units import CodeUnit, unit_from_chunk
 from server.core.background import TaskSet
 from server.core.datetimes import naive_utc_now
@@ -47,11 +48,8 @@ from server.embedding.normalize import normalize_whitespace
 logger = logging.getLogger("loom.code_search_cursor")
 
 CURSOR_VERSION = 1
-# Ranking-shaping request fields hashed into the cursor: a page must be
-# served from a pool ranked under the same query, prefix, reranker, legs
-# and priors. Page size (top_k) and body fill (token_budget, bodies,
-# annotate) are deliberately NOT in the hash — they shape the page, not
-# the ranking, and the next page uses the request's own values.
+# Keep this request hash stable across replicas. Search filters are signed in
+# the pool id. Page size, body fill, annotations and the seen-set can vary by page.
 _RANKING_FIELDS = (
     "query",
     "path_prefix",
@@ -96,6 +94,20 @@ def params_hash(inp: Any, *, rerank: str, embedding_model: str) -> str:
     parts["rerank"] = rerank
     parts["embedding_model"] = embedding_model
     return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def search_scope_digest(scope: SearchScope) -> str:
+    """Fingerprint the validated predicates that determine the ranked pool."""
+    parts = (
+        scope.pattern,
+        scope.has_pattern and scope.regex,
+        scope.has_pattern and scope.case_sensitive,
+        scope.exact_path,
+        sorted(set(scope.path_globs_re)),
+        sorted(set(scope.exclude_globs_re)),
+        sorted(set(scope.extensions)),
+    )
+    return hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode()).hexdigest()
 
 
 def encode(

@@ -1,0 +1,30 @@
+---
+import data from "blume:data";
+import { withBase } from "blume/components/islands/base-path.ts";
+import { footerLinks } from "blume/components/layout/footer-links.ts";
+import type { BlumeDataConfig } from "blume/core/data.ts";
+import { EN_UI, type UIStrings } from "blume/core/i18n-ui.ts";
+import { routeSetFor } from "blume/core/locale-links.ts";
+import { resolveLocalizable } from "blume/core/localizable.ts";
+import SiteFooter from "./SiteFooter.astro";
+import { siteLocales, type SiteLocale } from "./site-locales";
+
+interface Props {
+  footer?: BlumeDataConfig["footer"];
+  locale?: string;
+  ui?: UIStrings;
+}
+
+const { footer, locale, ui } = Astro.props;
+const siteLocale = locale && Object.hasOwn(siteLocales, locale) ? (locale as SiteLocale) : "en";
+const links = footerLinks(footer?.links ?? [], {
+  basePath: data.config.basePath,
+  i18n: data.config.i18n,
+  locale,
+  routes: routeSetFor(data.routes),
+}).map(({ href, label }) => ({ href: withBase(href), label }));
+const copyright = footer?.copyright && resolveLocalizable(footer.copyright, locale, data.config.i18n?.defaultLocale);
+const consentSettings = data.config.consent ? { ...EN_UI.consent, ...ui?.consent }.settings : undefined;
+---
+
+<SiteFooter locale={siteLocale} documentation links={links} copyright={copyright} consentSettings={consentSettings} />

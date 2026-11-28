@@ -278,7 +278,7 @@ async def test_adoption_report_contains_deployment_totals_and_contact_domains(ch
     version = await ch.query_one("SELECT version() AS version")
     assert version is not None
     assert report == {
-        "schema_version": 1,
+        "schema_version": 2,
         "installation_id": str(installation_id),
         "day": day.isoformat(),
         "window_start": start.isoformat(),
@@ -309,11 +309,149 @@ async def test_adoption_report_contains_deployment_totals_and_contact_domains(ch
         end + timedelta(days=2),
         end + timedelta(days=2, hours=12),
         installation_id,
-        restricted=None,
+        restricted=set(),
         ch=ch,
     )
     assert idle["requests"] == 0
+    assert idle["daily_successful_requests"] == 0
+    assert idle["active_accounts"] == 0
+    assert idle["serving_processes"] == 0
     assert idle["user_domains"] == []
+
+
+async def test_adoption_report_deduplicates_daily_activity(ch: CHClient) -> None:
+    start = datetime(2001, 10, 12, tzinfo=UTC)
+    noon = start + timedelta(hours=12)
+    midnight = start + timedelta(days=1)
+    org = unique_org("adoption")
+    other_org = unique_org("adoption")
+    company = f"{org}.example.test"
+    restricted = {(org, "configured-restricted")}
+
+    def request(
+        when: datetime, namespace: str, subject: str, *, tenant: str = org, **fields: Any
+    ) -> dict[str, Any]:
+        return _event(
+            tenant,
+            when.isoformat(),
+            namespace=namespace,
+            subject=subject,
+            instance=fields.pop("instance", "host-one:11"),
+            **fields,
+        )
+
+    await ch.insert(
+        "loom.agent_events",
+        [
+            request(start, "first", "alice"),
+            request(noon, "second", "alice", user_id="claimed-elsewhere"),
+            request(noon, "first", "sa:integration", instance="host-two:12"),
+            request(noon, "first", "alice", tenant=other_org),
+            request(noon, "first", "", user_id="unverified", instance="unknown:13"),
+            request(noon, "classified", "restricted-account"),
+            request(
+                noon,
+                "configured-restricted",
+                "operator-restricted-account",
+                instance="host-three:14",
+            ),
+            request(noon, "first", "benchmark", traffic_class="bench", instance="host-four:15"),
+            request(noon, "first", "background", traffic_class="background"),
+            request(noon, "first", "server-error", success=False, status_class="server"),
+            request(midnight, "first", "next-day", instance=""),
+        ],
+    )
+    await ch.insert(
+        "loom.agent_events_private",
+        [request(noon, "acl-" + "e" * 24, "mirror", mirror_marked=1)],
+    )
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {
+                "org": tenant,
+                "namespace": name,
+                "contact_email": f"shared-contact@{company}",
+                "classification": classification,
+            }
+            for tenant, name, classification in [
+                (org, "first", "standard"),
+                (org, "second", "standard"),
+                (other_org, "first", "standard"),
+                (org, "classified", "restricted"),
+                (org, "configured-restricted", "standard"),
+            ]
+        ],
+    )
+    installation_id = uuid.uuid4()
+    first = await window_report(start, noon, installation_id, restricted=restricted, ch=ch)
+    assert first["schema_version"] == 2
+    assert "daily_successful_requests" not in first
+    assert "active_accounts" not in first
+    assert "serving_processes" not in first
+    assert "domain_activity" not in first
+
+    daily = await window_report(noon, midnight, installation_id, restricted=restricted, ch=ch)
+    assert daily["schema_version"] == 3
+    assert daily["daily_successful_requests"] == 7
+    assert daily["active_accounts"] == 5
+    assert daily["serving_processes"] == 3
+    assert {"domain": company, "user_count": 1, "successful_requests": 5} in daily["user_domains"]
+    assert {
+        "domain": company,
+        "active_accounts": 3,
+        "successful_requests": 5,
+        "serving_processes": 2,
+    } in daily["domain_activity"]
+
+    unstamped = await window_report(
+        noon + timedelta(days=1),
+        midnight + timedelta(days=1),
+        installation_id,
+        restricted=restricted,
+        ch=ch,
+    )
+    assert unstamped["active_accounts"] == 1
+    assert unstamped["serving_processes"] is None
+    assert {
+        "domain": company,
+        "active_accounts": 1,
+        "successful_requests": 1,
+        "serving_processes": None,
+    } in unstamped["domain_activity"]
+
+
+async def test_adoption_report_includes_all_domains_active_before_noon(ch: CHClient) -> None:
+    start = datetime(2001, 10, 15, tzinfo=UTC)
+    noon = start + timedelta(hours=12)
+    midnight = start + timedelta(days=1)
+    org = unique_org("adoption")
+    domain_names = {"gmail.com", *(f"contact-{index:02}.{org}.example.test" for index in range(34))}
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {"org": org, "namespace": f"contact-{index}", "contact_email": f"user@{domain}"}
+            for index, domain in enumerate(sorted(domain_names))
+        ],
+    )
+    await ch.insert(
+        "loom.agent_events",
+        [
+            _event(org, start.isoformat(), namespace=f"contact-{index}", subject="user")
+            for index in range(len(domain_names))
+        ],
+    )
+    installation_id = uuid.uuid4()
+    first = await window_report(start, noon, installation_id, restricted=set(), ch=ch)
+    assert len(first["user_domains"]) == 30
+    assert "gmail.com" not in {row["domain"] for row in first["user_domains"]}
+
+    last = await window_report(noon, midnight, installation_id, restricted=set(), ch=ch)
+    assert last["successful_requests"] == 0
+    assert last["daily_successful_requests"] == len(domain_names)
+    assert {row["domain"] for row in last["user_domains"]} == domain_names
+    assert {row["domain"] for row in last["domain_activity"]} == domain_names
+    assert all(row["successful_requests"] == 1 for row in last["domain_activity"])
 
 
 async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient) -> None:

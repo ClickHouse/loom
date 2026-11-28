@@ -1,0 +1,77 @@
+name: Coding-agent memory evaluation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/memory-evaluation.yml
+      - examples/compare_coding_agent_memory.py
+      - examples/run_coding_agent_memory_comparison.sh
+      - examples/coding-agent-memory-comparison/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  evaluate:
+    name: Evaluate memory on a sample repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: python
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+          enable-cache: false
+      - name: Install Loom from the lockfile
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
+        run: uv sync --locked --python "$PYTHON_PATH" --extra dev --extra code
+      - name: Run the evaluation
+        id: evaluation
+        shell: bash
+        run: bash examples/run_coding_agent_memory_comparison.sh > "$RUNNER_TEMP/memory-evaluation.json"
+      - name: Write the results summary
+        if: ${{ !cancelled() }}
+        env:
+          EVALUATION_OUTCOME: ${{ steps.evaluation.outcome }}
+        shell: bash
+        run: |
+          echo '## Coding-agent memory evaluation' >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$EVALUATION_OUTCOME" != success ]]; then
+            echo 'The evaluation did not complete successfully. See the failed step for details.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          cat >> "$GITHUB_STEP_SUMMARY" <<'MARKDOWN'
+
+          | Check | Observed result |
+          | --- | --- |
+          | Memory handoff | A second MCP client retrieved the saved value and memory ID. |
+          | Source change | Loom returned `changed` on `main` and `fresh` on `release`. |
+          | Namespace access | A credential for another project received HTTP 403. |
+          | SQL history | A scoped reader saw both decisions and their writer identities. |
+          | Portability | A fresh namespace restored the corrected decision. |
+
+          Download the `memory-evaluation` artifact for the JSON results.
+          MARKDOWN
+      - name: Upload the evaluation results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: memory-evaluation
+          path: ${{ runner.temp }}/memory-evaluation.json
+          if-no-files-found: error

@@ -1190,7 +1190,7 @@ def test_the_command_is_dry_run_by_default() -> None:
 
 
 def test_a_cli_run_writes_as_the_decisions_command() -> None:
-    from server.cli.app import _dispatch
+    from server.cli.dispatch import _dispatch
     from server.memory.app.provenance import writer_actor
 
     seen: list[str] = []

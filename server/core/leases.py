@@ -190,8 +190,9 @@ class Lease:
 
     @asynccontextmanager
     async def renewed(self) -> AsyncIterator[Lease]:
-        """Run the block with the lease renewed, and release it after. Once the lease
-        is lost the block is cancelled and LeaseLost raised."""
+        """Run the block with the lease renewed, and release it after, to the end even
+        when the block's task is cancelled meanwhile. Once the lease is lost the block
+        is cancelled and LeaseLost raised."""
         body = asyncio.current_task()
         self.keep_renewed(on_lost=body.cancel if body is not None else None)
         try:
@@ -201,7 +202,11 @@ class Lease:
                 raise LeaseLost(self.name) from None
             raise
         finally:
-            await self.release()
+            # stopped here, not in the release's task: no loss cancels a block that ended
+            if self._renewer is not None:
+                self._renewer.cancel()
+            # a deadline that lands on the release would hold the name until its TTL
+            await release_shielded(self)
 
     async def _renew_loop(self, on_lost: Callable[[], Any] | None) -> None:
         pause = self.ttl_s / 6

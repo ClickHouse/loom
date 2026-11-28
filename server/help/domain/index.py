@@ -14,9 +14,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
+import yaml
+
 from server.core import bm25
 from server.knowledge.domain.chunking import Section as PageSection
 from server.knowledge.domain.chunking import detect_sections
+from server.memory.domain.okf_bundle import split_frontmatter
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 # ASCII whitespace and punctuation except `~`, as ClickHouse's splitByNonAlpha splits:
@@ -150,6 +153,17 @@ def split_page(path: str, text: str) -> list[Section]:
     before the first heading, if any, with an empty breadcrumb, then one per heading,
     whose breadcrumb starts with the page's title. Each section's text starts with its
     heading line."""
+    metadata, body, has_frontmatter = split_frontmatter(text)
+    if has_frontmatter:
+        # A leading thematic break can have a matching delimiter later in the page.
+        # Only a YAML mapping or an empty metadata block is frontmatter.
+        try:
+            values = yaml.safe_load(metadata)
+        except yaml.YAMLError:
+            pass
+        else:
+            if values is None or isinstance(values, dict):
+                text = body
     found = detect_sections(text)
     if not found:
         found = [PageSection(path=(), depth=0, start=0, end=len(text))]

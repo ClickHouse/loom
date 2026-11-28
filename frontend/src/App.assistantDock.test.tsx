@@ -214,8 +214,8 @@ describe("the Ask AI button", () => {
     await boot(1100);
     await userEvent.setup().hover(launcher());
     expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ask AI about this namespace$/);
-    act(() => useDock.setState({ reason: { kind: "starting" }, reasonShort: "setting up" }));
-    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ask AI: setting up$/));
+    act(() => useDock.setState({ reason: { kind: "failing" }, reasonShort: "configuration failed" }));
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ask AI: configuration failed$/));
     act(() => useDock.setState({ reason: null, reasonShort: "" }));
   });
 
@@ -223,8 +223,8 @@ describe("the Ask AI button", () => {
     await boot(1440);
     await userEvent.setup().hover(launcher());
     expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ask AI about this namespace$/);
-    act(() => useDock.setState({ reason: { kind: "starting" }, reasonShort: "setting up" }));
-    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ask AI: setting up$/));
+    act(() => useDock.setState({ reason: { kind: "failing" }, reasonShort: "configuration failed" }));
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ask AI: configuration failed$/));
     act(() => useDock.setState({ reason: { kind: "not_configured" }, reasonShort: "chat not set up" }));
     await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ask AI: chat not set up$/));
   });
@@ -260,7 +260,7 @@ describe("the Ask AI button", () => {
     act(() => useDock.setState({ working: false, unread: true }));
     expect(launcher()).toHaveAccessibleName("Ask AI, answer ready");
     expect(document.querySelector(".assistant-launcher-dot")).not.toBeNull();
-    act(() => useDock.setState({ reason: { kind: "starting" } }));
+    act(() => useDock.setState({ reason: { kind: "failing" } }));
     expect(launcher()).toHaveAccessibleName("Ask AI, unavailable");
     // Never disabled: a click opens the panel to the reason.
     expect(launcher()).not.toHaveAttribute("aria-disabled");
@@ -685,19 +685,19 @@ describe("the assistant's live region", () => {
 });
 
 describe("chat not set up", () => {
-  it("links every reader, at overlay widths, to the docs on setting up the assistant service", async () => {
+  it("links every reader, at overlay widths, to the native assistant configuration", async () => {
     assistantCheck = null;
     await boot(900);
     await userEvent.setup().click(launcher());
     const body = await screen.findByTestId("assistant-unavailable", {}, { timeout: 5000 });
     expect(body).toHaveTextContent("Chat isn't set up");
-    expect(body).toHaveTextContent("An operator sets up the assistant service for this deployment.");
+    expect(body).toHaveTextContent("An operator configures the assistant provider and model for this deployment.");
     expect(body).not.toHaveTextContent("Models & keys");
-    await userEvent.setup().click(within(body).getByRole("button", { name: "How to set up the assistant service" }));
+    await userEvent.setup().click(within(body).getByRole("button", { name: "How to configure the assistant" }));
     await until(() => panel().hasAttribute("hidden"));
     expect(useStore.getState().view).toBe("help");
-    expect(location.search).toContain("page=features");
-    expect(location.hash).toBe("#the-deployed-assistant");
+    expect(new URLSearchParams(location.search).get("page")).toBe("operations/assistant.md");
+    expect(location.hash).toBe("#configuration");
     expect(inertOnPage()).toBeNull();
   });
 });

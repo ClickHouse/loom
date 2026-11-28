@@ -120,13 +120,13 @@ describe("Ask about this on a Recall lab result", () => {
   });
 
   it("an unavailable Ask opens nothing either", async () => {
-    useDock.setState({ reason: { kind: "starting" }, reasonShort: "setting up" });
+    useDock.setState({ reason: { kind: "failing" }, reasonShort: "configuration failed" });
     render(<RecallLab />);
     const table = await score();
     const ask = within(within(table).getAllByRole("row")[1]).getByRole("button", {
       name: "Ask AI about this result",
     });
-    expect(ask).toHaveAccessibleDescription("Ask AI can't answer now: setting up.");
+    expect(ask).toHaveAccessibleDescription("Ask AI can't answer now: configuration failed.");
     await userEvent.setup().click(ask);
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
     expect(useDock.getState().open).toBe(false);

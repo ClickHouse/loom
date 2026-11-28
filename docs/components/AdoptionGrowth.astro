@@ -1,0 +1,26 @@
+---
+import type { ChartGrain } from "../lib/adoption-chart-series.mjs";
+import AdoptionMetricPair from "./AdoptionMetricPair.astro";
+
+interface Props {
+  rows: { period: string; first_active: number; cumulative_active: number; current: boolean }[];
+  grain: ChartGrain;
+  rangeStart: string;
+  rangeEnd?: string;
+}
+
+const { rows, grain, rangeStart, rangeEnd } = Astro.props;
+---
+
+<AdoptionMetricPair
+  label="Installations"
+  description="Each installation counts once at its first successful request in retained telemetry."
+  {grain}
+  rows={rows.map(({ period, first_active, current }) => ({ day: period, value: first_active, current }))}
+  growthRows={rows.map(({ period, cumulative_active, current }) => ({ day: period, value: cumulative_active, current }))}
+  axisStart={rangeStart}
+  axisEnd={rangeEnd}
+  observedLabel={"First observed per " + grain}
+  growthLabel="Cumulative installations"
+  growthFirst
+/>

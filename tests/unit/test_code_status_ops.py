@@ -419,7 +419,11 @@ async def test_refresh_writes_last_refresh_breadcrumb(monkeypatch: pytest.Monkey
     async def _no_lease(org: str, ns: str) -> None:
         return None
 
+    async def _no_links(org: str, ns: str, by: float) -> None:
+        return None
+
     monkeypatch.setattr(refresh_mod, "CodeRepo", _R)
+    monkeypatch.setattr(refresh_mod, "_settle_links", _no_links)
     monkeypatch.setattr(refresh_mod, "_REFRESH_LOCKS", {})
     monkeypatch.setattr(refresh_mod, "_take_lease", _no_lease)
     monkeypatch.setattr(worker_mod, "run_pass", _pass)
@@ -598,6 +602,7 @@ async def test_a_failed_worker_pass_shows_a_viewer_its_kind_not_its_text(
         index_status._ledger_passes_cache.clear()
     assert out.workers["code_pr_history"].last_error == "RuntimeError"
     assert "AS last_error_class," in _Ledger.sql and "AS last_error," not in _Ledger.sql
+    assert "Index workers reporting errors: code_pr_history." not in out.quality_warnings
 
     async def _none(days: int = 14):
         return {}

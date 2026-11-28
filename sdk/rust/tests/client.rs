@@ -10,7 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use clickhouse_loom::{Client, Error, RetryPolicy, RetryTimeouts, SearchRequest, SetRequest};
+use clickhouse_loom::{
+    Client, Error, ErrorCategory, ErrorKind, RetryPolicy, RetryTimeouts, SearchRequest, SetRequest,
+};
 use serde_json::{json, Value};
 use tokio::{
     process::Command,
@@ -40,6 +42,12 @@ mod update_filters;
 #[path = "review_regressions/mod.rs"]
 mod review_regressions;
 
+#[path = "routes/mod.rs"]
+mod routes;
+
+#[path = "retry_scope/mod.rs"]
+mod retry_scope;
+
 #[cfg(feature = "blocking")]
 #[path = "blocking_cases/mod.rs"]
 mod blocking_cases;
@@ -48,6 +56,8 @@ struct Request {
     line: String,
     headers: HashMap<String, String>,
     body: Value,
+    /// The body as sent, which a route outside the op registry may not encode as JSON.
+    raw: Vec<u8>,
 }
 
 struct Server {
@@ -91,6 +101,12 @@ impl Server {
                     .set_write_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
                 let request = read_request(&mut stream);
+                if response == "close" {
+                    // Answer nothing: the client sees a connection closed before a response.
+                    sender.send(request).unwrap();
+                    drop(stream);
+                    continue;
+                }
                 if response == "hold-body" {
                     stream
                         .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
@@ -168,13 +184,17 @@ fn read_request(stream: &mut TcpStream) -> Request {
         let (key, value) = header.split_once(':').unwrap();
         headers.insert(key.to_ascii_lowercase(), value.trim().to_owned());
     }
-    let len: usize = headers["content-length"].parse().unwrap();
-    let mut body = vec![0; len];
-    reader.read_exact(&mut body).unwrap();
+    let len: usize = headers
+        .get("content-length")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let mut raw = vec![0; len];
+    reader.read_exact(&mut raw).unwrap();
     Request {
         line: line.trim().into(),
         headers,
-        body: serde_json::from_slice(&body).unwrap(),
+        body: serde_json::from_slice(&raw).unwrap_or(Value::Null),
+        raw,
     }
 }
 
@@ -448,6 +468,15 @@ async fn api_errors_preserve_categories_and_retry_hints() {
         assert_eq!(error.retry_after.as_deref(), Some("8"));
         assert_eq!(error.request_id.as_deref(), Some("request-1"));
         assert_eq!(error.detail["custom"], 42);
+        // A name the SDK does not know falls back to the status rule.
+        let expected = if category == "future" {
+            "capacity"
+        } else {
+            category
+        };
+        assert_eq!(error.category().as_str(), expected);
+        assert!(!error.retryable());
+        assert_eq!(error.kind(), ErrorKind::RateLimited);
     }
 }
 
@@ -475,6 +504,11 @@ async fn nonstandard_http_errors_keep_the_status() {
         assert_eq!(error.category, None);
         assert_eq!(error.retryable, None);
         assert_eq!(error.retry_after_s, Some(3.0));
+        assert_eq!(error.kind(), ErrorKind::BackendUnavailable);
+        assert_eq!(
+            (error.category(), error.retryable()),
+            (ErrorCategory::Dependency, true)
+        );
     }
 }
 
@@ -490,7 +524,94 @@ async fn unknown_error_codes_and_date_retry_headers_survive() {
     };
     assert_eq!(error.code, "FUTURE_CONFLICT");
     assert_eq!(error.retry_after_s, Some(0.0));
+    assert_eq!(error.kind(), ErrorKind::PreconditionFailed);
+    assert_eq!(
+        (error.category(), error.retryable()),
+        (ErrorCategory::Input, false)
+    );
     assert!(error.retry_after.unwrap().contains("GMT"));
+}
+
+#[tokio::test]
+async fn a_final_5xx_is_retryable_only_where_nothing_could_have_written() {
+    for (op, idempotent) in [
+        ("assistant.ask", false),
+        ("future.op", false),
+        ("memory.get", true),
+    ] {
+        for (detail, retryable) in [
+            (json!({"code": "OVERLOADED"}), idempotent),
+            (json!({"code": "OVERLOADED", "retryable": true}), true),
+            (json!({"code": "OVERLOADED", "retryable": false}), false),
+            (json!({"code": "AUTH_UNAVAILABLE"}), true),
+        ] {
+            let server = Server::new(vec![
+                response(503, json!({"detail": detail}), ""),
+                response(200, "{}", ""),
+            ]);
+            let client = Client::builder("org", "ns", "bot")
+                .base_url(&server.url)
+                .api_key("")
+                .retry(RetryPolicy::disabled())
+                .build()
+                .unwrap();
+            let failure = client
+                .call::<Value>(op, &json!({}), clickhouse_loom::CallOptions::default())
+                .await
+                .unwrap_err();
+            let error = &failure.error;
+            assert_eq!(error.category(), ErrorCategory::Dependency, "{op} {detail}");
+            assert_eq!(error.retryable(), retryable, "{op} {detail}");
+            server.request().await;
+            assert!(
+                tokio::time::timeout(Duration::from_millis(300), server.request())
+                    .await
+                    .is_err()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn precondition_and_wrong_cell_answers_expose_their_details() {
+    let server = Server::new(vec![
+        response(
+            409,
+            json!({"detail": {"code": "PRECONDITION_FAILED", "message": "stale",
+                "current_sha256": "live"}}),
+            "",
+        ),
+        response(
+            409,
+            json!({"detail": {"code": "WRONG_CELL", "message": "elsewhere",
+                "org": "acme", "cell": "eu"}}),
+            "",
+        ),
+    ]);
+    let client = server.client();
+    let Error::Api(error) = client
+        .set(SetRequest::new("key", json!({})).if_match_sha256("stale"))
+        .await
+        .unwrap_err()
+    else {
+        panic!("expected API error");
+    };
+    assert_eq!(error.kind(), ErrorKind::PreconditionFailed);
+    assert_eq!(error.current_sha256(), Some("live"));
+    assert_eq!(
+        (error.category(), error.retryable()),
+        (ErrorCategory::Input, false)
+    );
+    assert_eq!((error.org(), error.cell()), (None, None));
+    server.request().await;
+
+    let Error::Api(error) = client.get("key").await.unwrap_err() else {
+        panic!("expected API error");
+    };
+    assert_eq!(error.kind(), ErrorKind::WrongCell);
+    assert_eq!((error.org(), error.cell()), (Some("acme"), Some("eu")));
+    assert_eq!(error.current_sha256(), None);
+    server.request().await;
 }
 
 #[tokio::test]

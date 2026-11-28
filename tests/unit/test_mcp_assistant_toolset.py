@@ -832,20 +832,21 @@ def test_an_assistant_memory_read_is_recorded_under_its_answer(
 def test_the_agent_is_told_to_cite_only_what_the_citation_check_can_verify(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The instructions and the assistant's tool descriptions name the citation forms
-    # server/assistant/app/citations.py checks, so the model is not steered to a form
-    # that always comes back unverified.
-    from server.assistant.app import citations, service
+    # Native receipts, rather than a second runtime's exposure polling, decide
+    # which returned sources a completed answer may cite.
+    from server.assistant.app import service
 
-    instructions = service.current_definition().agent_body()["instructions"]
-    # The citation bullet alone (the loaded instructions carry no indent).
-    bullet = instructions.split("cite it:", 1)[1].split("\n- ", 1)[0]
-    # The list of reads, exactly as the check counts them.
-    names = [op_name.replace(".", "_") for op_name in citations.RECORDING_READS]
-    listed = ", ".join(names[:-1]) + " or " + names[-1]
-    assert listed in " ".join(bullet.split()), listed
-    # Memory reads that record no exposure are not offered as citation sources.
-    assert "memory_history" not in bullet and "memory_provenance" not in bullet
+    instructions = service.current_definition().instructions
+    for form in (
+        "[memory:<key>@v<version>]",
+        "[doc:<source_uri>]",
+        "[doc:<source_uri> § <section>]",
+        "[code:<path>:<line>]",
+        "[help:<path> § <section>]",
+    ):
+        assert form in instructions
+    assert "Copy identifiers" in instructions and "during this answer" in instructions
+    assert "not evidence for this answer" in instructions
     monkeypatch.setattr(settings, "mcp_code_tools", False)
     by_name = {d["name"]: d for d in asyncio.run(mcp._tools_descriptor(toolset="assistant"))}
     query = by_name[OPERATIONS_BY_NAME["insights.query"].mcp_tool_name]["description"]

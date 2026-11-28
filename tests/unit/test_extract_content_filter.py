@@ -39,6 +39,7 @@ def test_a_filtered_reply_is_asked_again_without_the_recitation() -> None:
         ex._complete_and_parse(
             client,
             base_prompt="SYS",
+            retry_addendum="",
             operator_policy="",
             user_prompt="U",
             max_tokens=100,
@@ -64,6 +65,7 @@ def test_a_filtered_reply_on_the_truncation_retry_is_asked_again_too() -> None:
         ex._complete_and_parse(
             client,
             base_prompt="SYS",
+            retry_addendum="",
             operator_policy="",
             user_prompt="U",
             max_tokens=100,
@@ -95,6 +97,7 @@ def test_an_unparseable_cached_reply_is_asked_of_the_provider_again() -> None:
         ex._complete_and_parse(
             client,
             base_prompt="SYS",
+            retry_addendum="",
             operator_policy="",
             user_prompt="U",
             max_tokens=100,

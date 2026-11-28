@@ -95,13 +95,19 @@ for (const [width, docked] of [
           });
         });
         await memories(page);
-        if (path !== "/memories") await page.goto(path);
+        await expect(page.locator(".animate-view-in")).toHaveCount(0);
+        const sections = page.getByRole("navigation", { name: "Sections" });
+        await sections.getByRole("link", { name: "Library", exact: true }).click();
+        if (path === "/memories") {
+          await sections.getByRole("link", { name: "Memories", exact: true }).click();
+        }
         const bar = page.getByLabel("Search and filters");
         await expect(bar).toBeVisible();
         const entry = page.locator(".animate-view-in");
-        const startTime = await entry.evaluate((el) => {
+        const startTime = await entry.evaluate(async (el) => {
           const animation = el.getAnimations()[0];
           if (!animation) throw new Error("missing view entry animation");
+          await animation.ready;
           animation.currentTime = 1_000;
           return animation.startTime;
         });

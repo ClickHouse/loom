@@ -142,10 +142,20 @@ export function loomConfig() {
   return _loomConfigCache;
 }
 
+/** The token in the token file (`loomTokenPath`), "" when it is missing or empty. */
+function tokenFileToken() {
+  try {
+    return readFileSync(loomTokenPath(), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
 /** The Loom bearer token and the lookup that supplied it (`kind`: "env",
  *  "agent", "option", "config", "file", or "" for none), in this order: env,
- *  an agent's exchanged token, the install option, ~/.loom/config.json,
- *  ~/.loom/token. */
+ *  an agent's exchanged token, the install option, the file
+ *  LOOM_API_KEY_FILE names, ~/.loom/config.json, and with that variable
+ *  unset ~/.loom/token. */
 export function tokenLookup() {
   const fromEnv = (process.env.LOOM_API_KEY || "").trim();
   if (fromEnv) return { token: fromEnv, kind: "env" };
@@ -158,15 +168,13 @@ export function tokenLookup() {
   // `userConfig` values to hook processes as CLAUDE_PLUGIN_OPTION_<KEY>.
   const fromOption = (process.env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
   if (fromOption) return { token: fromOption, kind: "option" };
+  // A file named by environment outranks a saved token, like LOOM_API_KEY.
+  const named = process.env.LOOM_API_KEY_FILE ? tokenFileToken() : "";
+  if (named) return { token: named, kind: "file" };
   const fromCfg = String(loomConfig().token || "").trim();
   if (fromCfg) return { token: fromCfg, kind: "config" };
-  try {
-    const fromFile = readFileSync(loomTokenPath(), "utf8").trim();
-    if (fromFile) return { token: fromFile, kind: "file" };
-  } catch {
-    // no token file; caller decides whether to no-op
-  }
-  return { token: "", kind: "" };
+  const fromFile = tokenFileToken();
+  return { token: fromFile, kind: fromFile ? "file" : "" };
 }
 
 export function resolveToken() {
@@ -514,6 +522,16 @@ export function resolveRelDir(cwd, { top } = {}) {
  * both modes; the `repo:<id>` tag joins the project tag in tag mode.
  */
 export function resolveScope(cwd) {
+  if (!shared) return scopeFor(cwd);
+  // Scripts sharing a process ask about one directory: its git lookups run
+  // once, not once per script with the others' requests waiting behind them.
+  const key = String(cwd ?? "");
+  if (!shared.scopes.has(key)) shared.scopes.set(key, scopeFor(cwd));
+  const scope = shared.scopes.get(key);
+  return { ...scope, tags: [...scope.tags] };
+}
+
+function scopeFor(cwd) {
   const top = gitToplevel(cwd); // once: project, remote and relDir all need it
   const project = resolveProject(cwd, { top });
   const repo = repoIdentity(resolveRemote(cwd, { top }));
@@ -1004,12 +1022,53 @@ export function diffHeaders(diff, max) {
   return out.join("\n");
 }
 
+// --- several hooks in one process --------------------------------------------
+// hooks/loom-record.mjs runs an event's recording scripts in one process.
+// While `shared` is set, a script's runHookMain keeps its main for
+// runHooksTogether to start, readStdinJson answers the payload that was
+// handed off, resolveScope looks a directory up once for all of them, and
+// scheduleExit does nothing: the process ends when every main has returned,
+// not when the first one is done.
+let shared = null;
+
+/**
+ * Import the hook scripts at `urls` and run their mains in this process, in
+ * that order, each on the payload text `raw` as if the host had started it.
+ * Resolves when all of them have returned; nothing they throw escapes.
+ */
+export async function runHooksTogether(raw, urls) {
+  // Past any one hook's own bound: a settle of at most five seconds, then two requests.
+  scheduleExit(0, 2 * requestTimeoutMs() + 10000);
+  shared = { raw, mains: [], scopes: new Map() };
+  for (const url of urls) {
+    try {
+      await import(url);
+    } catch {
+      /* a script that does not load records nothing; the others still run */
+    }
+  }
+  const run = async (main) => {
+    try {
+      await main();
+    } catch {
+      /* swallowed, as runHookMain does: this process has no host to tell */
+    }
+  };
+  await Promise.all(shared.mains.map(run));
+  shared = null;
+  scheduleExit(0); // the grace each hook gives its last fire-and-forget post
+}
+
 /**
  * Run a hook's `main`. Whatever it throws, the hook exits 0: a hook never
  * fails the host session. With LOOM_HOOK_DEBUG=on the error's first line,
  * redacted, goes to stderr, which is how a broken hook shows itself.
  */
 export function runHookMain(main) {
+  if (shared) {
+    shared.mains.push(main);
+    return;
+  }
   Promise.resolve()
     .then(main)
     .catch((e) => {
@@ -1027,6 +1086,7 @@ export function runHookMain(main) {
  * but if fetch hangs past the grace window, this guarantees termination.
  */
 export function scheduleExit(code = 0, ms = exitGraceMs()) {
+  if (shared) return;
   setTimeout(() => process.exit(code), ms).unref();
 }
 
@@ -1073,32 +1133,27 @@ export function normalizePayload(raw) {
   return out;
 }
 
-/** Read the host's hook payload (JSON on stdin), normalized. Resolves to a
- *  plain object: {} on EOF, on malformed JSON, on any non-object value and
- *  on a payload over MAX_STDIN_CHARS;
- *  gives up waiting after a second, so a host that never closes stdin
- *  cannot hold a hook open. */
 const MAX_STDIN_CHARS = 32 * 1024 * 1024;
 
-export function readStdinJson() {
+/** Stdin read to its end: "" when it is empty, cannot be read or holds more
+ *  than MAX_STDIN_CHARS (an oversized payload is dropped, not parsed). Gives
+ *  up waiting after a second with what arrived, so a host that never closes
+ *  stdin cannot hold a hook open. */
+export function readStdinText() {
   return new Promise((resolve) => {
     let raw = "";
     let settled = false;
     const done = () => {
       if (settled) return;
       settled = true;
-      try {
-        resolve(normalizePayload(raw.trim() ? JSON.parse(raw) : {}));
-      } catch {
-        resolve({});
-      }
+      resolve(raw);
     };
     try {
       process.stdin.setEncoding("utf8");
       process.stdin.on("data", (c) => {
         raw += c;
         if (raw.length > MAX_STDIN_CHARS) {
-          raw = ""; // an oversized payload is dropped, not parsed
+          raw = "";
           done();
           process.stdin.destroy();
         }
@@ -1106,8 +1161,21 @@ export function readStdinJson() {
       process.stdin.on("end", done);
       process.stdin.on("error", done);
     } catch {
-      resolve({});
+      done();
     }
     setTimeout(done, 1000).unref();
+  });
+}
+
+/** Read the host's hook payload (JSON on stdin), normalized. Resolves to a
+ *  plain object: {} on EOF, on malformed JSON, on any non-object value and
+ *  on a payload over MAX_STDIN_CHARS. */
+export function readStdinJson() {
+  return (shared ? Promise.resolve(shared.raw) : readStdinText()).then((raw) => {
+    try {
+      return normalizePayload(raw.trim() ? JSON.parse(raw) : {});
+    } catch {
+      return {};
+    }
   });
 }

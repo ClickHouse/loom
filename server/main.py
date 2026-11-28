@@ -304,11 +304,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     # Provisioned and probed in the background: the lease can wait for minutes.
     track(_analysis.start_probe_loop())
-    from server.assistant.app import service as _assistant
-
-    assistant_loop = _assistant.start_setup_loop()
-    if assistant_loop is not None:
-        track(assistant_loop)
     track(boot.start_tracker_sources_refresher(ch))
     from server.code.app.index import repo_registry as _repo_registry
 
@@ -320,7 +315,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         retirement.get_gate().track(mirror_loop)
     boot.publish_frontend_assets(ch)
     boot.mark_process_start(ch)
-    await boot.probe_sandbox()
     # The tracker registry, the runtime overrides and this build's bundle
     # load before the first request (bounded; readiness stays false until the
     # first two do).

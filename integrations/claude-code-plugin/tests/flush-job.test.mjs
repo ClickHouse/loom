@@ -5,7 +5,8 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { dispatchFlush, flushJobPath, runFlushJob } from "../lib/flush-job.mjs";
+import { assertMode } from "./host-env.mjs";
+import { dispatchFlush, jobPath, runFlushJob, spawnDetached } from "../lib/flush-job.mjs";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "loom-flushjob-"));
 
@@ -14,8 +15,26 @@ function memCursor(initial = {}) {
   return { files, read: (p) => files[p] ?? "", write: (p, n) => (files[p] = String(n)) };
 }
 
-test("job files carry the name the client status check counts", () => {
-  assert.match(path.basename(flushJobPath("/t", 1_700_000_000_000, 42)), /^loom-flush-\d{13}-\d+\.json$/);
+test("job files carry the names the client status check counts", () => {
+  assert.match(path.basename(jobPath("flush", "/t")), /^loom-flush-\d{13}-\d+\.json$/);
+  assert.match(path.basename(jobPath("record-Stop", "/t")), /^loom-record-Stop-\d{13}-\d+\.json$/);
+});
+
+test("jobs one process hands off in the same millisecond get files of their own", () => {
+  const dir = tmp();
+  const jobs = [];
+  const spawnImpl = (cmd, args) => {
+    jobs.push(args.at(-1));
+    const child = new EventEmitter();
+    child.unref = () => {};
+    return child;
+  };
+  for (let i = 0; i < 50; i++) dispatchFlush({ posts: [{ op: "x", body: { i } }] }, { spawnImpl, tmp: dir });
+  assert.equal(new Set(jobs).size, 50);
+  assert.deepEqual(
+    jobs.map((job) => JSON.parse(fs.readFileSync(job, "utf8")).posts[0].body.i),
+    [...Array(50).keys()],
+  );
 });
 
 test("dispatchFlush writes the job and spawns the flusher detached with the request bound", () => {
@@ -35,6 +54,30 @@ test("dispatchFlush writes the job and spawns the flusher detached with the requ
   assert.equal(calls[0].opts.env.LOOM_HOOK_TIMEOUT_MS, "1234");
   const job = JSON.parse(fs.readFileSync(calls[0].args[1], "utf8"));
   assert.deepEqual(job, { posts: [{ op: "x", body: {} }] });
+});
+
+test("spawnDetached writes a private job file and names it last, to a process with no inherited stdio", () => {
+  const dir = tmp();
+  const calls = [];
+  const spawnImpl = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    const child = new EventEmitter();
+    child.unref = () => {};
+    return child;
+  };
+  const handOff = { kind: "record-Stop", env: { A: "1" }, spawnImpl, tmp: dir };
+  assert.equal(spawnDetached(["/x/hook.mjs", "Stop", "-"], "payload text", handOff), true);
+  const [{ cmd, args, opts }] = calls;
+  assert.equal(cmd, process.execPath);
+  assert.deepEqual(args.slice(0, 3), ["/x/hook.mjs", "Stop", "-"]);
+  assert.equal(path.dirname(args[3]), dir);
+  assert.match(path.basename(args[3]), /^loom-record-Stop-\d{13}-\d+\.json$/);
+  assert.equal(fs.readFileSync(args[3], "utf8"), "payload text");
+  assertMode(args[3], 0o600);
+  assert.deepEqual(
+    { detached: opts.detached, stdio: opts.stdio, env: opts.env },
+    { detached: true, stdio: "ignore", env: { A: "1" } },
+  );
 });
 
 test("a spawn that throws leaves no job behind; a later spawn error does not crash the hook", () => {

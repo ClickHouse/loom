@@ -141,12 +141,14 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
     ),
     DefaultChange(
         version="1.3.1",
-        name="adoption_telemetry_share_domains",
+        name="code_ingest_enabled",
         old=False,
         new=True,
         why=(
-            "Include namespace contact domains and aggregate counts in adoption reports. "
-            "Deployments can disable domain sharing while continuing to send usage totals."
+            "A configured repository is fetched and indexed after every push without a "
+            "setting: a deployment that never set the variable starts polling its "
+            "repositories and embedding what changed. A deployment that indexes only "
+            "when CI calls `code.refresh` sets it to false."
         ),
     ),
 )

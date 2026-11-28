@@ -47,7 +47,7 @@ PostJson = Callable[[str, str, dict[str, Any], str, float], tuple[int, dict[str,
 
 STALE_FLUSH_S = 600
 EXPIRING_SOON_S = 7 * 86400
-_FLUSH_RE = re.compile(r"^loom-flush-(\d{13})-\d+\.json$")
+_FLUSH_RE = re.compile(r"^loom-(?:flush|record-[A-Za-z]+)-(\d{13})-\d+\.json$")
 
 
 # ---- what the hooks would resolve ------------------------------------------------
@@ -1057,8 +1057,9 @@ def _codex_node_check(env: dict[str, str], install: Path) -> Check:
 
 
 def flush_check(tmp: Path, now: float) -> Check:
-    """Captures the hooks handed to a detached flusher that never finished:
-    `loom-flush-<ms>-<pid>.json` files older than STALE_FLUSH_S."""
+    """Captures the hooks handed to a detached process that never finished:
+    `loom-flush-<ms>-<pid>.json` (the flusher's) and `loom-record-<Event>-<ms>-<pid>.json`
+    (the recording launcher's) files older than STALE_FLUSH_S."""
     name = "client:flush"
     stale = 0
     total = 0
@@ -1079,7 +1080,7 @@ def flush_check(tmp: Path, now: float) -> Check:
             WARN,
             f"{stale} capture job(s) in {tmp} older than {STALE_FLUSH_S // 60} min never reached "
             "the server (the hooks fail open). Fix: the auth and namespace checks above; "
-            "then delete loom-flush-*.json.",
+            "then delete loom-flush-*.json and loom-record-*.json.",
         )
     return (
         name,

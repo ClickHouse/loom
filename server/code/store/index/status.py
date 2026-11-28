@@ -59,6 +59,14 @@ def parse_shared_coverage(
     return parsed["cov"], counts
 
 
+def _coverage_embedded(raw: str | None) -> int | None:
+    """The embedded chunks a published coverage row counts, None without a readable one."""
+    try:
+        return sum(int(c.get("embedded") or 0) for c in json.loads(raw or "")["cov"]["chunks"])
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
+
+
 def _json_time(o: Any) -> str:
     """JSON for the published rows: a datetime as ISO text, anything else as str."""
     iso = getattr(o, "isoformat", None)
@@ -82,7 +90,7 @@ class StatusMixin(CodeRepoBase):
     """Coverage, row counts and index health."""
 
     async def refresh_coverage(
-        self, org: str, ns: str, *, fingerprint: str | None = None
+        self, org: str, ns: str, *, fingerprint: str | None = None, must_land: bool = False
     ) -> tuple[dict[str, Any], dict[str, int] | None]:
         """Compute `coverage` and `coverage_gaps` once
         and publish them as the shared `coverage` state row (value = JSON,
@@ -91,7 +99,8 @@ class StatusMixin(CodeRepoBase):
         counts; a reader with no matching row calls it too, so the first cold
         open pays once for every process and colour. A cold computation reads
         about 1.2 GB and takes 4 s on a large repository; the row is a point
-        read."""
+        read. `must_land`: a failed write raises, for a caller that writes the
+        counts only once this row has landed."""
         if fingerprint is None:
             fingerprint = counts_fingerprint(await self.all_state(org, ns))
         cov = await self.coverage(org, ns)
@@ -108,8 +117,9 @@ class StatusMixin(CodeRepoBase):
                 json.dumps({"cov": cov, "gaps": gaps}, default=_json_time),
                 detail=fingerprint,
             )
-        except Exception:  # noqa: BLE001 — the answer stands without the row
-            pass
+        except Exception:  # the answer stands without the row, unless it must land
+            if must_land:
+                raise
         return cov, gaps
 
     async def coverage_gaps(self, org: str, ns: str) -> dict[str, int]:
@@ -275,6 +285,24 @@ class StatusMixin(CodeRepoBase):
         )
         return rows, int((total or {}).get("n") or 0)
 
+    async def published_chunks_behind(self, org: str, ns: str) -> bool:
+        """Whether the chunk figures readers serve trail the chunk table, as they do
+        when an embed backfill's last page landed in a process that died before it
+        republished, or when vectors landed between the coverage write and the
+        counts write. Each published row is compared when it exists, so a coverage
+        row published before its counts write failed still counts. False with no
+        row, or rows that match the table, such as the zeros a read writes for a
+        namespace with no chunks. Two point reads and one chunk aggregate."""
+        published = await self._shared_counts(org, ns)
+        embeddable, embedded = await self.chunk_embed_coverage(org, ns)
+        if published is not None and (
+            published.get("code_chunks_embeddable", 0),
+            published.get("code_chunks_embedded", 0),
+        ) != (embeddable, embedded):
+            return True
+        coverage = _coverage_embedded(await self.get_state_or_none(org, ns, "coverage"))
+        return coverage not in (None, embedded)
+
     async def recent_indexed_commits(
         self, org: str, ns: str, *, limit: int
     ) -> list[dict[str, Any]]:
@@ -377,12 +405,13 @@ class StatusMixin(CodeRepoBase):
         return {str(k): int(v) for k, v in parsed.items()}
 
     async def refresh_table_counts(
-        self, org: str, ns: str, *, fingerprint: str | None = None
+        self, org: str, ns: str, *, fingerprint: str | None = None, must_land: bool = False
     ) -> dict[str, int]:
         """Run the seven FINAL scans once and publish the answer as the shared
         `table_counts` row (value = JSON counts, detail = fingerprint) so
         every other process reads a point. Called by the ingest pass after
-        it advanced a watermark, and by a reader that found no row."""
+        it advanced a watermark, and by a reader that found no row.
+        `must_land` as in `refresh_coverage`."""
         if fingerprint is None:
             fingerprint = counts_fingerprint(await self.all_state(org, ns))
         out: dict[str, int] = {}
@@ -412,7 +441,9 @@ class StatusMixin(CodeRepoBase):
         out["code_chunks_embeddable"] = chunks["embeddable"]
         try:
             await self.set_state(org, ns, "table_counts", json.dumps(out), detail=fingerprint)
-        except Exception:  # noqa: BLE001 — the local answer is still good
+        except Exception:  # the local answer is still good, unless it must land
+            if must_land:
+                raise
             logger.debug("code table_counts: shared row not written for %s/%s", org, ns)
         if len(_COUNTS_CACHE) > 256:
             _COUNTS_CACHE.clear()

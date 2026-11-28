@@ -7,7 +7,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Getting started
 
 - [Overview](docs/getting-started/overview.md): Loom is a server that stores memory, documents, conversations, an entity graph and a code index for AI agents, as rows in ClickHouse, with Postgres as an option for live memory and knowledge state.
-- [Quickstart](docs/getting-started/quickstart.md): This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP.
+- [Quickstart](docs/getting-started/quickstart.md): Run Loom locally with Docker.
 - [Set up Loom with your coding agent](docs/getting-started/agent-setup.md): This page is for a coding agent, Claude Code or Codex, asked to install Loom on the machine it runs on and to prove that the install works.
 - [Shared memory for Claude Code, Codex and Cursor](docs/getting-started/connect-a-coding-agent.md): Loom gives Claude Code, Codex and Cursor shared long-term memory through plugins or MCP tools connected to the same self-hosted server.
 - [Evaluate Loom](docs/getting-started/evaluate.md): Evaluate the decision you need to make, not every harness in the repository.
@@ -44,6 +44,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 ## Features
 
+- [Features](docs/features/index.md): Loom gives agents memory, source material, and records of prior work in a namespace they can access.
 - [Conversations and sessions](docs/features/conversations-and-sessions.md): Loom keeps three kinds of session state, each in its own plane:
 - [The dashboard](docs/features/dashboard.md): The dashboard is a React single-page app the Loom server serves at its root URL.
 - [Entity graph](docs/features/entity-graph.md): Loom keeps an entity graph beside the memory rows, in the same ClickHouse database.
@@ -67,7 +68,6 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Agent frameworks and orchestrators](docs/features/integrations/frameworks.md): The SDKs ship adapters that present Loom through a framework's own memory or retrieval interface.
 - [The grep shim](docs/features/integrations/grep-shim.md): The grep shim is a `grep`/`rg` wrapper that appends each hit's enclosing function, from the code index, to the match line; it needs Node 18 or later, a viewer token and a repository in the code index.
 - [Langfuse](docs/features/integrations/langfuse.md): Needs `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; nothing is sent until both are set.
-- [LibreChat](docs/features/integrations/librechat.md): Needs LibreChat v0.8.8 (MIT), a Loom server that serves the assistant toolset, and one Loom `viewer` token per person.
 - [Connect to Loom's MCP memory server](docs/features/integrations/mcp-clients.md): An MCP memory server lets AI agents save and retrieve durable facts through the Model Context Protocol.
 - [OKF bundles](docs/features/integrations/okf.md): A namespace can be rendered as an OKF (Open Knowledge Format) v0.2 bundle: one Markdown file per memory with YAML frontmatter, an `index.md` per directory listing each concept with a one-line description, and a `log.md` of changes.
 - [VS Code](docs/features/integrations/vscode.md): GitHub Copilot in VS Code can save and retrieve project decisions through Loom's MCP server over streamable HTTP.
@@ -88,7 +88,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 ## Guides
 
-- [Guides](docs/guides/index.md)
+- [Guides](docs/guides/index.md): Choose a task to connect an agent, put shared context to work, or evaluate a workflow.
 - [Integrate Loom into an agent](docs/guides/agent-integration.md): This guide covers what an agent sends to Loom and how it reads the answers: the client surface, the identity, what to write, and how to read.
 - [Choose retrieval scope from the audience](docs/guides/audience-scoped-retrieval.md): Needs an end-user issuer (`LOOM_JWT_END_USER_ISSUERS_JSON`): an agent host signs each request as the person who asked, and picks the collections a reply may draw on from who will read it.
 - [Code tools for model integrations](docs/guides/code-tools.md): An indexed code namespace and a token with read access let an SDK tool loop investigate definitions, behavior and relationships with `loom_code_lookup`.
@@ -110,13 +110,15 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 ## Operations
 
+- [Operations](docs/operations/index.md): Deploy Loom for a team, choose storage and identity settings, and maintain a running instance.
 - [Exporting usage to a data warehouse](docs/operations/analytics-export.md): `loom export-analytics` writes one UTC day of usage and a snapshot of the namespaces to an S3 bucket as Parquet files, one file per entity per day, for a data warehouse to load.
+- [Native assistant setup](docs/operations/assistant.md): The assistant runs inside Loom and uses the same dashboard, HTTP, MCP and SDK interfaces.
 - [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row names an object in it, and under the Postgres authority a backup of Postgres too.
 - [Attaching the first cell](docs/operations/cell-attach.md): `loom cell attach` turns a prepared first cell (`loom cell prepare`, mode `recording`, directory row `attaching`) into a `serving` one: it places every org the cell holds in the router's directory, raises the cell's mode to `enforced` and…
 - [Cell control upgrades and recovery](docs/operations/cell-control.md): Cell control mutations require generation-aware clients and router handlers, and direct access to the cell's Postgres.
 - [Update a cell's configuration or addresses](docs/operations/cell-update.md): `loom cell update` reserves a configuration before the cell accepts it.
 - [ClickHouse Cloud and Managed Postgres](docs/operations/clickhouse-cloud.md): This guide runs Loom on Kubernetes over two managed services: ClickHouse Cloud for projections, vectors, history and analytics, and ClickHouse Managed Postgres as the memory authority.
-- [Code index operations](docs/operations/code-index-operations.md): This page covers how to enable the code index workers, configure repositories and keep the index current; the code index runs only when an operator enables its workers and configures repositories.
+- [Code index operations](docs/operations/code-index-operations.md): This page covers how to configure repositories, enable the code index workers and keep the index current; the code index runs once an operator configures a repository.
 - [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse (and Postgres, under `LOOM_STORAGE_AUTHORITY=postgres`), with the document extractor service as an image of its own (container images).
 - [Kubernetes](docs/operations/kubernetes.md): `deploy/helm/loom` runs Loom as N identical replicas on Kubernetes: one Deployment of web pods over one ClickHouse service, each pod a full replica.
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
@@ -132,7 +134,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 ## Reference
 
-- [Reference](docs/reference/index.md): Reference pages say what exists and what each option means.
+- [Reference](docs/reference/index.md): Look up SDKs, request and response fields, CLI commands, and server settings.
 - [CLI reference](docs/reference/cli.md): `loom` is the one command-line entry point for running, maintaining and connecting to a Loom deployment.
 - [Configuration reference](docs/reference/configuration.md): Every setting is declared in one file, `server/settings/catalog.py`, and is an environment variable `LOOM_<FIELD>` read at startup into `server.settings.settings`.
 - [Environment variables reference](docs/reference/environment.md): Almost everything Loom is configured with is a settings field: the environment variable `LOOM_<FIELD>` of a field on `server.settings.Settings`, listed with its default and meaning in the generated configuration reference.
@@ -154,7 +156,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 - [Microsoft Agent Framework context provider](docs/architecture/agent-framework-adapter.md): `LoomContextProvider` implements the framework's context-provider interface over the asynchronous Python SDK.
 - [Agno user-memory database](docs/architecture/agno-adapter.md): The Agno adapter implements the user-memory methods of its 3.2 `BaseDb` interface through the synchronous Loom SDK.
-- [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which answers questions about what a namespace holds and how it is used, with a citation for every claim.
+- [Assistant design](docs/architecture/assistant.md): Loom's native assistant answers namespace questions through bounded model turns and read-only operations, under the caller's identity.
 - [Cells](docs/architecture/cells.md): A deployment's memory can outgrow one Postgres primary and one ClickHouse service, and an org may want its memory in services of its own.
 - [Claude API memory file tree](docs/architecture/claude-memory-adapter.md): The Claude API memory adapter implements the framework's Python memory-tool bases and TypeScript memory handlers through Loom knowledge documents.
 - [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, except document bytes in an optional S3-compatible bucket and, under the Postgres memory authority, the Postgres tables: live memory, knowledge state and the records beside them.
@@ -171,7 +173,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Haystack document store and retriever](docs/architecture/haystack-adapter.md): The optional Haystack 3.5 adapter implements its document-store protocol and a native retrieval component through the synchronous Loom SDK.
 - [Knowledge gaps](docs/architecture/knowledge-gaps.md): Loom records the searches that found nothing a caller could use and groups them, once a day, into knowledge gaps: the questions several people asked that the namespace's memory and documents do not answer.
 - [Live connected-source search](docs/architecture/live-source-search.md): `search.query(live=true)` adds an ephemeral section from the asker's own connected Drive and Notion registrations.
-- [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into vectors, and an LLM client (`server/llm/`) that completes prompts.
+- [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom uses pluggable embedders and model clients configured through server settings.
 - [Document source worker boundary](docs/architecture/mcp-source-worker-boundary.md): This design specifies the requirements for the external worker integration.
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
 - [Memory consent and derived text](docs/architecture/memory-consent.md): A deletion contracts memory and records content refusal before its tombstone commits.

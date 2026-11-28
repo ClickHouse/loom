@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -52,9 +53,6 @@ def _wire(
 
     async def names(git_dir: str, base: str, sha: str, limit: int = 2000) -> list[str]:
         return ["x"] * files[sha]
-
-    async def meta(git_dir: str, shas: list[str]) -> dict[str, tuple[str, int]]:
-        return {s: ("", int(clock.time()) - 3600 + i) for i, s in enumerate(shas)}
 
     async def show(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes:
         return b"x"
@@ -98,7 +96,6 @@ def _wire(
 
     monkeypatch.setattr(gitrepo, "diff_files", diff_files)
     monkeypatch.setattr(gitrepo, "diff_name_only", names)
-    monkeypatch.setattr(gitrepo, "commit_meta_many", meta)
     monkeypatch.setattr(gitrepo, "show_file", show)
     monkeypatch.setattr(gitrepo, "commit_subject", subject)
     monkeypatch.setattr(rr, "RoundReads", _Reads)
@@ -135,7 +132,7 @@ def _pass(
     started = clock.now
     result = ingest_budget.CodeIngestResult()
     budget = ingest_budget.PassBudget(started=started, stop_after=started + 675.0)
-    asyncio.run(ingest_stream.ingest_oldest_first(plans, result, budget))
+    asyncio.run(ingest_stream.ingest_round_robin(plans, result, budget))
     return clock.now - started, result
 
 
@@ -188,3 +185,21 @@ def test_a_cursor_for_another_base_is_ignored(monkeypatch) -> None:
     assert asyncio.run(ingest_stream._slice_done(repo, "o", "n", "w0..big")) == 0
     repo.state["commit_slice"] = "w0..big:100"
     assert asyncio.run(ingest_stream._slice_done(repo, "o", "n", "w0..big")) == 100
+
+
+def test_the_entry_a_sliced_round_did_not_reach_is_served_first_next_pass(monkeypatch) -> None:
+    """Three entries each head a 500-file commit, a fourth has one small commit.
+    A slice is a turn: when the budget ends before the small entry is reached,
+    the `commits` cut names it, not an entry the round already served."""
+    monkeypatch.setattr(sys.modules[__name__], "PER_FILE_S", 2.5)
+    clock, done = _Clock(), []
+    _wire(monkeypatch, clock, {"ba": 500, "bb": 500, "bc": 500, "sd": 1}, done)
+    repos = {ns: _StateRepo() for ns in ("code-a", "code-b", "code-c", "code-d")}
+    pending = {"code-a": ["ba"], "code-b": ["bb"], "code-c": ["bc"], "code-d": ["sd"]}
+    started = clock.now
+    result = ingest_budget.CodeIngestResult()
+    budget = ingest_budget.PassBudget(started=started, stop_after=started + 472.5)
+    plans = [_plan(ns, repos[ns], pending[ns]) for ns in repos]
+    asyncio.run(ingest_stream.ingest_round_robin(plans, result, budget))
+    assert not any(sha == "sd" for sha, _ in done), "the budget ended before the small entry"
+    assert ingest_budget.cut_points(result.resume)["commits"] == "o/code-d", result.resume

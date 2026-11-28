@@ -291,7 +291,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like c
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since`, `code_moved` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `edges` | `list[CodeEdgeWire]` | The call-graph edges found, hop by hop; the far end (`from_*` for callers, `to_*` for callees) is the answer. |
 | `seed_symbols` | `list[str]` | Qualified names of the definitions the walk started from; empty when refused as ambiguous. |
@@ -345,7 +345,7 @@ Find callers before editing shared code.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since`, `code_moved` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `edges` | `list[CodeEdgeWire]` | The call-graph edges found, hop by hop; the far end (`from_*` for callers, `to_*` for callees) is the answer. |
 | `seed_symbols` | `list[str]` | Qualified names of the definitions the walk started from; empty when refused as ambiguous. |
@@ -390,7 +390,7 @@ Briefing at the START of a task, instead of exploring file by file.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since`, `code_moved` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `context` | `str` | The pack as Markdown text; for `unavailable`, a short note saying the PR has no pack yet. |
 | `tokens_used` | `int` | Estimated tokens of `context`. |
@@ -577,7 +577,7 @@ Is this already tested?
 
 ## `code.edit_context`
 
-Read source, tests, and notes.
+Before editing, read source, tests and notes.
 
 `POST /v1/code.edit_context` · MCP `loom_code_edit_context` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -590,9 +590,10 @@ Read source, tests, and notes.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `name` | `str` | `''` | Definition name, path:symbol, or path:line. |
-| `clues` | `list[str]` | *(computed)* | Fragments for one target, or exact declaration fragments across files. |
-| `names` | `list[str]` | *(computed)* | Batch name, path:symbol or path:line. |
+| `name` | `str` | `''` | Name, path:symbol, path:line, or file with clues. |
+| `clues` | `list[str]` | *(computed)* | Text fragments or exact declarations. |
+| `names` | `list[str]` | *(computed)* | Exact names or locations. |
+| `include_related_source` | `bool` | `True` | Set false after reading extra bodies. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -615,7 +616,7 @@ Read source, tests, and notes.
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
 | `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
-| `read_sources` | `list[CodeEditReadSource] \| None` | Batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Edit context only. |
 
 ## `code.enclosing`
 
@@ -640,7 +641,7 @@ Batched `path:line` -> enclosing function.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since`, `code_moved` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `results` | `list[dict[str, Any]]` | one entry per input location, input order preserved: {path, line, symbol, symbol_id, qualified_name, signature, tier, kind, start_line, end_line} kind is "function" / "method" / "fixture" for a line inside a function body; "class"… |
 | `resolved` | `int` | Locations that landed inside a function, type, or document section. |
@@ -788,7 +789,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since`, `code_moved` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
 | `matches` | `list[dict[str, Any]]` | {path, line, text, scope, scope_start_line, scope_end_line} per matching LINE, path/line ordered except when prioritize_patterns gives different literals first-page slots. scope_* is the span of the enclosing unit named by `scope` (0/0… |
 | `related` | `RelatedGrepEvidence \| None` | Related source for a qualified argument or member, separate from literal matches. |
@@ -881,7 +882,7 @@ Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since`, `code_moved` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `impacted_symbols` | `list[dict[str, Any]]` | Each row {qualified_name, path, hop, tier}; a row whose function is a registration function (`REGISTER_FUNCTION(X)`, `registerStorageFoo`) carries `via: "registration"` — the seed is reached through a registry; the key is absent otherwise. |
 | `impacted_tests` | `list[dict[str, Any]]` | Tests the test map ties to the seed and impacted paths: {test_path, src_path, confidence}. |
@@ -963,8 +964,8 @@ Health of the code index: indexed head commit, compiler-tier commit, row counts,
 | `pr_cursor` | `str` | The PR-history poller's cursor: the newest `updated_at` (ISO-8601) of the merged PRs it fetched; '' before its first pass. |
 | `commit_coverage` | `CodeCommitCoverage \| None` | Set when the request named a `commit`. |
 | `clone_head` | `str` | Freshness. clone_head is the bare clone's branch tip as of the last poller fetch (<= interval old); *_lag = first-parent commits between a watermark and that tip, -1 when a watermark is unset or the clone is unreadable. 0 everywhere ==… |
-| `clone_fetched_at` | `str` | When the ingest pass last fetched this entry's mirror (the `clone_head` row's updated_at, ISO-8601 UTC; '' unknown) and whether that is older than `code_fetch_stale_after_seconds`. |
-| `fetch_overdue` | `bool` | True when `clone_fetched_at` is older than `code_fetch_stale_after_seconds`. |
+| `clone_fetched_at` | `str` | When the ingest pass last fetched this entry's mirror (the `clone_head` row's updated_at, ISO-8601 UTC; '' with no fetch on record). |
+| `fetch_overdue` | `bool` | True when the last fetch, or with none on record the `git_head` write, is older than `code_fetch_stale_after_seconds`. |
 | `fast_tier_lag` | `int` | First-parent commits between `git_head` and `clone_head`; -1 when either is unknown. |
 | `scip_lag` | `int` | First-parent commits between `scip_commit` and `clone_head`; -1 when either is unknown. |
 | `scip_py_lag` | `int` | First-parent commits between `scip_commit_py` and `clone_head`; -1 when either is unknown. |
@@ -985,7 +986,7 @@ Health of the code index: indexed head commit, compiler-tier commit, row counts,
 | `symbol_stats_at` | `str` | The newest fan-in pass stamp (ISO-8601 UTC); '' when the pass has not written the table. |
 | `unit_risk_rows` | `int` | The precomputed risk table for this namespace — live rows and the newest stamp (ISO 8601, UTC), so an operator sees the weekly leg's progress and a resumed pass's remainder. 0 / "" = no row written (every served unit is read live). |
 | `unit_risk_at` | `str` | The newest risk-table stamp (ISO-8601 UTC); '' when no row is written. |
-| `chunks_total` | `int` | Live chunks, those carrying a vector, and their ratio (0..1; reference fixtures unembedded by design are outside the denominator). |
+| `chunks_total` | `int` | Live chunks, those carrying a vector, and their ratio (0..1; rows unembedded by design, reference fixtures and `embed_exclude` paths, are outside the denominator). |
 | `chunks_embedded` | `int` | Live chunks that carry an embedding vector. |
 | `embedding_coverage` | `float` | Embedded share of the embeddable chunks (0..1); 1.0 when the counts do not carry it. |
 
@@ -1058,7 +1059,7 @@ Tell loom what you did with a code answer, by its trace_run_id: 'used_in_answer'
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since`, `code_moved` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `path` | `str` | The repo-relative path read, normalised from the request. |
 | `entries` | `list[dict[str, Any]]` | source order: {kind, qualified_name, signature, start_line, end_line, tier} |
@@ -1138,7 +1139,7 @@ A PR draft asks whether a PR like it already exists.
 
 ## `code.read`
 
-Read inclusive, one-based indexed lines.
+Read indexed lines.
 
 `POST /v1/code.read` · MCP `loom_code_read` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -1151,14 +1152,14 @@ Read inclusive, one-based indexed lines.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `ranges` | `list[str] \| list[CodeReadRangeInput \| str]` | *(computed)* | Batch of inclusive one-based ranges as path:start-end strings or objects with path, start_line, and optional end_line. |
-| `path` | `str \| None` | `None` | Repository-relative file for a single range. |
+| `ranges` | `list[str] \| list[CodeReadRangeInput \| str] \| list[list[int]]` | *(computed)* | Inclusive one-based ranges as path:start-end strings, objects with path and line bounds, or [start, end] pairs sharing the top-level path. |
+| `path` | `str \| None` | `None` | Repository-relative file for a single range or a batch of line pairs. |
 | `start_line` | `int \| None` | `None` | First line of a single range, one-based. |
 | `end_line` | `int \| None` | `None` | Inclusive last line, defaulting to start_line. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since`, `code_moved` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `results` | `list[CodeReadRange]` |  |
 | `as_of` | `dict[str, Any]` |  |
@@ -1197,8 +1198,8 @@ CI calls this right after a merge lands: run one ingest pass now instead of wait
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `expected_head` | `str` | `''` | The commit CI just merged; advisory, recorded in `last_refresh_detail` and never checked. |
-| `wait` | `bool` | `False` | wait=True blocks until the pass completes (CI wants a sync signal); default fire-and-forget returns immediately. |
-| `wait_timeout_seconds` | `int` | `300` | With `wait`: seconds to wait for the pass (10..900); the call fails when the pass outlasts it. |
+| `wait` | `bool` | `False` | wait=True blocks until the pass completes (CI wants a sync signal), then rechecks the memories linked to the namespace's code unless another pass is checking them or the recheck fails; default fire-and-forget returns immediately. |
+| `wait_timeout_seconds` | `int` | `300` | With `wait`: seconds to wait for the pass (10..900); the call fails when the pass outlasts it, and a link recheck that outlasts it is left to the link worker. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1566,7 +1567,7 @@ Find implementations by question, behavior or identifier using `query`.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since`, `code_moved` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
 | `results` | `list[CodeUnit]` | The ranked units served on this page, cut to top_k and the token budget; empty on an abstain with no pool or a not-covered path. |
 | `route` | `str` | symbol_exact \| hybrid \| symbol_miss_hybrid |
@@ -1681,7 +1682,7 @@ Find an exact definition by name or path:line.
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
 | `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
-| `read_sources` | `list[CodeEditReadSource] \| None` | Batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Edit context only. |
 
 ## `code.symbol_history`
 

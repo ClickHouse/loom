@@ -1375,11 +1375,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`mode: 'presence'` checks `namespaces`. "
         "Check coverage. Use code.files for paths and local tools for uncommitted source."
     ),
-    "code.read": (
-        "Read inclusive, one-based indexed lines. Pass path, start_line, optional end_line "
-        "or ranges of such objects or path:start-end strings. Returns linked notes with "
-        "the source. Set include_lessons=false when you already have them."
-    ),
+    "code.read": "Read indexed lines. Ranges take path:start-end or path + [[start,end]].",
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
         "(`tests/queries/0_stateless/05138_*`), a basename stem "
@@ -1449,8 +1445,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "omitted qualification or SQL registration. `documented_in` lists citing sections."
     ),
     "code.edit_context": (
-        "Read source, tests, and notes. Batch exact `names` or declaration `clues`. "
-        "Use `name` for one target."
+        "Before editing, read source, tests and notes. Batch exact `names` or declaration `clues`."
     ),
     "code.backport_gap": (
         "Which release branches still carry the bug a merged fix removed, "
