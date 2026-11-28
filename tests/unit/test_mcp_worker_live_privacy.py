@@ -201,7 +201,7 @@ def _json_request(body: bytes):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", ["direct", "loom_op"])
-@pytest.mark.parametrize("entry", ["single", "batch", "version", "surrogate"])
+@pytest.mark.parametrize("entry", ["single", "batch", "version", "surrogate", "null", "missing"])
 async def test_live_mcp_refuses_invalid_id_at_the_endpoint(monkeypatch, tool, entry) -> None:
     import json
 
@@ -215,7 +215,7 @@ async def test_live_mcp_refuses_invalid_id_at_the_endpoint(monkeypatch, tool, en
         UNSUPPORTED_PROTOCOL_VERSION,
     )
 
-    request_id = "\ud800" if entry == "surrogate" else 1 << 128
+    request_id = {"surrogate": "\ud800", "null": None, "missing": None}.get(entry, 1 << 128)
     screen = AsyncMock(return_value={"jsonrpc": "2.0", "id": request_id, "result": {}})
     monkeypatch.setattr(mcp, "_verify_bearer", AsyncMock(return_value=object()))
     monkeypatch.setattr(mcp, "_screen_tool_call", screen)
@@ -229,6 +229,8 @@ async def test_live_mcp_refuses_invalid_id_at_the_endpoint(monkeypatch, tool, en
         }
     )
     request = {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": params}
+    if entry == "missing":
+        del request["id"]
     ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
     headers = {"Content-Type": "application/json"}
     if entry == "version":

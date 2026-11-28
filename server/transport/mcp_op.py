@@ -369,7 +369,7 @@ def invalid_live_request_id(req: dict[str, Any]) -> bool:
         return bounded_json_string_size(request_id, _MAX_LIVE_REQUEST_ID_BYTES) is None
     if type(request_id) is int:
         return request_id.bit_length() > 128
-    return request_id is not None
+    return True
 
 
 def route(
