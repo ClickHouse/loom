@@ -56,6 +56,14 @@ afterEach(() => {
 
 const refused = () =>
   new ApiError({ status: 400, code: "CREDENTIAL_REFUSED", message: "the source refused the credential: http_401" });
+const selfServiceOff = () =>
+  new ApiError({
+    status: 422,
+    code: "SELF_SERVICE_OFF",
+    message:
+      "adding a document source or rotating its credential is off on this deployment " +
+      "(LOOM_KNOWLEDGE_SOURCE_SELF_SERVICE_ENABLED); ask the operator",
+  });
 
 /** Nothing the page shows — its text, a field's value outside the password input, a
  *  toast — carries the key. */
@@ -138,6 +146,18 @@ describe("AddSourceDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("refused the credential");
     expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
+    expectKeyNowhere();
+  });
+
+  it("words a self-service refusal by the document source it refused, not repositories", async () => {
+    vi.mocked(addKnowledgeSource).mockRejectedValue(selfServiceOff());
+    renderAdd();
+    await fill();
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The operator turned this off");
+    expect(alert).toHaveTextContent("adding a document source");
+    expect(alert).not.toHaveTextContent(/repositor/i);
     expectKeyNowhere();
   });
 
@@ -392,6 +412,20 @@ describe("RotateSourceDialog", () => {
     fireEvent.change(screen.getByLabelText(/^Service account key/), { target: { value: KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Rotate" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("refused the credential");
+    expectKeyNowhere();
+  });
+
+  it("words a self-service refusal of a rotation without naming repositories", async () => {
+    vi.mocked(rotateKnowledgeSource).mockRejectedValue(selfServiceOff());
+    render(
+      <RotateSourceDialog open onOpenChange={() => {}} {...NS} name="design-docs" kind="gdrive" onRotated={() => {}} />,
+    );
+    fireEvent.change(screen.getByLabelText(/^Service account key/), { target: { value: KEY } });
+    fireEvent.click(screen.getByRole("button", { name: "Rotate" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The operator turned this off");
+    expect(alert).toHaveTextContent("rotating its credential");
+    expect(alert).not.toHaveTextContent(/repositor/i);
     expectKeyNowhere();
   });
 });
