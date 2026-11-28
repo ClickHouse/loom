@@ -508,7 +508,7 @@ requests) run `node`, `git` and `grep` on your machine: `git` reads the checkout
 remotes, branch, `HEAD` commit, status and diffs, and `grep` searches uncommitted files
 for the pattern of a grep the plugin redirects to the code index. The `loom-session`
 skill's brief script also runs `git log` for the commits since the last brief. The test
-gate (the hook that, when a reply ends, names the tests a change needs) runs no Python:
+gate (the hook that names the tests of a file you change) runs no Python:
 for a pytest test it picks the interpreter of the checkout's virtualenv, the active one
 (`VIRTUAL_ENV`) or a `python3` or `python` on `PATH`, checking that the interpreter's file
 exists without running it.

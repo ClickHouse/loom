@@ -921,6 +921,8 @@ test("any test run that finished since the change counts, whatever it ran and ho
     "node --test",
     "node --test tests/a.test.mjs",
     "gradle :app:test",
+    "./gradlew testDebugUnitTest",
+    "make unit-tests",
     "cargo nextest run",
     "tests/clickhouse-test 01234_x",
   ]) {
@@ -939,6 +941,8 @@ test("any test run that finished since the change counts, whatever it ran and ho
     "go install y@latest",
     "make latest",
     "node scripts/attest.js",
+    "npm install @testing-library/react",
+    "go get github.com/stretchr/testify",
   ]) {
     assert.equal(testedSince(bash(command, ""), since), false, command);
   }
@@ -973,6 +977,14 @@ test("any test run that finished since the change counts, whatever it ran and ho
     assert.equal(testedSince(shell(args), 1e12), true, args);
   }
   assert.equal(testedSince(shell('{"command":["npm","install","x@latest"]}'), 1e12), false);
+  // The shell tool counts under each name the client gives it; another tool that names a runner does not.
+  const named = (name) => [
+    item({ type: "function_call", name, call_id: "c3", arguments: '{"command":"pytest -q"}' }, 1e12),
+  ];
+  for (const name of ["exec", "exec_command", "shell", "shell_command", "local_shell", "container.exec"]) {
+    assert.equal(testedSince(named(name), 1e12), true, name);
+  }
+  assert.equal(testedSince(named("apply_patch"), 1e12), false);
   assert.equal(testedSince([], 0), false);
 });
 

@@ -630,13 +630,19 @@ function runsHere(command, run) {
 
 // A shell command that starts a test runner, wrapped or piped in any way: a
 // program `code.test_gate` names a run with or a common other one, or a
-// build tool with an argument in which `test` follows no letter (`make
-// test-unit`, `npm run test`, `node --test`, `gradle :app:test`). `import
-// pytest`, `pip install pytest`, `pytest.raises`, `npm install x@latest` and
-// `node scripts/attest.js` are not runs. A command that only mentions a
-// runner counts: what is read is whether the session ran a test at all.
+// build tool with an argument in which `test` or `tests` follows no letter
+// and no lower-case letter follows it (`make test-unit`, `npm run test`,
+// `node --test`, `gradle :app:test`, `gradlew testDebugUnitTest`). `import
+// pytest`, `pip install pytest`, `pytest.raises`, `npm install x@latest`,
+// `npm install @testing-library/react` and `node scripts/attest.js` are not
+// runs. A command that only mentions a runner counts: what is read is
+// whether the session ran a test at all.
 const RUNNER =
-  /(?<![\w.-])(?:(?<!(?:import|install)\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|nextest|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*(?<![A-Za-z])test)/;
+  /(?<![\w.-])(?:(?<!(?:import|install)\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|nextest|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*(?<![A-Za-z])tests?(?![a-z]))/;
+
+/** True for the name of a Codex rollout's shell tool, under any of the names
+ *  `normalizeToolName` folds onto Bash. */
+const rolloutShell = (name) => name === "exec" || normalizeToolName(name) === "Bash";
 
 /** The command text of a Codex rollout's shell call: its `arguments` JSON
  *  holds a string or an argv (`["go","test"]`), whose words no space joins. */
@@ -667,7 +673,7 @@ export function testedSince(objs, since) {
     if (o?.type === "response_item") {
       const call = o.payload || {};
       if (/_output$/.test(call.type)) done.set(call.call_id, at);
-      else if (["exec", "exec_command", "shell"].includes(call.name) && RUNNER.test(rolloutCommand(call))) {
+      else if (rolloutShell(call.name) && RUNNER.test(rolloutCommand(call))) {
         runs.push(call.call_id);
       }
       continue;
