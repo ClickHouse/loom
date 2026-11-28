@@ -92,6 +92,9 @@ async function main() {
   }
 
   if (event === "SessionEnd") {
+    // Read before a request is awaited: loom-session-memory, which runs
+    // beside this script, removes the stash.
+    const recalled = readRecalledStash(sessionId);
     let state = readRunState(sessionId);
     let completeOpts = opts;
     let deadline;
@@ -118,7 +121,6 @@ async function main() {
     // past its own request is reported as cancelled even after the row
     // landed. loom-record runs this script beside others in one process,
     // where scheduleExit leaves the exit to it.
-    const recalled = readRecalledStash(sessionId);
     const body = completeBody(scope, payload, finalText, process.env, recalled);
     // No longer begun, so a resumed session's next prompt opens a new run. The
     // id stays for the other SessionEnd hooks, which run beside this one; the

@@ -141,8 +141,10 @@ function payload(event, box) {
   });
 }
 
-/** Run the launcher with `args`; resolves {code, stdout, stderr} when it exits. */
-function runLauncher(args, hookEnv, stdin = "") {
+/** Run the launcher with `args`; resolves {code, stdout, stderr} when it
+ *  exits. `leaveOpen` is a host that writes the payload and never closes
+ *  the hook's stdin. */
+function runLauncher(args, hookEnv, stdin = "", { leaveOpen = false } = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [HOOK, ...args], { env: hookEnv, cwd: os.tmpdir() });
     let stdout = "";
@@ -150,7 +152,8 @@ function runLauncher(args, hookEnv, stdin = "") {
     child.stdout.on("data", (c) => (stdout += c));
     child.stderr.on("data", (c) => (stderr += c));
     child.on("close", (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(stdin);
+    if (leaveOpen) child.stdin.write(stdin);
+    else child.stdin.end(stdin);
   });
 }
 
@@ -265,6 +268,27 @@ test("the SessionEnd hook returns with its records sent, and the run's close doe
     // outlasts the run's close; it, session memory and the brief go through
     // the flusher.
     await arrived(loom, ["memory.set_from_messages", "conversation.append", "session.brief_save"]);
+  } finally {
+    await loom.close();
+    await removeSandbox(box);
+  }
+});
+
+test("the SessionEnd hook does not wait on a stdin its host leaves open", async () => {
+  const box = sandbox();
+  const loom = await heldLoom();
+  loom.release();
+  try {
+    withTmpdir(box.tmp, () => writeRunBegun(SESSION, `cc-${SESSION}`));
+    // An exit grace no test waits out: the hook returns when its records are sent.
+    const hookEnv = env(box, loom.url, { LOOM_HOOK_EXIT_MS: "60000" });
+    const started = Date.now();
+    const r = await runLauncher(["SessionEnd"], hookEnv, payload("SessionEnd", box), { leaveOpen: true });
+    const waited = Date.now() - started;
+    assert.deepEqual(r, { code: 0, stdout: "", stderr: "" });
+    assert.ok(loom.ops.includes("run.complete"), `run.complete not sent; seen: ${loom.ops.join(", ")}`);
+    // The launcher's own bound ends a process that stdin holds open at 16 s.
+    assert.ok(waited < 10000, `the hook returned after ${waited} ms`);
   } finally {
     await loom.close();
     await removeSandbox(box);

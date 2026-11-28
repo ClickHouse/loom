@@ -36,9 +36,7 @@ import { readPrivateFile, removeFile } from "../lib/tmp-state.mjs";
 
 /** The scripts each event records with, in the order they start. At
  *  SessionEnd loom-run reads the recalled-key stash before
- *  loom-session-memory removes it when its run is begun; a run whose begin
- *  it has to ask again waits for that answer first and can close without
- *  the keys. */
+ *  loom-session-memory removes it. */
 export const RECORDERS = {
   PostToolUse: ["loom-capture"],
   PostToolUseFailure: ["loom-capture"],
@@ -55,7 +53,12 @@ function run(event, raw) {
 
 async function hook(script, event, client) {
   const raw = await readStdinText();
-  if (event === "SessionEnd") return run(event, raw);
+  if (event === "SessionEnd") {
+    // Left open, a stdin its host never closes would hold this process
+    // through the exit grace after the records are sent.
+    process.stdin.destroy();
+    return run(event, raw);
+  }
   // An agent's token is left to the copy: renewing one is a request.
   if (agentMode() || resolveToken()) {
     spawnDetached([script, event, client || "-"], raw, { kind: `record-${event}` });
