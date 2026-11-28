@@ -153,7 +153,9 @@ async def test_conditional_update_rereads_the_head_under_the_lock(
         held_during_read.append(len(locks))
         return head
 
-    async def write_revision(input: Any, existing: Any, ch: Any, *, op: str) -> str:
+    async def write_revision(
+        input: Any, existing: Any, ch: Any, *, op: str, pipeline: bool = False
+    ) -> str:
         written.append(existing)
         return "ok"
 

@@ -8,10 +8,10 @@ import logging
 import re
 from typing import Any
 
+from server.code.app.search.priors import _noise_path
 from server.code.app.search.window import _has_test_intent
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.idents import spelled_names
-from server.code.domain.index import path_class
 from server.code.domain.search_scope import SearchScope
 from server.code.domain.units import CodeUnit, unit_from_chunk
 from server.code.store.index import CodeRepo, is_noise_path
@@ -54,7 +54,7 @@ def named_definitions(
         found = sorted(
             d
             for d in named
-            if d[0].startswith(path_prefix) and (asks_tests or not path_class.is_noise_path(d[0]))
+            if d[0].startswith(path_prefix) and (asks_tests or not _noise_path(d[0]))
         )
         found = [d for d in found if not is_noise_path(d[0])] or found
         if found and len(found) <= _MAX_DEFINITIONS_PER_NAME:

@@ -1,6 +1,6 @@
 """The `revise` policy's judgement: whether a memory's claim still holds for its code's
-new text, and the corrected claim when it does not. Loom never rewrites the memory: a
-correction is served as the link's `suggestion`."""
+new text, and the corrected claim when it does not. A correction is never written into
+the memory: it is served as the link's `suggestion`."""
 
 from __future__ import annotations
 

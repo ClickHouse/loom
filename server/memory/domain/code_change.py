@@ -1,7 +1,7 @@
 """What a namespace's code-linked memories go through when their code changes.
 
 A memory about code describes something Loom indexes, so once that code is gone,
-serving it as current is wrong. Loom never writes the memory; the namespace owner picks
+serving it as current is wrong. No policy writes the memory; the namespace owner picks
 what reads do:
 
   retire_removed (default)  search leaves out a memory whose linked code is all gone;
@@ -18,8 +18,11 @@ Under every policy, a memory that a search still serves ranks lower than its mat
 A memory a person pinned, locked or verified is only flagged.
 
 A link that sits at another name or path than the memory was written against is named
-on the reads that serve its links (`relocation`, `note`): the text still says the old
-name.
+on the reads that serve its links (`relocation`, `note`) while the text still says the
+old name. Under every policy the link pass brings that text up to a rename or move a
+link followed with its code unchanged, where the swap is certain and the memory is held
+in the repository's code namespace (`server.memory.app.code_renames.revise`); every
+other text stays as written.
 
 A read says of every memory that names code which state it is in, the indexed commit
 its link was anchored at and a day (`lead`), which a pin, a lock or a label does not
