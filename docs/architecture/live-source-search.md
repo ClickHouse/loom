@@ -4,6 +4,7 @@
 Drive and Notion registrations. The default is false. Indexed retrieval, ranking,
 withholding and paging keep their existing paths; provider results join only the
 final response. No provider result becomes an indexed hit or an ingestion request.
+Registered Linear document projects use the same live section.
 
 ## Authority and publication
 
@@ -37,7 +38,7 @@ response is capped at the smaller of 256 KiB and the configured source response
 limit. There are no retries or pagination.
 
 The `knowledge_live_search_*` settings can reduce the deadline, registration and
-hit counts, response bytes, Drive item count and Notion ancestor count. Their
+hit counts, response bytes, source item count and Notion ancestor count. Their
 defaults are these ceilings; configuration cannot increase them.
 
 Drive uses native full-text search constrained to registered folders, shared
@@ -47,6 +48,14 @@ file items have no native file-id search predicate and do not widen the search.
 Notion uses native title search and accepts pages only after checking registered
 page or database membership, following at most three ancestors. Incomplete
 coverage is not evidence that a document does not exist.
+
+Linear uses native document search filtered to at most four registered project
+identifiers. It excludes archived documents and comment matches, requests one
+bounded page, and checks each document's returned project, archive and trash
+state. Final membership checks fetch that document's current state without
+replacing the retained title or URL. A missing project identifier never widens
+the request to the workspace. Ingestion project slugs alone do not authorize a
+live search; the registration must contain a project UUID.
 
 Live search runs only on the first page, without tags, for queries of at most
 1,000 characters. It ignores memory retrieval recipes. An unavailable or timed-out

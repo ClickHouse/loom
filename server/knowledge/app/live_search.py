@@ -89,7 +89,7 @@ async def search(org: str, namespaces: list[str], query: str, *, top_k: int) -> 
                     and source.credential_mode == "connected"
                     and source.owner_subject == subject
                     and source.access == MIRRORED_ACCESS
-                    and source.kind in ("gdrive", "notion")
+                    and source.kind in ("gdrive", "notion", "linear")
                 ][: settings.knowledge_live_search_max_sources]
                 if not selected:
                     return None
