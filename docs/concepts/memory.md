@@ -598,7 +598,9 @@ The links are read where the code is:
   namespace, the memories linked to code in each file or naming it by its path or a tail of it
   (a bare filename, `search/handler.py`; an absolute path is trusted to name a file below the
   root that it ends in), each with its `code_state`, within `code_result_lessons_tokens`. Each
-  row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `changed_since` (the
+  row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `rev` (the first 12
+  characters of the commit its link was anchored at) for a linked row, `first_written` (the
+  day it was first written) for a row with a code state, `changed_since` (the
   commit that put its code in a changed, unresolved or missing state) when one is known, and
   `supersedes_key` when it replaces an older row, and `code_moved` (its links to code in the
   file that is now at another path or symbol than it was written against) when there are
@@ -623,7 +625,8 @@ The links are read where the code is:
   names the first indexed commit at which it read so, and a line whose code is now at
   another path or symbol says where (each hit lists those links as `code_moved`);
   `context.pack` decision lines carry the same note, and its memory lines a
-  `code_state=<state>@<commit>` label with `(code moved: …)` ahead of the text.
+  `code_state=<state>` label (`<state>@<commit>` when a commit put it there) with
+  `(code moved: …)` ahead of the text.
 - `memory.get` returns the links as `code` (each with its lines, any `suggestion`, and
   `was_path` and `was_symbol` when the code moved); `memory.search` hits
   read from a memory's own row carry its worst link as `code_state` and, when that is
@@ -636,11 +639,39 @@ The links are read where the code is:
   and leaves `memory_ask_code_staleness` on, `memory.ask` gives its synthesis a note of
   the memories whose code moved, changed or went, with the same clause for a link now at
   another path or symbol.
+- Each of those reads says of a memory that names code which state it is in, the commit
+  its link was anchored at (`code_rev` on a search hit, `rev` on a line or a lesson) and
+  a day, under a label that says which day it is. `first_written` is the day of the
+  memory's first write: a `memory.for_file` line, a lesson (the field `first_written`)
+  and a startup recall line print it, and no later write moves it. `written` is the day
+  the text served was written: a line of a search hit prints it from the hit's
+  `created_at`, the search document's, which a write of the text (`memory.set`,
+  `memory.update_by_id`) and `memory.restore` stamp again. For a memory whose text was
+  written again or restored, `written` is therefore a later day than `first_written`.
+  Neither is the row's `updated_at`: an unpin, a lock, an unlock or a label moves neither.
+  The commit is the repository's indexed head when the link was made or last re-anchored;
+  for a link made after its memory that is a later commit than the writer worked at.
+  A search hit read from a memory's own row that shows no link state, and whose text
+  names a file by a path with a directory, is `unlinked`: the read has no comparison
+  with code to show for it. Where no repository is indexed that is every such hit, and a
+  hit whose only link is pending or in a repository the caller may not read is marked
+  the same way. A `memory.for_file` line and a lesson are marked likewise; a memory that
+  names its file only in `files`, by a bare file name or by a symbol is not. `unlinked`
+  is a label a read gives: no row and no parked search page stores it.
+  A reply that serves a memory with a code state says once what was compared: no code
+  for an `unlinked` memory, and for every other state the repository as Loom indexed
+  it, which is not the caller's checkout. That sentence is `code_note` on
+  `memory.search`, the first line of a reader block, of a `context.pack` block and of
+  `loom_search`'s plain lines, the line after the header of a `memory.for_file`
+  block, and the `note` of a review brief's `rationale` section, whose rows carry the
+  `memory.for_file` line. A block takes the sentence's room from the budget of the row
+  that prints with it, so a row left out takes its part of the sentence with it.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read, and the edits that bring a memory's
   text up to a rename its link followed.
 
-A memory with no link reads exactly as one whose code is current. `namespace.validate`
+A memory with no link carries no link state: a read marks it `unlinked` when its text
+names a file by its path, and serves it without a label otherwise. `namespace.validate`
 counts the served memories that name code (a backticked or qualified name, a call, or
 `files`) and hold no link, by cause, as `info` findings:
 

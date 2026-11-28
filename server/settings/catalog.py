@@ -1760,18 +1760,21 @@ class CodeSettings(BaseModel):
     # A prose question whose nearest file card's cosine is below this
     # abstains `off_domain`; independent of the card leg. 0 = off.
     code_search_abstain_card_below: float = 0.0
-    # Calibrated confidence below which a result is flagged
-    # `low_calibrated_confidence` (still returned). The deployment sets 0.30.
+    # The abstain score below which a code.search result is flagged
+    # `low_calibrated_confidence` (still returned). The score is not
+    # `retrieval_confidence`: it blends the top cosine, its margin over the second
+    # hit, route agreement and the pool size. The deployment sets 0.30.
     code_search_abstain_confidence_below: float = 0.35
-    # The calibrated confidence from which a code.search result reads
-    # `retrieval_risk` "medium"; below it the result reads "high".
-    # Code embeddings score a right hit lower than memory text does: on the
-    # conceptual question set every right top 3 scored 0.40–0.63, so the
-    # memory plane's 0.55 / 0.75 labelled three in four right answers "high".
-    code_search_medium_risk_from: float = 0.40
-    # The calibrated confidence from which a code.search result reads `retrieval_risk`
-    # "low" (see code_search_medium_risk_from).
-    code_search_low_risk_from: float = 0.55
+    # The `retrieval_confidence` from which a code.search result reads
+    # `retrieval_risk` "medium"; below it the result reads "high". In the measurement
+    # behind the default about half of the prompts sent to another repository's index
+    # scored under it.
+    code_search_medium_risk_from: float = 0.35
+    # The `retrieval_confidence` from which a code.search result reads `retrieval_risk`
+    # "low": the best cosine is close to that of a confident hit. A prompt about other
+    # code usually scores lower, but about one in five sent to another repository's
+    # index still read low. The coding-agent plugins send their prompt pointers from it.
+    code_search_low_risk_from: float = 0.70
     # The question kinds the hypothetical answer votes on.
     code_search_hyde_kinds: str = "responsibility"
     # Cap on the hypothetical-answer (HyDE) leg's candidate list, as a multiple of the
@@ -4459,15 +4462,9 @@ class ObservabilitySettings(BaseModel):
     # every pass.
     worker_ledger_rows: bool = True
 
-    # Self-hosted adoption reports. Set false to stop all adoption reporting.
+    # Self-hosted adoption reports, including public aggregate activity for contact domains.
+    # Set false to stop adoption reporting.
     adoption_telemetry_enabled: bool = True
-    # Share namespace contact domains and counts in adoption reports. Set false to omit them.
-    adoption_telemetry_share_domains: bool = True
-    # Share daily account, successful request and serving process counts for contact domains.
-    # Requires domain sharing.
-    adoption_telemetry_share_domain_activity: bool = False
-    # Seconds between adoption checks and retries. A report covers 12 hours.
-    adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 
     # Master switch for OTel emission. `init_otel()` also refuses under pytest
     # regardless: server/main.py calls it at import, and a test run must never
@@ -5348,7 +5345,9 @@ class ProviderSettings(ModelSettings):
 
     # Skip the rerank when the vector top hit's cosine is ≥ this (strong
     # matches rank reliably; the rerank costs ~500 ms). Fallback when the
-    # adaptive gate has no probe.
+    # adaptive gate has no probe. Also the fallback for the cosine at which
+    # code.search's `retrieval_confidence` reads 1.0, so raising it lowers that
+    # confidence and its risk band where no calibration exists.
     llm_rerank_skip_above: float = 0.62
 
     # Recovery worker: retries failed embeds and reconciles orphan

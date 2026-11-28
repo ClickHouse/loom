@@ -5,14 +5,18 @@ seo:
 
 # Quickstart
 
-Run Loom locally with Docker. The default install listens only on localhost and needs no API key.
+Install Loom with Docker, then save and recall your first memory. A local installation
+listens on localhost and works without an API key.
 
-[Go to the install command](#fast-path-released-image-no-clone) · [Set up a shared instance](#start-in-multi-user-mode)
+[Install locally](#fast-path-released-image-no-clone) ·
+[Set up a shared instance](#start-in-multi-user-mode) ·
+[Try in Codespaces](#try-it-in-github-codespaces)
 
 ## Prerequisites
 
-Use Docker Desktop or Docker Engine with Compose 2.20 or later. Leave port `7777` free
-for Loom. On Windows, run the installer in a WSL 2 terminal where `docker` works.
+- Docker Desktop or Docker Engine with Compose 2.20 or later.
+- Port `7777` free for Loom.
+- On Windows, a WSL 2 terminal configured to run Docker.
 
 ## 1. Boot the stack
 

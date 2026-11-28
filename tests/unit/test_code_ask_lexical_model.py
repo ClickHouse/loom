@@ -51,8 +51,8 @@ async def test_factory_failure_reads_the_canonical_lexical_partition(
     def unavailable() -> Any:
         raise ImportError("provider client is unavailable")
 
-    async def thresholds(*args: Any) -> tuple[float, float]:
-        return 0.0, 0.0
+    async def thresholds(*args: Any) -> tuple[float, float, float]:
+        return 0.0, 0.0, 0.0
 
     async def as_of(*args: Any) -> dict[str, Any]:
         return {}

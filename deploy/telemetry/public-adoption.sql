@@ -15,12 +15,6 @@ SELECT
     (
         SELECT groupArray(payload) FROM (
             SELECT formatRowNoNewline('JSONEachRow', *) AS payload
-            FROM loom_product_analytics.public_adoption_version_trends ORDER BY period, product, version
-        )
-    ) AS version_trends,
-    (
-        SELECT groupArray(payload) FROM (
-            SELECT formatRowNoNewline('JSONEachRow', *) AS payload
             FROM loom_product_analytics.public_adoption_first_observation
         )
     ) AS first_observation,

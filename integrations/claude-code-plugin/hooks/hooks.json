@@ -17,25 +17,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs", "UserPromptSubmit"]
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs", "UserPromptSubmit"]
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs", "UserPromptSubmit"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-record.mjs", "UserPromptSubmit"]
           }
         ]
       }
@@ -80,6 +62,16 @@
             "type": "command",
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-blast-radius.mjs", "PostToolUse"]
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-test-gate.mjs", "PostToolUse"]
           }
         ]
       },

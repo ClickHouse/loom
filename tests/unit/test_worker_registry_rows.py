@@ -41,9 +41,13 @@ def test_a_rows_switches_are_boolean_settings(row: registry._Worker) -> None:
 
 
 @pytest.mark.parametrize("row", _ROWS, ids=[w.name for w in _ROWS])
-def test_a_rows_cadences_are_numeric_settings(row: registry._Worker) -> None:
+def test_a_rows_cadences_use_numbers_or_numeric_settings(row: registry._Worker) -> None:
+    if isinstance(row.interval, int):
+        assert row.interval > 0
+        assert registry._spec_for(row).interval_seconds == row.interval
+        assert registry.worker_meta()[row.name]["interval_seconds"] == row.interval
     names = [row.idle_interval, row.max_pass_setting, row.interval]
-    for name in (n for n in names if n is not None):
+    for name in (n for n in names if isinstance(n, str)):
         assert name in _FIELDS and _FIELDS[name].annotation in (int, float), name
 
 
@@ -64,8 +68,9 @@ def test_a_workers_spec_takes_its_cadence_from_its_setting(
     from server.settings import settings
 
     (row,) = [w for w in _ROWS if w.name == name]
-    assert row.interval == _CADENCE_SETTINGS[name]
-    monkeypatch.setattr(settings, row.interval, 7)
+    interval = _CADENCE_SETTINGS[name]
+    assert row.interval == interval
+    monkeypatch.setattr(settings, interval, 7)
     assert registry._spec_for(row).interval_seconds == 7
 
 

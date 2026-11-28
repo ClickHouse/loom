@@ -6,6 +6,7 @@ with the state of its code on the branch read."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -180,6 +181,7 @@ def _excerpt(mid: str, key: str, *, pinned: int = 0) -> dict:
         "excerpt": key,
         "pinned": pinned,
         "confidence": 1.0,
+        "created_at": datetime(2026, 3, 2, 10, 0),
     }
 
 
@@ -284,6 +286,8 @@ async def test_a_lesson_reads_changed_where_the_definition_differs_from_the_link
         ("k1", "fresh", ""),
         ("k2", "changed", "c2"),
     ]
+    # each says the day it was first written beside its state
+    assert {o["first_written"] for o in out} == {"2026-03-02"}
     assert changed_read == [{"m2"}]  # the read ranks a changed memory last before its cut
     # a branch still holding the definition k2 was written against reads it fresh
     branch = [("src/a.py", "src.a::Reader::read", "h0")]

@@ -71,6 +71,7 @@ async def test_sender_preserves_aggregates_within_the_collector_limit(
         }
 
     monkeypatch.setattr(adoption_telemetry, "window_report", aggregate)
+    monkeypatch.setattr(adoption_telemetry, "domain_snapshot", AsyncMock(return_value=None))
     requests: list[httpx.Request] = []
 
     def collect(request: httpx.Request) -> httpx.Response:

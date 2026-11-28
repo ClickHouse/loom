@@ -216,3 +216,39 @@ test("returns an error while writes fail or the warehouse is unconfigured", asyn
   const unconfigured = await handleAdoption(request(JSON.stringify(report)), { env: {}, now });
   assert.equal(unconfigured.status, 503);
 });
+
+test("accepts a live domain snapshot before the UTC day ends", async () => {
+  const observed_at = "2026-11-28T07:20:00+00:00";
+  const report = {
+    schema_version: 4,
+    installation_id: "31abbc20-dcf3-558b-b41d-4ca3265db296",
+    day: "2026-11-28",
+    observed_at,
+    loom_version: "1.3.0",
+    clickhouse_version: "26.10.2.551",
+    domain_activity: [{ domain: "client.example", active_accounts: 6, successful_requests: 25, serving_processes: 2 }],
+  };
+  const writes = [];
+  const request = new Request("https://example.test/api/v1/adoption", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(report),
+  });
+  const response = await handleAdoption(request, {
+    now: Date.parse(observed_at) + 60_000,
+    env: {
+      LOOM_TELEMETRY_CLICKHOUSE_URL: "https://warehouse.example",
+      LOOM_TELEMETRY_CLICKHOUSE_USER: "test",
+      LOOM_TELEMETRY_CLICKHOUSE_PASSWORD: "test",
+    },
+    fetcher: async (url, options) => {
+      writes.push([url.searchParams.get("query"), JSON.parse(options.body)]);
+      return new Response("");
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { stored: true, installation_id: report.installation_id, observed_at });
+  assert.deepEqual(writes, [
+    ["INSERT INTO loom_product_analytics.adoption_domain_snapshots FORMAT JSONEachRow", report],
+  ]);
+});

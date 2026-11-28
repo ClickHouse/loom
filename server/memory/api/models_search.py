@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -11,11 +11,12 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     field_serializer,
     model_serializer,
+    model_validator,
 )
 
 from server.memory.api.models_common import MemoryType, _Identity
 from server.memory.api.models_crud import CodeLink
-from server.memory.domain.code_change import CodeState
+from server.memory.domain.code_change import CodeState, compared
 from server.memory.domain.rerank_names import RerankName
 from server.memory.domain.search_types import ChunkRef
 from server.operations.base import MCP_HIDDEN
@@ -643,13 +644,18 @@ class _MemorySearchHit(BaseModel):
     # arrival-order recency in memory.ask reads it.
     created_at: str = ""
     namespace: str = ""  # source namespace; populated on cross-namespace search
-    # The hit's worst link to code ('' when it names no indexed code): `fresh`, `moved`,
-    # `changed` (that code changed since the memory was written: check it), `unresolved`
-    # (renamed or removed, and not followed: check it) or `missing`.
-    code_state: CodeState | Literal[""] = ""
+    # The hit's worst link to code, compared with the repository's indexed head: `fresh`,
+    # `moved`, `changed` (that code changed since the memory was written: check it),
+    # `unresolved` (renamed or removed, and not followed: check it) or `missing`.
+    # `unlinked` for a hit that shows no link and whose text names a file by its path:
+    # the search has no comparison with code for it. '' when it names none.
+    code_state: CodeState | Literal["unlinked", ""] = ""
     # The commit that put `code_state` at `changed`, `unresolved` or `missing`; '' for any
     # other state, and when no commit is known.
     code_changed_since: str = ""
+    # The commit the hit's worst link was anchored at: the repository's indexed head when
+    # the memory was linked or last re-anchored. '' for a hit that holds no link.
+    code_rev: str = ""
     # The hit's links that are now at another path or symbol than the memory was written
     # against, each with where the code is (`path`, `symbol`, `start_line`, `end_line`) and
     # what the text still calls it (`was_path`, `was_symbol`); empty for nearly every hit.
@@ -702,10 +708,19 @@ class MemorySearchOutput(BaseModel):
             data.pop("reinforcement", None)
         return data
 
+    @model_validator(mode="after")
+    def _say_what_was_compared(self) -> Self:
+        self.code_note = compared(hit.code_state for hit in self.results)
+        return self
+
     # The settled input this search ran (None for a parked page); private, never on the wire.
     _settled_input: MemorySearchInput | None = None
     # The ranked hits, best first; empty when nothing passed the noise floor.
     results: list[_MemorySearchHit]
+    # What the search compared, of the `results` this output was built with: no code
+    # for an `unlinked` hit, and for any other `code_state` the repository as indexed,
+    # not the caller's checkout. '' when no hit names code.
+    code_note: str = ""
     # render="reader" only: the results as one prompt block ("[date] [key]
     # (type) excerpt", ordered as memory.ask would read them) and the
     # synthesizer's instructions, so an external reader scores what the ask

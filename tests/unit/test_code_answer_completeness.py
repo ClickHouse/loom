@@ -202,8 +202,8 @@ async def test_wire_response_keeps_incomplete_retrieval_warning(
     from server.code.api.models_search import CodeAskInput
     from server.code.app import ask as handler
 
-    async def thresholds(*args: Any) -> tuple[float, float]:
-        return (0.3, 0.2)
+    async def thresholds(*args: Any) -> tuple[float, float, float]:
+        return (0.3, 0.2, 0.62)
 
     async def as_of(*args: Any) -> dict[str, Any]:
         return {}

@@ -187,6 +187,7 @@ async def memory_with_repo_decisions(
     apply_explain_default(added, home)
     update: dict[str, Any] = {
         "results": hits,
+        "code_note": code_change.compared(h.code_state for h in hits),
         "candidates_total": base.candidates_total + len(added),
         "namespaces_searched": list(dict.fromkeys([*base.namespaces_searched, repo_namespace])),
     }

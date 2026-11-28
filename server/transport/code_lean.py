@@ -429,8 +429,32 @@ def _grep_continuation(
     elif not exact_read:
         return
     params = {"ranges": [_grep_read_range(item.span) for item in selected], **options}
-    out["next"] = "For the full source, call loom_code_read with " + json.dumps(
-        params, separators=(",", ":")
+    lead = (
+        _GREP_READ_CUT
+        if any(_grep_contract_cut(item.span, contexts) for item in selected)
+        else _GREP_READ
+    )
+    out["next"] = lead + json.dumps(params, separators=(",", ":"))
+
+
+_GREP_READ = "For the full source, call loom_code_read with "
+# An excerpt can look like the whole definition; this one is missing its contract.
+_GREP_READ_CUT = (
+    "The excerpts leave out signature or docstring lines of the definitions they sit in. "
+    "Read a definition in full before editing it: call loom_code_read with "
+)
+
+
+def _grep_contract_cut(span: CodeReadRangeInput, contexts: list[dict[str, Any]]) -> bool:
+    """Whether excerpts omit the definition's first line or part of its docstring."""
+    windows = [window for window in contexts if window["path"] == span.path]
+    last = span.end_line if span.end_line is not None else span.start_line
+    return bool(contexts) and (
+        not any(window["start_line"] <= span.start_line <= window["end_line"] for window in windows)
+        or any(
+            window.get("docstring_elided") and span.start_line <= window["end_line"] <= last
+            for window in windows
+        )
     )
 
 

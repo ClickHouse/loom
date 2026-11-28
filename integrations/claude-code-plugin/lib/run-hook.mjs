@@ -11,7 +11,7 @@
 import os from "node:os";
 import path from "node:path";
 
-import { contentText, hookClient, redactHead, runPrefixFor } from "./loom-client.mjs";
+import { contentText, envSwitch, hookClient, redactHead, runPrefixFor } from "./loom-client.mjs";
 import { readPrivateFile, readSessionState, sessionStatePath, touchPrivateFile, writeJsonFile } from "./tmp-state.mjs";
 
 const GOAL_MAX = 2000;
@@ -31,7 +31,7 @@ export function runIdFor(sessionId, client = hookClient()) {
 // reads it before deriving.
 const RUN_ID_RE = /^[\w.:-]{1,128}$/;
 
-/** The session's run state ({begun, at, run_id}). A read refreshes the file's
+/** The session's run state ({begun, at, run_id}, or a kept begin). A read refreshes the file's
  *  mtime, so a session still running is never swept as stale. */
 export function readRunState(sessionId, tmp = os.tmpdir()) {
   const state = readSessionState("run", sessionId, { tmp });
@@ -75,6 +75,28 @@ export function beginBody(scope, payload, prompt) {
       tags: scope.tags || [],
     },
   };
+}
+
+/** LOOM_RUN_LEDGER=off: no run is opened, kept or closed. */
+export function runLedgerEnabled() {
+  return envSwitch("LOOM_RUN_LEDGER", true);
+}
+
+/**
+ * Keep the begin a prompt is about to ask in the session's run state, before
+ * anything asks it: {attempted, body, at}, plus `retry` when an earlier ask
+ * of it got no final answer. A begin may commit before its answer arrives,
+ * so `body` is the first one kept, which every retry re-sends. Null when the
+ * session's run is begun or refused. `scopeOf` is called only for a first
+ * body.
+ */
+export function keepRunBegin(payload, scopeOf, { tmp = os.tmpdir(), now = Date.now() } = {}) {
+  const prior = readRunState(payload.session_id, tmp);
+  if (prior.begun || prior.refused) return null;
+  const body = prior.attempted && prior.body ? prior.body : beginBody(scopeOf(), payload, String(payload.prompt || ""));
+  const state = { ...prior, attempted: true, body, at: now, ...(prior.attempted ? { retry: true } : {}) };
+  writeJsonFile(sessionStatePath("run", payload.session_id, { tmp }), state);
+  return state;
 }
 
 /** Claude Code SessionEnd `reason` → run status. A cleared or exited session

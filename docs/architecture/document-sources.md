@@ -739,8 +739,8 @@ hook sends with a session's prompt, files or transcript (`context.pack`, `code.s
 the latest user message through `memory.search` and persist conversation items through
 `memory.set`, so both are session content. Its coalesced delivery through
 `memory.bulk_set` has the same class. Automatic tool interception also sends
-`code.test_gate`, `code.symbol`, `code.enclosing` and `tracker.duplicate_check` with
-session-derived inputs. The rule decides; the
+`code.test_gate`, `code.symbol`, `code.outline`, `code.enclosing` and
+`tracker.duplicate_check` with session-derived inputs. The rule decides; the
 registry's classes and a test over what the shipped hooks send pin the full set.
 
 Once a session has seen the flag, no Loom hook sends any op from it, reads included, and

@@ -161,6 +161,18 @@ export function activityForRange(rows, filters, today) {
     });
 }
 
+/**
+ * @param {ReadonlyArray<{grain: string, period: string, active_accounts?: number | null, serving_processes?: number | null}>} rows
+ * @param {"active_accounts" | "serving_processes"} key
+ * @param {string} start
+ * @param {string} end
+ */
+export function dailyActivityForRange(rows, key, start, end) {
+  return rows
+    .filter((row) => row.grain === "day" && row.period >= start && row.period < end && Number.isFinite(row[key]))
+    .sort((left, right) => left.period.localeCompare(right.period));
+}
+
 export function adoptionGrowthForRange(rows, filters, today) {
   const start = daysBefore(today, filters.days);
   return (rows ?? [])
@@ -280,7 +292,10 @@ export function adoptionCsv(dataset, activity, lifecycle, oss) {
     case "stars":
       return [
         ["day_utc", "github_stars"],
-        ...oss.find(({ id }) => id === "stars").history.map(({ day, value }) => [day, value]),
+        ...oss
+          .find(({ id }) => id === "stars")
+          .history.filter(({ reconstructed }) => !reconstructed)
+          .map(({ day, value }) => [day, value]),
       ];
     default:
       return null;
