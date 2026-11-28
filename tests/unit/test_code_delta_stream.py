@@ -187,20 +187,28 @@ async def test_the_apply_takes_the_file_a_round_at_a_time(
     assert repo.rounds[-1][-1] == "src/gone.cpp" and stats.ctor_calls_recorded
 
 
-def _fds() -> int:
-    return len(os.listdir("/proc/self/fd"))
+def _delta_is_open(path: Path) -> bool:
+    target = path.stat()
+    for fd in Path("/proc/self/fd").iterdir():
+        try:
+            opened = fd.stat()
+        except FileNotFoundError:
+            continue  # The descriptor may close after the directory was listed.
+        if (opened.st_dev, opened.st_ino) == (target.st_dev, target.st_ino):
+            return True
+    return False
 
 
 def test_no_read_keeps_the_file_open(tmp_path: Path, caps: None) -> None:
     path = tmp_path / "delta.json"
     _write(path, 30)
-    before = _fds()
     delta = open_delta(path)
-    assert _fds() == before
+    assert not _delta_is_open(path)
     rounds = delta.rounds(100, lambda p: True)
     next(rounds)
+    assert _delta_is_open(path)
     rounds.close()  # a pass cancelled mid-apply drops its rounds
-    assert _fds() == before
+    assert not _delta_is_open(path)
 
 
 def test_the_round_budget_is_the_one_the_delta_was_opened_with(
@@ -358,10 +366,9 @@ async def test_a_failed_apply_releases_the_file(
         raise RuntimeError("clickhouse down")
 
     monkeypatch.setattr(scip_delta, "_apply_files", failing)
-    before = _fds()
     with pytest.raises(RuntimeError):
         await apply_delta(_Repo(), "o", "code-x", delta)  # type: ignore[arg-type]
-    assert _fds() == before
+    assert not _delta_is_open(path)
 
 
 @pytest.mark.asyncio
@@ -369,7 +376,6 @@ async def test_an_apply_cancelled_mid_read_releases_the_file_once_the_read_ends(
     tmp_path: Path, caps: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import asyncio
-    import gc
     import threading
 
     from server.code.app.index import delta_file
@@ -388,9 +394,6 @@ async def test_an_apply_cancelled_mid_read_releases_the_file_once_the_read_ends(
         return real(text, index)
 
     monkeypatch.setattr(delta_file, "_entry", slow)
-    # Unrelated cyclic garbage must close its descriptors before the baseline.
-    gc.collect()
-    before = _fds()
     task = asyncio.create_task(apply_delta(_Repo(), "o", "code-x", delta))  # type: ignore[arg-type]
     assert await asyncio.to_thread(in_read.wait, 10)
     task.cancel()
@@ -399,11 +402,10 @@ async def test_an_apply_cancelled_mid_read_releases_the_file_once_the_read_ends(
     cancelled.set()
     assert await asyncio.to_thread(done.wait, 10)
     for _ in range(50):
-        gc.collect()
-        if _fds() == before:
+        if not _delta_is_open(path):
             break
         await asyncio.sleep(0.02)
-    assert _fds() == before
+    assert not _delta_is_open(path)
 
 
 def test_deleted_paths_past_the_last_rounds_room_get_rounds_of_their_own(
