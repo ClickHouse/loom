@@ -406,6 +406,7 @@ async def test_adoption_report_deduplicates_daily_activity(ch: CHClient) -> None
 
     observed_at = noon + timedelta(minutes=5)
     snapshot = await domain_snapshot(observed_at, installation_id, restricted=restricted, ch=ch)
+    assert snapshot is not None
     assert snapshot["schema_version"] == 4
     assert snapshot["observed_at"] == observed_at.isoformat()
     assert snapshot["day"] == start.date().isoformat()

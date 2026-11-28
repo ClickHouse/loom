@@ -5,7 +5,9 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from clickhouse_connect.driver.exceptions import DatabaseError
 
+from server.insights.store import adoption_telemetry as adoption_store
 from server.insights.workers import adoption_telemetry
 from server.settings import Settings, settings
 from server.workers import pass_context, status_store, supervisor
@@ -574,6 +576,34 @@ async def test_missing_deployment_id_surfaces_status_without_delivery(
     http.assert_not_called()
 
 
+async def test_snapshot_read_limit_skips_only_the_live_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
+    now = datetime(2026, 11, 24, 3, tzinfo=UTC)
+    monkeypatch.setattr(adoption_telemetry, "utc_now", lambda: now)
+    deployment_id = uuid4()
+    monkeypatch.setattr(
+        adoption_telemetry,
+        "recorded_authority",
+        AsyncMock(return_value={"deployment_id": str(deployment_id)}),
+    )
+    ch = AsyncMock()
+    ch.query_all.side_effect = DatabaseError("Code: 158. Limit for rows to read exceeded.")
+    monkeypatch.setattr(adoption_telemetry, "get_client", lambda: ch)
+    monkeypatch.setattr(adoption_telemetry, "window_report", AsyncMock(return_value={}))
+    send = AsyncMock(return_value=True)
+    monkeypatch.setattr(adoption_telemetry, "_send_report", send)
+
+    with pass_context.ensure_pass("adoption_telemetry") as ctx:
+        await adoption_telemetry.run_pass()
+        assert ctx.cursor == "2026-11-23T12:00:00+00:00"
+        assert ctx.outcome["snapshot"] == "read_limit"
+    send.assert_awaited_once_with({}, "window_start")
+    assert ch.query_all.await_args.kwargs["settings"] == adoption_store._SNAPSHOT_READ_LIMITS
+    ch.query_one.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "rejection",
     [
@@ -688,7 +718,9 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
                  3, '1.2.0', '26.1.0', 23, 23, 23, [('live.example', 1, 23)],
                  [('live.example', 3, 23, 2)]),
                 ('capped', '2026-11-26 12:00:00', '2026-11-27 00:00:00', '2026-11-26',
-                 3, '1.2.0', '26.1.0', 4, 4, 4, [('capped.example', 1, 4)], [])
+                 3, '1.2.0', '26.1.0', 4, 4, 4, [('capped.example', 1, 4)], []),
+                ('stale', '2026-11-26 12:00:00', '2026-11-27 00:00:00', '2026-11-26',
+                 3, '1.2.0', '26.1.0', 1, 1, 1, [('stale.example', 1, 1)], [])
             """,
             """
             INSERT INTO loom_product_analytics.adoption_domain_snapshots
@@ -720,7 +752,8 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
 
     directories = [json.loads(row) for row in report["domain_directories"]]
     assert all(
-        row["domains"] == ["live.example", "shared.example", "capped.example", "new.example"]
+        row["domains"]
+        == ["live.example", "shared.example", "capped.example", "new.example", "stale.example"]
         for row in directories
     )
     domain_rows = {
@@ -743,5 +776,7 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
     assert domain_rows["new.example"]["successful_requests"] == 2
     assert domain_rows["capped.example"]["successful_requests"] == 4
     assert domain_rows["capped.example"]["active_accounts"] == 1
+    assert domain_rows["capped.example"]["loom_version"] == "1.2.0"
+    assert "stale.example" not in domain_rows
     assert domain_rows["shared.example"]["active_installations"] == 2
     assert domain_rows["shared.example"]["loom_version"] == "1.3.0"

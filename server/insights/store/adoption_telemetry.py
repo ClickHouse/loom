@@ -6,8 +6,11 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from clickhouse_connect.driver.exceptions import DatabaseError
+
 from server import __version__
 from server.core.ch import CHClient, sequential_reads
+from server.core.ch_errors import error_code
 from server.core.naming import not_mirror_sql
 
 _REQUEST_SCOPE = f"""
@@ -131,6 +134,12 @@ SETTINGS optimize_move_to_prewhere_if_final = 0
 
 
 _DOMAIN_ACTIVITY_FIELDS = ("domain", "active_accounts", "successful_requests", "serving_processes")
+_SNAPSHOT_READ_LIMITS = {
+    "max_rows_to_read": 5_000_000,
+    "max_bytes_to_read": 512 * 1024**2,
+    "read_overflow_mode": "throw",
+}
+_READ_LIMIT_CODES = (158, 307, 396)  # TOO_MANY_ROWS, TOO_MANY_BYTES, TOO_MANY_ROWS_OR_BYTES
 _MAX_SNAPSHOT_DOMAINS = 2000  # With domain names capped at 253 bytes, this fits in one MiB.
 _LIVE_DOMAINS_SQL = f"""
 SELECT * FROM ({DAILY_DOMAIN_ACTIVITY_SQL})
@@ -145,11 +154,16 @@ async def domain_snapshot(
     *,
     restricted: set[tuple[str, str]],
     ch: CHClient,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     start = end.replace(hour=0, minute=0, second=0, microsecond=0)
     params = {"start": start, "end": end, "restricted": sorted(restricted)}
     with sequential_reads():
-        rows = await ch.query_all(_LIVE_DOMAINS_SQL, params)
+        try:
+            rows = await ch.query_all(_LIVE_DOMAINS_SQL, params, settings=_SNAPSHOT_READ_LIMITS)
+        except DatabaseError as exc:
+            if error_code(exc) in _READ_LIMIT_CODES:
+                return None
+            raise
         version = await ch.query_one("SELECT version() AS clickhouse_version")
     if version is None:
         raise RuntimeError("adoption ClickHouse version is unavailable")

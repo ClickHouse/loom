@@ -64,7 +64,8 @@ A failed delivery is retried while its window is the latest completed one.
 Snapshots include the installation UUID, UTC day, observation timestamp, software
 versions, and aggregate activity for up to 2,000 eligible domains, ordered by
 successful requests. Each snapshot counts requests and distinct active users and
-serving processes since UTC midnight. The public directory refreshes every minute
+serving processes since UTC midnight. Loom skips a snapshot if its query exceeds
+five million rows or 512 MiB and still sends completed reports. The public directory refreshes every minute
 while visible. Completed daily counts replace the snapshot counts for the same
 installation and domain.
 

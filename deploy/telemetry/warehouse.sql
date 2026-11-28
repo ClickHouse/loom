@@ -200,7 +200,9 @@ LIMIT 50;
 
 -- Keep partial counts only while the domain is disclosed and final counts are unavailable.
 CREATE OR REPLACE VIEW loom_product_analytics.loom_adoption_live_domains AS
-SELECT snapshot.day, snapshot.installation_id, snapshot.loom_version, snapshot.observed_at AS reported_at,
+SELECT snapshot.day, snapshot.installation_id,
+       if(completed.present = 0, snapshot.loom_version, completed.loom_version) AS loom_version,
+       if(completed.present = 0, snapshot.observed_at, completed.window_end) AS reported_at,
        arrayMap(item -> CAST((
            item.domain, item.active_accounts,
            if(completed.present = 0, item.successful_requests, completed.requests[item.domain]),
@@ -221,7 +223,7 @@ FROM (
         )
 ) AS snapshot
 LEFT JOIN (
-    SELECT day, installation_id, 1 AS present,
+    SELECT day, installation_id, loom_version, window_end, 1 AS present,
            mapFromArrays(arrayMap(item -> item.domain, user_domains),
                          arrayMap(item -> item.successful_requests, user_domains)) AS requests,
            arrayMap(item -> item.domain, domain_activity) AS measured

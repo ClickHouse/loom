@@ -103,6 +103,12 @@ async def run_pass() -> None:
     cutoff = int((utc_now() - timedelta(minutes=1)).timestamp())
     observed_at = datetime.fromtimestamp(cutoff - cutoff % SNAPSHOT_INTERVAL_SECONDS, tz=UTC)
     snapshot = await domain_snapshot(observed_at, installation_id, restricted=restricted, ch=ch)
+    if snapshot is None:
+        pass_context.record_outcome(
+            "adoption_telemetry",
+            {"installation_id": str(installation_id), "snapshot": "read_limit"},
+        )
+        return
     await _send_report(snapshot, "observed_at")
 
 
