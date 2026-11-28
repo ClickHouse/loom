@@ -964,10 +964,10 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     (`server/code/domain/successor.py::elsewhere`): N's link recheck follows it; N-1's
     reads the link `missing`, as before. One host rechecks a repository at a time, so a
     range is read by one build. A `missing` link is never handed to a definition added
-    since, so a link N-1 read `missing` during the rollout stays `missing` under N
-    until its own name returns. The link rows are unchanged; `wide_ranges` is one more
-    number in the `memory_code_links` pass outcome, which every build serves as stored. No gate holds the
-    rollout.
+    since, so a link N-1 read `missing` during the rollout stays `missing` under N until
+    its own name returns. The link rows are unchanged; `wide_ranges` is one more number
+    in the `memory_code_links` pass outcome, which every build serves as stored. No gate
+    holds the rollout.
 
 ## What checks them
 

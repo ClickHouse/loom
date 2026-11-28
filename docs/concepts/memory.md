@@ -475,25 +475,23 @@ definition under 30 tokens is told by neither its text nor its own name, which a
 may define: it is followed there only under a name of the same words (`_read_rows` or
 `read_rows_v2` for `read_rows`) and with its scope, from module level to module level
 or, once no member of its class is left in its file, into the class that is that one
-renamed or keeps its members. Two definitions that may be it,
-or one that another removed definition may have become, leave the link `unresolved`. A
-range that changed more than 32 files under the entry's `path_prefixes` is not searched
-this way, and a warning in the server log names it; nor is a range whose diff cannot be
-read. Over such a range a live link is read as if nothing was renamed. An `unresolved`
-link is looked for from the commit its code was last read at, so its range grows with
-every commit. While that range is searched, the link is followed once one definition
-that may be it is left. Over a range that is not searched it stays `unresolved`, and no
-later commit narrows that range. The `memory_code_links` worker's pass outcome counts in
-`wide_ranges` the ranges its own pass followed, not those a `code.refresh` call followed
-first. A
-namesake that was already there never inherits a link, and a `missing` link comes back
-only when its own name does. A definition moved to another file under its own name with
-an edit is followed there when its text is close to the one the link last read. A new
-definition left where it was stops that search only when it may be the old one under a
-new name: an export list or an unrelated function added beside it does not. The search
-for a definition renamed as it moved is not made past a new definition left there,
-unless that one is another definition renamed alone. A name gone from its file is
-looked for in the files changed
+renamed or keeps its members. Two definitions that may be it, or one that another removed
+definition may have become, leave the link `unresolved`. A range that changed more than
+32 files under the entry's `path_prefixes` is not searched this way, and a warning in the
+server log names it; nor is a range whose diff cannot be read. Over such a range a live
+link is read as if nothing was renamed. An `unresolved` link is looked for from the
+commit its code was last read at, so its range grows with every commit. While that range
+is searched, the link is followed once one definition that may be it is left. Over a
+range that is not searched it stays `unresolved`, and no later commit narrows that range.
+The `memory_code_links` worker's pass outcome counts in `wide_ranges` the ranges its own
+pass followed, not those a `code.refresh` call followed first. A namesake that was
+already there never inherits a link, and a `missing` link comes back only when its own
+name does. A definition moved to another file under its own name with an edit is followed
+there when its text is close to the one the link last read. A new definition left where
+it was stops that search only when it may be the old one under a new name: an export list
+or an unrelated function added beside it does not. The search for a definition renamed as
+it moved is not made past a new definition left there, unless that one is another
+definition renamed alone. A name gone from its file is looked for in the files changed
 since its last check as the mirror holds them, beside the index, so a definition moved by
 a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
 followed when the link is rechecked. When `memory_code_links_mirror_naming_files` or more
