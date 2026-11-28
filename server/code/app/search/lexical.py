@@ -29,14 +29,15 @@ async def _lexical_leg(
     path_prefix: str,
     scope: SearchScope | None,
     path_penalties: tuple[float, float],
-) -> tuple[list[dict[str, Any]], list[str], list[float]]:
-    """The lexical leg: corpus stats for the idfs, then the chunk scan.
-    `scope` is the constraint's predicate, None when unconstrained;
-    `path_penalties` are the ranking's (test path, prose file) factors, which
-    the scan cuts its pool on."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], list[float]]:
+    """The lexical leg: corpus stats for the idfs, then the chunk scan. Returns
+    (pool, head, tokens, idfs): the pool is what the ranking fuses, the head is the
+    leg's own first rows, which calibration reads. They are one list unless the scan
+    cut the pool on `path_penalties`, the ranking's (test path, prose file) factors.
+    `scope` is the constraint's predicate, None when unconstrained."""
     rows: list[dict[str, Any]] = []
     if not run_lexical:
-        return rows, tokens, []
+        return rows, rows, tokens, []
     # Fail soft, as the vector leg does: a corpus-stats or scan failure
     # (a replica refusing the read, a timeout) degrades the search to the
     # other leg instead of failing the whole call. The counter says so.
@@ -72,8 +73,11 @@ async def _lexical_leg(
     except Exception as e:  # noqa: BLE001 — vector-only degrade
         logger.warning("code.search lexical leg failed: %s", e)
         work["lexical_leg_failed"] = 1
-        return [], tokens, []
-    return rows, lex_tokens, idfs
+        return [], [], tokens, []
+    if rows and "in_pool" in rows[0]:
+        pool = [r for r in rows if r["in_pool"]]
+        return pool, [r for r in rows if r["lex_rank"] <= _POOL], lex_tokens, idfs
+    return rows, rows, lex_tokens, idfs
 
 
 async def _lexical_terms(

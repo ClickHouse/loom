@@ -605,13 +605,28 @@ model and path scope because the text index has no token for them.
 For a question about the implementation, ranking multiplies the score of a test,
 example or benchmark path and of a prose file by a penalty. A test word in the query
 turns off the test-path penalty, the fan-in prior, the kind prior and saturation, and
-leaves the prose penalty on. A doc word turns off the prose penalty only. The lexical
-leg cuts its pool on its score times the two path penalties in force for the query,
-so the rows that ranking demotes do not take the pool from the rows it keeps. A test
-or prose row whose penalised score misses the pool is not a lexical candidate; it can
-still enter through the vector leg, which is not cut. The rows that make the pool
-keep the rank of their own score. Calibration reads the legs after the cut, so leg
-agreement and the fused head count the rows the pool holds.
+leaves the prose penalty on. A doc word turns off the prose penalty only.
+
+The lexical leg cuts its pool on the same two penalties. Fusion gives a row of the leg
+`1 / (60 + rank)`, and ranking multiplies that vote by the penalty of the row's path. A
+pool of the leg's first 200 rows by rank therefore drops source rows whose vote counts
+for more than the vote of the test and prose rows it keeps. The leg keeps the 200 rows
+with the largest `penalty / (60 + rank)` instead:
+
+- **A row keeps its rank in the whole leg** and votes with it, so a row in the pool
+  scores what it would if the leg returned every row. A source row admitted from rank
+  340 votes `1 / 400`.
+- **A test or prose row leaves the pool only when 200 rows count for more.** The leg's
+  first-ranked test row votes `0.35 / 61`, as much as a source row at rank 114, and
+  stays.
+- **The scan reads a bounded depth.** No row past rank `260 / f - 60` can be in the
+  pool, where `f` is the smallest factor a path can get: 2,912 rows for the default
+  penalties together, 980 for the prose penalty alone, at most 10,000.
+- **Calibration does not read the cut.** The statement also returns the leg's own
+  first 200 rows, and leg agreement, the top similarity and abstention are computed on
+  those, as without the penalties.
+
+The vector leg and the concept leg are not cut.
 
 After relevance ranking, per-file saturation spreads broad search results across
 files. It is skipped for an explicit path, a symbol route, test intent, or a

@@ -1,5 +1,5 @@
 """The lexical gate admits every scored identifier and rejects partial tokens, and
-the pool is cut on the path penalties."""
+the pool is cut on the vote the path penalties leave each row."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ async def test_identifier_gate_keeps_identity_model_prefix_and_pool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_path_penalty_keeps_the_pool_for_source_rows() -> None:
+async def test_the_pool_is_cut_on_the_vote_each_row_has_in_the_ranking() -> None:
     rows = (
         _row("tests/test_merge.py", "merge tree select"),
         _row("docs/merge.txt", "merge tree select"),
@@ -79,22 +79,52 @@ async def test_a_path_penalty_keeps_the_pool_for_source_rows() -> None:
         _row("src/CMakeLists.txt", "merge tree"),
     )
     tokens, idfs = ["merge", "tree", "select"], [1.0, 1.0, 1.0]
+    first_two = {"tests/test_merge.py", "docs/merge.txt"}
 
-    async def pool(n: int, **penalties: float) -> list[tuple[str, float]]:
-        found = await _repo(*rows).lexical_search_chunks(
+    async def leg(n: int, **penalties: float) -> list[dict]:
+        return await _repo(*rows).lexical_search_chunks(
             "o", "n", "m", tokens, idfs, pool=n, **penalties
         )
-        return [(r["path"], r["lex_score"]) for r in found]
 
-    # the test and the doc match one more term, so they are the whole pool
-    assert {p for p, _ in await pool(2)} == {"tests/test_merge.py", "docs/merge.txt"}
-    # cut on the ranking's factors, the pool goes to the source rows
-    cut = await pool(2, noise_penalty=0.35, prose_penalty=0.25)
-    assert {p for p, _ in cut} == {"src/merge.py", "src/CMakeLists.txt"}
+    def pool(found: list[dict]) -> list[tuple[str, float, int]]:
+        return [(r["path"], r["lex_score"], r["lex_rank"]) for r in found if r["in_pool"]]
+
+    # the test and the doc match one more term, so they are the leg's first two rows
+    assert {r["path"] for r in await leg(2)} == first_two
+    # a source row at rank 3 votes 1/63, the test row at most 0.35/61: the pool goes
+    # to the source rows, which keep their ranks in the whole leg
+    cut = await leg(2, noise_penalty=0.35, prose_penalty=0.25)
+    assert {p for p, _, _ in pool(cut)} == {"src/merge.py", "src/CMakeLists.txt"}
+    assert [(score, rank) for _, score, rank in pool(cut)] == [(2.0, 3), (2.0, 4)]
+    # the leg's own first two rows come back beside the pool, in rank order
+    assert [r["lex_rank"] for r in cut] == [1, 2, 3, 4]
+    assert {r["path"] for r in cut if not r["in_pool"]} == first_two
     # a test row that makes the cut keeps its rank and its score
-    kept = await pool(3, noise_penalty=0.35, prose_penalty=0.25)
-    assert kept[0] == ("tests/test_merge.py", 3.0)
-    assert {p for p, _ in kept[1:]} == {"src/merge.py", "src/CMakeLists.txt"}
+    kept = pool(await leg(3, noise_penalty=0.35, prose_penalty=0.25))
+    assert kept[0][:2] == ("tests/test_merge.py", 3.0) and kept[0][2] in (1, 2)
+    assert {p for p, _, _ in kept[1:]} == {"src/merge.py", "src/CMakeLists.txt"}
     # a question that asks for tests cuts on the prose factor alone
-    asked = await pool(2, prose_penalty=0.25)
-    assert asked[0] == ("tests/test_merge.py", 3.0) and asked[1][0].startswith("src/")
+    asked = pool(await leg(2, prose_penalty=0.25))
+    assert asked[0][:2] == ("tests/test_merge.py", 3.0) and asked[1][0].startswith("src/")
+
+
+@pytest.mark.asyncio
+async def test_a_first_ranked_test_row_outlasts_source_rows_that_match_less() -> None:
+    """The test row matches all three terms and 130 source rows match two. Its vote,
+    0.35/61, is worth a source row at rank 115, so a pool of 120 keeps it at rank 1
+    beside the 119 best source rows. A cut on score times factor (3 x 0.35 under 2)
+    would have dropped it for any pool under 131."""
+    source = (
+        "INSERT INTO loom.code_chunks (org, namespace, embedding_model, path, chunk_id, "
+        "content, lexemes, embedding) SELECT 'o', 'n', 'm', concat('src/m', toString(number), "
+        "'.py'), generateUUIDv4(), '', 'merge tree', arrayResize([0.1], 3072, 0.1) "
+        "FROM numbers(130)"
+    )
+    repo = _repo(_row("tests/test_merge.py", "merge tree select"), source)
+    found = await repo.lexical_search_chunks(
+        "o", "n", "m", ["merge", "tree", "select"], [1.0, 1.0, 1.0], pool=120, noise_penalty=0.35
+    )
+    assert [(r["lex_rank"], bool(r["in_pool"])) for r in found] == [
+        (rank, True) for rank in range(1, 121)
+    ]
+    assert found[0]["path"] == "tests/test_merge.py"

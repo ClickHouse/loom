@@ -120,8 +120,14 @@ class _SearchState:
     card_stats: dict[str, Any] = dc_field(default_factory=dict)
     concept_stats: dict[str, Any] = dc_field(default_factory=dict)
     lex_weight: float = 1.0
+    # the factors the ranking multiplies a (test path, prose file) by on this query,
+    # 1.0 = not applied; the lexical leg cuts its pool on the same pair
+    path_penalties: tuple[float, float] = (1.0, 1.0)
     # what the legs returned (their empty values when a deadline dropped one)
     lexical_rows: list[dict[str, Any]] = dc_field(default_factory=list)
+    # the lexical leg's own first rows, which calibration reads: `lexical_rows` itself
+    # unless the leg cut its pool on `path_penalties`
+    lexical_head: list[dict[str, Any]] = dc_field(default_factory=list)
     lex_tokens: list[str] = dc_field(default_factory=list)
     idfs: list[float] = dc_field(default_factory=list)
     vector_rows: list[dict[str, Any]] = dc_field(default_factory=list)

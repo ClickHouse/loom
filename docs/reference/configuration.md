@@ -653,7 +653,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_TRACE_LOG_ENABLED` | `bool` | `True` |  | Fire-and-forget code_search_trace/code_search_outcome telemetry. |
-| `LOOM_CODE_FUSION_SIGNALS` | `bool` | `True` |  | Post-fusion rank priors in code.search (path-noise penalty, query↔path stem affinity, file coherence), applied after RRF and before the outcome boost. Kill switch. |
+| `LOOM_CODE_FUSION_SIGNALS` | `bool` | `True` |  | Rank priors in code.search (the test-path and prose penalties, query↔path stem affinity, file coherence), applied after RRF and before the outcome boost. The lexical leg also picks its candidates on the two path penalties, before RRF, so they can move `retrieval_confidence` and `abstain`. Kill switch for both. |
 | `LOOM_CODE_SEARCH_QUERY_MAX_TOKENS` | `int` | `48` |  | Long-question trim: past this many lexemes the question is treated as an issue body (template headings stripped, the rarest 32 tokens gate, the first 512 cleaned words embed). Under the cap nothing changes. 0 = off. |
 | `LOOM_CODE_SEARCH_FILE_SATURATION` | `float` | `0.5` |  | Per-file saturation: the 2nd, 3rd... unit from one path is multiplied by decay^excess before the cut; a file's best unit never decays. 0 = off. Skipped under path_prefix, symbol routes and test intent. |
 | `LOOM_CODE_SEARCH_VECTOR_MODELS` | `str` | `''` |  | CSV of vector-model specs a request may name as `vector_model` (e.g. "prefix:512:text-embedding-3-large"); only the vector leg switches. Empty = the override is refused. |
@@ -686,7 +686,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_SEARCH_RERANK_TOP` | `int` | `20` |  | How many fused units the default rerank reads. |
 | `LOOM_CODE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `300` |  | Characters of each candidate shown to the default rerank (path and signature first, then the body head). |
 | `LOOM_CODE_SEARCH_CATALOGUE_PENALTY` | `float` | `1.0` |  | Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the question kinds `code_search_catalogue_kinds` names; 1.0 = off. |
-| `LOOM_CODE_SEARCH_PROSE_PENALTY` | `float` | `0.25` |  | Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off. |
+| `LOOM_CODE_SEARCH_PROSE_PENALTY` | `float` | `0.25` |  | Multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths. The ranking multiplies the fused score by it, and the lexical leg picks its candidates on each row's vote times it, before RRF, so it can move `retrieval_confidence` and `abstain`. A smaller value makes the lexical leg read deeper. 1.0 = off. |
 | `LOOM_CODE_SEARCH_KIND_PRIOR` | `'off' \| 'default' \| 'flat' \| 'structural'` | `'flat'` |  | Chunk-kind ranking prior when the request names none: structural boosts the kind named by the question; flat/default apply fixed tables; off disables it. |
 | `LOOM_CODE_SEARCH_CATALOGUE_KINDS` | `str` | `'responsibility'` |  | The question kinds `code_search_catalogue_penalty` applies to. |
 | `LOOM_CODE_FAN_IN_PRIOR_CAP` | `float` | `0.25` |  | Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool); skipped under test intent and on noise paths; inert without the stats. 0 = off. |

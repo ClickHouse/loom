@@ -109,17 +109,13 @@ async def _gather_legs(
         concept_stats=st.concept_stats,
         llm_legs=llm_legs,
     )
-    # The lexical pool is cut on the path penalties `_rank_units` will apply (none with
-    # the fusion signals off), so calibration reads the rows the ranking keeps
-    path_penalties = (
-        pool_penalties(query, prose_eligible=not constrained and shape != "symbol")
-        if settings.code_fusion_signals
-        else (1.0, 1.0)
-    )
+    # The path penalties of this query, decided once: the lexical leg cuts its pool on
+    # them and `_rank_units` multiplies by them
+    st.path_penalties = pool_penalties(query, prose_eligible=not constrained and shape != "symbol")
     # the fuzzy-symbol vote needs the query alone, so it runs beside the legs; under a
     # deadline a late leg is dropped and named
     (
-        (st.lexical_rows, st.lex_tokens, st.idfs),
+        (st.lexical_rows, st.lexical_head, st.lex_tokens, st.idfs),
         (st.vector_rows, st.qvec),
         st.history_rows,
         st.history_units,
@@ -141,9 +137,9 @@ async def _gather_legs(
                     work=work,
                     path_prefix=path_prefix,
                     scope=scope if constrained else None,
-                    path_penalties=path_penalties,
+                    path_penalties=st.path_penalties,
                 ),
-                ([], tokens, []),
+                ([], [], tokens, []),
             ),
             "vector": (
                 _vector_leg_rows(

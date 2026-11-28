@@ -3,22 +3,33 @@ capped voting lists — and which leg found each chunk."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from server.code.app.search.state import _SearchState
 from server.code.app.spans import code_span, span_attrs
+from server.code.domain.index.pool_cut import RRF_K as _RRF_K
 from server.settings import settings
 
-_RRF_K = 60.0
+
+def _leg_ranks(rows: list[dict[str, Any]]) -> Iterator[tuple[int, dict[str, Any]]]:
+    """(rank, row) for a content leg's rows, 1-based: the rank the leg gave the row
+    among everything it scored. The lexical leg says it on the row (`lex_rank`) when it
+    cut its pool on the path penalties; otherwise the rank is the row's position."""
+    for position, r in enumerate(rows, start=1):
+        yield int(r.get("lex_rank") or position), r
 
 
-def _fuse(st: _SearchState) -> tuple[list[tuple[dict[str, Any], float]], str]:
-    """Fuse the legs' rows into one scored list; returns (fused, the fusion label)."""
+def _fuse(
+    st: _SearchState, lexical_rows: list[dict[str, Any]]
+) -> tuple[list[tuple[dict[str, Any], float]], str]:
+    """Fuse `lexical_rows` (the leg's pool for the ranking, its head for calibration)
+    with the other legs' rows into one scored list; returns (fused, the fusion label)."""
     lex_weight = st.lex_weight
     fusion_kind = "rrf" if lex_weight == 1.0 else f"rrf(lex_w={lex_weight:g})"
     with code_span("search.fuse", route="rrf") as sp:
         fused = _rrf_fuse(
-            st.lexical_rows,
+            lexical_rows,
             st.vector_rows,
             st.history_rows,
             history_cap=st.history_cap,
@@ -38,13 +49,13 @@ def leg_provenance(
     lexical_rows: list[dict[str, Any]], vector_rows: list[dict[str, Any]]
 ) -> dict[str, tuple[str, int, int]]:
     """chunk_id -> (via, lexical_rank, vector_rank) from the two leg pools as
-    the legs returned them (1-based, first occurrence; 0 = not in that leg).
+    the legs ranked them (`_leg_ranks`; first occurrence; 0 = not in that leg).
     via is "both" | "lexical" | "vector"."""
     lex: dict[str, int] = {}
-    for i, r in enumerate(lexical_rows, start=1):
+    for i, r in _leg_ranks(lexical_rows):
         lex.setdefault(str(r["chunk_id"]), i)
     vec: dict[str, int] = {}
-    for i, r in enumerate(vector_rows, start=1):
+    for i, r in _leg_ranks(vector_rows):
         vec.setdefault(str(r["chunk_id"]), i)
     out: dict[str, tuple[str, int, int]] = {}
     for cid in lex.keys() | vec.keys():
@@ -92,17 +103,17 @@ def _rrf_fuse(
     hyde_cap: float | None = None,
     lexical_weight: float = 1.0,
 ) -> list[tuple[dict[str, Any], float]]:
-    """Reciprocal-rank fusion, k=60, unchanged for the two content legs. The optional
-    history list is fused with the same operator, except that each of its rows
-    contributes at most `history_cap` x the top two-leg score: a file the history names
-    is lifted among the content legs' candidates, never above the best of them on its
-    own."""
+    """Reciprocal-rank fusion, k=60, unchanged for the two content legs: each row
+    votes with its rank in its leg (`_leg_ranks`). The optional history list is fused
+    with the same operator, except that each of its rows contributes at most
+    `history_cap` x the top two-leg score: a file the history names is lifted among the
+    content legs' candidates, never above the best of them on its own."""
     scores: dict[str, float] = {}
     rep: dict[str, dict[str, Any]] = {}
     # The lexical list may weigh less than the vector list (a responsibility question's
     # words are the corpus's common words)
     for rows, weight in ((lexical_rows, float(lexical_weight)), (vector_rows, 1.0)):
-        for rank, r in enumerate(rows, start=1):
+        for rank, r in _leg_ranks(rows):
             cid = str(r["chunk_id"])
             rep.setdefault(cid, r)
             scores[cid] = scores.get(cid, 0.0) + weight / (_RRF_K + rank)

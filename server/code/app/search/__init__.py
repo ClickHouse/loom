@@ -30,7 +30,7 @@ Modules, each importing only from those listed before it:
 - `voting`: which voting legs a question gets and what they decide.
 - `gather`: route 2's legs, run beside each other under the budget.
 - `fusion`: RRF or comparable-score fusion, and leg provenance.
-- `calibrate`: calibration and abstention on the fused legs.
+- `calibrate`: calibration and abstention on the raw fusion.
 - `rerank`: the optional rerank pass.
 - `rank`: fused rows to ranked units through every prior.
 - `track`: the track_path diagnostic.

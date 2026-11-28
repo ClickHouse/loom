@@ -70,10 +70,9 @@ def _dir_match(path: str, recent_dirs: list[str]) -> bool:
 # recall@10 over plain RRF, all deterministic and LLM-free. Path-noise prior:
 # test/example/fuzzer code (`path_class.is_noise_path`) is indexed on purpose (agents
 # ask "how is X tested"), but for a conceptual question the implementation should
-# outrank its tests. The ranking demotes such a row and never drops it. The lexical leg
-# cuts its pool on the same factor (`pool_penalties`), so a test or prose row whose
-# score times its factor misses the pool is not a lexical candidate; it can still
-# enter through the vector leg.
+# outrank its tests: demote, never drop. The lexical leg cuts its pool on the same
+# factor (`pool_penalties`): it keeps the rows whose vote times the factor is largest,
+# so a test row leaves the pool only when that many rows count for more.
 # 0.35 with tests/ and ci/ in the corpus: a grid on the C++ conceptual fixture (penalty
 # {0.5, 0.35, 0.25}) read r@5 0.741/0.769/0.769, r@10 0.801/0.810/0.810 — knee at 0.35,
 # recovering most of the dilution the larger corpus caused (0.778 without tests/ and
@@ -173,42 +172,40 @@ _TEST_INTENT_TOKENS = frozenset(
 )
 
 
-def _path_factors(q_tokens: frozenset[str], prose_penalty: float) -> tuple[float, float]:
-    """The factors a test path and a prose file are multiplied by for a query's lexemes
-    (1.0 = not applied): a test word turns the first off, a doc word the second.
-    `prose_penalty` is `_prose_penalty`'s answer for the search."""
+def pool_penalties(query: str, *, prose_eligible: bool) -> tuple[float, float]:
+    """The factors the ranking multiplies a test path and a prose file by on this query
+    (1.0 = not applied): a test word turns the first off, a doc word the second, and
+    both are off with the fusion signals. `prose_eligible` is False for a search
+    constrained to paths and for a symbol lookup. The lexical leg cuts its pool on the
+    pair and `_apply_fusion_signals` multiplies by it."""
+    if not settings.code_fusion_signals:
+        return 1.0, 1.0
+    q_tokens = frozenset(code_tokens(query))
     return (
         1.0 if q_tokens & _TEST_INTENT_TOKENS else _NOISE_PENALTY,
-        1.0 if q_tokens & _DOC_INTENT_TOKENS else prose_penalty,
+        1.0 if q_tokens & _DOC_INTENT_TOKENS else _prose_penalty(eligible=prose_eligible),
     )
-
-
-def pool_penalties(query: str, *, prose_eligible: bool) -> tuple[float, float]:
-    """The factors `_apply_fusion_signals` multiplies a test path and a prose file by on
-    this query, for the lexical leg to cut its pool on: a row the ranking will demote
-    must not take a pool slot from one it will keep."""
-    return _path_factors(frozenset(code_tokens(query)), _prose_penalty(eligible=prose_eligible))
 
 
 def _apply_fusion_signals(
     ranked: list[CodeUnit],
     query: str,
     *,
+    path_penalties: tuple[float, float],
     prior_cap: float = 0.0,
     catalogue_penalty: float = 1.0,
-    prose_penalty: float = 1.0,
 ) -> list[CodeUnit]:
     """Path-noise penalty, stem affinity, embedded-identifier boost, file coherence —
     and, when `prior_cap` > 0, the fan-in prior: x(1 + cap * log1p(fan_in) / log1p(max
     fan_in in the pool)), read from CodeUnit.fan_in, skipped under test intent and on
     noise paths (the same two exemptions as the penalty), never applied to a unit
-    without callers. Calibration ran before this on the fused legs: of these signals
-    only the two path penalties reach abstention, through the pool the lexical leg cut
-    on them. Default cap 0 = the prior is not computed."""
+    without callers. `path_penalties` is the query's `pool_penalties` pair, the one the
+    lexical leg cut its pool on. Calibration ran before this on the raw fusion, so
+    abstention is unaffected. Default cap 0 = the prior is not computed."""
     if not ranked:
         return ranked
     q_tokens = frozenset(code_tokens(query))
-    noise_penalty, prose_penalty = _path_factors(q_tokens, prose_penalty)
+    noise_penalty, prose_penalty = path_penalties
     test_intent = bool(q_tokens & _TEST_INTENT_TOKENS)
     keywords = frozenset(t for t in q_tokens if len(t) > 2 and t not in _QUERY_STOPWORDS)
     embedded = embedded_idents(query)

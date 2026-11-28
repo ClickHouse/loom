@@ -1,4 +1,4 @@
-"""Calibration and abstention on the fused legs, before any prior reorders them."""
+"""Calibration and abstention on the raw fusion, before any prior reorders it."""
 
 from __future__ import annotations
 
@@ -21,13 +21,11 @@ def _calibrate(
     """Calibrate the fused list and decide abstention on it, before any
     prior reorders it; returns whether the two content legs agreed.
 
-    The lexical rows are the pool the leg cut on the path penalties
-    (`priors.pool_penalties`), so the fused head and leg agreement are read
-    from the rows the ranking keeps: a test or prose row the cut left out
-    no longer leads the fusion or makes the legs agree. The vector rows are
-    not cut."""
+    `fused` and the lexical rows read here are the leg's own first rows
+    (`st.lexical_head`), not the pool it cut on the path penalties: the
+    penalties are priors, and no prior decides abstention."""
     result, constrained, fuzzy_hit = st.result, st.constrained, st.fuzzy_hit
-    lexical_rows, vector_rows = st.lexical_rows, st.vector_rows
+    lexical_rows, vector_rows = st.lexical_head, st.vector_rows
     card_gate, card_stats, concept_stats = st.card_gate, st.card_stats, st.concept_stats
     # similarity signal for calibration: cosine of the top vector hit when the
     # vector leg ran; else the lexical top presence stands in at the floor.
