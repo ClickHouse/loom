@@ -9,7 +9,7 @@ The `loom` plugin for Claude Code does three things in one install:
   call, and the agent has nothing to remember to do.
 - **Steers the agent to the code index** inside a Loom-indexed repository. Whole-file
   reads and tree-wide greps are redirected to `code.*` operations, and an edit gets the
-  file's rules before it and its blast radius after it.
+  file's rules before it, and its blast radius and the tests linked to the file after it.
 
 Source: `integrations/claude-code-plugin/`, Node ESM scripts with no dependencies. The
 Codex build runs the same scripts; see [codex.md](codex.md).
@@ -55,9 +55,12 @@ end of this section are the exceptions. The plugin sends:
 - token usage and the model name (Claude Code only);
 - after each edit in an indexed checkout, the outline of that file's uncommitted diff
   against `HEAD`, to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);
-- at Stop in an indexed checkout, the outline of the diff of the files the session
-  changed, or of the whole uncommitted tree when the client gives no transcript, to
-  `code.test_gate` (`LOOM_TEST_GATE=off` stops it). A diff's outline, up to 200,000
+- the first time a session changes a file in an indexed checkout, with an edit tool or a
+  shell command that names it, the outline of that file's uncommitted diff, to
+  `code.test_gate` (`LOOM_TEST_GATE=off` stops it), and once more at the Stop of a
+  session that ran no test since its last code change, for the files it changed. With
+  `LOOM_TEST_GATE=block` the outline goes at Stop only, for the files the session changed,
+  or for the whole uncommitted tree when the client gives no transcript. A diff's outline, up to 200,000
   characters, is its file paths, its hunk line ranges and, in a code file, the last
   identifier before the first `(` of each hunk header's context, usually the enclosing
   function's name. Git takes that context from a line above the hunk in the old file,
@@ -185,8 +188,8 @@ Every option is optional; Claude Code asks once, and an empty answer falls back 
 Count agent tool calls and hook requests separately. Before Claude chooses a tool,
 the prompt hook can search the code index and supply matching symbols and line ranges.
 Claude can use those pointers through a targeted `Read` with no explicit Loom tool call.
-The test gate also calls `code.test_gate` itself; it names test obligations and does not
-execute the tests. Zero explicit calls alone does not establish that Loom was unused.
+The test gate also calls `code.test_gate` itself; it names the tests linked to a changed
+file and does not execute them. Zero explicit calls alone does not establish that Loom was unused.
 
 Check the setup in this order:
 
@@ -276,7 +279,14 @@ local-only changes and self-contained requests. Ambiguous or empty typed answers
 not trigger another automatic lookup. Search pointers are sent only when
 the index labels its own answer low-risk (or, with `LOOM_PROMPT_PACK_MIN_CONF`
 set, from that confidence) and never when it abstains; they are candidates, and
-the text does not tell the model to stop searching. Supply a task inside `<issue>...</issue>` when a harness adds instructions;
+the text does not tell the model to stop searching. A search with no semantic leg
+reads `medium` (confidence 0.5), so it sends no search pointers: a server with no
+embedding model, or a vector leg that failed or missed its deadline.
+`LOOM_PROMPT_PACK_MIN_CONF=0.5` sends them there too, and then also for every
+indexed-code prompt whose confidence is 0.5 or more. A code namespace an
+administrator has not calibrated can read answerable prompts `medium` or `high` and
+send none
+([`code.calibrate`](../../operations/code-index-operations.md#first-index)). Supply a task inside `<issue>...</issue>` when a harness adds instructions;
 the existing query helper extracts that block.
 
 Memory recall's default `first` mode makes one attempt on the first qualifying prompt,
@@ -384,11 +394,24 @@ It stays quiet for untracked files, empty diffs, repeated impact results, an una
 index or a failed request. Edits performed through `Bash`, including scripts using
 `python` or `sed`, do not match either edit hook.
 
+The test gate's line does follow a shell edit. It runs on `PostToolUse` after `Bash` and
+`PowerShell`, and rides the blast-radius hook after `Edit`, `Write` and `MultiEdit`. It
+emits one line per changed file, `Loom tests for <file>: <command>`, the first time the
+session changes that file, and only when the command names the file's path, the file
+differs from `HEAD`, it was written after the session began, and there is something to
+name: a test the index links to it and the checkout has, the file itself when it is a
+test, or, with no such test, the changed functions the index links no test to. It
+stays quiet for a file whose tests an earlier line named or the command itself ran, a
+comment-only change, an untracked file, a file already asked about in the session, an
+unavailable index or a request that failed twice, and always with `LOOM_TEST_GATE=block`
+or `off`.
+
 Headless sessions support `hookSpecificOutput.additionalContext`; ordinary visible
 assistant output does not prove whether that context reached the model. Capture
 `--debug hooks,mcp` output privately and redact tokens and authorization headers before
 sharing it. Include the hook event, tool name, hook output and relevant stream events.
-Correlate them with server requests to `memory.for_file` and `code.impact` to distinguish
+Correlate them with server requests to `memory.for_file`, `code.impact` and
+`code.test_gate` to distinguish
 hook matching, request execution, nonempty context and delivery to the agent.
 
 ## Configuration
@@ -460,18 +483,20 @@ The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
 | SessionStart                                      | `loom-session-start.mjs`    | one budgeted `context.pack` primer (working-memory note, pins, profile, memories, decisions, procedures, recent runs), one line naming an indexed checkout's code namespace and the repository's memory tag, a line naming the project's saved session briefs, a task-inbox line (`task.counts`), and a few lines naming the collections the token can read (`collection.list`) | `LOOM_INJECT_CONTEXT=false`, `LOOM_CODE_MAP=false`, `LOOM_TASK_INBOX_LINE=off`, `LOOM_COLLECTIONS_LINE=off` |
 | UserPromptSubmit                                  | `loom-prompt-pack.mjs`      | up to three `code.search` pointers for the prompt, only when the index rates its answer low-risk                                                                                                                                                                                                                                                                                | `LOOM_PROMPT_PACK=off`                                                                                      |
 | UserPromptSubmit                                  | `loom-prompt-recall.mjs`    | one bounded `context.pack` recall for the prompt (memories, decisions, procedures), injected only when memory does not abstain                                                                                                                                                                                                                                                  | `LOOM_PROMPT_RECALL=first` (default) / `on` / `off`                                                         |
-| UserPromptSubmit                                  | `loom-run.mjs`              | opens the session's run (`run.begin`, `run_id = cc-<session_id>`, goal = the first prompt)                                                                                                                                                                                                                                                                                      | `LOOM_RUN_LEDGER=off`                                                                                       |
+| UserPromptSubmit                                  | `loom-run.mjs`              | opens the session's run (`run.begin`, `run_id = cc-<session_id>`, goal = the first prompt); the prompt does not wait for it                                                                                                                                                                                                                                                     | `LOOM_RUN_LEDGER=off`                                                                                       |
 | PreToolUse (Read, Grep, Bash)                     | `loom-code-shunt.mjs`       | the code shunt and the tracker shunt ([next section](#the-code-shunt))                                                                                                                                                                                                                                                                                                          | `LOOM_CODE_SHUNT=off`, `LOOM_TRACKER_SHUNT=off`                                                             |
 | PreToolUse (Edit, Write, MultiEdit, NotebookEdit) | `loom-file-context.mjs`     | what Loom knows about the file about to change (`memory.for_file`): your rules and the repository's shared rules and design decisions; once per file per 30 min                                                                                                                                                                                                                 | `LOOM_FILE_CONTEXT=off`                                                                                     |
 | PostToolUse (Loom tools)                          | `loom-mentor-hint.mjs`      | lifts a result's `hint` into context, once per hint code per session                                                                                                                                                                                                                                                                                                            | `LOOM_MENTOR_HINTS=off`                                                                                     |
-| PostToolUse (Edit, Write, MultiEdit)              | `loom-blast-radius.mjs`     | one line from `code.impact`: callers, tests reaching the change, co-change files not yet touched                                                                                                                                                                                                                                                                                | `LOOM_BLAST_RADIUS=off`                                                                                     |
+| PostToolUse (Edit, Write, MultiEdit)              | `loom-blast-radius.mjs`     | one line from `code.impact`: callers, tests reaching the change, co-change files not yet touched; on a file's first edit, the test gate's line beside it in place of the tests                                                                                                                                                                                                  | `LOOM_BLAST_RADIUS=off`                                                                                     |
+| PostToolUse (Bash, PowerShell)                    | `loom-test-gate.mjs`        | one line per file the command changed, naming the command of the file's tests, or the changed functions the index links no test to (`code.test_gate`); once per file and per test per session, on the tool result ([the test gate](#the-test-gate))                                                                                                                             | `LOOM_TEST_GATE=off`                                                                                        |
+| UserPromptSubmit                                  | `loom-record.mjs`           | the prompt's one process: runs `loom-prompt-pack` and `loom-prompt-recall` in the hook and prints their context as one answer, writes the run's begin to the session's run state, and hands the prompt's recording scripts (`loom-run`, the namespace audit) to a detached process                                                                                              | each script's own                                                                                           |
 | PostToolUse, PostToolUseFailure, Stop, SessionEnd | `loom-record.mjs`           | runs the event's recording scripts (the rows below for those events, the gates excepted) in one process: detached after a tool call and at Stop, so the session does not wait for their requests, and in the hook itself at SessionEnd                                                                                                                                          | each script's own                                                                                           |
 | PostToolUse, PostToolUseFailure (any tool)        | `loom-capture.mjs`          | one episodic observation per tool call (`observe.record`); a failed call is typed `error`                                                                                                                                                                                                                                                                                       | none                                                                                                        |
 | Stop, SessionEnd                                  | `loom-conversation.mjs`     | appends new chat turns to the conversation plane (`conversation.append`)                                                                                                                                                                                                                                                                                                        | `LOOM_CAPTURE_CONVERSATIONS=false`                                                                          |
 | Stop                                              | `loom-usage.mjs`            | posts the session's token usage to `cost.record_turns`                                                                                                                                                                                                                                                                                                                          | `LOOM_USAGE=off`                                                                                            |
-| Stop                                              | `loom-test-gate.mjs`        | for changes this session made, blocks "done" once with the tests `code.test_gate` says the change obliges, unless your latest prompt ends with "Do not run the tests", or pytest already ran them to its summary line, failures included, and nothing was edited or run since (exact conditions: **Answered stops** in the plugin README)                                       | `LOOM_TEST_GATE=off`                                                                                        |
+| Stop                                              | `loom-test-gate.mjs`        | for changes this session made, blocks "done" once with the tests `code.test_gate` says the change obliges, unless a test runner ran since the last code change or your latest prompt ends with "Do not run the tests"; with `LOOM_TEST_GATE=block`, unless pytest ran the named tests to its summary line and nothing was edited or run since ([the test gate](#the-test-gate)) | `LOOM_TEST_GATE=off`                                                                                        |
 | Stop                                              | `loom-validate-gate.mjs`    | blocks once when `namespace.validate` finds errors or warnings on the memory keys this session wrote                                                                                                                                                                                                                                                                            | `LOOM_VALIDATE_GATE=off`                                                                                    |
-| Stop                                              | `loom-namespace-health.mjs` | on the first Stop, one line when `namespace.audit` finds a critical misuse of the namespace, pointing at the `loom-optimize` skill                                                                                                                                                                                                                                              | `LOOM_NAMESPACE_HEALTH=off`                                                                                 |
+| Stop                                              | `loom-namespace-health.mjs` | one line when `namespace.audit` finds a critical misuse of the namespace, pointing at the `loom-optimize` skill; the audit is asked once per session, by the first prompt's detached process, and told at a Stop                                                                                                                                                                | `LOOM_NAMESPACE_HEALTH=off`                                                                                 |
 | Stop, PreCompact                                  | `loom-working-memory.mjs`   | refreshes the working-memory note (`session:<project>`): goal, git status, files edited, last reply                                                                                                                                                                                                                                                                             | `LOOM_WORKING_MEMORY=off`                                                                                   |
 | Stop, PreCompact, SessionEnd                      | `loom-capture.mjs`          | crystallises the session (`observe.crystallize`)                                                                                                                                                                                                                                                                                                                                | none                                                                                                        |
 | PreCompact, SessionEnd                            | `loom-session-brief.mjs`    | revises the branch's session brief (`session.brief_save`, key `auto/<project>/<branch>`)                                                                                                                                                                                                                                                                                        | `LOOM_SESSION_BRIEF=off`                                                                                    |
@@ -483,7 +508,7 @@ requests) run `node`, `git` and `grep` on your machine: `git` reads the checkout
 remotes, branch, `HEAD` commit, status and diffs, and `grep` searches uncommitted files
 for the pattern of a grep the plugin redirects to the code index. The `loom-session`
 skill's brief script also runs `git log` for the commits since the last brief. The test
-gate (the hook that, when a reply ends, names the tests a change needs) runs no Python:
+gate (the hook that names the tests of a file you change) runs no Python:
 for a pytest test it picks the interpreter of the checkout's virtualenv, the active one
 (`VIRTUAL_ENV`) or a `python3` or `python` on `PATH`, checking that the interpreter's file
 exists without running it.
@@ -507,17 +532,23 @@ that knows its outcome calls `run.complete` itself.
 
 **Safety.** A hook never blocks the agent on the network.
 
-- The scripts that only record (tool observations, conversation turns, usage, the
-  working-memory note) do not hold the session after a tool call or at Stop: one launcher
-  (`hooks/loom-record.mjs`) writes the event to a private file, starts one detached
-  process that runs them, and exits. That process outlives the hook and the client's
-  process. It does not outlive a machine or container that is torn down when the client
-  exits, which loses what the process had not sent by then.
+- The scripts that only record (the run's open, tool observations, conversation turns,
+  usage, the working-memory note) do not hold the session at a prompt, after a tool call
+  or at Stop: one launcher (`hooks/loom-record.mjs`) writes the event to a private file,
+  starts one detached process that runs them, and exits. That process outlives the hook
+  and the client's process. It does not outlive a machine or container that is torn down
+  when the client exits, which loses what the process had not sent by then.
+- At a prompt the launcher also runs the two lookups the prompt waits for (the code
+  pointers and the recall) in its own process and prints what they found as one answer,
+  so a prompt starts one process.
 - At SessionEnd the launcher runs the scripts itself (the last turns, the run's close,
   session memory, the session brief) and returns when they have, in about half a second.
   The run's close is answered by then. What the flusher carries (the last turns, session
   memory, the brief) has been handed to it, and a host torn down in that instant can lose
   it. PreCompact runs the scripts as hooks of their own.
+- The namespace audit is asked once per session by the first prompt's detached process,
+  and the first Stop that finds its verdict tells it. A Stop asks in place only when
+  that process died before its answer.
 - Their writes are fire-and-forget; slow ones (conversation, session memory, session
   brief) go to a detached flusher (`hooks/loom-flush.mjs`).
 - Every request aborts after 5 × the `/v1/health` round trip, clamped to 3–8 s and cached
@@ -567,9 +598,10 @@ Beyond the off switches in the table:
 | `LOOM_PROMPT_RECALL_MIN_CONF`  | `0.5`                     | minimum `retrieval_confidence` before the prompt recall injects anything                   |
 | `LOOM_PROMPT_RECALL_MAX_CHARS` | `1200`                    | cap on the injected recall                                                                 |
 | `LOOM_PROMPT_PACK_TOP_K`       | `3`                       | pointers per prompt (`LOOM_PROMPT_PACK=off` turns the pack off)                            |
-| `LOOM_PROMPT_PACK_MIN_CONF`    | unset                     | a `retrieval_confidence` gate for search pointers; unset, the index's low-risk label       |
+| `LOOM_PROMPT_PACK_MIN_CONF`    | unset                     | a `retrieval_confidence` gate for search pointers (low risk is 0.7 up); unset, that label  |
 | `LOOM_FILE_CONTEXT_TTL_MIN`    | `30`                      | minutes before the same file's context is fetched again                                    |
 | `LOOM_BLAST_DEPTH`             | `1`                       | `code.impact` depth for the blast-radius line                                              |
+| `LOOM_TEST_GATE`               | unset                     | `block`: no line at edit time, and a stop passes only on the named tests; `off`: no gate   |
 | `LOOM_TEST_GATE_DEPTH`         | `2`                       | hops the test gate follows (1–3)                                                           |
 | `LOOM_OBSERVE_DEDUPE_S`        | `60`                      | a repeated read in this window is not observed again; `0` disables                         |
 | `LOOM_OBSERVE_SKIP_TOOLS`      | a built-in list           | comma-separated tool names (with `*` globs) that produce no observation                    |
@@ -578,24 +610,67 @@ Beyond the off switches in the table:
 
 `integrations/claude-code-plugin/README.md` documents the remaining knobs.
 
+## The test gate
+
+The test gate tells the agent which tests constrain a file when it changes the file. In
+an indexed checkout, the tool call that first changes a file comes back with one extra
+line when Loom has a test to name for it:
+
+```text
+Loom tests for src/app/router.py: .venv/bin/python -m pytest tests/test_router.py
+```
+
+- **What it names.** For a source file, the tests `code.test_gate` links to it through
+  its name, the mined test map or the call graph, each of them present in the checkout.
+  For a test file, the file itself. A test is given as one command where the harness is
+  known (`LOOM_CODE_TEST_GATE_RUN_TEMPLATES` on the server adds yours) and by path where
+  it is not. For pytest the line names the checkout's interpreter without starting it.
+- **With no test to name.** A source file with no such test in the checkout gets the
+  changed functions in place of a command: `the index links no test to Router::match`.
+  That is the index's view, not a fact about your tests: its call graph is a floor, and
+  a test can reach a function the graph holds no edge to.
+- **When.** Once per file and once per test per session, on the result of the edit tool
+  or shell command that changed the file. It costs no model request, and a session that
+  never runs the tests has still been told which ones they are. A file is asked about at
+  its first change only, so a function changed later in the same file is not named. A
+  test that shell command itself runs is not named on its own result.
+- **At the end of the session.** A session that ran no test since its last code change
+  is held once per distinct change, with the tests the change obliges and the functions
+  the index links no test to. A held stop costs the session one more model request, so
+  any test run since that change lets the stop pass: a shell command that starts a test
+  runner and finished no earlier than the newest write among the code files the session
+  changed. A documentation or prose file (`.md`, `.rst`, `.txt`, a changelog) written
+  after the run holds nothing. The gate reads that command for a runner's name only. Which tests ran and how they went cannot be read
+  reliably from shell commands, so that judgement stays with the agent and with CI. The
+  plugin README lists the runners under **Stops that pass**.
+
+To hold the stop until the named tests ran on the final tree, set `LOOM_TEST_GATE=block`
+in the environment Claude Code starts in. The gate then prints nothing at edit time, and
+blocks "done" once per distinct change unless the transcript already answers the ask; the
+plugin README lists the exact conditions under **Answered stops**. That mode also holds a
+session that ran the tests in a way the gate does not read. `LOOM_TEST_GATE=off` turns
+the gate off.
+
 ## The code shunt
 
-Inside an indexed checkout, `loom-code-shunt.mjs` denies bulk reads and names the op to
-call instead: an identifier goes to `code.symbol`, a literal or regex to `code.grep`,
-words to `code.search`. The index answers with the enclosing unit and its callers, not a
-whole file.
+Inside an indexed checkout, `loom-code-shunt.mjs` denies a bulk read and puts the
+index's answer in the denial: a file's functions, methods, classes and structs with their
+lines and headers, a symbol's definition, the tracker's verdict. A denial costs the agent a
+request, so the hook gives one only when it holds that answer in full.
 
-| Tool call                                                                     | Denied when                                                                           |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `Read` of a whole file                                                        | the file is indexed, unmodified, and longer than `LOOM_SHUNT_MAX_LINES` (800)         |
-| `Read` with `offset` / `limit`, or a `sed -n` / `head` / `tail` / `awk` slice | the span exceeds `LOOM_SHUNT_READ_CAP` (0 = off); at most twice per file per session  |
-| `Grep` over a directory; `rg`, `grep -r`, `cat` in Bash                       | the scope is inside the indexed tree                                                  |
-| a grep for one symbol name in one file                                        | once per symbol per session, with the exact `code.symbol` call                        |
-| `gh issue list --search`, `gh search issues`                                  | once per query, answered by `tracker.duplicate_check` with the closest reported items |
+| Tool call                                                                     | Denied when                                                                                                  |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `Read` of a whole file                                                        | the file is indexed, unmodified, longer than `LOOM_SHUNT_MAX_LINES` (800), and outlined in full by the index |
+| `Read` with `offset` / `limit`, or a `sed -n` / `head` / `tail` / `awk` slice | the span exceeds `LOOM_SHUNT_READ_CAP` (0 = off); at most twice per file per session                         |
+| `cat`, `bat`, `nl` or `tac` of a whole file in Bash                           | the whole-file rule, when the read is the whole command                                                      |
+| a grep for one symbol name in one file                                        | once per symbol per session, when the index holds exactly one definition                                     |
+| `gh issue list --search`, `gh search issues`                                  | once per query, answered by `tracker.duplicate_check` with the closest reported items                        |
 
-Everything else passes: targeted reads, single-file greps, pipelines, files you modified
-or have not committed, unindexed repositories. The same command passes on the next try
-after a symbol or tracker-shunt denial.
+Everything else passes: targeted reads, greps over a directory, single-file greps, files
+you modified or have not committed, unindexed repositories, and any call the index does
+not answer in full within 2.5 s. A Bash command of several parts (`;`, `&&`, `||`, a newline or a pipe) is
+never denied, because a denial withholds every part; its reads and greps are still
+counted. The same command passes on the next try after a symbol or tracker-shunt denial.
 
 Staleness does not turn the shunt off: an unmodified file is answered as of its indexed
 commit, and the deny text names the commit. To search your working tree instead, set

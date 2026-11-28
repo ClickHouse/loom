@@ -62,9 +62,11 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
     """One paragraph per hit: `[date] [memory_key] (type) excerpt`, in the
     order `memory.ask` would read them for this question (chronological for
     temporal questions, rank order otherwise). A hit from `label_namespace`
-    names it beside its type: `(decision, code-acme)`. A hit whose linked code
-    changed, was not found again or went says so before its excerpt, and one whose
-    code is now at another name or path says where (`code_change.note`)."""
+    names it beside its type: `(decision, code-acme)`. A hit that names code says
+    before its excerpt which state its code is in, the commit its link was anchored
+    at and the day it was written, and one whose code is now at another name or path
+    says where (`code_change.hit_note`). The block then opens with what was compared
+    (`code_change.compared`)."""
     if not hits:
         return ""
     from server.memory.app.ask.rendering import evidence_order
@@ -81,13 +83,10 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
         if label_namespace and _get(h, "namespace") == label_namespace:
             mtype = f"{mtype}, {label_namespace}"
         text = str(_get(h, "content_excerpt") or "")[:_EXCERPT_CHARS]
-        code = code_change.note(
-            str(_get(h, "code_state") or ""),
-            str(_get(h, "code_changed_since") or ""),
-            _get(h, "code_moved") or [],
-        )
+        code = code_change.hit_note(h)
         parts.append(f"[{_date_of(h)}] [{key}] ({mtype}){code} {text}{_restatement_note(h, keys)}")
-    return "\n\n".join(parts)
+    compared = code_change.compared(str(_get(h, "code_state") or "") for h in ordered)
+    return "\n\n".join([compared, *parts] if compared else parts)
 
 
 def _restatement_note(h: Any, keys_in_block: set[str]) -> str:

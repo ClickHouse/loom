@@ -103,9 +103,11 @@ class CodeSymbolInput(_CodeIdentity):
     # `lesson_namespaces` (over MCP the caller's memory home by default) and the
     # repository's team namespace, each with its `code_state` (`fresh`, `moved`, or
     # `changed` when this branch's body differs from the one the memory was written
-    # against) and, when the memory was written against another path or symbol than the
-    # definition has now, `code_moved`: where it is (`path`, `symbol`, `start_line`,
-    # `end_line`) and what the memory's text still calls it (`was_path`, `was_symbol`).
+    # against), `rev` (the first 12 characters of the commit its link was anchored at),
+    # `first_written` (the day it was first written) and, when the memory was written
+    # against another path or symbol than the definition has now, `code_moved`: where it
+    # is (`path`, `symbol`, `start_line`, `end_line`) and what the memory's text still
+    # calls it (`was_path`, `was_symbol`).
     # `lessons_unread: true` when the read, or one matched member's, failed or ran
     # past its bound; the lessons then served may be incomplete.
     include_lessons: bool = True

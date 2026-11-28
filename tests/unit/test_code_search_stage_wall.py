@@ -250,7 +250,7 @@ def handler_env(monkeypatch: pytest.MonkeyPatch, clock: _Clock):
         return {"commit": "c" * 40}
 
     async def _thresholds(org, ns):
-        return 0.30, 0.22
+        return 0.30, 0.22, 0.62
 
     monkeypatch.setattr(h, "index_as_of", _as_of)
     monkeypatch.setattr(h, "resolve_code_thresholds", _thresholds)

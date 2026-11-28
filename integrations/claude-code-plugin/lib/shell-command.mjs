@@ -167,21 +167,16 @@ export function ghRepoSlug(value) {
   return m ? `${m[1]}/${m[2]}`.toLowerCase() : "";
 }
 
-/** A command line that may be a `&&` / `;` chain: the first segment that is a
- *  gh issue search, or null. Pipelines and redirects still disqualify a
- *  segment (their output is not a question), quotes are honoured. */
+/** The issue-search shape of a command that is one `gh` call, or null. A
+ *  command of several parts is not judged (isCompoundCommand, or a `&` that
+ *  starts a second command), and a redirect or an expansion disqualifies it
+ *  (its output is not a question); quotes are honoured. */
 export function ghIssueSearchInCommand(command) {
-  const c = String(command || "");
-  if (!c.trim()) return null;
-  for (const seg of splitOutsideQuotes(c, LIST_SEPARATORS)) {
-    const s = seg.trim();
-    if (!s) continue;
-    const bare = s.replace(/"(?:\\.|[^"\\])*"|'[^']*'/g, "");
-    if (/[|>`$]/.test(bare)) continue;
-    const shape = ghIssueSearchShape(shTokens(s));
-    if (shape) return shape;
-  }
-  return null;
+  const s = String(command || "").trim();
+  if (!s || isCompoundCommand(s)) return null;
+  const bare = s.replace(/"(?:\\.|[^"\\])*"|'[^']*'/g, "");
+  if (/[&>`$]/.test(bare)) return null;
+  return ghIssueSearchShape(shTokens(s.replace(/;\s*$/, "")));
 }
 
 /** `awk '/re/…' files`, `sed -n '/re/p' file`, `git grep [-n] pattern files`
@@ -220,7 +215,8 @@ export function patternSearchShape(cmd, t) {
 
 /** The span a shell read asks for: {kind:"read", file, offset, limit} — the
  *  same shape Read(offset, limit) carries, so classifyRead judges both alike
- *  (limit null = to the end of the file). null when the command is not a
+ *  (limit null = to the end of the file; a limit with no offset = the file's
+ *  last `limit` lines, `tail -n N`). null when the command is not a
  *  line-range read of one file (pattern-driven sed/awk, -c bytes, several
  *  files, unknown flags with values). */
 export function parseRangedShellRead(cmd, argv) {
@@ -385,6 +381,14 @@ export function parseBashBulk(command) {
 
 /** A command's list separators: `;`, `&&`, `||` and newlines. */
 const LIST_SEPARATORS = [";", "&&", "||", "\n"];
+
+/** True when a command has more than one part: a `;` / `&&` / `||` / newline
+ *  list or a pipeline, outside quotes. The shunt never refuses one: a refusal
+ *  withholds every part, and only one of them is the read it judged. */
+export function isCompoundCommand(command) {
+  const parts = splitOutsideQuotes(String(command || ""), [...LIST_SEPARATORS, "|"]);
+  return parts.filter((part) => part.trim()).length > 1;
+}
 
 /** `text` cut at each of `separators` that sits outside quotes; quotes are
  *  kept in the pieces. Longer separators are tried first so `||` is not

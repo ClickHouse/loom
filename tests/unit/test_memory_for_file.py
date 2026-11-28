@@ -43,6 +43,8 @@ def _row(key: str, value: str, **over: Any) -> dict[str, Any]:
         "status": "active",
         "agent": "claude-code",
         "updated_at": datetime(2026, 9, 11, 12, 0),
+        # its first write: the day a line prints beside a code state
+        "created_at": datetime(2026, 3, 2, 9, 0),
         "matched_files": ["src/a.cpp"],
     }
     base.update(over)
@@ -458,6 +460,34 @@ def test_a_more_line_from_a_left_out_constraint_fits_the_budget(
     assert any(ln.startswith("- … ") and "lists them" in ln for ln in lines)
 
 
+def test_a_more_line_from_a_constraint_left_out_by_its_sentence_fits_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A constraint whose line fits the ceiling and whose sentence on what was compared
+    does not is left out, and takes the older note with it: the "… more" line that adds
+    is inside the budget the notes alone would fill."""
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
+    older = _row("notes/old", json.dumps("Keep 32."), namespace="me")
+    newer = _superseding(
+        "rules/new", older, "n" * 100, "me", tags=["constraint"], code_state="fresh"
+    )
+    line = len(mff._row_line(newer, _NOW, "me")) + 1
+    assert line <= 200 < line + len(_INDEXED) + 1
+    header = "Loom: 3 memories anchored to src/a.cpp — read before editing:"
+    used = len(header) + len("- notes/old: Keep 32.") + 1
+    filler = _row(
+        "notes/f", json.dumps("f" * (240 - used - 1 - len("- notes/f: "))), namespace="me"
+    )
+    text, _, truncated = mff.render_block(
+        "src/a.cpp", [newer, older, filler], 60, home="me", now=_NOW
+    )
+    lines = text.splitlines()
+    assert truncated is True and "rules/new [constraint]" not in text and _INDEXED not in text
+    budgeted = "\n".join(ln for ln in lines if "decision or constraint" not in ln)
+    assert len(budgeted) <= 60 * mff.CHARS_PER_TOKEN
+    assert any(ln.startswith("- … ") and "lists them" in ln for ln in lines)
+
+
 def test_notes_that_fit_exactly_print_beside_a_constraint_left_out_at_the_ceiling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -819,18 +849,20 @@ def test_an_attestation_adds_no_note_whether_current_or_stale() -> None:
 
 
 def test_an_unpinned_decision_whose_code_changed_notes_only_the_code() -> None:
-    line = _lines([_decision("design/c", pinned=False, code_state="changed")])[1]
+    said, line = _lines([_decision("design/c", pinned=False, code_state="changed")])[1:3]
+    assert said == _INDEXED
     assert line.startswith(
-        "- Decision (by alice, 3 days ago) (its code changed since it was "
-        "written: check before relying on it): Decided X because Y."
+        "- Decision (by alice, 3 days ago) (code_state=changed first_written=2026-03-02) (its code"
+        " changed since it was written: check before relying on it): Decided X because Y."
     )
 
 
 def test_a_note_names_the_commit_its_code_changed_at() -> None:
     hit = _decision("design/c", pinned=False, code_state="changed", code_changed_since="ab" * 20)
-    assert _lines([hit])[1].startswith(
-        "- Decision (by alice, 3 days ago) (its code changed since it was written, commit "
-        "abababababab: check before relying on it): Decided X because Y."
+    assert _lines([hit])[2].startswith(
+        "- Decision (by alice, 3 days ago) (code_state=changed first_written=2026-03-02) (its code"
+        " changed since it was written, commit abababababab: check before relying on it):"
+        " Decided X because Y."
     )
 
 
@@ -845,6 +877,8 @@ _MOVED = {
     "was_symbol": "DB::Reader::fetchRows",
 }
 _MOVED_NOW = "`DB::Reader::fetchRows` is now `DB::Reader::loadRows` at src/a.cpp:12-40"
+# what a block says once when a row it prints holds a link
+_INDEXED = code_change.compared(["fresh"])
 
 
 def test_a_line_whose_code_moved_names_where_it_is_now() -> None:
@@ -858,11 +892,56 @@ def test_a_line_whose_code_moved_names_where_it_is_now() -> None:
     )
     plain = _row("rules/plain", json.dumps("Keep 64."), code_state="moved", code_moved=[])
     assert _lines([moved, edited, plain])[1:] == [
-        f"- rules/moved (code moved: {_MOVED_NOW}): Keep 32.",
-        "- rules/edited (its code changed since it was written, commit abababababab: check "
-        f"before relying on it; {_MOVED_NOW}): Keep 48.",
+        _INDEXED,
+        f"- rules/moved (code_state=moved first_written=2026-03-02) (code moved: {_MOVED_NOW}): Keep 32.",
+        "- rules/edited (code_state=changed first_written=2026-03-02) (its code changed since it was"
+        f" written, commit abababababab: check before relying on it; {_MOVED_NOW}): Keep 48.",
+        "- rules/plain (code_state=moved first_written=2026-03-02): Keep 64.",
+    ]
+
+
+def test_a_row_that_names_code_says_its_state_revision_and_write_day() -> None:
+    """A fresh row names the commit its link was anchored at; an unlinked one says so;
+    both print the text they were written with, under one sentence on what was compared.
+    A rule that names the file only in `files` prints as it did."""
+    cited = "Do not edit src/gen/table.py:1-50, set at lines 940-944."
+    fresh = _row("rules/fresh", json.dumps(cited), code_state="fresh", code_rev="ba5e" * 10)
+    past = mff._as_printed(_row("notes/past", json.dumps(cited)))
+    rule = mff._as_printed(_row("rules/plain", json.dumps("Keep 64.")))
+    assert (past["code_state"], rule.get("code_state")) == ("unlinked", None)
+    assert _lines([fresh, past, rule])[1:] == [
+        code_change.compared(["fresh", "unlinked"]),
+        f"- rules/fresh (code_state=fresh rev=ba5eba5eba5e first_written=2026-03-02): {cited}",
+        f"- notes/past (code_state=unlinked first_written=2026-03-02): {cited}",
         "- rules/plain: Keep 64.",
     ]
+    # each clause is about a row the block prints
+    assert _lines([fresh, rule])[1] == _INDEXED
+    assert _lines([past, rule])[1] == code_change.compared(["unlinked"])
+    assert _lines([rule])[1:] == ["- rules/plain: Keep 64."]
+
+
+def test_the_sentence_is_inside_the_budget_and_goes_with_the_row_it_is_about() -> None:
+    long = [_row(f"notes/n{i}", json.dumps("n" * 200)) for i in range(3)]
+    past = _row("notes/past", json.dumps("Keep 32 in src/a.cpp."), code_state="unlinked")
+    text, tokens, truncated = mff.render_block("src/a.cpp", [*long, past], 110, home="me", now=_NOW)
+    assert truncated and tokens <= 110 and len(text) <= 110 * mff.CHARS_PER_TOKEN
+    assert "notes/past" not in text and code_change.NOT_COMPARED not in text
+
+
+def test_a_row_left_out_takes_its_sentence_with_it() -> None:
+    """The row that prints with the sentence pays for it: a block that leaves its only
+    unlinked row out has the whole budget for its other rows."""
+    plain = [_row(f"notes/n{i}", json.dumps("n" * 100)) for i in range(2)]
+    past = _row("notes/past", json.dumps("p" * 200 + " src/a.cpp"), code_state="unlinked")
+    both, _, _ = mff.render_block("src/a.cpp", plain, 10_000, home="me", now=_NOW)
+    # room for the two plain rows and the "… more" line, to the character
+    more = mff._more_line("src/a.cpp", 1)
+    budget = (len(both) + 1 + len(more)) // mff.CHARS_PER_TOKEN + 1
+    hits = [plain[0], past, plain[1]]
+    text, tokens, truncated = mff.render_block("src/a.cpp", hits, budget, home="me", now=_NOW)
+    assert text.splitlines()[1:] == [*both.splitlines()[1:], more]
+    assert truncated and tokens <= budget and code_change.NOT_COMPARED not in text
 
 
 def test_a_moved_note_counts_against_the_token_budget() -> None:
@@ -942,7 +1021,10 @@ async def test_the_block_and_the_hit_name_moved_code_only_from_current_readable_
     (hit,) = out.hits
     if case == "current":
         assert [m.model_dump(exclude_defaults=True) for m in hit.code_moved] == [_MOVED]
-        assert f"- rules/moved (code moved: {_MOVED_NOW}): Keep 32." in out.rendered
+        assert (
+            f"- rules/moved (code_state=moved first_written=2026-03-02) (code moved: {_MOVED_NOW}):"
+            " Keep 32."
+        ) in out.rendered
         rows, _ = await mff.listing_rows(request)
         # the names a code answer matches against its symbols come from the same rows
         assert rows[0]["code_symbols"] == ["DB::Reader::loadRows"]

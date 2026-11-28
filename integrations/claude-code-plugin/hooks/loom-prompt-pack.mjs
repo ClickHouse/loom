@@ -7,8 +7,10 @@
 // cache; later prompts may follow working-tree or index changes.
 //
 //   LOOM_PROMPT_PACK=off            disable
-//   LOOM_PROMPT_PACK_MIN_CONF=0.4   skip below this retrieval_confidence; unset, skip
-//                                   unless the index labels its answer low-risk
+//   LOOM_PROMPT_PACK_MIN_CONF=0.7   skip below this retrieval_confidence; unset, skip
+//                                   unless the index labels its answer low-risk (from
+//                                   0.7 by default). A search with no semantic leg
+//                                   reads 0.5: 0.5 or lower sends its pointers too
 //   LOOM_PROMPT_PACK_TOP_K=3        pointers per prompt
 //   LOOM_PROMPT_PACK_TIMEOUT_MS=2500 the search's bound: the prompt waits on it
 
@@ -121,8 +123,8 @@ async function main() {
     timeoutMs: TIMEOUT_MS,
   });
   const text = renderLookup(lookup, res, repo);
-  if (text) process.stdout.write(JSON.stringify(packPayload(text)) + "\n");
   scheduleExit(0);
+  return text ? packPayload(text) : undefined;
 }
 
 runHookMain(main);

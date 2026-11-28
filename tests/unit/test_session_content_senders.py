@@ -36,6 +36,7 @@ FLOOR = frozenset(
         "namespace.validate",
         "code.test_gate",
         "code.symbol",
+        "code.outline",
         "code.enclosing",
         "tracker.duplicate_check",
         "memory.search",

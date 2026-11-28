@@ -47,10 +47,10 @@ function seedIndexed(root, tmp) {
 }
 
 /** Run one hook; `stdin` is a string (sent as is) or an object (JSON). */
-function run(hook, stdin, { tmp, url = REFUSED, token = "t", env = {} }) {
+function run(hook, stdin, { tmp, url = REFUSED, token = "t", env = {}, event = "X" }) {
   return new Promise((resolve) => {
     const started = Date.now();
-    const child = spawn(process.execPath, [path.join(HOOKS, hook), "X"], {
+    const child = spawn(process.execPath, [path.join(HOOKS, hook), event], {
       env: hostEnv({
         PATH: process.env.PATH,
         HOME: tmp,
@@ -115,6 +115,9 @@ async function withCapturingServer(fn) {
   return bodies;
 }
 
+// The Stop test gate that takes only a run of the named tests as an answer.
+const BLOCKING = { LOOM_TEST_GATE: "block" };
+
 const HOOK_NAMES = [
   "loom-code-shunt.mjs",
   "loom-file-context.mjs",
@@ -126,11 +129,16 @@ const HOOK_NAMES = [
 test("malformed, empty and non-object stdin: every code hook exits 0 and prints nothing", async () => {
   const tmp = freshTmp();
   for (const hook of HOOK_NAMES) {
+    // The test gate reads its input at a Stop in either mode, and after a shell command.
+    const starts = hook === "loom-test-gate.mjs" ? [{}, { env: BLOCKING }, { event: "PostToolUse" }] : [{}];
     for (const stdin of ["{not json", "", "[]", "null", '"text"', "42"]) {
-      const r = await run(hook, stdin, { tmp });
-      assert.equal(r.code, 0, `${hook} on ${JSON.stringify(stdin)}`);
-      assert.equal(r.out, "", `${hook} on ${JSON.stringify(stdin)}`);
-      assert.equal(r.err, "", `${hook} writes no stack trace on ${JSON.stringify(stdin)}`);
+      for (const how of starts) {
+        const as = `${hook} ${JSON.stringify(how)} on ${JSON.stringify(stdin)}`;
+        const r = await run(hook, stdin, { tmp, ...how });
+        assert.equal(r.code, 0, as);
+        assert.equal(r.out, "", as);
+        assert.equal(r.err, "", `no stack trace: ${as}`);
+      }
     }
   }
 });
@@ -162,6 +170,10 @@ test("no token: nothing is asked of the server and nothing is printed", async ()
       assert.equal(r.code, 0, hook);
       assert.equal(r.out, "", hook);
     }
+    const shell = { tool_name: "Bash", tool_input: { command: "sed -i s/0/1/ src/a.cpp" }, cwd: dir, session_id: "s" };
+    fs.appendFileSync(path.join(dir, "src/a.cpp"), "int g() { return 1; }\n");
+    const r = await run("loom-test-gate.mjs", shell, { tmp, url, token: "", event: "PostToolUse" });
+    assert.equal(r.code + r.out, "0");
     assert.deepEqual(seen, []);
   });
 });
@@ -212,7 +224,7 @@ test("shunt: a server that never answers holds the call no longer than the looku
   });
 });
 
-test("shunt: an indexed entry decides locally; a symbol grep whose answer hangs keeps the plain redirect", async () => {
+test("shunt: an indexed entry decides locally; a symbol grep whose answer hangs runs after the lookup bound", async () => {
   const dir = checkout();
   await withServer(null, async (url, seen, arrived) => {
     const tmp = freshTmp();
@@ -228,8 +240,8 @@ test("shunt: an indexed entry decides locally; a symbol grep whose answer hangs 
       { tmp, url },
     );
     assert.equal(r.code, 0);
-    const reason = JSON.parse(r.out).hookSpecificOutput.permissionDecisionReason;
-    assert.match(reason, /names a symbol — call loom_code_symbol/);
+    assert.equal(r.out, "", "no answer to refuse with: the grep runs");
+    assert.ok(seen.includes("/v1/code.symbol"));
     assert.ok(
       r.ms < 5000,
       r.ms < 5000
@@ -332,6 +344,41 @@ test("Stop gates: a Stop the gate itself caused never blocks again", async () =>
     }
     assert.deepEqual(seen, []);
   });
+});
+
+test("test gate after a shell command: 401 and a hanging server add nothing to the call, and the file is asked about once more", async () => {
+  for (const status of [401, null]) {
+    await withServer(status, async (url, seen, arrived) => {
+      const op = "/v1/code.test_gate";
+      const { dir, tmp } = dirtySession();
+      const shell = { tool_name: "Bash", tool_input: { command: "sed -i s/0/1/ src/a.cpp" }, cwd: dir };
+      const bounds = { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" };
+      // A request can fail before the server observes it; require a witnessed run.
+      let r;
+      let session;
+      for (let attempt = 0; attempt < 3 && !arrived.has(op); attempt++) {
+        session = `s-${attempt}`;
+        r = await run(
+          "loom-test-gate.mjs",
+          { ...shell, session_id: session },
+          { tmp, url, env: bounds, event: "PostToolUse" },
+        );
+        assert.equal(r.code, 0, `${status}`);
+        assert.equal(r.out, "", `${status}`);
+        assert.ok(r.ms < 7000, `${status} took ${r.ms} ms`);
+      }
+      assert.ok(arrived.has(op), `${status}: never sent ${op} in three runs`);
+      const after = r.closedAt - arrived.get(op);
+      assert.ok(after < 1500, `${status}: ${after} ms after its request (${r.ms} ms in all)`);
+      // The same session's next command names the file again: one more request, then none.
+      const again = () =>
+        run("loom-test-gate.mjs", { ...shell, session_id: session }, { tmp, url, env: bounds, event: "PostToolUse" });
+      assert.equal((await again()).out, "");
+      const asked = seen.length;
+      assert.equal((await again()).out, "");
+      assert.equal(seen.length, asked, seen.join(","));
+    });
+  }
 });
 
 test("blast radius and file context: 401 and a hanging server add nothing to the edit", async () => {
@@ -438,18 +485,25 @@ test("blast radius and test gate: only the diff's paths and hunk headers reach t
       cwd: dir,
       session_id: "s",
     };
+    // The edit's own requests: the radius and the tests line.
     await run("loom-blast-radius.mjs", edit, { tmp, url });
     await run("loom-test-gate.mjs", { cwd: dir, session_id: "s", transcript_path: transcript }, { tmp, url });
   });
-  for (const op of ["/v1/code.impact", "/v1/code.test_gate"]) {
-    const sent = bodies.find((b) => b.url === op);
-    assert.ok(sent, `${op} not called: ${JSON.stringify(bodies.map((b) => b.url))}`);
-    assert.ok(!sent.body.diff.includes("s3cr3t-value"), op);
-    assert.ok(!sent.body.diff.includes("decrypted-by-textconv"), op);
-    assert.ok(!sent.body.diff.includes("int g()"), `${op} sends no changed line`);
-    assert.match(sent.body.diff, /^\+\+\+ b\/src\/a\.cpp$/m, `${op} keeps the path`);
-    assert.match(sent.body.diff, /^@@ .*\+\d+/m, `${op} keeps the hunk header`);
-    assert.equal(sent.body.diff.match(/^@@ /gm).length, 2, `${op} keeps the two hunks apart`);
+  // code.test_gate twice: for the tests line at the edit, and at the Stop of a session that ran no test.
+  for (const [op, times] of [
+    ["/v1/code.impact", 1],
+    ["/v1/code.test_gate", 2],
+  ]) {
+    const all = bodies.filter((b) => b.url === op);
+    assert.equal(all.length, times, `${op}: ${JSON.stringify(bodies.map((b) => b.url))}`);
+    for (const sent of all) {
+      assert.ok(!sent.body.diff.includes("s3cr3t-value"), op);
+      assert.ok(!sent.body.diff.includes("decrypted-by-textconv"), op);
+      assert.ok(!sent.body.diff.includes("int g()"), `${op} sends no changed line`);
+      assert.match(sent.body.diff, /^\+\+\+ b\/src\/a\.cpp$/m, `${op} keeps the path`);
+      assert.match(sent.body.diff, /^@@ .*\+\d+/m, `${op} keeps the hunk header`);
+      assert.equal(sent.body.diff.match(/^@@ /gm).length, 2, `${op} keeps the two hunks apart`);
+    }
   }
 });
 

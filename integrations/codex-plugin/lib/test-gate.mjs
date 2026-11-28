@@ -1,7 +1,16 @@
-// Helpers for the loom-test-gate Stop hook (unit-tested).
+// Helpers for the loom-test-gate hook (unit-tested).
 //
-// When the agent is about to stop with uncommitted changes in a loom-indexed
-// repo, ask `code.test_gate` what the change obliges: the tests that reach
+// The gate names the tests a change obliges, from `code.test_gate`. By
+// default it names them when the file is edited: the tool call that changed
+// a file carries one line with the command of the tests the index links to
+// it, or of the file itself when it is a test, or with the changed functions
+// the index links no test to when it has no test to name; once per file per
+// session (`adviceFiles`, `adviceLines`).
+//
+// At Stop it holds a session that ran no test since its last code change.
+// When the agent is about to stop with uncommitted changes in a
+// loom-indexed repo, it asks
+// `code.test_gate` what the change obliges: the tests that reach
 // it (evidence-ordered, with a run command when derivable) and the touched
 // functions no test reaches. If either list is non-empty and this exact
 // change has not been gated yet this session, block the stop ONCE with a
@@ -9,8 +18,14 @@
 // in review. The second stop on the
 // same change passes: the agent has seen the obligation and either ran the
 // tests or chose not to, and a gate that nags is a gate that gets disabled.
-// A stop whose transcript already answers the ask is not blocked at all
-// (`runAnswered`): a block costs the session one more model request.
+// A block costs the session one more model request, so by default any test
+// run since the last write to a changed code file lets the stop pass before
+// anything is asked (`testedSince`, `lastCodeChange`): which tests it ran
+// and how they went is the agent's to
+// judge, and a hook that reads shell text to decide it blocks sessions that
+// ran them. With LOOM_TEST_GATE=block nothing is named at edit time and the
+// stop passes only when the transcript shows the named tests ran on the tree
+// as it stands (`runAnswered`).
 //
 // The change is the session's, not the tree's: `sessionScope` keeps only
 // the dirty paths the transcript shows this session edited or named in a
@@ -21,9 +36,44 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { commandText, contentText, extractFiles, normalizeToolName, pathUnder } from "./loom-client.mjs";
+import {
+  commandText,
+  contentText,
+  DIFF_ARGS,
+  diffHeaders,
+  envSwitch,
+  extractFiles,
+  git,
+  gitToplevel,
+  normalizeToolName,
+  pathUnder,
+  postBounded,
+  resolveServerUrl,
+} from "./loom-client.mjs";
+import { readSessionState, writeSessionState } from "./tmp-state.mjs";
+import { parseLines, readRange } from "./transcript.mjs";
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "str_replace_editor", "apply_patch"]);
+
+/** What the gate does, from LOOM_TEST_GATE: "advise" names an edited file's
+ *  tests on the tool call that edited it and holds the stop of a session that
+ *  ran no test since its last code change (unset, or any on-word); "block" names
+ *  nothing and holds the stop until the named tests ran; "off" does neither. */
+export function gateMode(env = process.env) {
+  if (
+    String(env.LOOM_TEST_GATE ?? "")
+      .trim()
+      .toLowerCase() === "block"
+  ) {
+    return "block";
+  }
+  return envSwitch("LOOM_TEST_GATE", true, env) ? "advise" : "off";
+}
+
+/** The hops `code.test_gate` follows: LOOM_TEST_GATE_DEPTH, 1 to 3. */
+export function gateDepth(env = process.env) {
+  return Math.min(3, Math.max(1, Number(env.LOOM_TEST_GATE_DEPTH || 2)));
+}
 
 /** Stable signature of the change: sorted changed paths + the diff's hash. */
 export function gateSignature(changedPaths, diffHash) {
@@ -62,18 +112,14 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
     : [];
   const absent = new Set(missing);
   const tests = indexed.filter((t) => !absent.has(String(t.test_path || "")));
-  const raw = [...new Set(tests.map((t) => String(t.run || "")).filter(Boolean))];
-  const runs = onePytest(raw.slice(0, maxRuns)).map((r) => withPython(r, python));
+  const { raw, text: runs } = runList(tests, { maxRuns, python });
   const unknown = tests
     .filter((t) => !t.run)
     .map((t) => String(t.test_path || ""))
     .filter(Boolean);
   const untested = Array.isArray(gate.untested) ? gate.untested : [];
   const parts = [];
-  if (runs.length) {
-    const more = raw.length - maxRuns;
-    parts.push(`run: ${runs.join(" ; ")}${more > 0 ? ` (+${more} more)` : ""}`);
-  }
+  if (runs) parts.push(`run: ${runs}`);
   if (unknown.length) {
     const shown = unknown.slice(0, maxNames);
     const more = unknown.length - shown.length;
@@ -85,15 +131,12 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
     parts.push(`indexed tests not present in this checkout: ${shown.join(", ")}${more > 0 ? ` (+${more})` : ""}`);
   }
   if (untested.length) {
-    const names = [...new Set(untested.map((u) => short(u.qualified_name)))].filter(Boolean);
-    const shown = names.slice(0, maxNames);
-    const total = gate.untested_total || names.length;
-    const list = `${shown.join(", ")}${total > shown.length ? ` (+${total - shown.length})` : ""}`;
+    const { list, total } = untestedNames(gate, maxNames);
     // Beside tests to run, "no test reaches" reads as a fact about them, and
     // a test that builds an object reaches a constructor the graph holds no
     // edge to.
     parts.push(
-      runs.length || unknown.length
+      runs || unknown.length
         ? `the index links no test to: ${list} (the tests named here may still reach ${total > 1 ? "them" : "it"})`
         : `no test reaches: ${list}`,
     );
@@ -104,7 +147,7 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
   // that went hunting for a runner. Say what the obligation actually is.
   const tail = missing.length
     ? "Run the available tests and check the missing paths against the indexed revision (deleted, renamed or different checkout); use current equivalent tests or say why not. Missing tests are not passes."
-    : runs.length || unknown.length
+    : runs || unknown.length
       ? "Run the tests before finishing, or say why not."
       : "Add a test that reaches it, or say why none is needed.";
   const env =
@@ -115,6 +158,66 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
 }
 
 const isPytest = (run) => /^pytest(\s|$)/.test(String(run || ""));
+
+/** The functions of a gate's `untested`, by short name: the first `maxNames`
+ *  as `list`, with a count of the rest, and how many there are in `total`. */
+function untestedNames(gate, maxNames = 4) {
+  const untested = gate && Array.isArray(gate.untested) ? gate.untested : [];
+  const names = [...new Set(untested.map((u) => short(u.qualified_name)))].filter(Boolean);
+  const shown = names.slice(0, maxNames);
+  const total = (gate && gate.untested_total) || names.length;
+  const more = total > shown.length ? ` (+${total - shown.length})` : "";
+  return { list: shown.length ? `${shown.join(", ")}${more}` : "", total };
+}
+
+/** The distinct run commands of `tests` (`raw`) and the first `maxRuns` of
+ *  them as one text, "" when no test has one. */
+function runList(tests, { maxRuns, python }) {
+  const raw = [...new Set(tests.map((t) => String(t.run || "")).filter(Boolean))];
+  const runs = onePytest(raw.slice(0, maxRuns)).map((r) => withPython(r, python));
+  const more = raw.length - maxRuns;
+  return { raw, text: runs.length ? `${runs.join(" ; ")}${more > 0 ? ` (+${more} more)` : ""}` : "" };
+}
+
+/**
+ * The tests of a `code.test_gate` answer about `rel` alone that the
+ * edit-time line names: the ones the checkout has. For a source file they
+ * are the tests the index links to it; for a test file, the file itself.
+ * A file under a tests directory that no runner takes (a fixture, a
+ * conftest) is not a test to run for its own change.
+ */
+export function adviceTests(rel, gate, testExists) {
+  return (gate && Array.isArray(gate.tests) ? gate.tests : []).filter(
+    (t) =>
+      t && t.test_path && (t.run || String(t.test_path) !== rel) && (!testExists || testExists(String(t.test_path))),
+  );
+}
+
+/**
+ * The edit-time line for `rel` from `tests` (see `adviceTests`): their
+ * commands, then the tests no runner is known for. With no test, it names
+ * `untested`, the changed functions the index links no test to, as the
+ * index's view: the graph is a floor, and the line has no reply in which the
+ * agent could say that a test does reach them. "" when there is neither.
+ */
+export function renderAdvice(rel, tests, { maxRuns = 4, maxNames = 4, python, untested = "" } = {}) {
+  const parts = [runList(tests, { maxRuns, python }).text].filter(Boolean);
+  const unknown = [...new Set(tests.filter((t) => !t.run).map((t) => String(t.test_path)))];
+  if (unknown.length) {
+    const more = unknown.length - maxNames;
+    parts.push(`no known runner: ${unknown.slice(0, maxNames).join(", ")}${more > 0 ? ` (+${more})` : ""}`);
+  }
+  if (!parts.length && untested) parts.push(`the index links no test to ${untested}`);
+  return parts.length ? `Loom tests for ${rel}: ${parts.join(" · ")}` : "";
+}
+
+/** The tests of `tests` that `renderAdvice` prints: those of its first
+ *  `maxRuns` commands and its first `maxNames` paths with no known runner. */
+export function printedTests(tests, { maxRuns = 4, maxNames = 4 } = {}) {
+  const runs = [...new Set(tests.map((t) => String(t.run || "")).filter(Boolean))].slice(0, maxRuns);
+  const paths = [...new Set(tests.filter((t) => !t.run).map((t) => String(t.test_path)))].slice(0, maxNames);
+  return tests.filter((t) => (t.run ? runs.includes(String(t.run)) : paths.includes(String(t.test_path))));
+}
 
 /** `runs` with every `pytest <path>` folded into the first one: one command to
  *  copy and one process to start. A run with an option or a second word stays
@@ -239,6 +342,20 @@ export function gatePayload(text) {
   return text ? { decision: "block", reason: text } : null;
 }
 
+/** PostToolUse payload: additional context only, never a decision. */
+export function advicePayload(text) {
+  return text ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: text } } : null;
+}
+
+/** A predicate: is `testPath` a file of the checkout at `root`? A stale
+ *  index row or another checkout's test is not. */
+export function testsIn(root) {
+  return (testPath) => {
+    const target = path.resolve(root, testPath);
+    return Boolean(pathUnder(root, target)) && isFile(target);
+  };
+}
+
 /** `p` as a repo-relative posix path under `root` (resolved against `cwd`
  *  when relative); "" when it lies outside the repo or `root` is unknown. */
 function relativeToRoot(root, p, cwd) {
@@ -339,6 +456,135 @@ export function writtenSince(root, paths, since) {
   });
 }
 
+// How much of a transcript's head is read for the session's first row.
+const HEAD_BYTES = 64 * 1024;
+// Files asked about for one tool call: a command that names more waits for
+// the next call that names them.
+const MAX_ADVICE_FILES = 4;
+
+/**
+ * The files a PostToolUse payload's tool call changed that this session has
+ * not been advised on, with the checkout root: the dirty paths its edit tool
+ * targeted or its shell command named, written since the session began. That
+ * is `sessionScope` and `writtenSince` over the one call, the rule the
+ * blocking gate applies to the whole transcript, so a command that only reads
+ * a file left dirty before the session names nothing. The hook runs after
+ * every shell command, so a call that cannot name an unasked dirty file (a
+ * path is named with its last segment) costs one git call, not two.
+ */
+export function adviceFiles(payload, { cwd, root = "" } = {}) {
+  const dirty = git(["diff", "--name-only", "-z", "HEAD"], root || cwd, { timeoutMs: 2000, raw: true })
+    .split("\0")
+    .filter(Boolean);
+  const seen = dirty.length ? readSessionState("testadvice", payload.session_id).seen || {} : {};
+  const text = `${commandText(payload.tool_input)}\n${extractFiles(payload.tool_input).join("\n")}`;
+  const unasked = dirty.filter((rel) => !seen[rel] && text.includes(rel.slice(rel.lastIndexOf("/") + 1)));
+  const top = unasked.length ? root || gitToplevel(cwd) : "";
+  if (!top) return { root, files: [] };
+  const call = { type: "tool_use", name: payload.tool_name, input: payload.tool_input };
+  const named = sessionScope(unasked, [{ type: "assistant", message: { content: [call] } }], { root: top, cwd });
+  const head = named.length && payload.transcript_path ? readRange(payload.transcript_path, 0, HEAD_BYTES) : "";
+  const files = writtenSince(top, named, sessionStart(parseLines(head.toString()))).slice(0, MAX_ADVICE_FILES);
+  return { root: top, files };
+}
+
+/** `map` without its oldest keys beyond `max`. */
+function newest(map, max = 300) {
+  const keys = Object.keys(map);
+  for (const k of keys.slice(0, Math.max(0, keys.length - max))) delete map[k];
+  return map;
+}
+
+/** Adds `keys` to the session's test-advice map `field` (`seen`: files asked
+ *  about; `retried`: files to ask about once more; `named`: tests a line
+ *  named). The state is read and written here
+ *  with nothing between, not locked: two hooks of one session that write in
+ *  the same instant (parallel tool calls) keep one's entries, and the other's
+ *  file is then asked about twice or its test named twice. */
+function remember(sessionId, field, keys) {
+  const state = readSessionState("testadvice", sessionId);
+  const map = { ...state[field] };
+  for (const key of keys) map[key] = Date.now();
+  writeSessionState("testadvice", sessionId, { ...state, [field]: newest(map) });
+}
+
+/**
+ * The edit-time lines for `files` (from `adviceFiles`), as `{ rel, text,
+ * tests }` for each file that has one: `tests` counts the tests `text` names,
+ * 0 when it names the functions the index links no test to. Each file is
+ * asked about once per session, at its first change, so a function changed
+ * later in the same file is not asked about. A file the server gave no
+ * answer for is asked about once more, at the next call that names it, so a
+ * server that is down costs a session two bounded requests per file and not
+ * one per tool call. A file whose change is comments only is not asked
+ * about and stays unasked: it owes no test until it changes code. A test is
+ * named once per session: the test file a session edits after the source
+ * file it tests adds no second line with the same command. A test the call's
+ * own command runs is not named (`runsHere`): the line would arrive on the
+ * result of that run. Only the diff's paths, hunk ranges and function
+ * names are sent (`diffHeaders`).
+ */
+export async function adviceLines(payload, files, { root, repo, token, depth = gateDepth() } = {}) {
+  const asked = files
+    .map((rel) => [
+      rel,
+      git(["diff", ...DIFF_ARGS, "--unified=0", "HEAD", "--", rel], root, { timeoutMs: 2000, raw: true }),
+    ])
+    .filter(([, diff]) => !commentOnlyDiff(diff));
+  if (!asked.length) return [];
+  const gates = await Promise.all(
+    asked.map(([rel, diff]) =>
+      postBounded(
+        "code.test_gate",
+        {
+          org: repo.org,
+          namespace: repo.namespace,
+          files: [rel],
+          diff: diffHeaders(diff, 200_000),
+          depth,
+          consumer: "claude-code-testgate",
+        },
+        { token, serverUrl: resolveServerUrl() },
+      ),
+    ),
+  );
+  const state = readSessionState("testadvice", payload.session_id);
+  const rels = asked.map(([rel]) => rel);
+  // No answer (a timeout, a 5xx): the file stays unasked for one more call that names it.
+  const again = rels.filter((rel, i) => !gates[i] && !(state.retried || {})[rel]);
+  if (again.length) remember(payload.session_id, "retried", again);
+  if (again.length < rels.length) {
+    remember(
+      payload.session_id,
+      "seen",
+      rels.filter((rel) => !again.includes(rel)),
+    );
+  }
+  const named = { ...state.named };
+  const command = commandText(payload.tool_input);
+  const testExists = testsIn(root);
+  let python;
+  const lines = [];
+  const printed = [];
+  for (const [i, [rel]] of asked.entries()) {
+    const tests = adviceTests(rel, gates[i], testExists);
+    const fresh = tests.filter((t) => !named[t.test_path] && !(t.run && runsHere(command, String(t.run))));
+    if (python === undefined && fresh.some((t) => isPytest(t.run))) python = checkoutPython(root);
+    // Functions are named only for a file with no test to run in this checkout.
+    const untested = tests.length ? "" : untestedNames(gates[i]).list;
+    const text = renderAdvice(rel, fresh, { python, untested });
+    if (!text) continue;
+    // A test folded into "(+N more)" was not shown, so its own change still names it.
+    for (const t of printedTests(fresh)) {
+      named[t.test_path] = Date.now();
+      printed.push(t.test_path);
+    }
+    lines.push({ rel, text, tests: fresh.length });
+  }
+  if (printed.length) remember(payload.session_id, "named", printed);
+  return lines;
+}
+
 // The prompt's last sentence, whole: "Do not run the test suite.", "Please
 // don't run any tests". A sentence that says more (`do not run
 // tests/test_slow.py`, "If lint fails, do not run the tests.") or that is not
@@ -373,6 +619,106 @@ const ELSEWHERE = /\b(?:ssh|docker|podman|kubectl)\s/;
 /** True when `head`, a command's text up to a pytest run, shows the run
  *  started in this checkout. */
 const ranHere = (head) => !ELSEWHERE.test(head) && LAUNCHER.test(head.split(/[;&|(\n]/).pop());
+/** True when `command` runs `run`, a test's whole command, in this checkout:
+ *  `pytest tests/test_a.py::test_one` runs one test of the file, and `echo
+ *  "pytest tests/test_a.py"` and `docker exec app pytest tests/test_a.py` run
+ *  nothing here. */
+function runsHere(command, run) {
+  const at = command.indexOf(run);
+  return at >= 0 && /^(?:[\s;|&)]|$)/.test(command.slice(at + run.length)) && ranHere(command.slice(0, at));
+}
+
+// A shell command that starts a test runner, wrapped or piped in any way: a
+// program `code.test_gate` names a run with or a common other one, or a
+// build tool with an argument in which `test` or `tests` follows no letter
+// and no lower-case letter follows it (`make test-unit`, `npm run test`,
+// `node --test`, `gradle :app:test`, `gradlew testDebugUnitTest`). `import
+// pytest`, `pip install pytest`, `pytest.raises`, `npm install x@latest`,
+// `npm install @testing-library/react` and `node scripts/attest.js` are not
+// runs. A command that only mentions a runner counts: what is read is
+// whether the session ran a test at all.
+const RUNNER =
+  /(?<![\w.-])(?:(?<!(?:import|install)\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|nextest|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*(?<![A-Za-z])tests?(?![a-z]))/;
+
+/** True for the name of a Codex rollout's shell tool, under any of the names
+ *  `normalizeToolName` folds onto Bash. */
+const rolloutShell = (name) => name === "exec" || normalizeToolName(name) === "Bash";
+
+/** The command text of a Codex rollout's shell call: its `arguments` JSON
+ *  holds a string or an argv (`["go","test"]`), whose words no space joins. */
+function rolloutCommand(call) {
+  let input = call.input ?? call.arguments;
+  if (typeof input === "string") {
+    try {
+      input = JSON.parse(input);
+    } catch {
+      return input;
+    }
+  }
+  return commandText(input) || (typeof input === "string" ? input : "");
+}
+
+/**
+ * True when the transcript holds a shell command that starts a test runner
+ * (`RUNNER`) and finished at or after `since` (epoch ms), or has no dated
+ * result: Claude Code rows and Codex rollout calls, sidechains skipped. Its
+ * output is not read, so a run that failed, was piped into `grep` or ran
+ * between `git stash` and `git stash pop` counts.
+ */
+export function testedSince(objs, since) {
+  const done = new Map();
+  const runs = [];
+  for (const o of objs || []) {
+    const at = Date.parse((o && o.timestamp) || "");
+    if (o?.type === "response_item") {
+      const call = o.payload || {};
+      if (/_output$/.test(call.type)) done.set(call.call_id, at);
+      else if (rolloutShell(call.name) && RUNNER.test(rolloutCommand(call))) {
+        runs.push(call.call_id);
+      }
+      continue;
+    }
+    const content = o && !o.isSidechain && o.message && o.message.content;
+    for (const b of Array.isArray(content) ? content : []) {
+      if (o.type === "user" && b?.type === "tool_result") done.set(b.tool_use_id, at);
+      else if (
+        o.type === "assistant" &&
+        b?.type === "tool_use" &&
+        ["Bash", "PowerShell"].includes(normalizeToolName(b.name)) &&
+        RUNNER.test(commandText(b.input))
+      ) {
+        runs.push(b.id);
+      }
+    }
+  }
+  return runs.some((id) => !(done.get(id) < since));
+}
+
+// Documentation and prose by name: a test run answers no change to one.
+// `CMakeLists.txt` and a requirements file are code.
+const PROSE = /\.(?:md|mdx|rst|txt|adoc)$/i;
+const CHANGELOG = /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|NEWS)$/;
+const CODE_TXT = /(?:^|\/)(?:CMakeLists|[^/]*requirements[^/]*)\.txt$/i;
+const isProse = (file) => CHANGELOG.test(file) || (PROSE.test(file) && !CODE_TXT.test(file));
+
+/** The newest modification time, in epoch ms, among the code files of
+ *  `files` under `root`: a test run that finished since then saw each of
+ *  them as it stands. A documentation or prose file (`isProse`) is left out,
+ *  so an edit to one after the run holds no stop, and so is a file that
+ *  cannot be read (a deleted one). 0 when none is left. */
+export function lastCodeChange(root, files) {
+  let last = 0;
+  for (const file of files) {
+    if (isProse(file)) continue;
+    try {
+      last = Math.max(last, fs.statSync(path.join(root, file)).mtimeMs);
+    } catch {
+      // A deleted file has no time of its own.
+    }
+  }
+  return last;
+}
+
 // pytest's last line, whose order is fixed: failed, passed, skipped,
 // deselected, xfailed, xpassed, warnings, errors. A whole line starts at
 // "failed" or "passed" and names nothing deselected, so a -k subset is not
