@@ -602,10 +602,11 @@ The links are read where the code is:
   commit that put its code in a changed, unresolved or missing state) when one is known, and
   `supersedes_key` when it replaces an older row, and `code_moved` (its links to code in the
   file that is now at another path or symbol than it was written against) when there are
-  any; a row another row read for the answer supersedes is not served. `lessons_left_out` counts the rows the cap, a cut or that rule left
-  out. A decision or constraint is served whole or left out. The read runs after the answer,
-  never enters the search memo, and is skipped for `include_lessons: false`, with
-  `code_result_lessons` off, or for a token narrowed to its own user or session.
+  any; a row another row read for the answer supersedes is not served. `lessons_left_out`
+  counts the rows the cap, a cut or that rule left out. A decision or constraint is served
+  whole or left out. The read runs after the answer, never enters the search memo, and is
+  skipped for `include_lessons: false`, with `code_result_lessons` off, or for a token
+  narrowed to its own user or session.
 - `code.grep` in matches mode focuses inline lessons on the definitions its
   matches name in trunk files. When selecting files to read, grep prefers
   files with a current lesson linked to a matched definition at the returned
