@@ -130,7 +130,7 @@ def test_live_size_cannot_admit_an_oversized_operator_placement() -> None:
 
     import httpx
 
-    from server.router.fingerprints import placement_refusal, readable
+    from server.router.fingerprints import placement_refusal
     from server.router.limits import MAX_BODY_BYTES
 
     deployment = "11111111-1111-4111-8111-111111111111"
@@ -139,7 +139,7 @@ def test_live_size_cannot_admit_an_oversized_operator_placement() -> None:
     room = MAX_BODY_BYTES - len(json.dumps(live)) - 6 * cell.ORG_MAX_BYTES
     value["fields"]["oidc_client_id"] = "x" * room
     org = "\x01" * cell.ORG_MAX_BYTES
-    assert cell.named_org(org) == org and readable(value)
+    assert cell.named_org(org) == org and cell.readable_fingerprint(value)
     live["org"] = org
     operator = {"org": org, "deployment_id": deployment, "fingerprint": value}
     assert (
@@ -162,7 +162,7 @@ def test_both_placement_envelopes_fit_the_accepted_boundary(cell_name, deploymen
 
     import httpx
 
-    from server.router.fingerprints import placement_refusal, readable
+    from server.router.fingerprints import placement_refusal
     from server.router.limits import MAX_BODY_BYTES
 
     value = _value(deployment_id=deployment, oidc_client_id="")
@@ -173,7 +173,11 @@ def test_both_placement_envelopes_fit_the_accepted_boundary(cell_name, deploymen
     room = MAX_BODY_BYTES - max(len(json.dumps(body)) for body in bodies) - 6 * cell.ORG_MAX_BYTES
     value["fields"]["oidc_client_id"] = "x" * room
     org = "\x01" * cell.ORG_MAX_BYTES
-    assert cell.named_org(org) == org and readable(value) and cell.NAME.fullmatch(cell_name)
+    assert (
+        cell.named_org(org) == org
+        and cell.readable_fingerprint(value)
+        and cell.NAME.fullmatch(cell_name)
+    )
     for body in bodies:
         body["org"] = org
         assert (

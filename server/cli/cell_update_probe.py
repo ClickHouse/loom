@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from server.cli import cell_control, cell_prepare
+from server.core.cell_ch import TRANSACTION_S
 from server.router.app import REGISTER_ANSWER_MAX_S
 
 # Read/probe/commit bounds already used by prepare, plus its reply margin.
@@ -21,7 +22,7 @@ async def post(run: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
 
     try:
         await run.owner.call(
-            lambda: cell_prepare._write_nonces(run.ch, nonces), total_s=cell_control.TRANSACTION_S
+            lambda: cell_prepare._write_nonces(run.ch, nonces), total_s=TRANSACTION_S
         )
         async with asyncio.timeout(run.args.wait + ANSWER_S):
             answer = await cell_prepare._register(
@@ -36,9 +37,9 @@ async def post(run: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
         cell_control.preconditions(answer)
     except BaseException:
         try:
-            await run.owner.call(clean, total_s=cell_control.TRANSACTION_S)
+            await run.owner.call(clean, total_s=TRANSACTION_S)
         except BaseException:  # noqa: BLE001 — preserve the original operation failure.
             pass
         raise
-    await run.owner.call(clean, total_s=cell_control.TRANSACTION_S)
+    await run.owner.call(clean, total_s=TRANSACTION_S)
     return answer

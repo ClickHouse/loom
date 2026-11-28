@@ -13,6 +13,9 @@ from server.core import ch_names
 from server.core.ch import query_tag
 from server.settings import settings
 
+# A control transaction includes the standby acknowledgment of COMMIT.
+TRANSACTION_S = 60.0  # not a setting: one control transaction's deadline
+
 # system.query_log's log_comment: the scan's, and the writer check's. Attach's own grant
 # reads carry the tag of the check that runs them; the host names always carry the scan's.
 TAG = "cell.scan"
@@ -130,16 +133,19 @@ class Topology:
         return out
 
 
-async def read_topology(ch: Any) -> Topology:
+async def read_topology(ch: Any, *, max_replicas: int | None = None) -> Topology:
     cluster = settings.ch_cluster
     if not cluster:
         return Topology("", 0)
     with query_tag(TAG):
-        rows = await ch.query_all(
-            "SELECT host_name, port, shard_num FROM system.clusters WHERE cluster = {c:String} "
-            + WHOLE_SQL,
-            {"c": cluster},
-        )
+        sql = "SELECT host_name, port, shard_num FROM system.clusters WHERE cluster = {c:String} "
+        params: dict[str, Any] = {"c": cluster}
+        if max_replicas is not None:
+            sql += "LIMIT {replica_limit:UInt16} "
+            params["replica_limit"] = max_replicas + 1
+        rows = await ch.query_all(sql + WHOLE_SQL, params)
+    if max_replicas is not None:
+        bounded_topology(rows, max_replicas)
     return Topology(
         cluster,
         len({int(r["shard_num"]) for r in rows}),
@@ -175,3 +181,30 @@ async def per_host(
             raise Refused([Refusal(f"host {r['h']}", "answered without a configured name")])
         out[name].append(r)
     return out
+
+
+def complete(sql: str, *, sequential: int = 0) -> str:
+    return (
+        sql
+        + " "
+        + WHOLE_SQL
+        + ", skip_unavailable_shards=0, prefer_localhost_replica=1, "
+        + f"select_sequential_consistency={sequential}"
+    )
+
+
+def bounded_topology(rows: list[dict[str, Any]], limit: int) -> None:
+    """Reject cap+1 and malformed topology before Topology builds sets or maps."""
+    if len(rows) > limit:
+        raise Refused([Refusal("participant census", "configured replica limit exceeded")])
+    for row in rows:
+        if (
+            not isinstance(row.get("host_name"), str)
+            or not row["host_name"]
+            or len(row["host_name"].encode()) > 2048
+            or type(row.get("port")) is not int
+            or not 0 < row["port"] <= 65535
+            or type(row.get("shard_num")) is not int
+            or row["shard_num"] <= 0
+        ):
+            raise Refused([Refusal("participant census", "unreadable configured replica")])

@@ -1159,7 +1159,7 @@ async def configuration_placements(
         accepted = [
             value for value in (found.row.current_fp, found.row.next_fp) if value is not None
         ]
-        if not accepted or any(not fingerprints.readable(value) for value in accepted):
+        if not accepted or any(not cell_state.readable_fingerprint(value) for value in accepted):
             raise OperatorRefused(
                 "configured placement proof needs readable directory reservations"
             )

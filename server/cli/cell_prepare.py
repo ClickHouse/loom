@@ -41,6 +41,7 @@ from server.cli import cell as cell_cli
 from server.cli import cell_control
 from server.cli._ch import writes
 from server.core import cell
+from server.core.cell_ch import TRANSACTION_S
 from server.settings import settings
 
 # How long a run retries a busy or unreachable probe listener by default.
@@ -548,7 +549,7 @@ async def _prepare_locked(
     current, nxt = _own_rows(rows, snapshot, every)
     written = await owner.call(
         lambda: _write_rows(conn, rows, answer, current, nxt),
-        total_s=cell_control.TRANSACTION_S,
+        total_s=TRANSACTION_S,
     )
     print(
         json.dumps(

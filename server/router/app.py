@@ -67,7 +67,7 @@ from starlette.routing import Route
 
 from server.core import cell as cell_state
 from server.core.cell_probe import PATH as PROBE_PATH
-from server.router import directory, fingerprints, routing
+from server.router import directory, routing
 from server.router.limits import (
     ATTACH_BATCH,
     ATTACH_BEGIN_MAX_BYTES,
@@ -831,7 +831,9 @@ class Router:
         if set(body) != {"action", "target_fp", "keys_fp", "nonces"}:
             return _refused(400, "configuration requires action, target_fp, keys_fp and nonces")
         action, target, keys_fp = body["action"], body["target_fp"], body["keys_fp"]
-        if action not in ("config", "finish", "revert") or not fingerprints.readable(target):
+        if action not in ("config", "finish", "revert") or not cell_state.readable_fingerprint(
+            target
+        ):
             return _refused(400, "configuration requires a supported action and readable target_fp")
         if _text(body, "keys_fp", needed=True) is None:
             return _refused(400, f"keys_fp is text of 1 to {_TEXT_MAX} characters, no NUL")

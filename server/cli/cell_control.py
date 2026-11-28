@@ -14,13 +14,11 @@ from uuid import UUID
 
 from server.cli import cell_attach_pg as apg
 from server.core import pg, retirement
-from server.core.cell_ch import Refusal
+from server.core.cell_ch import TRANSACTION_S, Refusal
 from server.core.cell_ch import Refused as Refused
 from server.router.directory import CONTROL_FIELDS, CONTROL_MAX_S
 from server.settings import settings
 
-# A control transaction has few metadata statements; COMMIT's standby wait is bounded too.
-TRANSACTION_S = 60.0  # not a setting: a single control transaction's deadline
 OPEN_S = 75.0  # not a setting: connection initialization and direct-session checks
 REQUEST_S = CONTROL_MAX_S + 30.0  # not a setting: directory bound plus probes/connect/close
 Call = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]

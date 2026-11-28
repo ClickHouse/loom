@@ -8,7 +8,6 @@ from typing import Any
 
 from server.cli import cell_control
 from server.core import cell
-from server.router import fingerprints
 
 
 @dataclass(frozen=True)
@@ -48,8 +47,8 @@ async def read(conn: Any, name: str) -> State:
             "update needs complete prepared state naming this cell; prepare or restore it first"
         )
     current, pending = cell.json_object(row["current_fp"]), cell.json_object(row["next_fp"])
-    if not fingerprints.readable(current) or (
-        pending is not None and not fingerprints.readable(pending)
+    if not cell.readable_fingerprint(current) or (
+        pending is not None and not cell.readable_fingerprint(pending)
     ):
         raise cell_control._refused("update needs readable local current/next fingerprints")
     assert current is not None

@@ -195,8 +195,8 @@ async def test_census_syncs_before_complete_replica_union(monkeypatch, engine):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from server.cli import cell_update_participants as module
     from server.core.cell_ch import Topology
+    from server.insights.store import provider_participants as module
 
     events = []
     topology = Topology("replicas", 1, (("a", 9000), ("b", 9000)))
@@ -250,8 +250,8 @@ async def test_incomplete_topology_or_sync_never_returns_a_partial_census(monkey
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from server.cli import cell_update_participants as module
     from server.core.cell_ch import Topology
+    from server.insights.store import provider_participants as module
 
     topology = Topology(
         "replicas",
@@ -296,6 +296,6 @@ async def test_incomplete_topology_or_sync_never_returns_a_partial_census(monkey
         module.cell_sync, "_system", AsyncMock(side_effect=OSError("cannot synchronize"))
     )
     query = AsyncMock(side_effect=AssertionError("must not read partial census"))
-    with pytest.raises((module.cell_control.Refused, OSError)):
+    with pytest.raises((module.Refused, OSError)):
         await module.census(SimpleNamespace(query_all=query))
     query.assert_not_awaited()

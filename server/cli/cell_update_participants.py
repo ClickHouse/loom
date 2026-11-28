@@ -10,8 +10,8 @@ from typing import Any, cast
 from uuid import UUID
 
 from server.cli import cell_control
-from server.core import cell, cell_sync, ch_names, instances
-from server.core.cell_ch import WHOLE_SQL, Refused, per_host, quote, read_topology
+from server.core import cell, instances
+from server.core.cell_ch import TRANSACTION_S, complete
 from server.core.ch import query_tag
 from server.core.provider_process import (
     certified,
@@ -19,8 +19,9 @@ from server.core.provider_process import (
     participant_tag,
     proves_stopped,
 )
-from server.insights.store import cell_catalog
+from server.insights.domain.cell_participants import latest
 from server.insights.store import provider_participants as participants
+from server.insights.store.provider_participants import census
 
 
 class CompleteReads:
@@ -36,114 +37,12 @@ class CompleteReads:
         )
 
 
-def complete(sql: str, *, sequential: int = 0) -> str:
-    return (
-        sql
-        + " "
-        + WHOLE_SQL
-        + ", skip_unavailable_shards=0, prefer_localhost_replica=1, "
-        + f"select_sequential_consistency={sequential}"
-    )
-
-
-def latest(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
-    # The latest winner cannot hide a conflicting older version from another replica.
-    seen: dict[tuple[str, int], tuple[str, str]] = {}
-    for row in rows:
-        try:
-            identity = str(UUID(str(row["participant_id"])))
-            version = row["version"]
-            state, proof = row["state"], row["host_proof"]
-        except (KeyError, TypeError, ValueError):
-            raise cell_control._refused("participant census contains an unreadable row") from None
-        if (
-            type(version) is not int
-            or version <= 0
-            or state not in ("running", "drained", "retired")
-            or not isinstance(proof, str)
-        ):
-            raise cell_control._refused("participant census contains an unreadable row")
-        previous = out.get(identity)
-        observed = seen.get((identity, version))
-        if observed is not None and observed != (state, proof):
-            raise cell_control._refused(f"participant {identity} has conflicting equal versions")
-        seen[(identity, version)] = (state, proof)
-        if previous is None or int(previous["version"]) < version:
-            out[identity] = dict(row)
-    return out
-
-
 def capture(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {
         identity: row
         for identity, row in latest(rows).items()
         if row["state"] != "retired" or not has_certificate(row["host_proof"])
     }
-
-
-async def census(ch: Any) -> dict[str, dict[str, Any]]:
-    """Synchronize after the durable cutoff; every configured replica must answer."""
-    topology = await read_topology(ch)
-    if topology.cluster and not topology.entries:
-        raise cell_control._refused("participant census cannot resolve the configured cluster")
-    if problems := topology.refusals():
-        raise Refused(problems)
-    names = await cell_catalog.host_names(ch, topology) if topology.multi else {}
-    if problems := (await cell_catalog.own_refusals(ch, topology, names))[0]:
-        raise Refused(problems)
-    database = ch_names.database()
-    tables = await per_host(
-        ch,
-        topology,
-        names,
-        (
-            "SELECT hostName() AS h, engine FROM {source:tables} WHERE database={db:String} AND "
-            "name='_provider_participants'"
-        ),
-        {"db": database},
-    )
-    if not tables or any(len(rows) != 1 for rows in tables.values()):
-        raise cell_control._refused("participant table is missing from a configured replica")
-    engines = {str(rows[0]["engine"]) for rows in tables.values()}
-    if len(engines) != 1 or not next(iter(engines)).endswith("MergeTree"):
-        raise cell_control._refused(
-            "participant replicas have unreadable or different table engines"
-        )
-    engine = next(iter(engines))
-    if engine.startswith("Replicated"):
-        rows = await per_host(
-            ch,
-            topology,
-            names,
-            (
-                "SELECT hostName() AS h, database, table, zookeeper_path, replica_name, "
-                "replica_is_active FROM {source:replicas} WHERE database={db:String} AND "
-                "table='_provider_participants'"
-            ),
-            {"db": database},
-        )
-        if any(len(value) != 1 for value in rows.values()) or cell_catalog.extra_replicas(
-            row for value in rows.values() for row in value
-        ):
-            raise cell_control._refused("participant replica set includes an unverified replica")
-        budget = cell_sync.Budget(cell_control.TRANSACTION_S)
-        await cell_sync._system(
-            ch,
-            f"SYSTEM SYNC REPLICA{cell_sync._on_cluster(topology)} "
-            f"{quote(database)}.`_provider_participants` LIGHTWEIGHT",
-            topology,
-            budget,
-            "participant census",
-        )
-    source = f"{quote(database)}.`_provider_participants`"
-    params = {}
-    if topology.multi:
-        source = f"clusterAllReplicas({{cluster:String}}, {source})"
-        params["cluster"] = topology.cluster
-    sql = f"SELECT participant_id, state, version, host_proof FROM {source} FINAL"
-    rows = await ch.query_all(complete(sql, sequential=int(engine.startswith("Shared"))), params)
-    return latest(rows)
 
 
 async def stopped(ch: Any, initial: dict[str, Any], current: dict[str, Any] | None) -> bool:
@@ -222,7 +121,7 @@ async def replacement(
 async def settle(run: Any, target: dict[str, Any]) -> None:
     """Fix one complete captured set; expiry never removes an obligation."""
     with query_tag("cell.update.participants"):
-        initial = await run.owner.call(lambda: census(run.ch), total_s=cell_control.TRANSACTION_S)
+        initial = await run.owner.call(lambda: census(run.ch), total_s=TRANSACTION_S)
         captured = capture(list(initial.values()))
         done: set[str] = set()
         deadline = time.monotonic() + run.args.wait
@@ -236,7 +135,7 @@ async def settle(run: Any, target: dict[str, Any]) -> None:
                         done.add(identity)
                 return await replacement(run.ch, run, rows, set(captured), target)
 
-            live = await run.owner.call(poll, total_s=cell_control.TRANSACTION_S)
+            live = await run.owner.call(poll, total_s=TRANSACTION_S)
             remaining = sorted(set(captured) - done)
             if not remaining and live:
                 return

@@ -10,55 +10,9 @@ from server.core import cell, org_patterns
 from server.router.limits import MAX_BODY_BYTES
 
 
-def readable(value: Any) -> bool:
-    """Known fields have exact types; unknown JSON fields remain reserved and intact."""
-    if not isinstance(value, dict) or set(value) != {"v", "fields"}:
-        return False
-    if type(value["v"]) is not int or value["v"] != cell.FINGERPRINT_VERSION:
-        return False
-    fields = value["fields"]
-    if not isinstance(fields, dict):
-        return False
-    try:
-        # Reject cycles, non-JSON values and nonfinite floats before walking nested fields.
-        json.dumps(value, allow_nan=False)
-    except (TypeError, ValueError, RecursionError):
-        return False
-    pending = [value]
-    while pending:
-        item = pending.pop()
-        if isinstance(item, str):
-            try:
-                if "\0" in item:
-                    return False
-                item.encode()
-            except UnicodeError:
-                return False
-        elif isinstance(item, dict):
-            if any(not isinstance(key, str) for key in item):
-                return False
-            pending.extend(item.keys())
-            pending.extend(item.values())
-        elif isinstance(item, list):
-            pending.extend(item)
-        elif item is not None and type(item) not in (bool, int, float):
-            return False
-    for name, default in cell.DEFAULTS.items():
-        item = fields.get(name, default)
-        if type(item) is not type(default):
-            return False
-        if isinstance(item, list) and any(not isinstance(part, str) for part in item):
-            return False
-    for name in ("configured_orgs", "end_user_orgs"):
-        for org in fields.get(name, []):
-            if cell.named_org(org) is None or cell.org_name_refusal(org):
-                return False
-    return True
-
-
 def registration_refusal(value: Any, registered: Mapping[str, Any], name: str = "candidate") -> str:
     """A fingerprint accepts only the registered stores and host."""
-    if not readable(value):
+    if not cell.readable_fingerprint(value):
         return f"{name}: unreadable fingerprint; change fingerprints with `loom cell update`"
     expected = {
         "deployment_id": registered["deployment_id"],
@@ -121,7 +75,7 @@ def reservation_refusal(accepted: Sequence[dict[str, Any]], other: Sequence[dict
     Registration identity, placement winners and transaction locks are the caller's
     checks. Empty `other` means registration has not reserved a fingerprint yet.
     """
-    if not accepted or any(not readable(value) for value in (*accepted, *other)):
+    if not accepted or any(not cell.readable_fingerprint(value) for value in (*accepted, *other)):
         return "unreadable fingerprint reservation"
     for a in accepted:
         for b in other:
@@ -145,8 +99,8 @@ def configuration_pair(
     action: str,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Select the reserved pair without guessing the direction of an interrupted update."""
-    if any(not readable(value) for value in (current, target)) or (
-        pending is not None and not readable(pending)
+    if any(not cell.readable_fingerprint(value) for value in (current, target)) or (
+        pending is not None and not cell.readable_fingerprint(pending)
     ):
         raise ConfigurationRefused("configuration update needs readable fingerprints")
     assert current is not None

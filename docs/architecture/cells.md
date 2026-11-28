@@ -1653,6 +1653,30 @@ before any cell's processes do, since a prepared first cell asks the state route
 first cell-state read until it reads `serving`, and only a router of that release answers it
 from its cache ([upgrades](../operations/upgrades.md#upgrade-procedure)).
 
+## Bounded process census
+
+The shared process reader has an explicit bounded mode for complete process evidence.
+It reads permanent participants, every stored cell heartbeat and every stored web
+instance across the configured replicas, then reads participants again. Replicated
+participant tables synchronize before selection; shared tables use sequential reads.
+Catalog, membership, privilege or conflicting-version uncertainty refuses the read.
+The ordinary update reader keeps its existing query and allowance.
+
+Each complete read shares an 8 MiB raw allowance across its streams. A caller keeps one
+attempt across polls and physical rounds: at most 1024 participant identities, 1024
+observation identities and 8 MiB retained metadata, including certified retirements.
+Repeated evidence replaces bounded latest state without evicting captured obligations.
+The reader binds the original monotonic deadline and accepts at most 64 configured
+replicas. Oversized, truncated or malformed results refuse rather than yield a subset.
+
+Supported process observations bind the actual participant, certified birth, cell,
+accepted fingerprints and root-key fingerprint. Workers join without web instance rows;
+traffic-serving first-cell servers also need their router marker. Missing, stale,
+future or nonaccepting observations remain unresolved obligations. Native commands
+without observations require positive retirement; this component grants no owner
+exemption. Its internal result carries unresolved identities and selected evidence.
+It performs no attach, exposes no diagnostic route and certifies no physical isolation.
+
 ## Invariants
 
 - An org is served by exactly one cell, the one its placement names, and its placement
