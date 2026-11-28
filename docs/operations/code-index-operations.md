@@ -117,7 +117,7 @@ LOOM_CODE_REPOS_JSON='[
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
 | `namespace`, `org`                   | where the index lives                                                                                                         |
 | `repo`                               | `owner/name` on GitHub                                                                                                        |
-| `git_dir`, `git_remote`              | the bare clone and its remote; branches of one repository share one clone                                                     |
+| `git_dir`, `git_remote`              | the bare clone and its remote; entries that share a clone name the same remote                                                |
 | `git_branch`                         | the branch this namespace tracks                                                                                              |
 | `path_prefixes`                      | comma-separated prefixes to index; an entry without it indexes the whole tree minus the built-in denylist                     |
 | `exclude`                            | globs never indexed (list or comma-separated)                                                                                 |
@@ -219,8 +219,14 @@ and a `.loomignore` file at the indexed commit are honoured as excludes. A depen
 vendored as a git submodule is not in the bare mirror; give it its own entry and name it
 in `depends_on`. The gauge `loom.code.repos_config_errors` reports entries the server
 could not use (invalid JSON, a nameless entry, a namespace with `.` or `/`, a duplicate
-namespace); 0 means the value parsed clean. Validate the JSON before a restart
-with `docker compose --env-file .env -f dev/docker-compose.cloud.yml config`.
+namespace, a clone an earlier entry holds with another remote); 0 means the value parsed
+clean. While it is not 0 the mirror sweep removes nothing on any host, so the mirrors,
+checkouts and lock files of removed repositories stay until the error is fixed. Entries
+that share a `git_dir` share its clone only when their `git_remote` values, after the
+defaults, are the same string: branches of one repository use one spelling of the
+remote, and a fork and its upstream each set their own `git_dir`. Validate the JSON
+before a restart with
+`docker compose --env-file .env -f dev/docker-compose.cloud.yml config`.
 
 Who can read an index is governed by the namespace's join policy and grants
 ([tokens and grants](../guides/tokens-and-grants.md)). `LOOM_CODE_ORG_READABLE=true`

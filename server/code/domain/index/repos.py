@@ -536,6 +536,9 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
     base = _scalar_repo(config)
     repos: list[RepoConfig] = []
     seen: set[str] = set()
+    # A fork and its upstream derive the same clone dir; in one clone each fetch would
+    # move the other's branch refs.
+    clone_holders: dict[str, tuple[str, str]] = {}
     for i, e in enumerate(entries):
         if not isinstance(e, dict) or not e.get("namespace"):
             errors[f"entry:{i}"] = f"code repo entry missing 'namespace', skipped: {e!r}"
@@ -578,6 +581,8 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
         git_dir, git_remote = _entry_clone_fields(e, ns, repo_name, base)
         proxy_identity = _entry_git_proxy_identity(e, ns, errors)
         if proxy_identity is None:
+            continue
+        if _clone_taken(clone_holders, git_dir, git_remote, ns, errors):
             continue
         repos.append(
             RepoConfig(
@@ -627,6 +632,27 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
     if not repos:
         repos = _scalar_entries(config, errors)
     return repos
+
+
+def _clone_taken(
+    holders: dict[str, tuple[str, str]],
+    git_dir: str,
+    git_remote: str,
+    ns: str,
+    errors: dict[str, str],
+) -> bool:
+    """Whether an earlier entry holds `git_dir` with another `git_remote` (both after
+    `_entry_clone_fields` applies the defaults); records the entry's config error when
+    one does. The first entry claims a clone; branches share it by spelling the remote
+    the same way."""
+    held_remote, held_ns = holders.setdefault(git_dir, (git_remote, ns))
+    if held_remote == git_remote:
+        return False
+    errors[f"git_dir:{ns}"] = (
+        f"code repo {ns} skipped: its clone {git_dir} is held by {held_ns} with another "
+        "git_remote; use one spelling of the remote, or set a separate git_dir"
+    )
+    return True
 
 
 def _entry_clone_fields(
