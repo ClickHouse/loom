@@ -12,13 +12,13 @@ on a laptop, `loom up` boots one in a few minutes: [quickstart](getting-started/
 
 ### How do I give Claude Code, Codex or Cursor long-term memory?
 
-Use the Claude Code or Codex plugins for session-start context and capture, or connect any
-other MCP client with `loom install --client <name>` (see [MCP clients](features/integrations/mcp-clients.md)).
-Boot a server via the [quickstart](getting-started/quickstart.md). Cursor gets the MCP
-entry and the `loom` and `loom-code` skills (no hooks for session-start context; not yet
-tested in Cursor); transcript capture comes from the separate `sessionEnd` hook. See
-[Connect a coding agent](getting-started/connect-a-coding-agent.md) and
-[Cursor](features/integrations/cursor.md).
+Use the Claude Code or Codex plugins for session-start context and capture.
+For another supported MCP client, use [`loom install`](reference/cli.md#connect-a-client).
+Boot a server via the [quickstart](getting-started/quickstart.md). Install the
+[Cursor plugin](features/integrations/cursor.md#plugin) for the MCP tools and the
+`loom` and `loom-code` skills. The local single-user MCP connection and read-only
+memory search are tested in Cursor. The plugin does not load memory at session start.
+Transcript capture uses the separate [`sessionEnd` hook](features/integrations/cursor.md#transcript-capture).
 
 ### Why are my search results nonsense?
 
