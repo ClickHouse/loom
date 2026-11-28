@@ -4,13 +4,12 @@ its indexed head: moves, renames, edits, removals, pending names and parse failu
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cache
 from time import time_ns
-from typing import Any, cast
+from typing import Any
 
 from server.code.app import memory_links as code
 from server.code.domain.anchor import (
@@ -91,7 +90,7 @@ async def recheck_all(result: link_pass.PassResult) -> None:
         granted = (left + rest - 1) // rest
         budget = link_pass.Budget(judgements=granted)
         try:
-            async with link_pass.repository_locks.lease(_lock_name(org, cns)):
+            async with link_pass.repository_locks.lease(link_pass.lock_name(org, cns)):
                 await _recheck_repository(org, cns, budget, result)
         except LeaseBusy:
             pass  # another pass is checking this repository
@@ -110,13 +109,9 @@ async def recheck_repository(org: str, cns: str) -> link_pass.PassResult | None:
     if not settings.memory_code_links_enabled or (org, cns) not in await store.code_namespaces():
         return None
     result = link_pass.PassResult()
-    async with link_pass.repository_locks.lease(_lock_name(org, cns)):
+    async with link_pass.repository_locks.lease(link_pass.lock_name(org, cns)):
         await _recheck_repository(org, cns, link_pass.Budget(judgements=0), result)
     return result
-
-
-def _lock_name(org: str, cns: str) -> str:
-    return "code_links/" + hashlib.sha256(f"{org}\x1f{cns}".encode()).hexdigest()[:40]
 
 
 async def _recheck_repository(
@@ -129,14 +124,12 @@ async def _recheck_repository(
     await _recheck_pending(org, cns, head, files, result)
     await rehash.refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
-    if head and head == checked and await link_pass.recheck_cursor(org, cns).read():
-        await link_pass.recheck_cursor(org, cns).clear()  # a crash left it after the checkpoint
     if head and head != checked:
-        cut_at = (await link_pass.recheck_cursor(org, cns).read()).get("head", "")
+        cut_at = (await _progress(org, cns).read()).get("head", "")
         if cut_at and cut_at != head and not await files.has(cut_at):
             # gone with a rewrite: what that pass already wrote is in no diff, so every
             # link is rechecked, as after a force-push
-            await link_pass.recheck_cursor(org, cns).clear()
+            await _progress(org, cns).clear()
             await code.set_checked_head(org, cns, "")  # a cut full recheck resumes as one
             checked = ""
         elif cut_at and cut_at != head:
@@ -147,9 +140,13 @@ async def _recheck_repository(
             checked = cut_at
         await _follow(org, cns, checked, head, files, result)
         await code.set_checked_head(org, cns, head)
-        await link_pass.recheck_cursor(org, cns).clear()  # after the checkpoint: see code_links
     result.wide_ranges += files.wide_ranges
     await policy.apply_policies(org, cns, head, files, budget, result)
+
+
+def _progress(org: str, cns: str) -> link_pass.Cursor[dict[str, str]]:
+    """The cursor a repository's recheck records its head and last path done in."""
+    return link_pass.Cursor(f"recheck/{org}/{cns}", {})
 
 
 # paths rechecked between two writes: a pass the deadline cuts keeps what it did
@@ -186,11 +183,8 @@ async def _follow(
     """Recheck, path by path, the links `checked..head` may have changed (all of them
     without a range), writing every `_PATHS_PER_WRITE` paths and recording the last one
     done, so a cut pass resumes."""
-    progress = link_pass.recheck_cursor(org, cns)
+    progress = _progress(org, cns)
     done = await progress.read()
-    after = str(done.get("after", "")) if done.get("head") == head else ""
-    # in flight before any link is read: a writer that inserts later sees this cursor
-    await progress.write({"head": head, "after": after})
     changed = await files.range(checked, head) if checked else None
     kept = changed.paths if changed is not None else None
     # old and new paths: a cut pass may have moved links to a new path already
@@ -206,14 +200,12 @@ async def _follow(
         made = [c for c in await code.commits_after(org, cns, checked, head) if c != head]
         if made:
             rows += await store.for_commits(org, [cns], made)
-    # a pending link waits for `_reanchor`, not for a range recheck
-    unique = {
-        (a["path"], a["qualified_name"], a["memory_id"]): a for a in rows if a["state"] != "pending"
-    }
+    unique = {(a["path"], a["qualified_name"], a["memory_id"]): a for a in rows}
     by_path: dict[str, list[LinkRow]] = defaultdict(list)
     for a in unique.values():
         if a["path"]:
             by_path[a["path"]].append(a)
+    after = str(done.get("after", "")) if done.get("head") == head else ""
     paths = [p for p in sorted(by_path) if p > after]
     unparsed, failed = await _unparsed(org, cns), set[str]()
     for i in range(0, len(paths), _PATHS_PER_WRITE):
@@ -227,6 +219,7 @@ async def _follow(
         if len(unparsed) > known:  # owed before the cursor moves past them
             await _set_unparsed(org, cns, unparsed)
         await progress.write({"head": head, "after": part[-1]})
+    await progress.clear()
     if failed:
         result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
 
@@ -274,8 +267,7 @@ async def _retry_unparsed(
         return
     by_commit: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_paths(org, [cns], sorted(paths)):
-        if a["state"] != "pending":
-            by_commit[a["checked_commit"]].append(a)
+        by_commit[a["checked_commit"]].append(a)
     still, failed = set[str](), set[str]()
     for commit, rows in by_commit.items():
         changed = await files.range(commit, head) if commit else None
@@ -294,11 +286,11 @@ async def _retry_unparsed(
 
 
 async def _unparsed(org: str, cns: str) -> set[str]:
-    return set(await link_pass.unparsed_cursor(org, cns).read())
+    return set(await link_pass.Cursor[list[str]](f"unparsed/{org}/{cns}", []).read())
 
 
 async def _set_unparsed(org: str, cns: str, paths: set[str]) -> None:
-    await link_pass.unparsed_cursor(org, cns).write(sorted(paths))
+    await link_pass.Cursor[list[str]](f"unparsed/{org}/{cns}", []).write(sorted(paths))
 
 
 async def _lost(org: str, cns: str, paths: set[str]) -> list[LinkRow]:
@@ -637,7 +629,7 @@ async def _elsewhere(org: str, cns: str, lost: dict[str, str]) -> dict[str, list
 async def _recheck_pending(
     org: str, cns: str, head: str, files: link_pass.RepoReads, result: link_pass.PassResult
 ) -> None:
-    cursor = link_pass.Cursor[dict[str, Any]](f"{_lock_name(org, cns)}/pending", {})
+    cursor = link_pass.Cursor[dict[str, Any]](f"{link_pass.lock_name(org, cns)}/pending", {})
     state = await cursor.read()
     stored_after = state.get("after")
     after = (int(stored_after[0]), str(stored_after[1])) if stored_after else None
@@ -650,58 +642,13 @@ async def _recheck_pending(
         before=before,
         limit=int(settings.memory_code_links_batch),
     )
-    moves = await _reanchor(org, cns, head, files, [r for r in rows if r["path"]])
-    moves += await _resolve_pending(
-        org, cns, head, files, result, [r for r in rows if not r["path"]]
-    )
+    moves = await _resolve_pending(org, cns, head, files, result, rows)
     moves = await _current_moves(org, moves)  # a drop beside a stale move must not outlive it
     moves += await _file_links_beside(org, cns, moves)
     await _write_moves(moves, head)
     result.rechecked += len(moves)
     if nxt != after:
         await cursor.write({"before": before, "after": list(nxt)} if nxt else {})
-
-
-async def _reanchor(
-    org: str, cns: str, head: str, files: link_pass.RepoReads, rows: list[PendingLink]
-) -> list[Move]:
-    """The links a writer parked as pending because a recheck pass may not have seen them
-    (they keep their path). Each is rechecked at `head` from the commit it was built at,
-    as the fresh link it was, and written whatever the result: unchanged is fresh at the
-    head, a deleted path is `missing`. A path that does not parse stays pending until the
-    pending days pass, then the row is dropped as a pathless one is."""
-    if not head or not rows:
-        return []
-    by_commit: dict[str, list[LinkRow]] = defaultdict(list)
-    for r in rows:
-        by_commit[r["checked_commit"]].append(cast(LinkRow, {**r, "state": "fresh"}))
-    moves: list[Move] = []
-    for commit, group in by_commit.items():
-        by_path: dict[str, list[LinkRow]] = defaultdict(list)
-        for a in group:
-            by_path[a["path"]].append(a)
-        changed = await files.range(commit, head) if commit else None
-        unparsed = set[str]()
-        found = await _recheck_paths(
-            org, cns, by_path, sorted(by_path), changed, head, files, unparsed, set()
-        )
-        moved = {id(m.row) for m in found}
-        moves += found
-        await store.insert(
-            store.tombstones(
-                [
-                    r
-                    for r in rows
-                    if r["checked_commit"] == commit and r["expired"] and r["path"] in unparsed
-                ]
-            )
-        )
-        moves += [
-            Move(a, link_pass.link_of(a))
-            for a in group
-            if id(a) not in moved and a["path"] not in unparsed
-        ]
-    return moves
 
 
 async def _file_links_beside(org: str, cns: str, moves: list[Move]) -> list[Move]:

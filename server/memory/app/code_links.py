@@ -18,7 +18,7 @@ import asyncio
 import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -45,6 +45,7 @@ from server.memory.app.code_link_reads import (
 from server.memory.domain.code_link_keys import IDENTITY, QueuePosition
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
+from server.memory.store.key_write_lock import LeaseBusy
 from server.settings import settings
 
 # names and links read of one memory at most
@@ -148,52 +149,32 @@ async def _link_org(
         result.linked += len(rows_out)
         result.unlinked += len(gone)
         linked += [r["mid"] for r in memories]
-    await _insert_unseen(out)
+    await _insert_at_head(out)
     if linked and rereads:
         read = {r["mid"]: r["inputs"] for memories in todo.values() for r in memories}
         await _relink_rewritten(org, linked, read, result, rereads - 1)
 
 
-async def _insert_unseen(inserted: list[LinkRow]) -> None:
-    """Insert `inserted`, a link a recheck pass may have missed parked as `pending` first,
-    promoted if the fence reads clear it and parked again if they change after
+async def _insert_at_head(inserted: list[LinkRow]) -> None:
+    """Insert `inserted` while holding each linked repository's recheck lease, and only if
+    its indexed head is still the one the links were built at. A pass that checked a later
+    head ran before the lease and would never have seen them: LeaseBusy, the queue
+    retries and builds at the new head. A pass that starts after reads them
     (docs/architecture/code-index-architecture.md)."""
-    guard = [
-        r for r in inserted if r["path"] and r["state"] != "pending" and r["tombstoned_at"] is None
-    ]
-    parked = {id(r): store.link_row(r, follows=r["version"], state="pending") for r in guard}
-    await store.insert([parked.get(id(r), r) for r in inserted])
-    by_repo: dict[tuple[str, str], list[LinkRow]] = defaultdict(list)
-    for r in guard:
-        by_repo[r["org"], r["code_namespace"]].append(r)
-    promoted: list[tuple[LinkRow, tuple[str, str], str]] = []
-    with sequential_reads():
-        fences = {k: await _fence(*k) for k in by_repo}
-        for key, rows in by_repo.items():
-            running, checked = fences[key]
-            promoted += [
-                (store.link_row(r, follows=parked[id(r)]["version"]), key, checked)
-                for r in rows
-                if not running and checked in ("", r["checked_commit"])
-            ]
-        if not promoted:
-            return
-        await store.insert([row for row, _, _ in promoted])
-        # a pass skips pending rows: one that began between the fence reads and the promotion
-        # left these fresh at the old head, so read again and park what moved
-        after = {k: await _fence(*k) for k in {key for _, key, _ in promoted}}
-        back = [
-            store.link_row(row, follows=row["version"], state="pending")
-            for row, key, checked in promoted
-            if after[key] != (False, checked)
-        ]
-    if back:
-        await store.insert(back)
-
-
-async def _fence(org: str, cns: str) -> tuple[bool, str]:
-    """Whether a recheck pass is in flight, and the head its last pass checked."""
-    return bool(await link_pass.recheck_cursor(org, cns).read()), await code.checked_head(org, cns)
+    heads: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for r in inserted:
+        if r["path"] and r["state"] != "pending" and r["tombstoned_at"] is None:
+            heads[r["org"], r["code_namespace"]].add(r["checked_commit"])
+    async with AsyncExitStack() as held:
+        for key in sorted(heads):
+            await held.enter_async_context(
+                link_pass.repository_locks.lease(link_pass.lock_name(*key))
+            )
+            with sequential_reads():
+                now = await code.indexed_head(*key)
+            if heads[key] != {now}:
+                raise LeaseBusy(f"{key[0]}/{key[1]} moved to {now} while its links were built")
+        await store.insert(inserted)
 
 
 async def _relink_rewritten(

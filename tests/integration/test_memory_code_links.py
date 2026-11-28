@@ -897,7 +897,7 @@ async def test_a_refresh_follows_the_links_to_the_head_it_indexed(env, monkeypat
     from server.code.api.models_ingest import CodeRefreshInput
     from server.code.app.index.pass_budget import CodeIngestResult
     from server.code.app.ingest import handle_code_refresh
-    from server.memory.app import code_link_judge, code_link_pass, code_link_recheck
+    from server.memory.app import code_link_judge, code_link_pass
     from server.settings import settings
 
     repo = env
@@ -924,7 +924,7 @@ async def test_a_refresh_follows_the_links_to_the_head_it_indexed(env, monkeypat
     monkeypatch.setattr(ingest_pass, "run_pass", ingest)
     monkeypatch.setattr(code_link_judge, "judge_claim", judge)
     refresh = CodeRefreshInput(org=ORG, namespace=TRUNK, wait=True)
-    async with code_link_pass.repository_locks.lease(code_link_recheck._lock_name(ORG, TRUNK)):
+    async with code_link_pass.repository_locks.lease(code_link_pass.lock_name(ORG, TRUNK)):
         out = await handle_code_refresh(refresh)
     assert (out.triggered, out.head_after) == (True, c2)
     assert [link["state"] for link in await _links(mid)] == ["fresh"]

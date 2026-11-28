@@ -1064,12 +1064,11 @@ separate mirror-content cleanup before serving; this account procedure does not 
 
 ### Memory links written during a recheck
 
-A build that parks late-inserted links writes the recheck cursor before it reads links
-and clears it after the checked head moves. While replicas of the previous build still
-run the recheck pass, they write the cursor late, clear it early and never park, so the
-write-side check can miss a link inserted then. Such a link is served as fresh until the
-next pass of the new build rechecks it. The window ends when the last previous-build
-replica is replaced; the new build carries no code for it.
+A build that takes the repository's recheck lease to insert a memory's links writes no
+new row shape and no setting. Replicas of the previous build insert without the lease, so
+while they run the link worker a link can be inserted just after a pass snapshotted and
+be served as fresh until the next pass of any build rechecks it. The window ends when the
+last previous-build replica is replaced; the new build carries no code for it.
 
 ## Independent proposal approval
 

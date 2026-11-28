@@ -683,28 +683,19 @@ No source text is fetched from a network or fabricated to fill a gap.
 
 ## Memory links written during a recheck
 
-A recheck pass writes its `recheck` cursor before it snapshots the links it follows, and
-clears the cursor only after it moves the checked head. A writer that links a memory
-inserts each link as `pending` first. It then reads the cursor and the checked head, and
-inserts the link again as fresh only when no pass is running and the checked head is
-unset or is the commit the link was built at. The pass follows no pending link, so the
-writer reads both again after the promotion and parks the link once more if a pass has
-begun or the head has moved. A pass that snapshotted before the promotion wrote its
-cursor before it, and clears it only after it moves the head, so that read sees the
-cursor or the new head; a pass that snapshots after the promotion follows the fresh
-link. `pending` reads as unknown. The next recheck re-anchors a pending link that keeps
-its path at the current head, from the commit it was built at. A path that never parses
-expires after `memory_code_links_pending_days`, as a pathless pending link does. A crash
-between the inserts leaves the link pending, never fresh; a crash between the checked
-head and the cursor clear is cleared by the next pass. Each link is written two or three
-times, in batches per call; that cost is accepted because it is bounded by the links a
-write creates and keeps a crash or a racing pass from ever leaving a link fresh.
+A recheck pass follows a repository's links from its checked head to its indexed head
+under the repository's lease, and a writer that links a memory inserts its links under
+the same lease. A pass that starts after the insert reads the new links. A pass that ran
+before the writer took the lease checked a head the writer's links were not built at,
+so the writer finds the indexed head moved, inserts nothing and raises `LeaseBusy`; the
+link worker retries the queue page, which builds the links at the new head. A writer
+that finds the lease held waits `memory_code_links_interval_seconds` for the next pass
+the same way. No link is stored in a state that waits for a pass, and the read side
+trusts a link only when the checked head is the indexed head.
 
-The fence reads run under `sequential_reads()`, so a cursor or checked head another
-replica wrote is seen. That holds when the state writes are visible to a
-sequential read, as `loom doctor` checks for `select_sequential_consistency`; a
-deployment where they are not can serve a link as fresh that a pass on another replica
-did not see.
+The indexed head is read under `sequential_reads()`, so a head another replica indexed
+is seen. That holds when the state writes are visible to a sequential read, as
+`loom doctor` checks for `select_sequential_consistency`.
 
 ## Invariants
 
