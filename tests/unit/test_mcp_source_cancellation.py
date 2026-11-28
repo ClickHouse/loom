@@ -1730,6 +1730,34 @@ async def test_catalog_change_during_final_access_refuses_mapped_read(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("during_read", [True, False], ids=["read", "idle"])
+async def test_sdk_callback_error_refuses_read_or_close(
+    monkeypatch: pytest.MonkeyPatch, during_read: bool
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HTTPFixture("resources", block=False)
+    caller = asyncio.current_task()
+
+    async def authority() -> None:
+        if asyncio.current_task() is caller and fixture.reads:
+            await remote._message_handler(ValueError(TEXT))
+
+    remote = source.MCPSourceClient(
+        fixture.config(), None, validate_access=authority, _transport=FixtureTransport(fixture)
+    )
+    refusal = pytest.raises(source.MCPSourceError, match=r"^MCP source protocol$")
+    if during_read:
+        async with remote:
+            with refusal:
+                await remote.read(IDENTITY)
+    else:
+        with refusal:
+            async with remote:
+                await remote._message_handler(RuntimeError(TEXT))
+    assert fixture.reads == int(during_read)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", [200, 202])
 async def test_initialized_notification_requires_empty_accepted_response(
     monkeypatch: pytest.MonkeyPatch, status: int

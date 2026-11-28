@@ -849,7 +849,10 @@ class MCPSourceClient:
             self._leave_private()
 
     async def _message_handler(self, message: Any) -> None:
-        if isinstance(message, types.ServerNotification) and isinstance(
+        if isinstance(message, Exception):
+            assert self._transport is not None
+            self._transport.failure = self._transport.failure or _error_code(message)
+        elif isinstance(message, types.ServerNotification) and isinstance(
             message.root, types.ToolListChangedNotification
         ):
             self._tool_catalog_generation += 1
