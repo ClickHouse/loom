@@ -135,6 +135,7 @@ class DescriptionProviderGuardTest(unittest.IsolatedAsyncioTestCase):
                     patch("server.core.ch.get_client", return_value=object()),
                     patch("server.embedding.embedder.get_embedder", return_value=embedder),
                     patch("server.llm.client.get_llm_client", return_value=client),
+                    patch("server.llm.client.llm_is_fake", return_value=False),
                     patch.object(describe, "_card_for", new_callable=AsyncMock, return_value=""),
                     patch.object(describe, "describe_prompt", return_value=("system", "user", 60)),
                     redirect_stdout(StringIO()),

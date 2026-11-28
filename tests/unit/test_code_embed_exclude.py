@@ -262,6 +262,7 @@ def test_loom_code_describe_leaves_a_marked_chunk_alone(monkeypatch: pytest.Monk
     monkeypatch.setattr("server.code.store.index.CodeRepo", _CodeRepo)
     monkeypatch.setattr("server.embedding.embedder.get_embedder", _Embedder)
     monkeypatch.setattr("server.llm.client.get_llm_client", _LLM)
+    monkeypatch.setattr("server.llm.client.llm_is_fake", lambda: False)
     monkeypatch.setattr("server.code.app.index.describe._describe_chunk", describe_chunk)
     monkeypatch.setattr("server.code.app.index.describe._card_for", nothing)
     args = SimpleNamespace(top_pct=100.0, suffix="", concurrency=2, limit=0)
