@@ -6559,6 +6559,7 @@ export interface MemoryListEntry {
 export interface MemoryListOutput {
   entries: MemoryListEntry[];
   truncated: boolean;
+  rows_read?: number;
   total?: number;
   today?: number;
   namespace_version?: string;

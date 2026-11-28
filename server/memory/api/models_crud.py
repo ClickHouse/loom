@@ -901,6 +901,9 @@ class MemoryListOutput(BaseModel):
     # The matching rows in the requested order; empty on an `unchanged` poll.
     entries: list[_MemoryListEntry]
     truncated: bool  # true if more entries exist beyond `limit`
+    # Rows this page read from `offset` before the authority dropped any: the next page's
+    # offset is `offset + rows_read`, which `len(entries)` understates when rows were dropped.
+    rows_read: int = 0
     # Total rows matching this scope (ignores `limit`), so callers can show
     # "N of TOTAL". 0 on an `unchanged` poll, which carries no counts.
     total: int = 0

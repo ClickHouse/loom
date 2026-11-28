@@ -236,6 +236,9 @@ export type VerificationState = "human" | "process" | "stale" | "none";
 export interface MemoryListResponse {
   entries: MemoryListEntry[];
   truncated: boolean;
+  // Rows the page read from `offset` before the server dropped any: the next offset is
+  // `offset + rows_read`, not `offset + entries.length`.
+  rows_read?: number;
   // Total rows in this namespace scope, ignoring the page `limit`. Lets the
   // UI show "N of TOTAL" instead of "N of <page cap>".
   total: number;

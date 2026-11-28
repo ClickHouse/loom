@@ -14936,6 +14936,7 @@ class MemoryListBody(TypedDict, total=False):
 class MemoryListOutput(TypedDict, total=False):
     entries: Required[list["MemoryListEntry"]]
     truncated: Required[bool]
+    rows_read: NotRequired[int]
     total: NotRequired[int]
     today: NotRequired[int]
     namespace_version: NotRequired[str]
