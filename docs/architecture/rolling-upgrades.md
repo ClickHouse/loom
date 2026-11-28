@@ -961,13 +961,21 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     holds the rollout.
 
 66. **A definition renamed as it moves to another file or scope**
-    (`server/code/domain/successor.py::elsewhere`): N's link recheck follows it; N-1's
-    reads the link `missing`, as before. One host rechecks a repository at a time, so a
-    range is read by one build. A `missing` link is never handed to a definition added
-    since, so a link N-1 read `missing` during the rollout stays `missing` under N
-    until its own name returns. The link rows are unchanged; `wide_ranges` is one more
-    number in the `memory_code_links` pass outcome, which every build serves as stored. No gate holds the
-    rollout.
+    (`server/code/domain/successor.py::elsewhere`): the builds differ in which of these
+    the link recheck follows, never in the link rows. One host rechecks a repository at
+    a time, so a range is read by one build, and a link one build followed is read by
+    the other as any followed link. Where N follows a definition and N-1 does not (its
+    tokens in a range of more than 32 changed files or past new definitions in its own
+    scope, a text nearly its own under another name, a definition under 30 tokens that
+    went with its scope), N-1 reads the link `missing` or `unresolved`. N weighs an
+    `unresolved` link again from the commit its code was last read at, at its next
+    recheck within 30 days or when its file changes. A `missing` link is never handed to
+    a definition added since, so a link N-1 read `missing` during the rollout stays
+    `missing` under N until its own name returns. Where both follow and differ (N takes
+    the definition's tokens under another name before a definition of its own name with
+    an edit), the link is where the build that read the range put it. `wide_ranges` is a
+    number in the `memory_code_links` pass outcome, which every build serves as stored.
+    No gate holds the rollout.
 
 ## What checks them
 

@@ -34,8 +34,9 @@ reported commit](#check-a-lesson-after-a-code-edit).
   `moved`, `changed` (naming the commit that changed it), `unresolved` or `missing`. A link
   records the definition's tokens, so whitespace, comments and most formatter changes leave
   it `fresh`. A definition renamed as it moves to another file or class is followed
-  when one new definition there is it: `moved` with the same tokens, `changed` with an
-  edit or outside its class. A link to a file follows the lines that hold a name the
+  when one new definition there is it, however many files the commits changed: `moved`
+  with the same tokens, `changed` with a small edit or outside its class. A link to a
+  file follows the lines that hold a name the
   memory cites, and is replaced by a link to a definition the memory names once the
   file defines it.
   [Link states](../concepts/memory.md#memories-linked-to-code)

@@ -9,11 +9,12 @@ answer is uncertain, never a removal. When no declaration of them has a text clo
 under any name, it is not among them (`unmatched`): it may still have moved to another
 file.
 
-Where that search finds nothing, the definition may have been renamed as it moved to
-another file or scope (`elsewhere`): among the definitions the changed files did not have
-before, the one with its exact shape, or the one of its own name with a close text. A
-small definition is told by neither: it is followed there only with its scope, under a
-name of its own words.
+The definition may also have been renamed as it moved to another file or scope
+(`elsewhere`): among the definitions the changed files did not have before, the one with
+its exact shape, which is looked for first; then the one of its own name with a close
+text, or the one whose text is nearly its own under any name. A small definition is told
+by its shape alone only with its scope: under a name of its own words from module level,
+and with its class otherwise.
 """
 
 from __future__ import annotations
@@ -28,6 +29,9 @@ from server.code.domain.anchor import Definition, bare_name, local_name, unnumbe
 
 # how close the old and new text, names blanked, must be for an edited rename
 _CLOSE = 0.6
+# and for one found by its text alone, under another name in another file or scope: a
+# tenth of its tokens may differ (a parameter, a callee renamed with it)
+_NEAR = 0.9
 # the share of a class's members a renamed class must keep to be its successor, and how
 # many at least: one shared name is the method itself, no evidence about the class
 _KEPT_MEMBERS = 0.5
@@ -42,6 +46,12 @@ _WORD = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+|[^\w\s]+")
 # line up to this many lines; past that the two are not compared and the answer is unsure
 _MAX_TOKENS = 600
 _MAX_LINES = 400
+
+
+# the lines a definition is searched for by in a range too wide to read whole: this many
+# of its longest, each of this many characters or more
+_LINES = 3
+_MIN_LINE = 12
 
 
 # the kinds that make a scope a class (a namespace or module is never renamed into one)
@@ -71,6 +81,16 @@ class Side:
 
     def text(self, d: Definition) -> str:
         return "\n".join(self.lines[max(0, d.start_line - 1) : d.end_line])
+
+
+def own_lines(was: Definition, before: Side) -> list[str]:
+    """The lines that tell `was`'s text among the files of a range: its `_LINES` longest
+    that do not hold its name (a rename rewrites those), without their indentation (a
+    move changes it). A definition moved whole takes them along."""
+    name = re.compile(r"(?<!\w)" + re.escape(_bare(was)) + r"(?!\w)")
+    lines = {line.strip() for line in before.lines[max(0, was.start_line - 1) : was.end_line]}
+    told = [line for line in lines if len(line) >= _MIN_LINE and not name.search(line)]
+    return sorted(told, key=lambda line: (-len(line), line))[:_LINES]
 
 
 def _scope_of(d: Definition) -> str:
@@ -151,27 +171,30 @@ def elsewhere(
     new: Sequence[Side],
     gone: Sequence[Side],
     kept: Sequence[Side] = (),
+    *,
+    edited: bool = True,
 ) -> Successor:
-    """What `was` (in `before`) became in another file or scope, where the search of its
-    own found nothing. `new` holds, file by file, the definitions a file did not define
-    before; `gone` those whose name left their file, `was` among them: one new definition
-    is the successor of one of them at most; `kept` those the changed files still define
-    under a name they had.
+    """What `was` (in `before`) became in another file or scope. `new` holds, file by
+    file, the definitions a file did not define before; `gone` those whose name left
+    their file, `was` among them: one new definition is the successor of one of them at
+    most; `kept` those the changed files still define under a name they had, which never
+    inherit a link whatever their text.
 
-    The one with its exact shape is it renamed alone; else the one of its own name with
-    a close text is it edited, when no definition of that name that stayed is close too
-    (`_same_name`). A small definition is followed only with its scope and under a name
-    of its own words (`_may_be`). A member is carried unless its class came with it
-    unchanged. Several that may be it, or one another removed definition may have
-    become, are uncertain."""
-    small = len(_TOKEN.findall(before.text(was))) < _SMALL
-    vacated = small and _vacated(_scope_of(was), before, gone)
+    The one with its exact shape is it renamed alone: the only answer without `edited`.
+    Else the one of its own name with a close text is it edited, when no definition of
+    that name that stayed is close too (`_same_name`); else the one whose text is nearly
+    its own, under any name (`_nearly`). A small definition is told by its shape only
+    with its scope (`_may_be`), and never by a text that is only near. A member is
+    carried unless its class came with it unchanged. Several that may be it, or one
+    another removed definition may have become, are uncertain."""
+    small = _small(was, before)
+    left = next((side for side in gone if side.path == before.path), None)
     had = {side.path: side for side in kept}
     arrived = [
         (d, side)
         for side in new
         for d in side.defs
-        if not small or _may_be(was, before, d, side, had.get(side.path), vacated)
+        if not small or _may_be(was, before, d, side, had.get(side.path), left)
     ]
     rivals = [
         (r, side)
@@ -180,33 +203,61 @@ def elsewhere(
         if (side.path, r.qualified_name) != (before.path, was.qualified_name)
     ]
     found = _same_shape(was, before, arrived, [r for r, _ in rivals])
-    if found is not None:
-        return found
+    if found is not None or not edited:
+        return found or Successor(None)
     stayed = [(d, side) for side in kept for d in side.defs]
-    return _same_name(was, before, arrived, rivals, stayed)
+    found = _same_name(was, before, arrived, rivals, stayed)
+    if small or found.definition is not None or found.uncertain:
+        return found
+    return _nearly(was, before, arrived, rivals, stayed)
 
 
 def _may_be(
-    was: Definition, before: Side, d: Definition, now: Side, had: Side | None, vacated: bool
+    was: Definition, before: Side, d: Definition, now: Side, had: Side | None, left: Side | None
 ) -> bool:
     """Whether a small `was` may be `d` in another file or scope. Under `_SMALL` tokens
-    a text is mostly its signature, and its own name is one any class may define
-    (`__iter__`, `close`): it goes only with its scope, module level to module level or
-    into the successor of its class. A class has one only once no member of it is left
-    in its file (`vacated`): that class renamed alone, or the one keeping its members,
-    weighed with those it already had (`had`: what `now`'s file kept), so a class that
-    took two methods in is not it. And only under a name of its own words (`_read_rows`,
-    `read_rows_v2`): one shared word is no kinship among every changed file, where two
-    stubs have one shape (`class ReadError(Exception): pass`, `RetryError`)."""
+    a text is mostly its signature, and two stubs have one shape (`class
+    ReadError(Exception): pass`, `RetryError`). From module level its name is its own:
+    it goes, into any scope, under a name of its own words (`_read_rows`,
+    `read_rows_v2`); one shared word is no kinship among every changed file. A member's
+    name is one any class may define (`__iter__`, `close`): it goes only with its class
+    (`_with_its_class`), under a name the search of its own file would take (`_kin`)."""
     a, b = _words(was.name), _words(d.name)
-    if not a or _unversioned(a) != _unversioned(b):
-        return False
+    same = bool(a) and _unversioned(a) == _unversioned(b)
     scope, target = _scope_of(was), _scope_of(d)
-    if not scope or not target:
-        return scope == target
-    if not vacated:
+    if not scope:
+        return same
+    if not target or not (same or _kin(was, d)):
         return False
-    if _renamed_alone(scope, target, before, now):
+    return _with_its_class(was, before, d, now, had, left)
+
+
+def _with_its_class(
+    was: Definition, before: Side, d: Definition, now: Side, had: Side | None, left: Side | None
+) -> bool:
+    """`d`'s class (or enclosing function) is the one `was` was in. Once no member of
+    that one is left in its file (`left`: what the file lost): the one renamed alone or
+    with nearly its text, or the one keeping its members' names, weighed with those it
+    already had (`had`: what `now`'s file kept), so a class that took two methods in is
+    not it. Or, whatever stays behind: two more of its members, each told by its own
+    text, left for `d`'s class under their names with their tokens (a class split in
+    two); small ones vouch for nothing, any dict-like class has them."""
+    scope, target = _scope_of(was), _scope_of(d)
+    lost = left.defs if left is not None else ()
+    theirs = {_bare(m): m.shape.exact for m in now.defs if _scope_of(m) == target}
+    came = [
+        r
+        for r in lost
+        if _scope_of(r) == scope
+        and _bare(r) != _bare(was)
+        and r.shape.exact
+        and theirs.get(_bare(r)) == r.shape.exact
+    ]
+    if left is not None and sum(not _small(r, left) for r in came) >= _MIN_SHARED:
+        return True
+    if not _vacated(scope, before, lost):
+        return False
+    if _renamed_alone(scope, target, before, now) or _nearly_the_same(scope, target, before, now):
         return True
     old, kept = _layout(before)[0][scope], _layout(now)[0][target]
     own = _layout(had)[0][target] if had is not None else set()
@@ -214,12 +265,32 @@ def _may_be(
     return shared >= _MIN_SHARED and shared / len(old | kept | own) >= _KEPT_MEMBERS
 
 
-def _vacated(scope: str, before: Side, gone: Sequence[Side]) -> bool:
+def _small(d: Definition, side: Side) -> bool:
+    """`d` is under `_SMALL` tokens: its shape alone tells nothing."""
+    return len(_TOKEN.findall(side.text(d))) < _SMALL
+
+
+def _vacated(scope: str, before: Side, gone: Sequence[Definition]) -> bool:
     """No member of `scope` is left in `before`'s file: each is among `gone`. Its own
     name may stay, as an alias of the class it became."""
-    left = {_unnumbered(r) for side in gone if side.path == before.path for r in side.defs}
+    left = {_unnumbered(r) for r in gone}
     names = {_unnumbered(d) for d in before.defs}
     return all(n in left for n in names if n.startswith(scope + "."))
+
+
+def _nearly_the_same(scope: str, target: str, before: Side, now: Side) -> bool:
+    """Whether `scope`'s own definition became `target`'s with a text nearly its own:
+    the class or function renamed with a small edit, its members with it."""
+
+    def only(side: Side, name: str) -> Definition | None:
+        found = [d for d in side.defs if local_name(d.qualified_name, d.path) == name]
+        return found[0] if len(found) == 1 else None
+
+    old, new = only(before, scope), only(now, target)
+    if old is None or new is None or _small(old, before):
+        return False
+    score = _similar(before.text(old), old, now.text(new), new, _NEAR)
+    return score is not None and score >= _NEAR
 
 
 def _same_shape(
@@ -277,6 +348,59 @@ def _same_name(
         if not contested:
             return Successor(d, carried=_left_its_class(was, before, d, side))
     return Successor(None, uncertain=bool(close) or unknown)
+
+
+def _nearly(
+    was: Definition,
+    before: Side,
+    arrived: list[tuple[Definition, Side]],
+    rivals: list[tuple[Definition, Side]],
+    stayed: list[tuple[Definition, Side]],
+) -> Successor:
+    """`was` renamed as it moved with a small edit: the only one of `arrived` whose text
+    is nearly its own (`_NEAR`). Not when another removed definition is as near to that
+    one (the nearest is its predecessor: a function nested in `was` is the one a new
+    function alike became), nor when a definition that `stayed` is as near to `was`: its
+    text may have gone under that name, which never inherits a link. A class is weighed
+    with classes only, a function with functions: a class of one method reads as its
+    method does. Of two near ones, the one that holds the other is near by what it
+    holds."""
+    text, classy = before.text(was), was.kind in _CLASS_KINDS
+
+    def alike(found: list[tuple[Definition, Side]]) -> list[tuple[Definition, Side]]:
+        return [(d, side) for d, side in found if (d.kind in _CLASS_KINDS) == classy]
+
+    scores = [(d, side, _similar(text, was, side.text(d), d, _NEAR)) for d, side in alike(arrived)]
+    near = [(d, side, score) for d, side, score in scores if score is None or score >= _NEAR]
+    near = [(d, side, score) for d, side, score in near if not _holds_one(d, side, near)]
+    if len(near) != 1:
+        return Successor(None, uncertain=bool(near))
+    d, side, score = near[0]
+    if score is None:  # too long to compare: it may be it
+        return Successor(None, uncertain=True)
+    there, floor = side.text(d), score
+
+    def as_near(other: float | None) -> bool:
+        return other is None or other >= floor
+
+    if any(as_near(_similar(then.text(r), r, there, d, _NEAR)) for r, then in alike(rivals)) or any(
+        as_near(_similar(text, was, kept.text(k), k, _NEAR)) for k, kept in alike(stayed)
+    ):
+        return Successor(None, uncertain=True)
+    return Successor(d, carried=_left_its_class(was, before, d, side))
+
+
+def _holds_one(
+    d: Definition, side: Side, others: Sequence[tuple[Definition, Side, float | None]]
+) -> bool:
+    """`d` holds one of `others` in its lines: a definition nested in it."""
+    return any(
+        e is not d
+        and at.path == side.path
+        and d.start_line <= e.start_line
+        and e.end_line <= d.end_line
+        for e, at, _ in others
+    )
 
 
 def _left_its_class(was: Definition, before: Side, d: Definition, now: Side) -> bool:
@@ -351,7 +475,7 @@ def _none_close(was: Definition, new: list[Definition], before: Side, now: Side)
 def _related(was: Definition, d: Definition, before: Side) -> bool:
     """Two small definitions look alike by their shape alone: `d` may be `was` only under
     a related name (`_kin`). A larger one is judged by its text."""
-    return len(_TOKEN.findall(before.text(was))) >= _SMALL or _kin(was, d)
+    return not _small(was, before) or _kin(was, d)
 
 
 def _unnumbered(d: Definition) -> str:
@@ -428,9 +552,10 @@ def _tokens(text: str, name: str) -> list[str]:
     return ["_" if t == name else t for t in _TOKEN.findall(text)]
 
 
-def _similar(a: str, was: Definition, b: str, d: Definition) -> float | None:
-    """How close two definitions' texts are, names blanked (0..1); None when they are too
-    long to compare within the bound."""
+def _similar(a: str, was: Definition, b: str, d: Definition, floor: float = _CLOSE) -> float | None:
+    """How close two definitions' texts are, names blanked (0..1), 0 when the cheap
+    bounds show them under `floor`; None when they are too long to compare within the
+    bound."""
     left, right = _tokens(a, bare_name(was.name)), _tokens(b, bare_name(d.name))
     if max(len(left), len(right)) > _MAX_TOKENS:
         left = [" ".join(_tokens(x, bare_name(was.name))) for x in a.splitlines() if x.strip()]
@@ -438,10 +563,10 @@ def _similar(a: str, was: Definition, b: str, d: Definition) -> float | None:
         if max(len(left), len(right)) > _MAX_LINES:
             # too long to compare, unless their sizes alone rule it out
             sizes = 2 * min(len(left), len(right)) / (len(left) + len(right))
-            return None if sizes >= _CLOSE else 0.0
+            return None if sizes >= floor else 0.0
     m = SequenceMatcher(None, left, right, autojunk=False)
     # the cheap upper bounds first: most candidates are nowhere near
-    if m.real_quick_ratio() < _CLOSE or m.quick_ratio() < _CLOSE:
+    if m.real_quick_ratio() < floor or m.quick_ratio() < floor:
         return 0.0
     return m.ratio()
 

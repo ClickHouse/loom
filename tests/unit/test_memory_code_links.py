@@ -5157,6 +5157,28 @@ async def test_a_mirror_grep_names_files_as_written(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_mirror_grep_for_lines_finds_a_file_holding_any_of_them(tmp_path) -> None:
+    from server.code.app import memory_links
+
+    git, commit = _repo(tmp_path)
+    head = commit(
+        {
+            "a.py": "def f(n):\n        for i in range(start, n):\n            pass\n",
+            "b.py": "def g(rows):\n    return sorted(rows, key=len)\n",
+            "c.py": "def h():\n    return 0\n",
+            "-e.py": "x = sorted(rows, key=len)\n",  # a path git must not read as an option
+        }
+    )
+    scope = SimpleNamespace(cfg=SimpleNamespace(git_dir=str(tmp_path / ".git"), namespace="n"))
+    # as written, wherever it is indented; a line that starts as an option is a line
+    lines = ["for i in range(start, n):", "sorted(rows, key=len)", "--not-there"]
+    paths = ["a.py", "b.py", "c.py", "-e.py"]
+    found = await memory_links.grep_lines(scope, head, lines, paths, limit=10)
+    assert sorted(found) == ["-e.py", "a.py", "b.py"]
+    assert await memory_links.grep_lines(scope, head, [], paths, limit=10) == []
+
+
+@pytest.mark.asyncio
 async def test_an_edited_move_the_index_settles_is_followed_when_the_mirror_cannot_answer(
     monkeypatch,
 ) -> None:
@@ -5394,12 +5416,17 @@ def _renaming_world(
     async def indexed_names(scope, commit, path):
         return await files.names(commit, path)
 
+    async def grep_lines(scope, commit, lines, paths, *, limit):
+        held = [p for p in paths if any(x in commits.get((commit, p), "") for x in lines)]
+        return held[:limit]
+
     _reads(monkeypatch, files, at)
     monkeypatch.setattr(files, "range", range_of)
     monkeypatch.setattr(files, "is_ancestor", is_ancestor)
     monkeypatch.setattr(code_links.code, "candidates", nothing)
     monkeypatch.setattr(code_links.code, "ingest_scope", ingest_scope)
     monkeypatch.setattr(code_links.code, "indexed_names", indexed_names)
+    monkeypatch.setattr(code_links.code, "grep_lines", grep_lines)
     (d,) = [
         x for x in _file("pkg/a.py", commits[("c0", "pkg/a.py")]).defs if x.name == "fetch_rows"
     ]
@@ -5489,30 +5516,142 @@ async def test_a_missing_link_is_not_handed_to_a_definition_renamed_elsewhere(mo
     assert await _followed(files, lost, "c1", "c2") == []
 
 
+def _wide(commits: dict[tuple[str, str], str], n: int = 3) -> dict[tuple[str, str], str]:
+    """`commits` with `n` more files changed at c1, none holding a line of `_LONG_ROWS`."""
+    return commits | {("c1", f"pkg/n{i}.py"): f"def n{i}():\n    return {i}\n" for i in range(n)}
+
+
 @pytest.mark.asyncio
-async def test_a_range_past_the_file_cap_is_not_searched_and_is_counted(
-    monkeypatch, caplog
+@pytest.mark.parametrize("edited", [False, True], ids=["its-tokens", "nearly-its-text"])
+async def test_a_range_past_the_file_cap_is_read_where_the_definitions_lines_are(
+    monkeypatch, caplog, edited: bool
 ) -> None:
-    commits = {
-        ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
-        ("c1", "pkg/a.py"): _KEEP,
-        ("c1", "pkg/b.py"): _LONG_ROWS.replace("fetch_rows", "warm_up"),
-    }
+    theirs = _LONG_ROWS.replace("fetch_rows", "warm_up")
+    commits = _wide(
+        {
+            ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
+            ("c1", "pkg/a.py"): _KEEP,
+            ("c1", "pkg/b.py"): theirs.replace("(n, start=0)", "(n, start=0, step=1)")
+            if edited
+            else theirs,
+        }
+    )
     files, row = _renaming_world(monkeypatch, commits)
-    monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 1)  # a.py and b.py changed
-    with caplog.at_level(logging.WARNING, logger=code_link_pass.log.name):
-        assert await _followed(files, row) == [("missing", "pkg/a.py", "pkg.a::fetch_rows")]
-        # once a range, however many links are lost over it
-        assert await files.turnover("c0", "c1", limit=1) is None
+    monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 2)  # five changed
+    read: list[tuple[str, str]] = []
+    at = files.at
+
+    async def counted(commit, path):
+        read.append((commit, path))
+        return await at(commit, path)
+
+    monkeypatch.setattr(files, "at", counted)
+    with caplog.at_level(logging.INFO, logger=code_link_pass.log.name):
+        state = "changed" if edited else "moved"
+        assert await _followed(files, row) == [(state, "pkg/b.py", "pkg.b::warm_up")]
+    # read whole it is not: only the link's file and the one holding its lines are parsed
+    assert await files.turnover("c0", "c1", limit=2) is None
+    assert {path for _, path in read} == {"pkg/a.py", "pkg/b.py"}
+    # counted once a range, however many links are lost over it
     assert files.wide_ranges == 1
-    # a warning, the only trace when `code.refresh` rechecks: it keeps no pass outcome
-    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
-        (
-            "WARNING",
-            "memory links: no renamed definition searched for across files: 2 files "
-            "changed in c0..c1 of code-a",
+    assert not caplog.records
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("why", ["too-many-hold-them", "git-cannot-search", "past-the-setting"])
+async def test_a_wide_range_whose_files_cannot_be_told_is_not_searched(
+    monkeypatch, caplog, why: str
+) -> None:
+    commits = _wide(
+        {
+            ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
+            ("c1", "pkg/a.py"): _KEEP,
+            ("c1", "pkg/b.py"): _LONG_ROWS.replace("fetch_rows", "warm_up"),
+        }
+    )
+    files, row = _renaming_world(monkeypatch, commits)
+    monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 2)
+    grep = code_links.code.grep_lines
+
+    async def grep_lines(scope, commit, lines, paths, *, limit):
+        return (
+            None if why == "git-cannot-search" else await grep(scope, commit, lines, paths, limit=1)
         )
-    ]
+
+    monkeypatch.setattr(code_links.code, "grep_lines", grep_lines)
+    if why == "too-many-hold-them":
+        monkeypatch.setattr(settings, "memory_code_links_mirror_naming_files", 1)
+    if why == "past-the-setting":
+        monkeypatch.setattr(settings, "memory_code_links_mirror_changed_files", 4)
+    with caplog.at_level(logging.INFO, logger=code_link_pass.log.name):
+        assert await _followed(files, row) == [("missing", "pkg/a.py", "pkg.a::fetch_rows")]
+        # a second link lost over the range: the warning is logged once a range
+        assert await files.turnover_holding("c0", "c1", ["return sorted(out)"], "pkg/z.py") is None
+    assert files.wide_ranges == 1
+    logged = [(r.levelname, r.getMessage()) for r in caplog.records]
+    if why == "past-the-setting":
+        # a warning, the only trace when `code.refresh` rechecks: it keeps no pass outcome
+        assert logged == [
+            (
+                "WARNING",
+                "memory links: no renamed definition searched for across files: 5 files "
+                "changed in c0..c1 of code-a, past memory_code_links_mirror_changed_files",
+            )
+        ]
+    else:
+        reason = (
+            "git cannot search them" if why == "git-cannot-search" else "its lines are in too many"
+        )
+        assert (
+            logged
+            == [
+                (
+                    "INFO",
+                    "memory links: a definition not searched for across the 5 files changed in "
+                    f"c0..c1 of code-a: {reason}",
+                )
+            ]
+            * 2
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_definition_with_no_line_of_its_own_is_not_searched_for_in_a_wide_range(
+    monkeypatch,
+) -> None:
+    # every line of it holds its name or is a word any file has
+    stub = "def fetch_rows():\n    pass\n"
+    commits = _wide(
+        {
+            ("c0", "pkg/a.py"): _KEEP + "\n\n" + stub,
+            ("c1", "pkg/a.py"): _KEEP,
+            ("c1", "pkg/b.py"): stub.replace("fetch_rows", "_fetch_rows"),
+        }
+    )
+    files, row = _renaming_world(monkeypatch, commits)
+    assert await _followed(files, row) == [("moved", "pkg/b.py", "pkg.b::_fetch_rows")]
+    files, row = _renaming_world(monkeypatch, commits)
+    monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 2)
+    assert await _followed(files, row) == [("missing", "pkg/a.py", "pkg.a::fetch_rows")]
+
+
+@pytest.mark.asyncio
+async def test_a_wide_range_is_read_at_its_base_for_another_removed_definition(
+    monkeypatch,
+) -> None:
+    # z.py, deleted, had the same text under another name: b.py's may be either's, as
+    # in a range read whole
+    commits = _wide(
+        {
+            ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
+            ("c0", "pkg/z.py"): _LONG_ROWS.replace("fetch_rows", "drain_rows"),
+            ("c1", "pkg/a.py"): _KEEP,
+            ("c1", "pkg/b.py"): _LONG_ROWS.replace("fetch_rows", "warm_up"),
+        }
+    )
+    files, row = _renaming_world(monkeypatch, commits)
+    monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 2)
+    assert await _followed(files, row) == [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]
 
 
 @pytest.mark.asyncio
@@ -5564,12 +5703,13 @@ def _two_that_may_be_it(c2: dict[str, str]) -> dict[tuple[str, str], str]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("unread", [False, True], ids=["too-wide", "unreadable"])
+@pytest.mark.parametrize("unread", [False, True], ids=["unsearchable", "unreadable"])
 async def test_an_unresolved_link_stays_unresolved_over_a_range_not_searched(
     monkeypatch, unread: bool
 ) -> None:
     # an unresolved link is looked for from its own commit, c0, so its range only grows:
-    # c2 changes 33 other files, or c0..c2 cannot be read, and both candidates are there
+    # c2 changes 33 other files and git cannot search them, or c0..c2 cannot be read,
+    # and both candidates are there
     two = {p: src for (c, p), src in _two_that_may_be_it({}).items() if c == "c1"}
     others = {} if unread else {f"pkg/n{i}.py": f"N{i} = 1\n" for i in range(33)}
     files, row = _renaming_world(monkeypatch, _two_that_may_be_it(two | others))
@@ -5579,10 +5719,27 @@ async def test_an_unresolved_link_stays_unresolved_over_a_range_not_searched(
     async def since_c1(base, head):
         return None if unread and base == "c0" else await range_of(base, head)
 
+    async def no_search(scope, commit, lines, paths, *, limit):
+        return None
+
     monkeypatch.setattr(files, "range", since_c1)
+    monkeypatch.setattr(code_links.code, "grep_lines", no_search)
     lost = row | {"state": "unresolved", "changed_since": "c1"}
     assert await _followed(files, lost, "c1", "c2") == []
     assert files.wide_ranges == (0 if unread else 1)
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_link_is_weighed_again_over_a_wide_range(monkeypatch) -> None:
+    # c2 changes 33 other files and removes c.py: read where the lines are, the range
+    # leaves b.py's the only one
+    one = {"pkg/b.py": _LONG_ROWS.replace("fetch_rows", "warm_up")}
+    others = {f"pkg/n{i}.py": f"N{i} = 1\n" for i in range(33)}
+    files, row = _renaming_world(monkeypatch, _two_that_may_be_it(one | others))
+    assert await _followed(files, row) == [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]
+    lost = row | {"state": "unresolved", "changed_since": "c1"}
+    assert await _followed(files, lost, "c1", "c2") == [("moved", "pkg/b.py", "pkg.b::warm_up")]
+    assert files.wide_ranges == 1
 
 
 @pytest.mark.asyncio
@@ -5666,17 +5823,20 @@ async def test_a_file_the_ingest_refuses_adds_no_renamed_definition(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_a_namesake_elsewhere_is_weighed_before_a_definition_under_another_name(
-    monkeypatch,
+@pytest.mark.parametrize("copied", [True, False], ids=["its-tokens-elsewhere", "edited-elsewhere"])
+async def test_its_tokens_under_another_name_are_weighed_before_a_namesake_with_an_edit(
+    monkeypatch, copied: bool
 ) -> None:
-    # b.py takes it under its own name with an edit, c.py gains an exact copy under
-    # another: the name is followed, as before the search across names
+    # b.py takes its name with an edit. Where c.py gains its tokens under another name,
+    # that one is the code the memory was written against; where c.py's is edited too,
+    # the name is followed
     edited = _LONG_ROWS.replace("out.append(-i)", "out.append(-i * 2)")
+    theirs = _LONG_ROWS if copied else _LONG_ROWS.replace("(n, start=0)", "(n, start=0, step=1)")
     commits = {
         ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
         ("c1", "pkg/a.py"): _KEEP,
         ("c1", "pkg/b.py"): edited,
-        ("c1", "pkg/c.py"): _LONG_ROWS.replace("fetch_rows", "warm_up"),
+        ("c1", "pkg/c.py"): theirs.replace("fetch_rows", "warm_up"),
     }
     files, row = _renaming_world(monkeypatch, commits)
     _history(monkeypatch, files, commits)
@@ -5685,7 +5845,51 @@ async def test_a_namesake_elsewhere_is_weighed_before_a_definition_under_another
         return [Definition("pkg/b.py", "pkg.b::fetch_rows", "fetch_rows")]
 
     monkeypatch.setattr(code_links.code, "candidates", candidates)
-    assert await _followed(files, row) == [("changed", "pkg/b.py", "pkg.b::fetch_rows")]
+    assert await _followed(files, row) == [
+        ("moved", "pkg/c.py", "pkg.c::warm_up")
+        if copied
+        else ("changed", "pkg/b.py", "pkg.b::fetch_rows")
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edited", [False, True], ids=["its-tokens", "nearly-its-text"])
+async def test_a_definition_renamed_as_it_moved_is_followed_past_new_ones_in_its_own_scope(
+    monkeypatch, edited: bool
+) -> None:
+    # a.py gains a definition that is nothing like it: the search of its own file is
+    # unsure of that one alone, and the other files are still read
+    theirs = _LONG_ROWS.replace("fetch_rows", "warm_up")
+    commits = {
+        ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
+        ("c1", "pkg/a.py"): _KEEP + "\n\ndef count_rows(rows):\n    return {'n': len(rows)}\n",
+        ("c1", "pkg/b.py"): theirs.replace("(n, start=0)", "(n, start=0, step=1)")
+        if edited
+        else theirs,
+    }
+    files, row = _renaming_world(monkeypatch, commits)
+    state = "changed" if edited else "moved"
+    assert await _followed(files, row) == [(state, "pkg/b.py", "pkg.b::warm_up")]
+    # with nothing brought in elsewhere it is as unsure as its own file left it
+    del commits["c1", "pkg/b.py"]
+    files, row = _renaming_world(monkeypatch, commits)
+    assert await _followed(files, row) == [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]
+
+
+@pytest.mark.asyncio
+async def test_a_method_is_followed_into_its_class_renamed_with_one_member(monkeypatch) -> None:
+    # a class of one method shares no member names with its successor, so the search of
+    # its file is unsure of the class; the method's tokens, the only ones, tell it
+    method = _LONG_ROWS.replace("def fetch_rows(n,", "def fetch_rows(self, n,").replace(
+        "\n", "\n    "
+    )
+    probe = "class Probe:\n    " + method.rstrip() + "\n"
+    commits = {
+        ("c0", "pkg/a.py"): _KEEP + "\n\n" + probe,
+        ("c1", "pkg/a.py"): _KEEP + "\n\n" + probe.replace("Probe", "Check"),
+    }
+    files, row = _renaming_world(monkeypatch, commits)
+    assert await _followed(files, row) == [("moved", "pkg/a.py", "pkg.a::Check::fetch_rows")]
 
 
 @pytest.mark.asyncio

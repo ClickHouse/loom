@@ -465,34 +465,45 @@ A memory's detail in the dashboard lists these links with their state
 ([clip](../assets/screenshots/clip-memory-linked-code.webm)).
 
 A link follows its definition through file moves, renames (with an edit, when the new
-name is related to the old), and its class's rename within the file. A definition
-renamed as it moves to another file, class or namespace is looked for among the
-definitions the changed files did not have before: the only one with its tokens under
-another name reads `moved`; failing that, the only one of its own name with a close text
-reads `changed`, unless a definition of that name that stayed in the changed files is
-close as well. A member reads `changed` there unless its class came with it unchanged. A
-definition under 30 tokens is told by neither its text nor its own name, which any class
-may define: it is followed there only under a name of the same words (`_read_rows` or
-`read_rows_v2` for `read_rows`) and with its scope, from module level to module level
-or, once no member of its class is left in its file, into the class that is that one
-renamed or keeps its members. Two definitions that may be it,
-or one that another removed definition may have become, leave the link `unresolved`. A
-range that changed more than 32 files under the entry's `path_prefixes` is not searched
-this way, and a warning in the server log names it; nor is a range whose diff cannot be
-read. Over such a range a live link is read as if nothing was renamed. An `unresolved`
+name is related to the old), and its class's rename within the file. A definition renamed
+as it moves to another file, class or namespace is looked for among the definitions the
+changed files did not have before, by three rules in turn. The only one with its tokens
+under another name reads `moved`. The only one of its own name with a close text reads
+`changed`, unless a definition of that name that stayed in the changed files is close as
+well. The only one whose text is nearly its own under any name, a tenth of its tokens
+differing at most (a parameter, a callee renamed with it), reads `changed`, when no other
+removed definition is as near to that one and no definition that stayed is as near to it.
+A member reads `changed` there unless its class came with it unchanged. The first rule is
+applied before a definition of its own name with an edit is looked for in another file,
+and whatever the search of its own file left unsure; the other two only when that search
+left no new definition there that may be it. A definition under 30 tokens is told by its
+tokens only with its scope, and never by a text that is only near. From module level it
+goes, into any scope, under a name of the same words (`_read_rows` or `read_rows_v2` for
+`read_rows`). A member, whose name any class may define, goes only with its class, under
+a name related to its own: the class renamed alone or with nearly its text, or keeping
+its members' names, once no member of it is left in its file; or the class that two more
+of its members, of 30 tokens or more each, left for with their tokens under their names.
+Two definitions that may be it, or one that another removed definition may have become,
+leave the link `unresolved`. A definition that kept its name in its file never inherits a
+link, whatever its text: a copy that was already there is another definition. A range
+that changed more than 32 files under the entry's `path_prefixes` is not parsed whole:
+the definition is looked for in the files that hold, at either end of the range, one of
+its three longest lines without its name, by a search of the mirror. That search is not
+made for a definition with no such line of 12 characters or more, when
+`memory_code_links_mirror_naming_files` or more files hold one, when more than
+`memory_code_links_mirror_changed_files` changed (a warning in the server log names the
+range), or when git cannot run it; nor is a range searched whose diff cannot be read.
+Over a range not searched a live link is read as if nothing was renamed. An `unresolved`
 link is looked for from the commit its code was last read at, so its range grows with
-every commit. While that range is searched, the link is followed once one definition
-that may be it is left. Over a range that is not searched it stays `unresolved`, and no
-later commit narrows that range. The `memory_code_links` worker's pass outcome counts in
-`wide_ranges` the ranges its own pass followed, not those a `code.refresh` call followed
-first. A
-namesake that was already there never inherits a link, and a `missing` link comes back
-only when its own name does. A definition moved to another file under its own name with
-an edit is followed there when its text is close to the one the link last read. A new
-definition left where it was stops that search only when it may be the old one under a
-new name: an export list or an unrelated function added beside it does not. The search
-for a definition renamed as it moved is not made past a new definition left there,
-unless that one is another definition renamed alone. A name gone from its file is
+every commit. While that range is searched, the link is followed once one definition that
+may be it is left. Over a range that is not searched it stays `unresolved`. The
+`memory_code_links` worker's pass outcome counts in `wide_ranges` the ranges past 32
+files its own pass followed, not those a `code.refresh` call followed first. A `missing`
+link comes back only when its own name does. A definition moved to another file under its
+own name with an edit is followed there when its text is close to the one the link last
+read. A new definition left where it was stops that search only when it may be the old
+one under a new name: an export list or an unrelated function added beside it does not. A
+name gone from its file is
 looked for in the files changed
 since its last check as the mirror holds them, beside the index, so a definition moved by
 a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is

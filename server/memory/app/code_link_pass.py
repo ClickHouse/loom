@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -36,7 +36,8 @@ class PassResult:
     unlinked: int = 0
     rechecked: int = 0
     suggested: int = 0
-    # ranges that changed too many files to look in for a definition renamed as it moved
+    # ranges that changed too many files to read whole for a definition renamed as it
+    # moved: it is looked for in the files that hold its lines
     wide_ranges: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -119,7 +120,7 @@ class RepoReads:
         # ("here" | "elsewhere" | "renamed", …): the same-file search, the one for its
         # name in another module and the one for it under another name
         self.successors: dict[tuple[str, ...], Successor] = {}
-        # ranges `turnover` did not read: they changed more files than its limit
+        # ranges `turnover` did not read whole: they changed more files than its limit
         self.wide_ranges = 0
 
     async def _once[T](self, key: tuple[Any, ...], read: Callable[[], Awaitable[T]]) -> T:
@@ -270,40 +271,123 @@ class RepoReads:
         """The definitions `base..head` brought in and took out of the files it changed,
         those the ingest would not index left out, a renamed file read as one. None when
         the range cannot be read (a force-push, a diff git fails on), or changed more
-        than `limit` files under the entry's prefixes: counted in `wide_ranges`."""
+        than `limit` files under the entry's prefixes: counted in `wide_ranges`, and
+        read only where a definition's lines are (`turnover_holding`)."""
 
         async def read() -> Turnover | None:
-            changed = await self.range(base, head)
-            scope = await self._once(
-                ("scope", head), lambda: code.ingest_scope(self.org, self.cns, head)
-            )
-            if changed is None or scope is None:
+            paths = await self._changed(base, head)
+            if paths is None:
                 return None
-            # by prefix first: the denylist is matched only on a range within the bound
-            paths = {old: now for old, now in changed.paths.items() if scope.under(now or old)}
-            if len(paths) > limit:
+            if len(paths[1]) > limit:
                 self.wide_ranges += 1
+                return None
+            return await self._read_turnover(paths[0], base, head, paths[1])
+
+        return await self._once(("turnover", base, head), read)
+
+    async def turnover_holding(
+        self, base: str, head: str, lines: Sequence[str], path: str
+    ) -> Turnover | None:
+        """`turnover` of a range too wide to read whole, over `path` and the files that
+        hold one of `lines` at either end: parsing thousands of files takes longer than
+        a pass may run, and a definition that moved whole took its lines with it. None
+        when the range cannot be read or those files cannot be told (`_holding`)."""
+
+        async def read() -> Turnover | None:
+            paths = await self._changed(base, head)
+            held = await self._holding(paths[0], base, head, paths[1], lines) if paths else None
+            if paths is None or held is None:
+                return None
+            some = {
+                old: now
+                for old, now in paths[1].items()
+                if old in held or now in held or path in (old, now)
+            }
+            return await self._read_turnover(paths[0], base, head, some)
+
+        return await self._once(("turnover", base, head, path, *lines), read)
+
+    async def _changed(
+        self, base: str, head: str
+    ) -> tuple[code.IngestScope, dict[str, str]] | None:
+        """The entry's ingest scope at `head` and the paths `base..head` changed under
+        its prefixes (old -> its path at `head`, '' = deleted); None when the range
+        cannot be read."""
+        changed = await self.range(base, head)
+        scope = await self._once(
+            ("scope", head), lambda: code.ingest_scope(self.org, self.cns, head)
+        )
+        if changed is None or scope is None:
+            return None
+        # by prefix first: the denylist is matched only on the files read
+        return scope, {o: n for o, n in changed.paths.items() if scope.under(n or o)}
+
+    async def _read_turnover(
+        self, scope: code.IngestScope, base: str, head: str, paths: dict[str, str]
+    ) -> Turnover:
+        """What each of `paths` (old -> its path at `head`, '' = deleted) gained, lost
+        and kept."""
+        found = Turnover([], [], [])
+        for old, now in sorted(paths.items()):
+            if not scope.takes(now or old):
+                continue
+            try:
+                await self._file_turnover(scope, base, old, head, now, found)
+            except code.ParseFailed:
+                pass  # the index holds nothing of a file that does not parse
+        return found
+
+    async def _holding(
+        self,
+        scope: code.IngestScope,
+        base: str,
+        head: str,
+        paths: dict[str, str],
+        lines: Sequence[str],
+    ) -> set[str] | None:
+        """The paths of a wide range (`paths`: old -> its path at `head`) whose text
+        holds one of `lines`: at `head` under its path there, at `base` under its old
+        one. None when that cannot be told: no line to look for, more than
+        `memory_code_links_mirror_changed_files` paths (each is an argument to git),
+        `memory_code_links_mirror_naming_files` or more files holding one at either end
+        (a line any file has), or a search git cannot run. Each is logged, the second as
+        a warning once a range."""
+        if len(paths) > settings.memory_code_links_mirror_changed_files:
+            if ("too wide", base, head) not in self._read:
+                self._read["too wide", base, head] = True
                 # a warning: `code.refresh` rechecks too and keeps no count
                 log.warning(
                     "memory links: no renamed definition searched for across files: %d "
-                    "files changed in %s..%s of %s",
+                    "files changed in %s..%s of %s, past memory_code_links_mirror_changed_files",
                     len(paths),
                     base[:12],
                     head[:12],
                     self.cns,
                 )
-                return None
-            found = Turnover([], [], [])
-            for old, now in sorted(paths.items()):
-                if not scope.takes(now or old):
-                    continue
-                try:
-                    await self._file_turnover(scope, base, old, head, now, found)
-                except code.ParseFailed:
-                    pass  # the index holds nothing of a file that does not parse
-            return found
-
-        return await self._once(("turnover", base, head), read)
+            return None
+        limit = settings.memory_code_links_mirror_naming_files
+        held: set[str] = set()
+        why = "" if lines else "it has no line of its own"
+        ends = ((head, set(paths.values()) - {""}), (base, set(paths))) if lines else ()
+        for commit, some in ends:
+            takes = sorted(filter(scope.takes, some))
+            found = await code.grep_lines(scope, commit, lines, takes, limit=limit)
+            if found is None or len(found) >= limit:
+                why = "git cannot search them" if found is None else "its lines are in too many"
+                break
+            held.update(found)
+        if why:
+            log.info(
+                "memory links: a definition not searched for across the %d files changed in "
+                "%s..%s of %s: %s",
+                len(paths),
+                base[:12],
+                head[:12],
+                self.cns,
+                why,
+            )
+            return None
+        return held
 
     async def _file_turnover(
         self, scope: code.IngestScope, base: str, old: str, head: str, now: str, found: Turnover
