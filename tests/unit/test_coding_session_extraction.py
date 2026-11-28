@@ -42,12 +42,12 @@ def test_a_coding_session_is_extracted_with_its_own_prompt_at_every_size(compact
             existing_memories=existing,
             namespace_categories=None,
             custom_instructions="",
-            agent_learnings=True,
+            agent_learnings=True,  # not read for a coding session
             coding_session=True,
         )
 
     prompt = system_prompt(None)
-    # No conversation rule or example and no examples preamble.
+    # No conversation rule or example, no examples preamble and no flag-gated block.
     assert prompt == _CODING_SESSION_SYSTEM_PROMPT
     assert "EXAMPLE 1" not in prompt
     # Most captures hold nothing to keep, so this prompt is what their call costs.

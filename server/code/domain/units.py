@@ -113,22 +113,12 @@ _OPTIONAL_WHEN_EMPTY: frozenset[str] = frozenset(
     }
 )
 
-# Every served unit says which leg found it. `via` is one of VIA_VALUES: a content leg
-# or both, the symbol route, or the other leg that proposed a unit neither content leg
-# found. The ranks are 1-based positions inside the leg's pool before fusion (0 = the
-# leg did not return this chunk). Computed from the leg results BEFORE the fusion priors
-# reorder anything, so they answer "what did each leg say", not "where did it end up".
-VIA_VALUES: tuple[str, ...] = (
-    "lexical",
-    "vector",
-    "both",
-    "symbol",
-    "definition",
-    "history",
-    "card",
-    "concept",
-    "hyde",
-)
+# Every served unit says which leg found it. `via` names a content leg or both
+# (`lexical`, `vector`, `both`), the symbol route, or the other leg that proposed a unit
+# neither content leg found. The ranks are 1-based positions inside the leg's pool before
+# fusion (0 = the leg did not return this chunk). Computed from the leg results BEFORE the
+# fusion priors reorder anything, so they answer "what did each leg say", not "where did
+# it end up".
 _DEFAULT_GRANULARITY = "unit"
 
 

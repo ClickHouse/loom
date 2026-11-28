@@ -109,6 +109,25 @@ async def test_a_rename_within_its_file_names_the_old_and_the_new_symbol(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_a_module_prefix_that_follows_its_file_reads_as_a_rename(monkeypatch) -> None:
+    moved = _link(
+        "m1",
+        "moved",
+        qn="loader::fetch_rows",
+        path="loader.py",
+        prev="reader.py",
+        prev_qn="reader::fetch_rows",
+    )
+    _links(monkeypatch, [_head("m1")], [moved])
+    note = await ma._annotate_stale_code_memories([_mem("m1")], _IN)
+    assert note is not None
+    assert (
+        "[m1]: `reader::fetch_rows` is now `loader::fetch_rows` at loader.py"
+        in note.content_excerpt
+    )
+
+
+@pytest.mark.asyncio
 async def test_two_renames_name_what_the_memory_was_written_against(monkeypatch) -> None:
     renamed = _link("m1", "moved", qn="n::retrieve_rows", path="src/n.py", prev="src/m.py")
     renamed["anchored_name"] = "n::fetch_rows"

@@ -32,8 +32,9 @@ def _extraction_base_prompt(
     compact: bool, *, agent_learnings: bool = False, coding_session: bool = False
 ) -> str:
     """The extraction system prompt before the preamble: a coding session's own
-    prompt at every input size, else the full or the compact examples plus the
-    flag-gated blocks."""
+    prompt at every input size, which takes no flag-gated block (`agent_learnings`
+    is not read for it), else the full or the compact examples plus the flag-gated
+    blocks."""
     if coding_session:
         return _CODING_SESSION_SYSTEM_PROMPT
     base_prompt = (

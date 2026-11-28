@@ -276,8 +276,9 @@ class RepoReads:
     async def turnover(self, base: str, head: str, *, limit: int) -> Turnover | None:
         """The definitions `base..head` brought in and took out of the files it changed,
         those the ingest would not index left out, a renamed file read as one. None when
-        the range cannot be read (a force-push, a diff git fails on), or changed more
-        than `limit` files under the entry's prefixes: counted in `wide_ranges`, and
+        the range cannot be read (a force-push, a diff git fails on), when no repository
+        indexes the namespace, or when the range changed more than `limit` files under
+        the entry's prefixes: only that last case is counted in `wide_ranges`, and it is
         read only where a definition's lines are (`turnover_holding`)."""
 
         async def read() -> Turnover | None:
@@ -289,7 +290,7 @@ class RepoReads:
                 return None
             return await self._read_turnover(paths[0], base, head, paths[1])
 
-        return await self._once(("turnover", base, head), read)
+        return await self._once(("turnover", base, head, limit), read)
 
     async def turnover_holding(
         self, base: str, head: str, lines: Sequence[str], path: str, *, limit: int

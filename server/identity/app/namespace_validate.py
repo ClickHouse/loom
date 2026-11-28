@@ -326,8 +326,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
 
 # What every `code_unlinked_*` check reads (`code_unlinked.unlinked`).
 _UNLINKED_READ = (
-    f"Only the {code_unlinked.SCANNED} served memories last written are read (all under "
-    "`keys` when given), and only in an org that indexes a repository. A raw tool "
+    f"Only the {code_unlinked.SCANNED} served memories last written are read (of those "
+    "under `keys` when given), and only in an org that indexes a repository. A raw tool "
     "observation is never linked and is not read; a word of the prose counts as a name "
     "only beside `files`."
 )
@@ -409,7 +409,7 @@ _CONTRACT: dict[str, RuleContract] = {
         1,
         exceptions=(
             f"Only the {code_unlinked.SCANNED} memories whose `moved` link was last checked "
-            "are read (all under `keys` when given), only in repositories the caller may "
+            "are read (of those under `keys` when given), only in repositories the caller may "
             "read, and no high-sensitivity memory. A link whose code also changed is "
             "`code_links_stale`'s."
         ),
@@ -448,7 +448,9 @@ _CONTRACT: dict[str, RuleContract] = {
         exceptions=_UNLINKED_READ,
         uncertainty=(
             "While the link pass backfills earlier writes, a memory it has not reached is "
-            "counted here even when nothing of it will resolve."
+            "counted here even when nothing of it will resolve. A write queued after the "
+            "pass's position with an earlier write time (an insert in flight, a writer "
+            "clock behind ClickHouse's) is counted under its cause until the next pass."
         ),
     ),
 }
