@@ -396,7 +396,7 @@ export function sessionScope(changed, objs, { root, cwd } = {}) {
       const call = o.payload || {};
       if (
         ["custom_tool_call", "function_call"].includes(call.type) &&
-        ["exec", "exec_command", "shell", "apply_patch"].includes(call.name)
+        (rolloutShell(call.name) || call.name === "apply_patch")
       ) {
         const input = call.input ?? call.arguments;
         if (typeof input === "string") commands.push(input);
@@ -631,14 +631,26 @@ function runsHere(command, run) {
 // A shell command that starts a test runner, wrapped or piped in any way: a
 // program `code.test_gate` names a run with or a common other one, or a
 // build tool with an argument in which `test` or `tests` follows no letter
-// and no lower-case letter follows it (`make test-unit`, `npm run test`,
-// `node --test`, `gradle :app:test`, `gradlew testDebugUnitTest`). `import
-// pytest`, `pip install pytest`, `pytest.raises`, `npm install x@latest`,
-// `npm install @testing-library/react` and `node scripts/attest.js` are not
-// runs. A command that only mentions a runner counts: what is read is
+// (`make test-unit`, `make testall`, `npm run test`, `node --test`, `gradle
+// :app:test`, `gradlew testDebugUnitTest`), or Gradle with a task in which
+// `Test` follows a lower-case letter (`gradlew integrationTest`). `import
+// pytest`, `pytest.raises`, `make latest` and `node scripts/attest.js` are
+// not runs. A command that only mentions a runner counts: what is read is
 // whether the session ran a test at all.
-const RUNNER =
-  /(?<![\w.-])(?:(?<!(?:import|install)\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|nextest|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*(?<![A-Za-z])tests?(?![a-z]))/;
+//
+// After a package manager's verb earlier in the simple command the name is a
+// package: `pip install -U pytest`, `npm i -D @types/jest`, `uv add --dev
+// pytest`, `go get github.com/stretchr/testify`. A flag is no verb: `npx
+// --no-install jest` runs.
+const FETCHED = String.raw`\s(?:(?:un)?install|add|i|ci|get)\s[^\n;|&]*`;
+// The task after Gradle's `-x` is left out of the build: `gradle build -x
+// test`. Maven's `-Dmaven.test.skip=true` runs none either (`(?!\.skip)`).
+const LEFT_OUT = String.raw`\s-x\s+\S*`;
+const RUNNER = new RegExp(
+  String.raw`(?<![\w.-])(?:(?<!import\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|nextest|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])(?<!${FETCHED})` +
+    String.raw`|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*(?<![A-Za-z])tests?(?!\.skip)(?<!${FETCHED}|${LEFT_OUT})` +
+    String.raw`|gradlew?\s[^\n;|&]*[a-z]Test(?<!${LEFT_OUT}))`,
+);
 
 /** True for the name of a Codex rollout's shell tool, under any of the names
  *  `normalizeToolName` folds onto Bash. */
@@ -662,8 +674,9 @@ function rolloutCommand(call) {
  * True when the transcript holds a shell command that starts a test runner
  * (`RUNNER`) and finished at or after `since` (epoch ms), or has no dated
  * result: Claude Code rows and Codex rollout calls, sidechains skipped. Its
- * output is not read, so a run that failed, was piped into `grep` or ran
- * between `git stash` and `git stash pop` counts.
+ * output is not read, so a run that failed or was piped into `grep` counts.
+ * So does one between `git stash` and `git stash pop` in the same command; a
+ * pop in a later command rewrites the changed files after the run.
  */
 export function testedSince(objs, since) {
   const done = new Map();
@@ -695,11 +708,10 @@ export function testedSince(objs, since) {
 }
 
 // Documentation and prose by name: a test run answers no change to one.
-// `CMakeLists.txt` and a requirements file are code.
-const PROSE = /\.(?:md|mdx|rst|txt|adoc)$/i;
+// A `.txt` file is code: a requirements file, a build list, a test fixture.
+const PROSE = /\.(?:md|mdx|markdown|rst|adoc|asciidoc)$/i;
 const CHANGELOG = /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|NEWS)$/;
-const CODE_TXT = /(?:^|\/)(?:CMakeLists|[^/]*requirements[^/]*)\.txt$/i;
-const isProse = (file) => CHANGELOG.test(file) || (PROSE.test(file) && !CODE_TXT.test(file));
+const isProse = (file) => CHANGELOG.test(file) || PROSE.test(file);
 
 /** The newest modification time, in epoch ms, among the code files of
  *  `files` under `root`: a test run that finished since then saw each of

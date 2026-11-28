@@ -337,6 +337,17 @@ test("Codex rollout tool calls scope the gate to paths named by this session", (
     { type: "response_item", payload: { type: "message", content: "src/b.py" } },
   ];
   assert.deepEqual(sessionScope(DIRTY, rows, { root: ROOT }), ["src/a.py", "tests/test_a.py"]);
+  // The shell tool under each name the client gives it; another tool that names a path is no change.
+  const named = (name) => [
+    {
+      type: "response_item",
+      payload: { type: "function_call", name, arguments: '{"command":["bash","-lc","sed -i s/x/y/ src/b.py"]}' },
+    },
+  ];
+  for (const name of ["exec", "exec_command", "shell", "shell_command", "local_shell", "container.exec"]) {
+    assert.deepEqual(sessionScope(DIRTY, named(name), { root: ROOT }), ["src/b.py"], name);
+  }
+  assert.deepEqual(sessionScope(DIRTY, named("read_file"), { root: ROOT }), []);
 });
 
 test("sidechain edits and non-assistant rows are not the session's change", () => {
@@ -925,12 +936,24 @@ test("any test run that finished since the change counts, whatever it ran and ho
     "make unit-tests",
     "cargo nextest run",
     "tests/clickhouse-test 01234_x",
+    "make testacc",
+    "make testall",
+    "npm run testci",
+    "./gradlew integrationTest",
+    "gradle connectedAndroidTest",
+    // A run after an install, in its own simple command.
+    "npm ci && npm test",
+    "pip install -e . && pytest",
+    "yarn add -D jest; yarn jest",
+    "for i in 1 2 3; do pytest tests; done",
+    "npx --no-install jest",
   ]) {
     assert.equal(testedSince(bash(command, FAILED), since), true, command);
     assert.equal(testedSince(call("PowerShell", { command }), since), true, command);
   }
-  // A command that reads or writes a test, or installs a runner, runs none;
-  // neither does a build tool whose argument holds `test` inside a word.
+  // A command that reads or writes a test, or installs a package, runs none;
+  // neither does a build tool whose argument holds `test` inside a word, or
+  // one told to leave its tests out.
   for (const command of [
     HEREDOC,
     "sed -n 1,40p tests/test_a.py",
@@ -943,6 +966,19 @@ test("any test run that finished since the change counts, whatever it ran and ho
     "node scripts/attest.js",
     "npm install @testing-library/react",
     "go get github.com/stretchr/testify",
+    "npm install @playwright/test",
+    "npm install -D node-test",
+    "npm install --save-dev jest",
+    "yarn add -D jest",
+    "pnpm add -D vitest",
+    "pip install -U pytest",
+    "pip install 'pytest>=8'",
+    "uv add --dev pytest",
+    "npm i -D @types/jest",
+    "npm uninstall jest",
+    "gradle build -x test",
+    "./gradlew build -x integrationTest",
+    "mvn package -Dmaven.test.skip=true",
   ]) {
     assert.equal(testedSince(bash(command, ""), since), false, command);
   }
@@ -994,24 +1030,35 @@ test("the last code change is the most recently written code file that can be re
     for (const [file, at] of [
       ["a.py", 1e12],
       ["b.py", 1e12 + 5000],
-      ["CMakeLists.txt", 1e12 + 6000],
-      ["dev-requirements.txt", 1e12 + 7000],
+      ["constraints.txt", 1e12 + 6000],
+      ["requirements/dev.txt", 1e12 + 6000],
+      ["tests/fixtures/expected.txt", 1e12 + 6000],
+      ["testdata/golden.txt", 1e12 + 6000],
       ["README.md", 1e12 + 9000],
-      ["notes.txt", 1e12 + 9000],
+      ["notes.markdown", 1e12 + 9000],
       ["guide.rst", 1e12 + 9000],
+      ["manual.asciidoc", 1e12 + 9000],
       ["CHANGELOG", 1e12 + 9000],
     ]) {
+      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
       fs.writeFileSync(path.join(dir, file), "x\n");
       fs.utimesSync(path.join(dir, file), new Date(at), new Date(at));
     }
     assert.equal(lastCodeChange(dir, ["b.py", "a.py", "deleted.py"]), 1e12 + 5000);
     // Documentation and prose are left out, by extension or by a changelog's name.
     assert.equal(
-      lastCodeChange(dir, ["a.py", "b.py", "README.md", "notes.txt", "guide.rst", "CHANGELOG"]),
+      lastCodeChange(dir, ["a.py", "b.py", "README.md", "notes.markdown", "guide.rst", "manual.asciidoc", "CHANGELOG"]),
       1e12 + 5000,
     );
-    assert.equal(lastCodeChange(dir, ["a.py", "CMakeLists.txt"]), 1e12 + 6000);
-    assert.equal(lastCodeChange(dir, ["a.py", "dev-requirements.txt"]), 1e12 + 7000);
+    // A .txt file is code: a requirements file, a test fixture.
+    for (const file of [
+      "constraints.txt",
+      "requirements/dev.txt",
+      "tests/fixtures/expected.txt",
+      "testdata/golden.txt",
+    ]) {
+      assert.equal(lastCodeChange(dir, ["a.py", file]), 1e12 + 6000, file);
+    }
     assert.equal(lastCodeChange(dir, ["README.md", "deleted.py"]), 0);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

@@ -358,8 +358,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   (`testedSince`, `lastCodeChange`): the command's text is read for a
   runner's name only, not for which tests ran or how they went, so a run
   that failed, was piped or ran between `git stash` and `git stash pop`
-  passes, in a Claude Code transcript or a Codex rollout. With no
-  transcript the default holds no stop.
+  in the same command passes, in a Claude Code transcript or a Codex
+  rollout; a pop in a later command rewrites the changed files, and that
+  stop is held. With no transcript the default holds no stop.
   With LOOM_TEST_GATE=block nothing is printed at edit time, and a Claude
   Code stop passes only when its transcript already answers the ask to run
   the named tests (`runAnswered` in lib/test-gate.mjs); a Codex rollout
