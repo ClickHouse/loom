@@ -17,25 +17,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs", "UserPromptSubmit"]
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs", "UserPromptSubmit"]
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs", "UserPromptSubmit"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-record.mjs", "UserPromptSubmit"]
           }
         ]
       }

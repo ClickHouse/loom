@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import cast
 
 from server.settings import settings
 from server.workers.first_pass import OwnedTable, Scope, due_hook
@@ -100,8 +101,8 @@ class _Worker:
     module: str
     # The settings flag that switches it on; None → always on.
     enabled: str | None
-    # The settings field holding the cadence.
-    interval: str
+    # Seconds between passes, or the setting that holds them.
+    interval: str | int
     pass_attr: str = "run_pass"
     # A second settings flag the worker needs beyond its own (the ledger
     # it reads, the plane it serves); off → the worker is off.
@@ -121,13 +122,17 @@ class _Worker:
     # due_scope.
     owned_tables: bool = False
 
+    def cadence_seconds(self) -> int | float:
+        if isinstance(self.interval, int):
+            return self.interval
+        return cast(int | float, getattr(settings, self.interval))
+
 
 def _spec_for(row: _Worker) -> WorkerSpec:
     """Import an enabled worker and build its spec — the `WorkerSpec(...)`
     each row would otherwise spell out, field for field."""
     mod = importlib.import_module(row.module)
     pass_callable = getattr(mod, row.pass_attr)
-    interval = getattr(settings, row.interval)
     max_pass = None
     if row.max_pass_setting is not None:
         max_pass = float(getattr(settings, row.max_pass_setting)) + row.max_pass_headroom
@@ -135,7 +140,7 @@ def _spec_for(row: _Worker) -> WorkerSpec:
         max_pass = float(getattr(mod, row.max_pass_attr))
     return WorkerSpec(
         row.name,
-        interval,
+        row.cadence_seconds(),
         pass_callable,
         max_pass_seconds=max_pass,
         first_pass_due=getattr(mod, row.first_pass_due) if row.first_pass_due else None,
@@ -170,7 +175,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "adoption_telemetry",
         "server.insights.workers.adoption_telemetry",
         "adoption_telemetry_enabled",
-        "adoption_telemetry_interval_seconds",
+        300,
         first_pass_due="first_pass_due",
     ),
     _Worker(
@@ -626,7 +631,7 @@ def worker_meta() -> dict[str, dict[str, float | bool | None]]:
     return {
         row.name: {
             "enabled": _is_enabled(row),
-            "interval_seconds": getattr(settings, row.interval),
+            "interval_seconds": row.cadence_seconds(),
             "idle_interval_seconds": getattr(settings, row.idle_interval)
             if row.idle_interval
             else None,

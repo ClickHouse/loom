@@ -5027,19 +5027,9 @@ settings:
   # worker.<name>.pass, kind='worker'); loom.worker_status records every pass. [restart]
   # worker_ledger_rows: true
 
-  # Self-hosted adoption reports. Set false to stop all adoption reporting. [restart]
+  # Self-hosted adoption reports, including public aggregate activity for contact
+  # domains. Set false to stop adoption reporting. [restart]
   # adoption_telemetry_enabled: true
-
-  # Share namespace contact domains and counts in adoption reports. Set false to omit
-  # them. [restart]
-  # adoption_telemetry_share_domains: true
-
-  # Share daily account, successful request and serving process counts for contact
-  # domains. Requires domain sharing. [restart]
-  # adoption_telemetry_share_domain_activity: false
-
-  # Seconds between adoption checks and retries. A report covers 12 hours. [restart]
-  # adoption_telemetry_interval_seconds: 3600
 
   # Master switch for OTel emission. `init_otel()` also refuses under pytest regardless:
   # server/main.py calls it at import, and a test run must never ship rows into

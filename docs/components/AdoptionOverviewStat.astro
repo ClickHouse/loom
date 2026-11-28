@@ -1,0 +1,19 @@
+---
+import { BigStat } from "@clickhouse/click-ui/BigStat";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+
+interface Props {
+  id?: string;
+  label: string;
+  value: string;
+  note: string;
+}
+
+const { id, label, value, note } = Astro.props;
+---
+
+<Panel {id} className="adoption-stat" orientation="vertical" alignItems="start" padding="md" gap="xs" hasBorder fillWidth>
+  <BigStat className="metric-value" height="auto" order="titleBottom" size="lg" {label} title={value} />
+  <Text size="sm" color="muted">{note}</Text>
+</Panel>

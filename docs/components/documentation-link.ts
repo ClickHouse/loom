@@ -15,3 +15,7 @@ export function documentationLink(locale: SiteLocale, path: string) {
 export function documentationOverview(locale: SiteLocale) {
   return localizedDocumentationOverview(locale, (path) => translatedPaths.has(path));
 }
+
+export function isDocumentationIndex(pathname: string, locale: SiteLocale) {
+  return pathname === "/docs" || (locale !== "en" && pathname === `/docs/${locale}`);
+}

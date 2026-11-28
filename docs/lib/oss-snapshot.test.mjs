@@ -11,24 +11,109 @@ const env = {
   LOOM_TELEMETRY_CLICKHOUSE_PASSWORD: "write-password",
 };
 
-test("allows the scheduled job to record one snapshot per counter and UTC date", async () => {
-  const calls = [];
+async function runSnapshot(sources) {
+  const writes = [];
   const fetcher = async (url, init) => {
-    calls.push({ url: new URL(url), init });
-    return calls.length === 1 ? Response.json({ stargazers_count: 42, forks_count: 7 }) : new Response("");
+    const address = new URL(url);
+    if (address.hostname === "analytics.example.test") {
+      assert.match(address.searchParams.get("query"), /INSERT INTO loom_product_analytics\.oss_metrics/);
+      writes.push(init.body.split("\n").map((row) => JSON.parse(row)));
+      return new Response("");
+    }
+    const source = sources[address.pathname];
+    assert.ok(source, `Unexpected snapshot source ${address.pathname}`);
+    assert.equal(init.headers?.Authorization, undefined);
+    return source(address, init);
   };
   const request = new Request(endpoint, { headers: { Authorization: "Bearer job-secret" } });
   const response = await snapshotOss(request, env, fetcher, new Date("2026-11-24T02:30:00Z"));
+  return { response, writes };
+}
+
+test("allows the scheduled job to record repository and distribution counters for the UTC date", async () => {
+  const releaseRequests = [];
+  const { response, writes } = await runSnapshot({
+    "/repos/ClickHouse/loom": () => Response.json({ stargazers_count: 42, forks_count: 7 }),
+    "/repos/ClickHouse/loom/releases": (address, { signal }) => {
+      releaseRequests.push({ address: address.href, signal });
+      if (address.searchParams.get("page") === "1") {
+        return Response.json([{ assets: [{ download_count: 3 }, { download_count: 5 }] }], {
+          headers: { Link: '<https://untrusted.example/releases?page=2>; rel="next"' },
+        });
+      }
+      return Response.json([{ assets: [{ download_count: 11 }] }]);
+    },
+    "/ClickHouse/loom/pkgs/container/loom": () =>
+      new Response('<span class="label">Total downloads</span><h3 title="1869">1.87K</h3>'),
+  });
   assert.equal(response.status, 204);
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0].url.hostname, "api.github.com");
-  assert.equal(calls[1].url.hostname, "analytics.example.test");
-  assert.match(calls[1].url.searchParams.get("query"), /INSERT INTO loom_product_analytics\.oss_metrics/);
-  const rows = calls[1].init.body.split("\n").map((row) => JSON.parse(row));
-  assert.deepEqual(rows, [
-    { day: "2026-11-24", source: "github", artifact: "ClickHouse/loom", metric: "stars", value: 42 },
-    { day: "2026-11-24", source: "github", artifact: "ClickHouse/loom", metric: "forks", value: 7 },
+  assert.deepEqual(
+    releaseRequests.map(({ address }) => address),
+    [
+      "https://api.github.com/repos/ClickHouse/loom/releases?per_page=100&page=1",
+      "https://api.github.com/repos/ClickHouse/loom/releases?per_page=100&page=2",
+    ],
+  );
+  assert.equal(releaseRequests[0].signal, releaseRequests[1].signal);
+  assert.deepEqual(writes, [
+    [
+      { day: "2026-11-24", source: "github", artifact: "ClickHouse/loom", metric: "stars", value: 42 },
+      { day: "2026-11-24", source: "github", artifact: "ClickHouse/loom", metric: "forks", value: 7 },
+      {
+        day: "2026-11-24",
+        source: "github",
+        artifact: "ClickHouse/loom",
+        metric: "release_asset_downloads_total",
+        value: 19,
+      },
+      {
+        day: "2026-11-24",
+        source: "ghcr",
+        artifact: "ghcr.io/clickhouse/loom",
+        metric: "container_pulls_total",
+        value: 1869,
+      },
+    ],
   ]);
+});
+
+test("preserves verified snapshots when the repository is unavailable or release results are partial", async () => {
+  const releasePages = [];
+  const { response, writes } = await runSnapshot({
+    "/repos/ClickHouse/loom": () => new Response(null, { status: 503 }),
+    "/repos/ClickHouse/loom/releases": (address) => {
+      const page = address.searchParams.get("page");
+      releasePages.push(page);
+      if (page === "2") return new Response(null, { status: 503 });
+      return Response.json([{ assets: [{ download_count: 7 }] }], {
+        headers: { Link: '<https://api.github.com/repos/ClickHouse/loom/releases?page=2>; rel="next"' },
+      });
+    },
+    "/ClickHouse/loom/pkgs/container/loom": () => new Response('<span>Total downloads</span><h3 title="0">0</h3>'),
+  });
+  assert.equal(response.status, 204);
+  assert.deepEqual(releasePages, ["1", "2"]);
+  assert.deepEqual(writes, [
+    [
+      {
+        day: "2026-11-24",
+        source: "ghcr",
+        artifact: "ghcr.io/clickhouse/loom",
+        metric: "container_pulls_total",
+        value: 0,
+      },
+    ],
+  ]);
+});
+
+test("rejects malformed totals and skips the warehouse when no source has an observation", async () => {
+  const { response, writes } = await runSnapshot({
+    "/repos/ClickHouse/loom": () => Response.json({ stargazers_count: -1, forks_count: "3" }),
+    "/repos/ClickHouse/loom/releases": () => Response.json([{ assets: [{ download_count: 7 }, {}] }]),
+    "/ClickHouse/loom/pkgs/container/loom": () => new Response("<span>Total downloads</span><h3>Unavailable</h3>"),
+  });
+  assert.equal(response.status, 502);
+  assert.deepEqual(writes, []);
 });
 
 test("rejects unauthenticated calls before making requests", async () => {
