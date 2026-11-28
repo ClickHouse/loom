@@ -55,9 +55,11 @@ end of this section are the exceptions. The plugin sends:
 - token usage and the model name (Claude Code only);
 - after each edit in an indexed checkout, the outline of that file's uncommitted diff
   against `HEAD`, to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);
-- at Stop in an indexed checkout, the outline of the diff of the files the session
-  changed, or of the whole uncommitted tree when the client gives no transcript, to
-  `code.test_gate` (`LOOM_TEST_GATE=off` stops it). A diff's outline, up to 200,000
+- the first time a session changes a file in an indexed checkout, with an edit tool or a
+  shell command that names it, the outline of that file's uncommitted diff, to
+  `code.test_gate` (`LOOM_TEST_GATE=off` stops it). With `LOOM_TEST_GATE=block` the
+  outline goes at Stop instead, for the files the session changed, or for the whole
+  uncommitted tree when the client gives no transcript. A diff's outline, up to 200,000
   characters, is its file paths, its hunk line ranges and, in a code file, the last
   identifier before the first `(` of each hunk header's context, usually the enclosing
   function's name. Git takes that context from a line above the hunk in the old file,
@@ -185,8 +187,8 @@ Every option is optional; Claude Code asks once, and an empty answer falls back 
 Count agent tool calls and hook requests separately. Before Claude chooses a tool,
 the prompt hook can search the code index and supply matching symbols and line ranges.
 Claude can use those pointers through a targeted `Read` with no explicit Loom tool call.
-The test gate also calls `code.test_gate` itself; it names test obligations and does not
-execute the tests. Zero explicit calls alone does not establish that Loom was unused.
+The test gate also calls `code.test_gate` itself; it names the tests linked to a changed
+file and does not execute them. Zero explicit calls alone does not establish that Loom was unused.
 
 Check the setup in this order:
 
@@ -384,11 +386,21 @@ It stays quiet for untracked files, empty diffs, repeated impact results, an una
 index or a failed request. Edits performed through `Bash`, including scripts using
 `python` or `sed`, do not match either edit hook.
 
+The test gate's line does follow a shell edit. It runs on `PostToolUse` after `Bash` and
+`PowerShell`, and rides the blast-radius hook after `Edit`, `Write` and `MultiEdit`. It
+emits one line per changed file, `Loom: tests the index links to <file>: <command>`, the
+first time the session changes that file, and only when the command names the file's
+path, the file differs from `HEAD`, it was written after the session began, and the index
+links it to a test the checkout has. It stays quiet for an edited test file, a
+comment-only change, an untracked file, a file already asked about in the session, an
+unavailable index or a failed request, and always with `LOOM_TEST_GATE=block` or `off`.
+
 Headless sessions support `hookSpecificOutput.additionalContext`; ordinary visible
 assistant output does not prove whether that context reached the model. Capture
 `--debug hooks,mcp` output privately and redact tokens and authorization headers before
 sharing it. Include the hook event, tool name, hook output and relevant stream events.
-Correlate them with server requests to `memory.for_file` and `code.impact` to distinguish
+Correlate them with server requests to `memory.for_file`, `code.impact` and
+`code.test_gate` to distinguish
 hook matching, request execution, nonempty context and delivery to the agent.
 
 ## Configuration
@@ -464,12 +476,13 @@ The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
 | PreToolUse (Read, Grep, Bash)                     | `loom-code-shunt.mjs`       | the code shunt and the tracker shunt ([next section](#the-code-shunt))                                                                                                                                                                                                                                                                                                          | `LOOM_CODE_SHUNT=off`, `LOOM_TRACKER_SHUNT=off`                                                             |
 | PreToolUse (Edit, Write, MultiEdit, NotebookEdit) | `loom-file-context.mjs`     | what Loom knows about the file about to change (`memory.for_file`): your rules and the repository's shared rules and design decisions; once per file per 30 min                                                                                                                                                                                                                 | `LOOM_FILE_CONTEXT=off`                                                                                     |
 | PostToolUse (Loom tools)                          | `loom-mentor-hint.mjs`      | lifts a result's `hint` into context, once per hint code per session                                                                                                                                                                                                                                                                                                            | `LOOM_MENTOR_HINTS=off`                                                                                     |
-| PostToolUse (Edit, Write, MultiEdit)              | `loom-blast-radius.mjs`     | one line from `code.impact`: callers, tests reaching the change, co-change files not yet touched                                                                                                                                                                                                                                                                                | `LOOM_BLAST_RADIUS=off`                                                                                     |
+| PostToolUse (Edit, Write, MultiEdit)              | `loom-blast-radius.mjs`     | one line from `code.impact`: callers, tests reaching the change, co-change files not yet touched; on a file's first edit, the test gate's line beside it in place of the tests                                                                                                                                                                                                  | `LOOM_BLAST_RADIUS=off`                                                                                     |
+| PostToolUse (Bash, PowerShell)                    | `loom-test-gate.mjs`        | one line per file the command changed, naming the command of the tests `code.test_gate` links to it; once per file per session, on the tool result, and never a blocked stop ([the test gate](#the-test-gate))                                                                                                                                                                  | `LOOM_TEST_GATE=off`                                                                                        |
 | PostToolUse, PostToolUseFailure, Stop, SessionEnd | `loom-record.mjs`           | runs the event's recording scripts (the rows below for those events, the gates excepted) in one process: detached after a tool call and at Stop, so the session does not wait for their requests, and in the hook itself at SessionEnd                                                                                                                                          | each script's own                                                                                           |
 | PostToolUse, PostToolUseFailure (any tool)        | `loom-capture.mjs`          | one episodic observation per tool call (`observe.record`); a failed call is typed `error`                                                                                                                                                                                                                                                                                       | none                                                                                                        |
 | Stop, SessionEnd                                  | `loom-conversation.mjs`     | appends new chat turns to the conversation plane (`conversation.append`)                                                                                                                                                                                                                                                                                                        | `LOOM_CAPTURE_CONVERSATIONS=false`                                                                          |
 | Stop                                              | `loom-usage.mjs`            | posts the session's token usage to `cost.record_turns`                                                                                                                                                                                                                                                                                                                          | `LOOM_USAGE=off`                                                                                            |
-| Stop                                              | `loom-test-gate.mjs`        | for changes this session made, blocks "done" once with the tests `code.test_gate` says the change obliges, unless your latest prompt ends with "Do not run the tests", or pytest already ran them to its summary line, failures included, and nothing was edited or run since (exact conditions: **Answered stops** in the plugin README)                                       | `LOOM_TEST_GATE=off`                                                                                        |
+| Stop                                              | `loom-test-gate.mjs`        | only with `LOOM_TEST_GATE=block`: for changes this session made, blocks "done" once with the tests `code.test_gate` says the change obliges, unless your latest prompt ends with "Do not run the tests", or pytest already ran them to its summary line, failures included, and nothing was edited or run since (exact conditions: **Answered stops** in the plugin README)     | `LOOM_TEST_GATE=block`                                                                                      |
 | Stop                                              | `loom-validate-gate.mjs`    | blocks once when `namespace.validate` finds errors or warnings on the memory keys this session wrote                                                                                                                                                                                                                                                                            | `LOOM_VALIDATE_GATE=off`                                                                                    |
 | Stop                                              | `loom-namespace-health.mjs` | on the first Stop, one line when `namespace.audit` finds a critical misuse of the namespace, pointing at the `loom-optimize` skill                                                                                                                                                                                                                                              | `LOOM_NAMESPACE_HEALTH=off`                                                                                 |
 | Stop, PreCompact                                  | `loom-working-memory.mjs`   | refreshes the working-memory note (`session:<project>`): goal, git status, files edited, last reply                                                                                                                                                                                                                                                                             | `LOOM_WORKING_MEMORY=off`                                                                                   |
@@ -570,6 +583,7 @@ Beyond the off switches in the table:
 | `LOOM_PROMPT_PACK_MIN_CONF`    | unset                     | a `retrieval_confidence` gate for search pointers; unset, the index's low-risk label       |
 | `LOOM_FILE_CONTEXT_TTL_MIN`    | `30`                      | minutes before the same file's context is fetched again                                    |
 | `LOOM_BLAST_DEPTH`             | `1`                       | `code.impact` depth for the blast-radius line                                              |
+| `LOOM_TEST_GATE`               | unset                     | `block` holds the stop in place of the edit-time line; `off` turns the gate off            |
 | `LOOM_TEST_GATE_DEPTH`         | `2`                       | hops the test gate follows (1–3)                                                           |
 | `LOOM_OBSERVE_DEDUPE_S`        | `60`                      | a repeated read in this window is not observed again; `0` disables                         |
 | `LOOM_OBSERVE_SKIP_TOOLS`      | a built-in list           | comma-separated tool names (with `*` globs) that produce no observation                    |
@@ -577,6 +591,36 @@ Beyond the off switches in the table:
 | `LOOM_SESSION_BRIEF_KEY`       | `auto/<project>/<branch>` | the key the session brief is saved under                                                   |
 
 `integrations/claude-code-plugin/README.md` documents the remaining knobs.
+
+## The test gate
+
+The test gate tells the agent which tests constrain a file when it changes the file. In
+an indexed checkout, the tool call that first changes a file in a session comes back with
+one extra line:
+
+```text
+Loom: tests the index links to src/flask/blueprints.py: python3 -m pytest tests/test_blueprints.py
+```
+
+- **What it names.** The tests `code.test_gate` links to the file through its name, the
+  mined test map or the call graph, each of them present in the checkout, as one command
+  where the harness is known (`LOOM_CODE_TEST_GATE_RUN_TEMPLATES` on the server adds
+  yours) and by path where it is not. For pytest it names the checkout's interpreter
+  without starting it.
+- **When.** Once per file per session, on the result of the edit tool or shell command
+  that changed the file. It costs no model request, and a session that never runs the
+  tests has still been told which ones they are.
+- **What it does not do.** It does not check that the tests ran, and it never holds the
+  end of a session. Whether a session ran the right tests cannot be read reliably from
+  its shell commands, so that judgement stays with the agent and with CI.
+
+To hold the stop instead, set `LOOM_TEST_GATE=block` in the environment Claude Code starts
+in. The gate then prints nothing at edit time, and blocks "done" once per distinct change
+with the tests the change obliges and the functions the index links no test to, unless
+the transcript already answers the ask; the plugin README lists the exact conditions
+under **Answered stops**. A block costs the session one more model request, also when the
+session had run the tests in a way the gate does not read. `LOOM_TEST_GATE=off` turns the
+gate off.
 
 ## The code shunt
 

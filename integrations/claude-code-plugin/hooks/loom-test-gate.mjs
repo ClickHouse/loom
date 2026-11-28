@@ -1,7 +1,18 @@
 #!/usr/bin/env node
-// loom-test-gate — Stop hook.
+// loom-test-gate — PostToolUse (Bash|PowerShell) and Stop.
 //
-// On Stop, if the working tree has uncommitted changes THIS SESSION made
+// PostToolUse, the default (LOOM_TEST_GATE unset): after a shell command
+// that changed files in a loom-indexed repo, ask `code.test_gate` which
+// tests the index links to each one and attach ONE line per file naming
+// their command, once per file per session. The line rides the tool result,
+// so it costs no model request, and it arrives while the file is still
+// being edited. An edit tool's call gets the same line from
+// loom-blast-radius, the one hook wired for those tools. The stop is never
+// held: whether the tests then ran is the agent's to judge.
+//
+// Stop, with LOOM_TEST_GATE=block: the gate holds the stop instead, and
+// names nothing at edit time. If the working tree has uncommitted changes
+// THIS SESSION made
 // in a loom-indexed repo, ask `code.test_gate` for the change's obligations
 // (tests to run, untested touched functions) and block the stop ONCE per
 // distinct change with a reason that names them. "This session's" is read
@@ -16,15 +27,13 @@
 // of the tree touched this session, server down, second stop on the same
 // change — the agent stops as normal. Without a transcript path the whole
 // dirty tree is the change.
-// LOOM_TEST_GATE=off disables; LOOM_TEST_GATE_DEPTH (1-3) sets the hops.
+// LOOM_TEST_GATE=off disables both; LOOM_TEST_GATE_DEPTH (1-3) sets the hops.
 
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
 import {
   git,
   gitToplevel,
-  pathUnder,
+  normalizeToolName,
   postBounded,
   readStdinJson,
   DIFF_ARGS,
@@ -32,15 +41,19 @@ import {
   resolveServerUrl,
   resolveToken,
   scheduleExit,
-  envSwitch,
 } from "../lib/loom-client.mjs";
 import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 import { readAllLines } from "../lib/transcript.mjs";
 import {
+  adviceFiles,
+  adviceLine,
+  advicePayload,
   checkoutPython,
   commentOnlyDiff,
   decideBlock,
+  gateDepth,
+  gateMode,
   gatePayload,
   gateSignature,
   newestChange,
@@ -48,14 +61,28 @@ import {
   runAnswered,
   sessionScope,
   sessionStart,
+  testsIn,
   writtenSince,
 } from "../lib/test-gate.mjs";
 
-const ENABLED = envSwitch("LOOM_TEST_GATE", true);
-const DEPTH = Math.min(3, Math.max(1, Number(process.env.LOOM_TEST_GATE_DEPTH || 2)));
+const MODE = gateMode();
+const DEPTH = gateDepth();
+const AFTER_TOOL = process.argv[2] === "PostToolUse";
+
+/** After a shell command: the line for the files it changed, or nothing. */
+async function advise(payload, token) {
+  const tool = normalizeToolName(payload.tool_name);
+  if (tool !== "Bash" && tool !== "PowerShell") return;
+  const { root, files } = adviceFiles(payload, { cwd: payload.cwd || process.cwd() });
+  if (!files.length) return;
+  const repo = await resolveIndexedRepo(root, { consumer: "claude-code-testgate" });
+  if (!repo.indexed) return;
+  const out = advicePayload(await adviceLine(payload, files, { root, repo, token, depth: DEPTH }));
+  if (out) process.stdout.write(JSON.stringify(out) + "\n");
+}
 
 async function main() {
-  if (!ENABLED) {
+  if (MODE !== (AFTER_TOOL ? "advise" : "block")) {
     scheduleExit(0);
     return;
   }
@@ -65,6 +92,11 @@ async function main() {
     return;
   }
   const payload = await readStdinJson();
+  if (AFTER_TOOL) {
+    await advise(payload, token);
+    scheduleExit(0);
+    return;
+  }
   // A Stop fired by our own block must never block again.
   if (payload.stop_hook_active) {
     scheduleExit(0);
@@ -127,16 +159,7 @@ async function main() {
     },
     { token, serverUrl: resolveServerUrl() },
   );
-  const testExists = (testPath) => {
-    const target = path.resolve(root, testPath);
-    if (!pathUnder(root, target)) return false;
-    try {
-      return fs.statSync(target).isFile();
-    } catch {
-      // A stale index row or another checkout's test is an explicit gap.
-      return false;
-    }
-  };
+  const testExists = testsIn(root);
   // The newest file time among the uncommitted and untracked files.
   const lastModified = () => {
     const untracked = git(["ls-files", "-z", "--others", "--exclude-standard"], root, {

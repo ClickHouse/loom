@@ -8,11 +8,18 @@
 // the agent is still in the edit, which is when a missed sibling file is
 // cheap to fix.
 //
-// Fail-open everywhere: no token, not an indexed repo, untracked file, empty
-// diff, server slow → nothing is printed. One bounded request (3 s). The same
-// touched-symbol set for a file is reported once per session.
+// The test gate's edit-time line rides the same context: the first edit of a
+// file this session also asks `code.test_gate` which tests the index links
+// to it and names their command (lib/test-gate.mjs), in place of the radius's
+// own count of tests. This hook is the only one wired for an edit tool, so an
+// edit gets one line. LOOM_TEST_GATE=block or off leaves the radius alone.
 //
-//   LOOM_BLAST_RADIUS=off        disable
+// Fail-open everywhere: no token, not an indexed repo, untracked file, empty
+// diff, server slow → nothing is printed. Each request is bounded (3 s) and
+// the two go out together. The same touched-symbol set for a file is reported
+// once per session.
+//
+//   LOOM_BLAST_RADIUS=off        disable the radius; the tests line stays
 //   LOOM_BLAST_MAX_NAMES=5       callers named inline
 //   LOOM_BLAST_DEPTH=1           impact depth (1 or 2)
 //   LOOM_BLAST_PER_HOP=50        impacted rows requested per hop (counts stay exact)
@@ -35,15 +42,17 @@ import { relativeForLookup, targetPath } from "../lib/file-context.mjs";
 import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 import { blastPayload, blastSignature, decideEmit, impactBody, renderBlast } from "../lib/blast-radius.mjs";
+import { adviceFiles, adviceLine, gateMode } from "../lib/test-gate.mjs";
 
 const ENABLED = envSwitch("LOOM_BLAST_RADIUS", true);
+const ADVISE = gateMode() === "advise";
 const MAX_NAMES = Number(process.env.LOOM_BLAST_MAX_NAMES || 5);
 const DEPTH = Math.min(2, Math.max(1, Number(process.env.LOOM_BLAST_DEPTH || 1)));
 const PER_HOP = Math.min(500, Math.max(1, Number(process.env.LOOM_BLAST_PER_HOP || 50)));
 const TOOLS = new Set(["Edit", "Write", "MultiEdit", "apply_patch"]);
 
 async function main() {
-  if (!ENABLED) {
+  if (!ENABLED && !ADVISE) {
     scheduleExit(0);
     return;
   }
@@ -87,37 +96,33 @@ async function main() {
   // on it yet; empty = the edit was a no-op or already committed. The outline is
   // sent in its place; with no `+++` path in it (a mode-only change, a binary file,
   // a header dropped for a line end) the server has nothing to read.
-  const diff = git(["diff", ...DIFF_ARGS, "--unified=0", "HEAD", "--", rel], root, {
-    timeoutMs: 2000,
-    raw: true,
-  });
+  const diff = ENABLED
+    ? git(["diff", ...DIFF_ARGS, "--unified=0", "HEAD", "--", rel], root, { timeoutMs: 2000, raw: true })
+    : "";
   const outline = diffHeaders(diff, 200_000);
-  if (!/^\+\+\+ /m.test(outline)) {
-    scheduleExit(0);
-    return;
-  }
+  const files = ADVISE ? adviceFiles(payload, { root, cwd }).files : [];
+  const [impact, advice] = await Promise.all([
+    /^\+\+\+ /m.test(outline)
+      ? postBounded("code.impact", impactBody(repo, outline, { depth: DEPTH, perHop: PER_HOP }), {
+          token,
+          serverUrl: resolveServerUrl(),
+        })
+      : null,
+    files.length ? adviceLine(payload, files, { root, repo, token }) : "",
+  ]);
 
-  const impact = await postBounded("code.impact", impactBody(repo, outline, { depth: DEPTH, perHop: PER_HOP }), {
-    token,
-    serverUrl: resolveServerUrl(),
-  });
-  if (!impact) {
-    scheduleExit(0);
-    return;
+  let blast = "";
+  if (impact) {
+    const touchedPaths = git(["diff", "--name-only", "HEAD"], root, { timeoutMs: 2000 })
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const decision = decideEmit(readSessionState("blast", payload.session_id), rel, blastSignature(rel, impact));
+    writeSessionState("blast", payload.session_id, decision.cache);
+    // The tests line names the command, so the radius does not count them too.
+    if (decision.emit) blast = renderBlast(rel, impact, { maxNames: MAX_NAMES, touchedPaths, tests: !advice });
   }
-
-  const touchedPaths = git(["diff", "--name-only", "HEAD"], root, { timeoutMs: 2000 })
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const decision = decideEmit(readSessionState("blast", payload.session_id), rel, blastSignature(rel, impact));
-  writeSessionState("blast", payload.session_id, decision.cache);
-  if (!decision.emit) {
-    scheduleExit(0);
-    return;
-  }
-
-  const text = renderBlast(rel, impact, { maxNames: MAX_NAMES, touchedPaths });
+  const text = [blast, advice].filter(Boolean).join(" ");
   if (text) process.stdout.write(JSON.stringify(blastPayload(text)) + "\n");
   scheduleExit(0);
 }

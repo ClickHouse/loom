@@ -86,6 +86,17 @@
         ]
       },
       {
+        "matcher": "Bash|shell|exec_command|local_shell",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "Loom: Name linked tests",
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" PostToolUse codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" PostToolUse codex"
+          }
+        ]
+      },
+      {
         "matcher": "*",
         "hooks": [
           {

@@ -1,7 +1,15 @@
-// Helpers for the loom-test-gate Stop hook (unit-tested).
+// Helpers for the loom-test-gate hook (unit-tested).
 //
-// When the agent is about to stop with uncommitted changes in a loom-indexed
-// repo, ask `code.test_gate` what the change obliges: the tests that reach
+// The gate names the tests the index links to a change, from
+// `code.test_gate`. By default it names them when the file is edited: the
+// tool call that changed a file carries one line with the command, once per
+// file per session, and the stop is never held (`adviceFiles`, `adviceLine`).
+// Whether a session then ran the tests is the agent's to judge: a hook that
+// reads shell text to decide it blocks sessions that did.
+//
+// With LOOM_TEST_GATE=block the gate holds the stop instead. When the agent
+// is about to stop with uncommitted changes in a loom-indexed repo, it asks
+// `code.test_gate` what the change obliges: the tests that reach
 // it (evidence-ordered, with a run command when derivable) and the touched
 // functions no test reaches. If either list is non-empty and this exact
 // change has not been gated yet this session, block the stop ONCE with a
@@ -21,9 +29,43 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { commandText, contentText, extractFiles, normalizeToolName, pathUnder } from "./loom-client.mjs";
+import {
+  commandText,
+  contentText,
+  DIFF_ARGS,
+  diffHeaders,
+  envSwitch,
+  extractFiles,
+  git,
+  gitToplevel,
+  normalizeToolName,
+  pathUnder,
+  postBounded,
+  resolveServerUrl,
+} from "./loom-client.mjs";
+import { readSessionState, writeSessionState } from "./tmp-state.mjs";
+import { parseLines, readRange } from "./transcript.mjs";
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "str_replace_editor", "apply_patch"]);
+
+/** What the gate does, from LOOM_TEST_GATE: "advise" names an edited file's
+ *  tests on the tool call that edited it (unset, or any on-word); "block"
+ *  holds the stop instead; "off" does neither. */
+export function gateMode(env = process.env) {
+  if (
+    String(env.LOOM_TEST_GATE ?? "")
+      .trim()
+      .toLowerCase() === "block"
+  ) {
+    return "block";
+  }
+  return envSwitch("LOOM_TEST_GATE", true, env) ? "advise" : "off";
+}
+
+/** The hops `code.test_gate` follows: LOOM_TEST_GATE_DEPTH, 1 to 3. */
+export function gateDepth(env = process.env) {
+  return Math.min(3, Math.max(1, Number(env.LOOM_TEST_GATE_DEPTH || 2)));
+}
 
 /** Stable signature of the change: sorted changed paths + the diff's hash. */
 export function gateSignature(changedPaths, diffHash) {
@@ -62,18 +104,14 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
     : [];
   const absent = new Set(missing);
   const tests = indexed.filter((t) => !absent.has(String(t.test_path || "")));
-  const raw = [...new Set(tests.map((t) => String(t.run || "")).filter(Boolean))];
-  const runs = onePytest(raw.slice(0, maxRuns)).map((r) => withPython(r, python));
+  const { raw, text: runs } = runList(tests, { maxRuns, python });
   const unknown = tests
     .filter((t) => !t.run)
     .map((t) => String(t.test_path || ""))
     .filter(Boolean);
   const untested = Array.isArray(gate.untested) ? gate.untested : [];
   const parts = [];
-  if (runs.length) {
-    const more = raw.length - maxRuns;
-    parts.push(`run: ${runs.join(" ; ")}${more > 0 ? ` (+${more} more)` : ""}`);
-  }
+  if (runs) parts.push(`run: ${runs}`);
   if (unknown.length) {
     const shown = unknown.slice(0, maxNames);
     const more = unknown.length - shown.length;
@@ -93,7 +131,7 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
     // a test that builds an object reaches a constructor the graph holds no
     // edge to.
     parts.push(
-      runs.length || unknown.length
+      runs || unknown.length
         ? `the index links no test to: ${list} (the tests named here may still reach ${total > 1 ? "them" : "it"})`
         : `no test reaches: ${list}`,
     );
@@ -104,7 +142,7 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
   // that went hunting for a runner. Say what the obligation actually is.
   const tail = missing.length
     ? "Run the available tests and check the missing paths against the indexed revision (deleted, renamed or different checkout); use current equivalent tests or say why not. Missing tests are not passes."
-    : runs.length || unknown.length
+    : runs || unknown.length
       ? "Run the tests before finishing, or say why not."
       : "Add a test that reaches it, or say why none is needed.";
   const env =
@@ -115,6 +153,35 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
 }
 
 const isPytest = (run) => /^pytest(\s|$)/.test(String(run || ""));
+
+/** The distinct run commands of `tests` (`raw`) and the first `maxRuns` of
+ *  them as one text, "" when no test has one. */
+function runList(tests, { maxRuns, python }) {
+  const raw = [...new Set(tests.map((t) => String(t.run || "")).filter(Boolean))];
+  const runs = onePytest(raw.slice(0, maxRuns)).map((r) => withPython(r, python));
+  const more = raw.length - maxRuns;
+  return { raw, text: runs.length ? `${runs.join(" ; ")}${more > 0 ? ` (+${more} more)` : ""}` : "" };
+}
+
+/**
+ * The edit-time line for `rel`: the commands of the tests the index links
+ * to it, or "" when it links none this checkout has. A changed test file is
+ * the gate's own row, not a link, so an edit to a test names nothing. The
+ * functions the index links no test to are not named: the graph is a floor,
+ * and the line has no reply in which the agent could say so.
+ */
+export function renderAdvice(rel, gate, { maxRuns = 4, maxNames = 4, python, testExists } = {}) {
+  const tests = (gate && Array.isArray(gate.tests) ? gate.tests : []).filter(
+    (t) => t && t.why !== "changed_test" && t.test_path && (!testExists || testExists(String(t.test_path))),
+  );
+  const parts = [runList(tests, { maxRuns, python }).text].filter(Boolean);
+  const unknown = [...new Set(tests.filter((t) => !t.run).map((t) => String(t.test_path)))];
+  if (unknown.length) {
+    const more = unknown.length - maxNames;
+    parts.push(`no known runner: ${unknown.slice(0, maxNames).join(", ")}${more > 0 ? ` (+${more})` : ""}`);
+  }
+  return parts.length ? `Loom: tests the index links to ${rel}: ${parts.join(" · ")}` : "";
+}
 
 /** `runs` with every `pytest <path>` folded into the first one: one command to
  *  copy and one process to start. A run with an option or a second word stays
@@ -239,6 +306,20 @@ export function gatePayload(text) {
   return text ? { decision: "block", reason: text } : null;
 }
 
+/** PostToolUse payload: additional context only, never a decision. */
+export function advicePayload(text) {
+  return text ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: text } } : null;
+}
+
+/** A predicate: is `testPath` a file of the checkout at `root`? A stale
+ *  index row or another checkout's test is not. */
+export function testsIn(root) {
+  return (testPath) => {
+    const target = path.resolve(root, testPath);
+    return Boolean(pathUnder(root, target)) && isFile(target);
+  };
+}
+
 /** `p` as a repo-relative posix path under `root` (resolved against `cwd`
  *  when relative); "" when it lies outside the repo or `root` is unknown. */
 function relativeToRoot(root, p, cwd) {
@@ -337,6 +418,84 @@ export function writtenSince(root, paths, since) {
       return true;
     }
   });
+}
+
+// How much of a transcript's head is read for the session's first row.
+const HEAD_BYTES = 64 * 1024;
+// Files asked about for one tool call: a command that names more waits for
+// the next call that names them.
+const MAX_ADVICE_FILES = 4;
+
+/**
+ * The files a PostToolUse payload's tool call changed that this session has
+ * not been advised on, with the checkout root: the dirty paths its edit tool
+ * targeted or its shell command named, written since the session began. That
+ * is `sessionScope` and `writtenSince` over the one call, the rule the
+ * blocking gate applies to the whole transcript, so a command that only reads
+ * a file left dirty before the session names nothing. The hook runs after
+ * every shell command, so a call that cannot name an unasked dirty file (a
+ * path is named with its last segment) costs one git call, not two.
+ */
+export function adviceFiles(payload, { cwd, root = "" } = {}) {
+  const dirty = git(["diff", "--name-only", "-z", "HEAD"], root || cwd, { timeoutMs: 2000, raw: true })
+    .split("\0")
+    .filter(Boolean);
+  const seen = dirty.length ? readSessionState("testadvice", payload.session_id).seen || {} : {};
+  const text = `${commandText(payload.tool_input)}\n${extractFiles(payload.tool_input).join("\n")}`;
+  const unasked = dirty.filter((rel) => !seen[rel] && text.includes(rel.slice(rel.lastIndexOf("/") + 1)));
+  const top = unasked.length ? root || gitToplevel(cwd) : "";
+  if (!top) return { root, files: [] };
+  const call = { type: "tool_use", name: payload.tool_name, input: payload.tool_input };
+  const named = sessionScope(unasked, [{ type: "assistant", message: { content: [call] } }], { root: top, cwd });
+  const head = named.length && payload.transcript_path ? readRange(payload.transcript_path, 0, HEAD_BYTES) : "";
+  const files = writtenSince(top, named, sessionStart(parseLines(head.toString()))).slice(0, MAX_ADVICE_FILES);
+  return { root: top, files };
+}
+
+/**
+ * The additional context for `files` (from `adviceFiles`): one line per
+ * file the index links to tests, "" when it links none. Each file is asked
+ * about once per session, whatever the server answers, so a server that is
+ * down costs a session one bounded request per file and not one per tool
+ * call. A file whose change is comments only is not asked about and stays
+ * unasked: it owes no test until it changes code. Only the diff's paths,
+ * hunk ranges and function names are sent (`diffHeaders`).
+ */
+export async function adviceLine(payload, files, { root, repo, token, depth = gateDepth() } = {}) {
+  const asked = files
+    .map((rel) => [
+      rel,
+      git(["diff", ...DIFF_ARGS, "--unified=0", "HEAD", "--", rel], root, { timeoutMs: 2000, raw: true }),
+    ])
+    .filter(([, diff]) => !commentOnlyDiff(diff));
+  if (!asked.length) return "";
+  const seen = { ...readSessionState("testadvice", payload.session_id).seen };
+  for (const [rel] of asked) seen[rel] = Date.now();
+  const keys = Object.keys(seen);
+  if (keys.length > 300) keys.slice(0, keys.length - 300).forEach((k) => delete seen[k]);
+  writeSessionState("testadvice", payload.session_id, { seen });
+  const gates = await Promise.all(
+    asked.map(([rel, diff]) =>
+      postBounded(
+        "code.test_gate",
+        {
+          org: repo.org,
+          namespace: repo.namespace,
+          files: [rel],
+          diff: diffHeaders(diff, 200_000),
+          depth,
+          consumer: "claude-code-testgate",
+        },
+        { token, serverUrl: resolveServerUrl() },
+      ),
+    ),
+  );
+  const needsPython = gates.some((gate) => (gate?.tests || []).some((t) => isPytest(t?.run)));
+  const opts = { python: needsPython ? checkoutPython(root) : undefined, testExists: testsIn(root) };
+  return asked
+    .map(([rel], i) => renderAdvice(rel, gates[i], opts))
+    .filter(Boolean)
+    .join("\n");
 }
 
 // The prompt's last sentence, whole: "Do not run the test suite.", "Please

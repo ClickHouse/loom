@@ -89,7 +89,8 @@ receives on stdout.
 | PreToolUse Read\|Grep\|Bash                                    | loom-code-shunt       | tool_name, tool_input, cwd         | JSON permission decision | code.repos; deny text                                                                                                                                                                                                 | `LOOM_CODE_SHUNT=off`              |
 | PreToolUse Edit\|Write\|MultiEdit\|NotebookEdit                | loom-file-context     | tool_input, session_id             | JSON additionalContext   | memory.for_file                                                                                                                                                                                                       | `LOOM_FILE_CONTEXT=off`            |
 | PostToolUse loom tools                                         | loom-mentor-hint      | tool_name, tool_response           | JSON additionalContext   | none                                                                                                                                                                                                                  | `LOOM_MENTOR_HINTS=off`            |
-| PostToolUse Edit\|Write\|MultiEdit                             | loom-blast-radius     | tool_input, cwd                    | JSON additionalContext   | code.impact                                                                                                                                                                                                           | `LOOM_BLAST_RADIUS=off`            |
+| PostToolUse Edit\|Write\|MultiEdit                             | loom-blast-radius     | tool_input, cwd, transcript head   | JSON additionalContext   | code.impact; code.test_gate for a file's first edit                                                                                                                                                                   |
+| PostToolUse Bash\|PowerShell                                   | loom-test-gate        | tool_input, cwd, transcript head   | JSON additionalContext   | code.test_gate for each changed file the command names, once per file                                                                                                                                                 |
 | PostToolUse, PostToolUseFailure, Stop, SessionEnd (timeout 10) | loom-record           | the payload                        | none                     | after a tool call and at Stop, starts one detached process, which runs the event's `detached` rows; at SessionEnd, runs the event's `in loom-record` rows itself                                                      | each script's own                  |
 | PostToolUse, PostToolUseFailure, detached                      | loom-capture          | tool_*, session_id, cwd            | none                     | observe.record; code.outcome; the recalled-keys stash                                                                                                                                                                 | no token                           |
 | PreCompact                                                     | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
@@ -98,7 +99,7 @@ receives on stdout.
 | Stop, detached                                                 | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
 | Stop, detached                                                 | loom-conversation     | transcript, last_assistant_message | none                     | conversation.append via the flusher                                                                                                                                                                                   | `LOOM_CAPTURE_CONVERSATIONS=false` |
 | Stop, detached                                                 | loom-usage            | transcript                         | none                     | cost.record_turns                                                                                                                                                                                                     | `LOOM_USAGE=off`                   |
-| Stop                                                           | loom-test-gate        | transcript, cwd                    | JSON block once          | code.test_gate                                                                                                                                                                                                        | `LOOM_TEST_GATE=off`               |
+| Stop                                                           | loom-test-gate        | transcript, cwd                    | JSON block once          | with LOOM_TEST_GATE=block only: code.test_gate                                                                                                                                                                        |
 | Stop                                                           | loom-validate-gate    | transcript                         | JSON block once          | namespace.validate                                                                                                                                                                                                    | `LOOM_VALIDATE_GATE=off`           |
 | Stop                                                           | loom-namespace-health | cwd, session_id                    | JSON block once          | namespace.audit (first Stop only)                                                                                                                                                                                     | `LOOM_NAMESPACE_HEALTH=off`        |
 | Stop, detached                                                 | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set when the note changed                                                                                                                                                                              | `LOOM_WORKING_MEMORY=off`          |
@@ -226,7 +227,10 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   only (`diffHeaders`) and asks code.impact (depth 1) what the touched symbols
   reach; injects one line — callers, tests reaching the change, and co-change
   partner files this session has not touched. The same touched set is
-  reported once per session. LOOM_BLAST_RADIUS=off disables.
+  reported once per session. It is the one hook wired for an edit tool, so
+  it also carries the test gate's line for the file's first edit (see
+  loom-test-gate), which replaces its own count of tests: one line per
+  edit. LOOM_BLAST_RADIUS=off disables the radius, not that line.
 - **loom-capture.** PostToolUse and PostToolUseFailure record one episodic
   `observe.record` per tool call (zero-token heuristic typing, inputs and
   outputs truncated to 800 characters, the session's run id attached);
@@ -278,15 +282,29 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   namespace.audit over the last day (sample_limit=0); a critical finding
   gives the agent one line naming the codes and /loom-optimize, as a
   block-once reason. Later stops make no call.
-- **loom-test-gate.** With uncommitted changes this session made in a
-  loom-indexed repo (dirty paths the transcript shows an edit tool targeted
-  or a shell command named, written since the session's first row; a tree
-  left dirty before the session gates nothing), sends the change's paths, hunk ranges and function names only
-  (`diffHeaders`) to code.test_gate for its obligations and blocks the stop
-  once per distinct change with a reason naming them. A Claude Code stop
-  whose transcript already answers the ask to run tests is not blocked
-  (`runAnswered` in lib/test-gate.mjs); a Codex rollout answers nothing.
-  LOOM_TEST_GATE=off disables; LOOM_TEST_GATE_DEPTH sets hops (1-3).
+- **loom-test-gate.** Names the tests the index links to a changed file.
+  By default it does so when the file changes and never holds the stop:
+  after a Bash or PowerShell command (and, through loom-blast-radius, after
+  an edit tool) it takes the dirty paths the call named or targeted that
+  were written since the session's first row, asks code.test_gate about
+  each one not asked about yet this session (`adviceFiles`, `adviceLine` in
+  lib/test-gate.mjs; at most four per call; a comment-only change is not
+  asked about) and prints one line per file naming the commands of the
+  linked tests the checkout has, as additionalContext on that tool result:
+  no model request, and no reading of shell text to decide whether tests
+  ran. A changed test file names nothing. A call that names no unasked
+  dirty file costs one git call and no request.
+  With LOOM_TEST_GATE=block it holds the stop instead and prints nothing at
+  edit time: with uncommitted changes this session made in a loom-indexed
+  repo (dirty paths the transcript shows an edit tool targeted or a shell
+  command named, written since the session's first row; a tree left dirty
+  before the session gates nothing), it sends the change's paths, hunk
+  ranges and function names only (`diffHeaders`) to code.test_gate for its
+  obligations and blocks the stop once per distinct change with a reason
+  naming them. A Claude Code stop whose transcript already answers the ask
+  to run tests is not blocked (`runAnswered` in lib/test-gate.mjs); a Codex
+  rollout answers nothing.
+  LOOM_TEST_GATE=off disables both; LOOM_TEST_GATE_DEPTH sets hops (1-3).
 - **loom-usage.** Reads the transcript's last MiB, dedupes assistant turns
   by message id (sidechains skipped) and posts their raw usage counters to
   cost.record_turns; the server prices them. Not wired for Codex, whose

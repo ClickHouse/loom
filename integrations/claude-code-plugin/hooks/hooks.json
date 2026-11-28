@@ -84,6 +84,16 @@
         ]
       },
       {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-test-gate.mjs", "PostToolUse"]
+          }
+        ]
+      },
+      {
         "matcher": "*",
         "hooks": [
           {

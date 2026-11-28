@@ -47,10 +47,10 @@ function seedIndexed(root, tmp) {
 }
 
 /** Run one hook; `stdin` is a string (sent as is) or an object (JSON). */
-function run(hook, stdin, { tmp, url = REFUSED, token = "t", env = {} }) {
+function run(hook, stdin, { tmp, url = REFUSED, token = "t", env = {}, event = "X" }) {
   return new Promise((resolve) => {
     const started = Date.now();
-    const child = spawn(process.execPath, [path.join(HOOKS, hook), "X"], {
+    const child = spawn(process.execPath, [path.join(HOOKS, hook), event], {
       env: hostEnv({
         PATH: process.env.PATH,
         HOME: tmp,
@@ -115,6 +115,9 @@ async function withCapturingServer(fn) {
   return bodies;
 }
 
+// The Stop test gate holds a stop only when asked to.
+const BLOCKING = { LOOM_TEST_GATE: "block" };
+
 const HOOK_NAMES = [
   "loom-code-shunt.mjs",
   "loom-file-context.mjs",
@@ -158,10 +161,14 @@ test("no token: nothing is asked of the server and nothing is printed", async ()
       ["loom-test-gate.mjs", { cwd: dir, session_id: "s" }],
       ["loom-validate-gate.mjs", { cwd: dir, session_id: "s" }],
     ]) {
-      const r = await run(hook, payload, { tmp, url, token: "" });
+      const r = await run(hook, payload, { tmp, url, token: "", env: BLOCKING });
       assert.equal(r.code, 0, hook);
       assert.equal(r.out, "", hook);
     }
+    const shell = { tool_name: "Bash", tool_input: { command: "sed -i s/0/1/ src/a.cpp" }, cwd: dir, session_id: "s" };
+    fs.appendFileSync(path.join(dir, "src/a.cpp"), "int g() { return 1; }\n");
+    const r = await run("loom-test-gate.mjs", shell, { tmp, url, token: "", event: "PostToolUse" });
+    assert.equal(r.code + r.out, "0");
     assert.deepEqual(seen, []);
   });
 });
@@ -297,7 +304,7 @@ test("Stop gates: 401 and a hanging server both let the stop through", async () 
           r = await run(
             hook,
             { cwd: dir, session_id: "s", transcript_path: transcript },
-            { tmp, url, env: { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } },
+            { tmp, url, env: { ...BLOCKING, LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } },
           );
           assert.equal(r.code, 0, `${hook} ${status}`);
           assert.equal(r.out, "", `${hook} ${status}`);
@@ -326,12 +333,50 @@ test("Stop gates: a Stop the gate itself caused never blocks again", async () =>
         {
           tmp,
           url,
+          env: BLOCKING,
         },
       );
       assert.equal(r.out, "", hook);
     }
     assert.deepEqual(seen, []);
   });
+});
+
+test("test gate after a shell command: 401 and a hanging server add nothing to the call, and the file is asked about once", async () => {
+  for (const status of [401, null]) {
+    await withServer(status, async (url, seen, arrived) => {
+      const op = "/v1/code.test_gate";
+      const { dir, tmp } = dirtySession();
+      const shell = { tool_name: "Bash", tool_input: { command: "sed -i s/0/1/ src/a.cpp" }, cwd: dir };
+      const bounds = { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" };
+      // A request can fail before the server observes it; require a witnessed run.
+      let r;
+      let session;
+      for (let attempt = 0; attempt < 3 && !arrived.has(op); attempt++) {
+        session = `s-${attempt}`;
+        r = await run(
+          "loom-test-gate.mjs",
+          { ...shell, session_id: session },
+          { tmp, url, env: bounds, event: "PostToolUse" },
+        );
+        assert.equal(r.code, 0, `${status}`);
+        assert.equal(r.out, "", `${status}`);
+        assert.ok(r.ms < 7000, `${status} took ${r.ms} ms`);
+      }
+      assert.ok(arrived.has(op), `${status}: never sent ${op} in three runs`);
+      const after = r.closedAt - arrived.get(op);
+      assert.ok(after < 1500, `${status}: ${after} ms after its request (${r.ms} ms in all)`);
+      // The same session's next command names the file again: no second request.
+      const asked = seen.length;
+      const again = await run(
+        "loom-test-gate.mjs",
+        { ...shell, session_id: session },
+        { tmp, url, env: bounds, event: "PostToolUse" },
+      );
+      assert.equal(again.out, "");
+      assert.equal(seen.length, asked, seen.join(","));
+    });
+  }
 });
 
 test("blast radius and file context: 401 and a hanging server add nothing to the edit", async () => {
@@ -438,18 +483,29 @@ test("blast radius and test gate: only the diff's paths and hunk headers reach t
       cwd: dir,
       session_id: "s",
     };
+    // The edit's own requests: the radius and the tests line.
     await run("loom-blast-radius.mjs", edit, { tmp, url });
-    await run("loom-test-gate.mjs", { cwd: dir, session_id: "s", transcript_path: transcript }, { tmp, url });
+    await run(
+      "loom-test-gate.mjs",
+      { cwd: dir, session_id: "s", transcript_path: transcript },
+      { tmp, url, env: BLOCKING },
+    );
   });
-  for (const op of ["/v1/code.impact", "/v1/code.test_gate"]) {
-    const sent = bodies.find((b) => b.url === op);
-    assert.ok(sent, `${op} not called: ${JSON.stringify(bodies.map((b) => b.url))}`);
-    assert.ok(!sent.body.diff.includes("s3cr3t-value"), op);
-    assert.ok(!sent.body.diff.includes("decrypted-by-textconv"), op);
-    assert.ok(!sent.body.diff.includes("int g()"), `${op} sends no changed line`);
-    assert.match(sent.body.diff, /^\+\+\+ b\/src\/a\.cpp$/m, `${op} keeps the path`);
-    assert.match(sent.body.diff, /^@@ .*\+\d+/m, `${op} keeps the hunk header`);
-    assert.equal(sent.body.diff.match(/^@@ /gm).length, 2, `${op} keeps the two hunks apart`);
+  // code.test_gate twice: for the tests line at the edit, and for the blocking gate's Stop.
+  for (const [op, times] of [
+    ["/v1/code.impact", 1],
+    ["/v1/code.test_gate", 2],
+  ]) {
+    const all = bodies.filter((b) => b.url === op);
+    assert.equal(all.length, times, `${op}: ${JSON.stringify(bodies.map((b) => b.url))}`);
+    for (const sent of all) {
+      assert.ok(!sent.body.diff.includes("s3cr3t-value"), op);
+      assert.ok(!sent.body.diff.includes("decrypted-by-textconv"), op);
+      assert.ok(!sent.body.diff.includes("int g()"), `${op} sends no changed line`);
+      assert.match(sent.body.diff, /^\+\+\+ b\/src\/a\.cpp$/m, `${op} keeps the path`);
+      assert.match(sent.body.diff, /^@@ .*\+\d+/m, `${op} keeps the hunk header`);
+      assert.equal(sent.body.diff.match(/^@@ /gm).length, 2, `${op} keeps the two hunks apart`);
+    }
   }
 });
 
