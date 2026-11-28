@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def _ask_search_kwargs(
-    input: CodeAskInput, abstain_threshold: float, noise_floor: float
+    input: CodeAskInput, abstain_threshold: float, confident_similarity: float
 ) -> dict[str, Any]:
     """Retrieval settings code.ask grounds its synthesis on. The token
     budget is the caller's when given, else the deployment default — the
@@ -43,7 +43,7 @@ def _ask_search_kwargs(
         # ask synthesizes FROM these excerpts.
         "rerank_endpoint": input.rerank,
         "abstain_threshold": abstain_threshold,
-        "noise_floor": noise_floor,
+        "confident_similarity": confident_similarity,
     }
 
 
@@ -74,7 +74,7 @@ async def handle_code_ask(input: CodeAskInput) -> CodeAskOutput:
             override = settings.code_ask_llm_model
             llm = get_llm_client_for_model(override) if override else get_llm_client()
 
-    abstain_threshold, noise_floor = await resolve_code_thresholds(org, ns)
+    abstain_threshold, confident_similarity = await resolve_code_thresholds(org, ns)
     from server.code.app.answers import ask
 
     # The index head keys the negative cache; the block is the 30 s per-namespace one the
@@ -87,7 +87,7 @@ async def handle_code_ask(input: CodeAskInput) -> CodeAskOutput:
         question=input.question,
         embedder=embedder,
         llm=llm,
-        search_kwargs=_ask_search_kwargs(input, abstain_threshold, noise_floor),
+        search_kwargs=_ask_search_kwargs(input, abstain_threshold, confident_similarity),
         allow_synthesis=input.synthesize,
         no_cache=input.no_cache,
         index_head=str(as_of.get("commit") or ""),

@@ -628,11 +628,34 @@ with the largest `penalty / (60 + rank)` instead:
   pool, where `f` is the smallest factor a path can get: 2,912 rows for the default
   penalties together, 980 for the prose penalty alone, at most 10,000.
 - **Calibration does not read the cut.** The statement also returns the leg's own
-  first 200 rows, and leg agreement, the top similarity and abstention are computed on
-  those, as without the penalties. A penalty reaches them only as the order of rows
-  with one score.
+  first 200 rows, and leg agreement and abstention are computed on those, as without
+  the penalties. A penalty reaches them only as the order of rows with one score.
 
 The vector leg and the concept leg are not cut.
+
+`retrieval_confidence` estimates the chance that the first three results hold a file
+the answer is in. It reads the two content legs before any prior reorders them
+(`code/domain/index/search_confidence.py`, `code/app/search/calibrate.py`) and is the
+product of two terms:
+
+- **Similarity: does the index hold an answer?** The vector leg's best cosine, read on
+  the embedder's calibrated scale: 0 at the midpoint between the abstain threshold and
+  the cosine of a confident hit (`rerank_skip_above` in the namespace's calibration,
+  else in the embedder's boot calibration, else `LOOM_LLM_RERANK_SKIP_ABOVE`), 1 at
+  that cosine. An absolute cosine is not comparable across embedding models. A
+  question about another repository scores under the midpoint, so its confidence is
+  near 0 whatever the lexical leg returns.
+- **Agreement: is the best unit the right one?** 0.9 when the lexical leg's first 200
+  rows hold the vector leg's first unit, 0.65 when they hold another unit of its file,
+  0.4 when neither. A leg that did not answer counts as the middle case.
+
+A search with no cosine (no embedder, a lexical-only request, a failed vector leg)
+reads 0.45. `retrieval_risk` bands the confidence: `abstain` below
+`LOOM_CODE_SEARCH_ABSTAIN_CONFIDENCE_BELOW` (0.15) or when the best cosine is under the
+abstain threshold, `medium` from `LOOM_CODE_SEARCH_MEDIUM_RISK_FROM` (0.35), `low` from
+`LOOM_CODE_SEARCH_LOW_RISK_FROM` (0.60), `high` between. The bands are set for these
+levels: a confident cosine reads `medium` unconfirmed and `low` once the lexical leg
+returns its unit or its file.
 
 After relevance ranking, per-file saturation spreads broad search results across
 files. It is skipped for an explicit path, a symbol route, test intent, or a

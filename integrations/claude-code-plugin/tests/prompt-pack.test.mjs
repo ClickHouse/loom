@@ -46,7 +46,7 @@ test("renderPack caps and deduplicates one answer without hiding later evidence"
   // Candidates under a prefix the server knows as Loom's own words; nothing tells the model to stop looking.
   assert.match(
     first.text,
-    /^Loom index pointers for this prompt \(confidence 0\.81\); Read a line range to check one:\n/,
+    /^Loom index pointers for this prompt \(confidence 0\.81\), candidates: Read a line range to check one, search if none fits:\n/,
   );
   assert.doesNotMatch(first.text, /do not|search again/i);
   assert.equal(

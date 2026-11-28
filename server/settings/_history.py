@@ -161,4 +161,36 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "when CI calls `code.refresh` sets it to false."
         ),
     ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_search_abstain_confidence_below",
+        old=0.35,
+        new=0.15,
+        why=(
+            "code.search confidence is computed on a new scale: the best cosine read "
+            "against the embedder's calibration, times how far the lexical leg confirms "
+            "it. A question the index cannot answer scores under 0.15. A deployment that "
+            "set the variable for the old scale should unset it."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_search_medium_risk_from",
+        old=0.4,
+        new=0.35,
+        why=(
+            "On the new code.search confidence scale a confident cosine the lexical leg "
+            "does not confirm scores 0.40 and reads medium risk."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_search_low_risk_from",
+        old=0.55,
+        new=0.6,
+        why=(
+            "On the new code.search confidence scale low risk starts where the lexical "
+            "leg returns the vector leg's best unit, or its file with a confident cosine."
+        ),
+    ),
 )

@@ -147,18 +147,20 @@ def resolve_code_identity(org: str, namespace: str) -> tuple[str, str]:
 
 
 async def resolve_code_thresholds(org: str, ns: str) -> tuple[float, float]:
-    """(abstain_threshold, noise_floor) — per-namespace calibration when
-    present (code.calibrate seeds it), scalar fallbacks otherwise."""
+    """(abstain_threshold, confident_similarity): the cosine under which a hit is noise
+    and the cosine of a confident hit, for this namespace's embedder. Per-namespace
+    calibration when present (code.calibrate seeds it), else the embedder's boot
+    calibration, else the scalar fallbacks."""
     from server.memory.app.embedder_calibration import (
         effective_abstain_threshold,
-        effective_noise_floor,
+        effective_rerank_skip_above,
         resolve_calibration,
     )
 
     calibration = await resolve_calibration(org, ns)
     return (
         effective_abstain_threshold(settings.memory_search_abstain_threshold, calibration),
-        effective_noise_floor(settings.memory_search_min_similarity, calibration),
+        effective_rerank_skip_above(settings.llm_rerank_skip_above, calibration),
     )
 
 

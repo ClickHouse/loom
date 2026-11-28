@@ -44,6 +44,9 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
+| 1.3.1 | `LOOM_CODE_SEARCH_LOW_RISK_FROM` | `0.55` | `0.6` | On the new code.search confidence scale low risk starts where the lexical leg returns the vector leg's best unit, or its file with a confident cosine. |
+| 1.3.1 | `LOOM_CODE_SEARCH_MEDIUM_RISK_FROM` | `0.4` | `0.35` | On the new code.search confidence scale a confident cosine the lexical leg does not confirm scores 0.40 and reads medium risk. |
+| 1.3.1 | `LOOM_CODE_SEARCH_ABSTAIN_CONFIDENCE_BELOW` | `0.35` | `0.15` | code.search confidence is computed on a new scale: the best cosine read against the embedder's calibration, times how far the lexical leg confirms it. A question the index cannot answer scores under 0.15. A deployment that set the variable for the old scale should unset it. |
 | 1.3.1 | `LOOM_CODE_INGEST_ENABLED` | `False` | `True` | A configured repository is fetched and indexed after every push without a setting: a deployment that never set the variable starts polling its repositories and embedding what changed. A deployment that indexes only when CI calls `code.refresh` sets it to false. |
 | 1.3.1 | `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `False` | `True` | Include namespace contact domains and aggregate counts in adoption reports. Deployments can disable domain sharing while continuing to send usage totals. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | `'auto'` | Keep source lookups upfront on the coding toolset. General search and the dispatcher are available through discovery. Other toolsets retain their entrypoints. Explicit lists and empty values retain their meaning. |
@@ -692,9 +695,9 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_FAN_IN_PRIOR_CAP` | `float` | `0.25` |  | Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool); skipped under test intent and on noise paths; inert without the stats. 0 = off. |
 | `LOOM_CODE_SEARCH_RRF_LEXICAL_WEIGHT_RESPONSIBILITY` | `float` | `1.0` |  | Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal weights. |
 | `LOOM_CODE_SEARCH_ABSTAIN_CARD_BELOW` | `float` | `0.0` |  | A prose question whose nearest file card's cosine is below this abstains `off_domain`; independent of the card leg. 0 = off. |
-| `LOOM_CODE_SEARCH_ABSTAIN_CONFIDENCE_BELOW` | `float` | `0.35` |  | Calibrated confidence below which a result is flagged `low_calibrated_confidence` (still returned). The deployment sets 0.30. |
-| `LOOM_CODE_SEARCH_MEDIUM_RISK_FROM` | `float` | `0.4` |  | The calibrated confidence from which a code.search result reads `retrieval_risk` "medium"; below it the result reads "high". Code embeddings score a right hit lower than memory text does: on the conceptual question set every right top 3 scored 0.40–0.63, so the memory plane's 0.55 / 0.75 labelled three in four right answers "high". |
-| `LOOM_CODE_SEARCH_LOW_RISK_FROM` | `float` | `0.55` |  | The calibrated confidence from which a code.search result reads `retrieval_risk` "low" (see code_search_medium_risk_from). |
+| `LOOM_CODE_SEARCH_ABSTAIN_CONFIDENCE_BELOW` | `float` | `0.15` |  | code.search confidence below which a result is flagged `low_calibrated_confidence` (still returned): the best cosine sits where a question about another repository does. |
+| `LOOM_CODE_SEARCH_MEDIUM_RISK_FROM` | `float` | `0.35` |  | The code.search confidence from which a result reads `retrieval_risk` "medium"; below it the result reads "high". A hit as similar as a confident one that the lexical leg does not confirm scores 0.40. |
+| `LOOM_CODE_SEARCH_LOW_RISK_FROM` | `float` | `0.6` |  | The code.search confidence from which a result reads `retrieval_risk` "low": the lexical leg returns the vector leg's best unit, or its file with a confident cosine. The coding-agent plugins send their prompt pointers from it. |
 | `LOOM_CODE_SEARCH_HYDE_KINDS` | `str` | `'responsibility'` |  | The question kinds the hypothetical answer votes on. |
 | `LOOM_CODE_SEARCH_HYDE_CAP` | `float` | `1.0` |  | Cap on the hypothetical-answer (HyDE) leg's candidate list, as a multiple of the two-leg top (the history rule). |
 | `LOOM_CODE_SEARCH_HYDE_MAX_TOKENS` | `int` | `220` |  | Tokens the hypothetical-answer (HyDE) passage may run to. |

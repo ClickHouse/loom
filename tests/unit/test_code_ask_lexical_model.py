@@ -91,7 +91,7 @@ async def test_factory_failure_reads_the_canonical_lexical_partition(
             "llm_legs": "none",
             "deadline_ms": 0,
             "abstain_threshold": 0.0,
-            "noise_floor": 0.0,
+            "confident_similarity": 0.0,
             "rerank_endpoint": "none",
         },
     )

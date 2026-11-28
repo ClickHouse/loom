@@ -21,7 +21,6 @@ from pydantic import ValidationError
 from server.code.api.models_search import CodeSearchInput
 from server.code.app import common as cc
 from server.code.app import search as cs
-from server.code.app.search.calibrate import calibration_routes
 from server.code.app.search.fusion import leg_provenance
 from server.code.app.search.state import _POOL
 from server.code.app.search.track import track_verdict
@@ -209,46 +208,63 @@ def test_wire_drops_empty_provenance_and_keeps_a_set_one() -> None:
 # ---- legs-aware calibration --------------------------------------------------
 
 
-def test_calibration_routes_count_leg_agreement_only_when_both_legs_ran() -> None:
-    hybrid_agree = calibration_routes(legs_agree=True, both_legs=True, fuzzy_hit=False)
-    assert hybrid_agree == {"extra_route_votes": 1, "extra_routes_possible": 2}
-    hybrid_disagree = calibration_routes(legs_agree=False, both_legs=True, fuzzy_hit=True)
-    assert hybrid_disagree == {"extra_route_votes": 1, "extra_routes_possible": 2}
-    single = calibration_routes(legs_agree=False, both_legs=False, fuzzy_hit=True)
-    assert single == {"extra_route_votes": 1, "extra_routes_possible": 1}
-    # a stale True cannot leak in when one leg did not run
-    assert calibration_routes(legs_agree=True, both_legs=False, fuzzy_hit=False) == {
-        "extra_route_votes": 0,
-        "extra_routes_possible": 1,
-    }
+class _TopRepo(_Repo):
+    """The vector leg's first unit is `top` in `path`; the lexical pool stays [a, b]."""
+
+    def __init__(self, top: str, path: str, *, distance: float = 0.1) -> None:
+        super().__init__()
+        self.top, self.path, self.distance = top, path, distance
+
+    async def vector_search_chunks(self, *a, **k):
+        self.calls.append("vector")
+        return [{**_vec(self.top, self.distance), "path": self.path}, _vec("c", 0.6)]
 
 
-def test_single_leg_route_agreement_is_not_penalised_for_the_missing_leg() -> None:
-    # fuzzy hit on every arm: the hybrid legs agree on `a`, so hybrid = 3/3;
-    # a single leg has one extra route (fuzzy) and reaches 2/2 — the same 1.0.
-    hybrid = _search(_Repo(fuzzy=True), _Embedder())
-    lexical = _search(_Repo(fuzzy=True), _Embedder(), legs="lexical")
-    vector = _search(_Repo(fuzzy=True), _Embedder(), legs="vector")
-    assert hybrid.route_agreement == lexical.route_agreement == vector.route_agreement == 1.0
-    # without the fuzzy vote a single leg is 1/2 and so is a disagreeing hybrid 2/3 > 1/2:
-    # the single leg is scored on what ran, never below a hybrid whose legs disagreed
-    lexical_no_fuzzy = _search(_Repo(), _Embedder(), legs="lexical")
-    assert lexical_no_fuzzy.route_agreement == 0.5
-    assert not lexical_no_fuzzy.abstain
-
-
-def test_a_requested_lexical_only_run_does_not_abstain_on_the_similarity_stand_in() -> None:
-    # per-namespace calibration can put the abstain threshold above
-    # noise_floor + 0.1; a vector leg the request skipped must not abstain
-    # the result on a cosine nobody measured
-    res = _search(
-        _Repo(fuzzy=True), _Embedder(), legs="lexical", abstain_threshold=0.45, noise_floor=0.22
+def test_confidence_reads_whether_the_lexical_leg_confirms_the_vector_legs_first_unit() -> None:
+    same_unit = _search(_TopRepo("a", "src/a.cpp"), _Embedder())
+    same_file = _search(_TopRepo("a2", "src/a.cpp"), _Embedder())
+    neither = _search(_Repo(), _Embedder())
+    got = [
+        (r.route_agreement, r.retrieval_confidence, r.retrieval_risk)
+        for r in (same_unit, same_file, neither)
+    ]
+    assert got == [(1.0, 0.9, "low"), (0.5, 0.65, "low"), (0.0, 0.4, "medium")]
+    assert "legs_agree=True" in same_unit.score_explanation
+    assert "legs_agree=False" in same_file.score_explanation
+    assert same_unit.calibration_explanation == (
+        "top_similarity=0.90, similarity=1.00, leg_agreement=1.00"
     )
-    assert not res.abstain and res.retrieval_risk != "abstain"
-    # the degrade path (no embedder at all) is unchanged: the stand-in stays
-    # at noise_floor + 0.1 and the old threshold rule applies
-    degraded = _search(_Repo(fuzzy=True), None, abstain_threshold=0.45, noise_floor=0.22)
-    assert degraded.abstain and degraded.abstain_code == "below_threshold"
+
+
+def test_a_cosine_where_unrelated_text_sits_reads_no_confidence() -> None:
+    # between the abstain threshold (0.30) and the middle of the range to a confident
+    # cosine (0.62): the unit both legs found is still not an answer
+    res = _search(_TopRepo("a", "src/a.cpp", distance=0.58), _Embedder())
+    assert res.top_similarity == 0.42 and res.retrieval_confidence == 0.0
+    assert res.abstain and res.abstain_code == "low_calibrated_confidence"
+    # halfway up the ramp the confirmed unit reads a medium risk, not an abstain
+    half = _search(_TopRepo("a", "src/a.cpp", distance=0.46), _Embedder())
+    assert half.retrieval_confidence == 0.45 and half.retrieval_risk == "medium"
+    below = _search(_TopRepo("a", "src/a.cpp", distance=0.8), _Embedder())
+    assert below.abstain and below.abstain_code == "below_threshold"
+
+
+def test_a_single_leg_run_is_not_scored_as_a_disagreement() -> None:
+    vector = _search(_Repo(), _Embedder(), legs="vector")
+    assert (vector.route_agreement, vector.retrieval_confidence) == (0.5, 0.65)
+    lexical = _search(_Repo(), _Embedder(), legs="lexical")
+    assert (lexical.route_agreement, lexical.retrieval_risk) == (0.5, "medium")
+    assert lexical.top_similarity == 0.0 and "no vector leg" in lexical.calibration_explanation
+
+
+def test_a_run_without_a_cosine_does_not_abstain_on_the_similarity_stand_in() -> None:
+    # per-namespace calibration can put the abstain threshold anywhere; a vector leg
+    # the request skipped, or one with no embedder, must not abstain the result on a
+    # cosine nobody measured, nor read low risk
+    res = _search(_Repo(fuzzy=True), _Embedder(), legs="lexical", abstain_threshold=0.45)
+    degraded = _search(_Repo(fuzzy=True), None, abstain_threshold=0.45)
+    for r in (res, degraded):
+        assert not r.abstain and r.retrieval_risk == "medium"
 
 
 # ---- track_path --------------------------------------------------------------

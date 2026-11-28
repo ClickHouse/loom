@@ -1760,18 +1760,18 @@ class CodeSettings(BaseModel):
     # A prose question whose nearest file card's cosine is below this
     # abstains `off_domain`; independent of the card leg. 0 = off.
     code_search_abstain_card_below: float = 0.0
-    # Calibrated confidence below which a result is flagged
-    # `low_calibrated_confidence` (still returned). The deployment sets 0.30.
-    code_search_abstain_confidence_below: float = 0.35
-    # The calibrated confidence from which a code.search result reads
-    # `retrieval_risk` "medium"; below it the result reads "high".
-    # Code embeddings score a right hit lower than memory text does: on the
-    # conceptual question set every right top 3 scored 0.40–0.63, so the
-    # memory plane's 0.55 / 0.75 labelled three in four right answers "high".
-    code_search_medium_risk_from: float = 0.40
-    # The calibrated confidence from which a code.search result reads `retrieval_risk`
-    # "low" (see code_search_medium_risk_from).
-    code_search_low_risk_from: float = 0.55
+    # code.search confidence below which a result is flagged
+    # `low_calibrated_confidence` (still returned): the best cosine sits where a
+    # question about another repository does.
+    code_search_abstain_confidence_below: float = 0.15
+    # The code.search confidence from which a result reads `retrieval_risk`
+    # "medium"; below it the result reads "high". A hit as similar as a confident
+    # one that the lexical leg does not confirm scores 0.40.
+    code_search_medium_risk_from: float = 0.35
+    # The code.search confidence from which a result reads `retrieval_risk` "low":
+    # the lexical leg returns the vector leg's best unit, or its file with a
+    # confident cosine. The coding-agent plugins send their prompt pointers from it.
+    code_search_low_risk_from: float = 0.60
     # The question kinds the hypothetical answer votes on.
     code_search_hyde_kinds: str = "responsibility"
     # Cap on the hypothetical-answer (HyDE) leg's candidate list, as a multiple of the

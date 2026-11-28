@@ -254,16 +254,19 @@ class CodeSearchOutput(_LessonsOut):
     ] = ""
     # Human-readable reason for the abstain, with what to do instead; "" when not abstaining.
     abstain_reason: str = ""
-    # Calibrated risk band from `retrieval_confidence`: low (>= 0.75), medium (>= 0.55),
+    # Risk band of `retrieval_confidence`, at the deployment's cut-offs: low, medium,
     # high, or abstain (below the abstain cut-off or the top cosine under its threshold).
     retrieval_risk: Literal["low", "medium", "high", "abstain"] = "low"
-    # Calibrated confidence 0-1 from the top similarity, its margin over the second hit,
-    # `route_agreement` and the pool size; 0.0 on an abstain with no results.
+    # Confidence 0-1 that the first results hold the code asked about: the vector leg's
+    # best cosine read on the embedder's calibrated scale, times how far the lexical leg
+    # confirms that unit (`route_agreement`). Near 0 when the index holds no answer;
+    # 0.0 on an abstain with no results.
     retrieval_confidence: float = 0.0
-    # Share (0-1) of the retrieval routes that ran and agreed: the primary hit, lexical and
-    # vector legs sharing a top-10 chunk, a fuzzy-symbol hit; 1.0 on an exact symbol hit.
+    # How far the lexical leg confirms the vector leg's best unit: 1.0 it returns that
+    # unit, 0.5 another unit of its file or one leg did not run, 0.0 neither; 1.0 on an
+    # exact symbol hit.
     route_agreement: float = 0.0
-    # The calibration inputs as text (top_similarity, margin, route_agreement, ...), plus
+    # The calibration inputs as text (top_similarity, similarity, leg_agreement), plus
     # the legs the answer ranked without past the deadline.
     calibration_explanation: str = ""
     # Estimated tokens of the served page (results, history section and annotations).

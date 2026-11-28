@@ -190,9 +190,12 @@ export function searchBody(repo, prompt, { topK = 3, token } = {}) {
 
 /** Gate on the index's own verdict, not on the caller's optimism: the answer
  *  it labels low-risk (`retrieval_risk`, banded by the deployment's own
- *  settings), or `minConfidence` when the caller names one. The model re-reads
- *  the pointers on every later request, so an answer the index itself rates a
- *  medium or high risk sends none. */
+ *  settings), or `minConfidence` when the caller names one. Low risk is where
+ *  the index's best semantic match is as close as a confident hit and its
+ *  word search returns the same unit or file: the first three results then
+ *  held a file to change for about four issues in five, and almost never for
+ *  a question about another repository. The model re-reads the pointers on
+ *  every later request, so a medium or high risk sends none. */
 export function accept(res, minConfidence = null) {
   if (!res || res.abstain) return false;
   if (!Array.isArray(res.results) || !res.results.length) return false;
@@ -226,7 +229,9 @@ export function renderPack(res, { cap = 3, header } = {}) {
   if (!lines.length) return { text: "" };
   const conf = Number(res.retrieval_confidence || 0).toFixed(2);
   // The default lead opens with a prefix the server knows as Loom's own words.
-  const lead = header || `Loom index pointers for this prompt (confidence ${conf}); Read a line range to check one:`;
+  const lead =
+    header ||
+    `Loom index pointers for this prompt (confidence ${conf}), candidates: Read a line range to check one, search if none fits:`;
   return { text: `${lead}\n${lines.join("\n")}` };
 }
 
