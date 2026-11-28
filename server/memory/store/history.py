@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core import pg
+from server.core.ch import sequential_reads
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.memory.store import pg_memory
@@ -99,6 +100,8 @@ class HistoryTarget:
     memory_id: str
     content_sha256: str  # the hash of the version's text, which its search rows carry too
     tags: tuple[str, ...] = ()
+    redacted_at: str | None = None
+    expires_at: str | None = None
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> HistoryTarget:
@@ -113,6 +116,8 @@ class HistoryTarget:
             version=int(r.get("version") or 0),
             content_sha256=str(r.get("content_sha256") or ""),
             tags=tuple(r.get("tags") or ()),
+            redacted_at=str(r["redacted_at"]) if r.get("redacted_at") else None,
+            expires_at=str(r["expires_at"]) if r.get("expires_at") is not None else None,
         )
 
 
@@ -245,22 +250,24 @@ async def find_history_target(
     ch = ch or _default_client()
     cols = (
         "org, memory_id, namespace, agent, user_id, session_id, memory_key, version, "
-        "toStringCutToZero(content_sha256) AS content_sha256, tags"
+        "toStringCutToZero(content_sha256) AS content_sha256, tags, redacted_at, expires_at"
     )
     at = "org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}"
-    r = await ch.query_one(
-        f"""
+    with sequential_reads():
+        r = await ch.query_one(
+            f"""
         SELECT org, toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-               memory_key, version, content_sha256, tags
+               memory_key, version, content_sha256, tags, redacted_at, expires_at
         FROM (
             SELECT {cols} FROM loom.memory_versions WHERE {at}
             UNION ALL
             SELECT {cols} FROM loom.memory WHERE {at}
         )
+        ORDER BY isNotNull(redacted_at) DESC
         LIMIT 1
         """,
-        params={"org": org, "mid": memory_id, "v": version},
-    )
+            params={"org": org, "mid": memory_id, "v": version},
+        )
     return None if r is None else HistoryTarget.from_row(r)
 
 

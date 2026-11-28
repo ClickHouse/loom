@@ -176,7 +176,7 @@ async def test_a_hot_files_links_are_bound_in_slices_and_the_best_of_all_are_kep
     class _Sliced:
         async def query_all(self, sql: str, params: dict[str, Any] | None = None):
             nonlocal file_scans
-            if "arrayExists" in sql:
+            if "arrayExists(f ->" in sql:
                 file_scans += 1
                 assert "linked" not in (params or {})
                 return [_row("named", "v", confidence=0.99)]
@@ -1097,27 +1097,36 @@ def test_a_cut_object_value_prints_as_stored() -> None:
 
 def test_a_decision_whose_source_changed_says_so_pinned_or_not() -> None:
     tags = ["decision", "source-changed"]
-    pinned = _lines([_decision("design/p", tags=tags)])[1]
+    evidence = {"use_guidance": {"freshness": {"source": "changed"}, "next_step": "recheck_source"}}
+    pinned = _lines([_decision("design/p", tags=tags) | evidence])[1]
     assert pinned.startswith("- Decision (by alice, 3 days ago) (pinned) (source changed): ")
-    own = _lines([_decision("design/u", tags=tags, pinned=False, namespace="me")])[1]
+    own = _lines([_decision("design/u", tags=tags, pinned=False, namespace="me") | evidence])[1]
     assert own.startswith("- design/u [decision] (source changed): ")
     # A fact carrying the tag is no decision: nothing is added.
     fact = _row("fact", json.dumps("A plain fact."), tags=["source-changed"], namespace="me")
-    assert "(source changed" not in _lines([fact])[1]
+    assert "(source changed" not in _lines([fact | evidence])[1]
 
 
 @pytest.mark.asyncio
-async def test_the_served_block_marks_a_decision_whose_source_changed(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("source_state", ["changed", "unknown"])
+async def test_the_served_block_marks_only_a_checked_source_change(
+    monkeypatch: pytest.MonkeyPatch, source_state: str
 ) -> None:
     rows = [
         _decision("extracted", "Decided spill.", pinned=False, tags=["decision", "source-changed"])
     ]
+
+    async def states(org, selected):
+        assert len(selected) == 1 and selected[0]["memory_key"] == "extracted"
+        return [source_state]
+
+    monkeypatch.setattr(mff, "guidance_source_states", states)
     monkeypatch.setattr(mff, "get_client", lambda: _CH(rows))
     out = await mff.handle_memory_for_file(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", token_budget=300)
     )
-    assert "- extracted [decision] (source changed): Decided spill." in out.rendered
+    assert ("(source changed)" in out.rendered) is (source_state == "changed")
+    assert out.hits[0].use_guidance.freshness.source == source_state
 
 
 def test_an_attested_decision_whose_source_changed_reads_source_changed() -> None:
@@ -1125,6 +1134,7 @@ def test_an_attested_decision_whose_source_changed_reads_source_changed() -> Non
     hit = _decision(
         "design/a", pinned=False, tags=["decision", "source-changed"], verification="human"
     )
+    hit["use_guidance"] = {"freshness": {"source": "changed"}, "next_step": "recheck_source"}
     line = _lines([hit])[1]
     assert line.startswith("- Decision (by alice, 3 days ago) (source changed): ")
 
@@ -1161,3 +1171,28 @@ async def test_the_listing_and_the_block_keep_the_commit_a_changed_link_names(
     assert rows[0]["code_changed_since"] == "ab" * 20
     out = await mff.handle_memory_for_file(request)
     assert "commit abababababab" in out.rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "display",
+    [
+        {"value": '{"quarantined": {}}'},
+        {"excerpt": '{"description": "preview', "procedure_fields": '{"quarantined": {}}'},
+        {
+            "value": '{"description": "preview',
+            "value_truncated": True,
+            "procedure_fields": '{"quarantined": {}}',
+        },
+    ],
+)
+async def test_file_guidance_marks_quarantined_procedure_inspect_only(display):
+    row = {
+        "memory_type": "procedural",
+        "status": "active",
+        "tags": [],
+        "files": [],
+        **display,
+    }
+    await mff.guided_file_rows("o", [row])
+    assert row["use_guidance"].next_step == "inspect_only"

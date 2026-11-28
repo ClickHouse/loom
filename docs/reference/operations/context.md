@@ -109,6 +109,7 @@ Retrieve task context by passing the task as `query`.
 | `rendered` | `str` | The pack as one text: each non-empty section in a `<name>` tag, in block order, cut to `token_budget`. |
 | `sections` | `dict[str, str]` | Each section's body by name, in block order; sections that rendered nothing are absent. |
 | `blocks` | `list[ContextBlock]` | One entry per non-empty section: label, body, token estimate, citations, source count, and `priority` (its position in block order). |
+| `use_guidance` | `list[ContextUseGuidance]` | Guidance for the cited items retained in the rendered pack. |
 | `section_meta` | `dict[str, dict[str, Any]]` | Per-section details by name: source count, citations, whether it was cut, its size, its token budget and fill ratio (above 1.0 means it was cut). |
 | `section_count` | `int` | How many sections rendered something. |
 | `truncated` | `bool` | True when any section, or the whole pack, was cut to its budget. |

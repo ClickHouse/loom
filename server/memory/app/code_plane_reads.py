@@ -13,6 +13,7 @@ from typing import Any, NamedTuple
 from server.code.domain.anchor import Definition, bare_name, local_name
 from server.code.domain.declaration import fingerprint_version
 from server.code.domain.extract import bounded_parse
+from server.core.hashing import hash_text
 from server.identity.domain.read_scope import ReadFilters
 from server.memory.domain.code_change import LOCATED, relocation, worst
 from server.memory.domain.decision_schema import CONSTRAINT_TAG
@@ -83,7 +84,8 @@ async def lessons_for_symbol(
     `fresh_at_commit` restricts the answer to lessons confirmed fresh at that revision.
     Otherwise an unreadable branch uses trunk's state."""
     from server.code.app import memory_links as code
-    from server.memory.app.code_link_reads import current_links, readable_namespaces
+    from server.memory.app.code_link_reads import current_links, inputs_now, readable_namespaces
+    from server.memory.app.for_file import current_file_rows, guided_file_rows
 
     if not namespaces:
         return []
@@ -107,11 +109,13 @@ async def lessons_for_symbol(
     links = await current_links(org, candidates)
     if not links:
         return []
+    trunk_only: frozenset[str] = frozenset()
     here = await _definitions_at(org, code_namespace, head, paths, qualified_name)
     if here is None:
         if fresh_at_commit:
             return []
         matched = _as_trunk_has_it(links, qualified_name)
+        trunk_only = frozenset(a["memory_id"] for a, _, _ in matched)
     else:
         matched = _matched(
             links, here, on_trunk=code_namespace == trunk, require_fingerprint=bool(fresh_at_commit)
@@ -129,30 +133,46 @@ async def lessons_for_symbol(
         limit=limit,
         changed=[mid for mid, state in states.items() if state == "changed"],
     )
+    served = await current_file_rows(org, served)
     rows = {str(r["mid"]): r for r in served}
     # a place in the trunk repository is named only to a caller who may read it
     names_trunk = any(relocation({**a, "state": state}) for a, state, _ in matched) and bool(
         await readable_namespaces(org, {trunk})
     )
-    out: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
+    out: dict[str, tuple[tuple[Any, ...], dict[str, Any], dict[str, Any]]] = {}
+    local_code_changes: set[str] = set()
     for a, state, suggestion in matched:
         row = rows.get(a["memory_id"])
         if row is None or row["mid"] in out:
             continue
+        if inputs_now(org, row | {"sha": hash_text(row["content_sha256"])}) != a["inputs_hash"]:
+            continue
+        if state == "changed":
+            local_code_changes.add(a["memory_id"])
         rank = (state == "changed", not row.get("pinned"), -float(row.get("confidence") or 0))
         lesson: dict[str, Any] = {
             "memory_key": str(row["memory_key"]),
             "namespace": str(row["namespace"]),
             "excerpt": str(row["excerpt"]),
-            "code_state": state,
+            "code_state": (
+                "unknown" if a["memory_id"] in trunk_only and state in ("fresh", "moved") else state
+            ),
             "changed_since": a["changed_since"] if state == "changed" else "",
             "suggestion": suggestion,
         }
         if names_trunk and (moved := _moved_here(a, state, here)):
             lesson["code_moved"] = moved
-        out[row["mid"]] = (rank, lesson)
-    ranked = [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
-    return fit_symbol_lessons(ranked)
+        out[row["mid"]] = (rank, row, lesson)
+    ranked = sorted(out.values(), key=lambda x: x[0])[:limit]
+    await guided_file_rows(
+        org,
+        [row for _, row, _ in ranked],
+        local_code_changes=local_code_changes,
+        unchecked=trunk_only,  # the branch's files were not read: trunk's check is not theirs
+    )
+    return fit_symbol_lessons(
+        [lesson | {"use_guidance": row["use_guidance"].model_dump()} for _, row, lesson in ranked]
+    )
 
 
 def _moved_here(

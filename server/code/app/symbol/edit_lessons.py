@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from server.code.app import enrich
 from server.code.app.spans import code_span, span_attrs
+from server.code.domain.lesson import code_lessons
 from server.identity.app.request_scope import request_narrowed
 from server.memory.app.code_plane_reads import fit_symbol_lessons
 from server.settings import settings
@@ -30,7 +32,7 @@ def _verified_callers(definitions: list[CodeUnit]) -> dict[tuple[str, str, str],
     return callers
 
 
-def _key(note: dict[str, Any]) -> tuple[str, str, str]:
+def _key(note: Mapping[str, Any]) -> tuple[str, str, str]:
     return note["namespace"], note["memory_key"], note["excerpt"]
 
 
@@ -45,11 +47,13 @@ def _attach(
         for note in notes
         if note.get("code_state") == "fresh" and _key(note) not in seen
     }
-    fitted = fit_symbol_lessons([*unit.lessons, *proposals.values()])
-    primary = len(unit.lessons)
-    if fitted[:primary] != unit.lessons:
+    # Budget the wire form so typed guidance and the retrieved rows use the same encoding.
+    primary_rows: list[dict[str, Any]] = code_lessons.dump_python(unit.lessons, mode="json")
+    fitted = fit_symbol_lessons([*primary_rows, *proposals.values()])
+    primary = len(primary_rows)
+    if fitted[:primary] != primary_rows:
         return 0
-    kept = fitted[primary:]
+    kept = code_lessons.validate_python(fitted[primary:])
     unit.lessons.extend(kept)
     seen.update(map(_key, kept))
     return len(kept)

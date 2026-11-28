@@ -141,7 +141,10 @@ describe("Recall Lab: the scores table", () => {
   });
 
   it("opens the memory drawer from a row, by click or from its key button", async () => {
-    searchMemory.mockResolvedValue({ results: [hit("deploy_note", 0.9)], embedding_model: "m" });
+    searchMemory.mockResolvedValue({
+      results: [hit("deploy_note", 0.9, { agent: "writer", user_id: "-", session_id: "-" })],
+      embedding_model: "m",
+    });
     render(<RecallLab />);
     const table = await score();
     fireEvent.click(within(table).getByText("excerpt of deploy_note"));
@@ -149,6 +152,82 @@ describe("Recall Lab: the scores table", () => {
     useStore.setState({ inspectedMemoryKey: null });
     fireEvent.click(within(table).getByRole("button", { name: "deploy_note" }));
     expect(useStore.getState().inspectedMemoryKey).toBe("deploy_note");
+  });
+
+  it.each([false, true])(
+    "opens a legacy ranked-only hit only when its writer is unique (ambiguous: %s)",
+    async (ambiguous) => {
+      searchMemory.mockResolvedValue({ results: [hit("legacy_note", 0.9, { agent: "writer", session_id: "one" })] });
+      const row = { ...entry("legacy_note"), agent: "writer", user_id: "u", session_id: "one" };
+      listMemories.mockImplementation(async (_identity, _limit, opts) => {
+        const entries = !opts?.prefix ? [] : ambiguous ? [row, { ...row, user_id: "other" }] : [row];
+        return { entries, total: entries.length, today: 0, truncated: false };
+      });
+      render(<RecallLab />);
+      const button = within(await score()).getByRole("button", { name: "legacy_note" });
+      await waitFor(() =>
+        expect(listMemories).toHaveBeenCalledWith(
+          expect.objectContaining({ user_id: "*", session_id: "one" }),
+          expect.any(Number),
+          expect.objectContaining({ prefix: "legacy_note", agent: "writer" }),
+        ),
+      );
+      if (ambiguous) expect(button).toBeDisabled();
+      else await waitFor(() => expect(button).toBeEnabled());
+      fireEvent.click(button);
+      if (ambiguous) expect(useStore.getState().inspectedMemoryKey).toBeNull();
+      else
+        expect(useStore.getState()).toMatchObject({
+          inspectedMemoryKey: "legacy_note",
+          inspectedOwner: { user_id: "u", session_id: "one" },
+          inspectedScope: { namespace: "ns", exact: true },
+        });
+    },
+  );
+
+  it("keeps chunk, shared and sentinel hits visible without opening a namesake", async () => {
+    searchMemory.mockResolvedValue({
+      results: [
+        hit("chunk:s:0", 0.9, { source: "chunk", agent: "writer", user_id: "u", session_id: "s" }),
+        hit("definition", 0.8, { agent: "_shared", user_id: "-", session_id: "-" }),
+        hit("sentinel", 0.7, { agent: "-", user_id: "-", session_id: "-" }),
+      ],
+    });
+    render(<RecallLab />);
+    const table = within(await score());
+    expect(table.getByRole("button", { name: "chunk:s:0" })).toBeDisabled();
+    expect(table.getByRole("button", { name: "definition" })).toBeDisabled();
+    expect(table.getByRole("button", { name: "sentinel" })).toBeDisabled();
+    fireEvent.click(table.getByText("excerpt of definition"));
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+  });
+
+  it("opens the selected namesake using its complete identity", async () => {
+    searchMemory.mockResolvedValue({
+      results: [
+        hit("deploy_note", 0.9, { namespace: "ns", agent: "writer", user_id: "-", session_id: "-" }),
+        hit("deploy_note", 0.8, { namespace: "other", agent: "writer", user_id: "u", session_id: "s" }),
+        hit("deploy_note", 0.7, { namespace: "ns", agent: "writer", content_excerpt: "identity incomplete" }),
+      ],
+    });
+    render(<RecallLab />);
+    const table = await score();
+    const [local, other, incomplete] = within(table).getAllByRole("button", { name: "deploy_note" });
+    expect(incomplete).toBeDisabled();
+    fireEvent.click(within(table).getByText("identity incomplete"));
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+    fireEvent.click(other);
+    expect(useStore.getState()).toMatchObject({
+      inspectedMemoryKey: "deploy_note",
+      inspectedAgent: "writer",
+      inspectedOwner: { user_id: "u", session_id: "s" },
+      inspectedScope: { namespace: "other", exact: true },
+    });
+    fireEvent.click(local);
+    expect(useStore.getState()).toMatchObject({
+      inspectedOwner: { user_id: "-", session_id: "-" },
+      inspectedScope: { namespace: "ns", exact: true },
+    });
   });
 
   it("marks a keyword row and gives it dashes where nothing ranked it", async () => {
@@ -161,6 +240,53 @@ describe("Recall Lab: the scores table", () => {
     expect(row.getByText("value of deploy_kw")).toBeInTheDocument();
     expect(row.getByText("procedural")).toBeInTheDocument();
     expect(row.getAllByText("—")).toHaveLength(3);
+  });
+
+  it("keeps guidance with the matching writer and session when keys are shared", async () => {
+    listMemories.mockResolvedValue({
+      entries: [{ ...entry("deploy_note"), user_id: "user", session_id: "one" }],
+      total: 1,
+      today: 0,
+      truncated: false,
+    });
+    searchMemory.mockResolvedValue({
+      results: [
+        hit("deploy_note", 0.9, {
+          agent: "claude-code",
+          user_id: "user",
+          session_id: "one",
+          content_excerpt: "matching revision",
+          use_guidance: { next_step: "inspect_only", reasons: [] },
+        }),
+        hit("deploy_note", 0.8, {
+          agent: "claude-code",
+          user_id: "user",
+          session_id: "two",
+          content_excerpt: "other session",
+          use_guidance: { next_step: "validate_lead", reasons: [] },
+        }),
+        hit("deploy_note", 0.7, {
+          agent: "other-agent",
+          user_id: "user",
+          session_id: "one",
+          content_excerpt: "other writer",
+          use_guidance: { next_step: "follow_if_applicable", reasons: [] },
+        }),
+      ],
+      embedding_model: "m",
+    });
+    render(<RecallLab />);
+    const rows = within(await score())
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) => within(row));
+    expect(rows).toHaveLength(3);
+    expect(rows[0].getByText("keyword match")).toBeInTheDocument();
+    expect(rows[0].getByText("matching revision")).toBeInTheDocument();
+    expect(rows[0].getByText("Suggested use: inspect only")).toBeInTheDocument();
+    expect(rows[1].queryByText("keyword match")).toBeNull();
+    expect(rows[1].getByText("Suggested use: validate lead")).toBeInTheDocument();
+    expect(rows[2].getByText("Suggested use: follow if applicable")).toBeInTheDocument();
   });
 
   it("puts the row count and the embedder at the end of the toolbar", async () => {

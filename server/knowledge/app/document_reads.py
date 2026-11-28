@@ -70,6 +70,15 @@ async def document_counts(org: str, namespaces: list[str]) -> dict[str, int]:
 # ============================================================
 
 
+async def ordinary_source_uris(org: str, namespace: str, uris: set[str]) -> set[str]:
+    """Currently live ordinary sources in a namespace already authorized by the caller."""
+    from server.core.ch import sequential_reads
+    from server.knowledge.store.documents import ordinary_live_source_uris
+
+    with sequential_reads():
+        return await ordinary_live_source_uris(org, namespace, sorted(uris))
+
+
 @dataclass(frozen=True)
 class ListRequest:
     input: KnowledgeListInput

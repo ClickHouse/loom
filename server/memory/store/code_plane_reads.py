@@ -10,6 +10,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.memory.store.code_links import LinkedMemory
+from server.memory.store.sql import FILE_LISTING_VISIBLE, PROCEDURE_GUIDANCE_FIELDS
 
 
 async def served_excerpts(
@@ -32,18 +33,20 @@ async def served_excerpts(
         return []
     return await query_all_sliced(
         ch or _default_client(),
-        """
-        SELECT toString(memory_id) AS mid, memory_key, namespace,
+        f"""
+        SELECT toString(memory_id) AS mid, memory_id, memory_key, namespace,
+               agent, user_id, session_id, memory_type, version, tags, files,
                if(startsWith(value, '"'), JSONExtractString(value), value) AS excerpt,
-               pinned, confidence
+               pinned, confidence, conflict_with, CAST(status AS String) AS status_text,
+               source_trace, source_class, source_resource_id, requires_review,
+               verified_by, verified_sha256, content_sha256, {PROCEDURE_GUIDANCE_FIELDS}
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace IN {nss:Array(String)}
+        WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
           AND (namespace, agent, user_id, session_id, memory_key, memory_id)
-              IN {memories:Array(Tuple(String, String, String, String, String, UUID))}
-          AND tombstoned_at IS NULL AND status IN ('active', 'conflicted')
-          AND (expires_at IS NULL OR expires_at > now()) AND sensitivity != 'high'
-        ORDER BY memory_id IN {changed:Array(UUID)}, pinned DESC, confidence DESC
-        LIMIT {limit:UInt32}
+              IN {{memories:Array(Tuple(String, String, String, String, String, UUID))}}
+          AND ({FILE_LISTING_VISIBLE}) AND status IN ('active', 'conflicted')
+        ORDER BY memory_id IN {{changed:Array(UUID)}}, pinned DESC, confidence DESC
+        LIMIT {{limit:UInt32}}
         """,
         {
             "org": org,

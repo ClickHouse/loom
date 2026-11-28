@@ -6,15 +6,17 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from server.code.api.models_symbol import CodeEditContextInput
+from server.code.api.models_symbol import CodeEditContextInput, CodeSymbolOutput
 from server.code.app import enrich, memory_links
 from server.code.app.symbol import edit_lessons
 from server.code.domain.anchor import Definition
 from server.code.domain.units import CodeUnit
 from server.memory.app import code_link_reads, code_plane_reads
+from server.memory.domain.use_guidance import guidance_for_row
 from server.settings import settings
 
 REVISION = "a" * 40
+CONTENT_SHA = "b" * 64
 NOTE = {"memory_key": "mounting", "namespace": "history", "excerpt": "Mounts can repeat."}
 FRESH = {**NOTE, "code_state": "fresh"}
 
@@ -41,17 +43,19 @@ async def test_verified_callers_share_lesson_scope_and_keep_one_copy(monkeypatch
     originals = [u.model_dump()["examples"] for u in definitions]
     primary = {**FRESH, "memory_key": "direct"}
     different = {**primary, "excerpt": "Mounts need distinct endpoint names."}
-    definitions[2].lessons = [primary]
+    guidance = guidance_for_row({"status": "active"})
+    serialized_guidance = guidance.model_dump(mode="json")
+    definitions[2].lessons = [{**primary, "use_guidance": guidance}]
     read = AsyncMock(
         return_value=[
-            FRESH,
+            {**FRESH, "use_guidance": serialized_guidance},
             primary,
             different,
             {**NOTE, "memory_key": "old", "code_state": "changed"},
         ]
     )
     monkeypatch.setattr(enrich, "lessons_for_symbol", read)
-    monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 1000)
     request = CodeEditContextInput(lesson_namespaces=["history"])
 
     await edit_lessons.attach_verified_caller_lessons(
@@ -68,13 +72,14 @@ async def test_verified_callers_share_lesson_scope_and_keep_one_copy(monkeypatch
         assert kwargs["extra_namespaces"] == ["history"]
         assert kwargs["paths"] == ["web/app.py"]
         assert 0 < kwargs["seconds"] <= settings.code_enrich_timeout_s
-    assert [d.lessons for d in definitions] == [
+    response = CodeSymbolOutput(definitions=definitions).model_dump(mode="json")
+    assert [d.get("lessons", []) for d in response["definitions"]] == [
         [
-            {**FRESH, "linked_symbols": ["App.mount"]},
+            {**FRESH, "linked_symbols": ["App.mount"], "use_guidance": serialized_guidance},
             {**different, "linked_symbols": ["App.mount"]},
         ],
         [],
-        [primary],
+        [{**primary, "use_guidance": serialized_guidance}],
     ]
     assert [u.examples for u in definitions] == originals
 
@@ -150,6 +155,7 @@ async def test_verified_lesson_only_ranks_fresh_rows(monkeypatch):
             "qualified_name": "App.mount",
             "state": state,
             "changed_since": "b" * 40,
+            "inputs_hash": code_link_reads.inputs_hash(CONTENT_SHA, [], "repo", "-"),
         }
         for key, state in enumerate(states)
     ]
@@ -168,7 +174,10 @@ async def test_verified_lesson_only_ranks_fresh_rows(monkeypatch):
 
     async def excerpts(_org, _namespaces, memories, *, limit, changed):
         matching = sorted(memories, key=lambda identity: identity[-1] in changed)
-        return [{**by_id[mid], "mid": mid, "excerpt": mid} for *_, mid in matching[:limit]]
+        return [
+            {**by_id[mid], "mid": mid, "excerpt": mid, "content_sha256": CONTENT_SHA}
+            for *_, mid in matching[:limit]
+        ]
 
     monkeypatch.setattr(code_plane_reads.reads, "served_excerpts", excerpts)
     monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
@@ -219,6 +228,7 @@ async def test_verified_caller_requires_matching_fingerprint(
         "fingerprint_version": "older" if legacy else code_plane_reads.fingerprint_version(),
         "changed_since": REVISION,
         "suggestion": "",
+        "inputs_hash": code_link_reads.inputs_hash(CONTENT_SHA, [], "repo", "-"),
     }
     definition = Definition(path, symbol, "mount", body_hash=recovered)
     monkeypatch.setattr(code_plane_reads.links_store, "for_paths", AsyncMock(return_value=[link]))
@@ -228,9 +238,8 @@ async def test_verified_caller_requires_matching_fingerprint(
     monkeypatch.setattr(
         code_plane_reads, "_definitions_at", AsyncMock(return_value={(path, symbol): definition})
     )
-    monkeypatch.setattr(
-        code_plane_reads.reads, "served_excerpts", AsyncMock(return_value=[{**NOTE, "mid": "one"}])
-    )
+    row = {**NOTE, "mid": "one", "memory_id": "one", "user_id": "-", "content_sha256": CONTENT_SHA}
+    monkeypatch.setattr(code_plane_reads.reads, "served_excerpts", AsyncMock(return_value=[row]))
     monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
 
     scope = {"qualified_name": symbol, "paths": [path], "namespaces": ["history"]}

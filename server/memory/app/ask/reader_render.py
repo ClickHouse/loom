@@ -81,12 +81,17 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
         if label_namespace and _get(h, "namespace") == label_namespace:
             mtype = f"{mtype}, {label_namespace}"
         text = str(_get(h, "content_excerpt") or "")[:_EXCERPT_CHARS]
+        guidance = _get(h, "use_guidance")
+        step = _get(guidance, "next_step") if guidance else ""
+        note = f" [use: {step}]" if step else ""
         code = code_change.note(
             str(_get(h, "code_state") or ""),
             str(_get(h, "code_changed_since") or ""),
             _get(h, "code_moved") or [],
         )
-        parts.append(f"[{_date_of(h)}] [{key}] ({mtype}){code} {text}{_restatement_note(h, keys)}")
+        parts.append(
+            f"[{_date_of(h)}] [{key}] ({mtype}){code} {text}{_restatement_note(h, keys)}{note}"
+        )
     return "\n\n".join(parts)
 
 

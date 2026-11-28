@@ -52,6 +52,7 @@ from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.domain.delete_marks import delete_version_trace
+from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.domain.served import served_totals
 from server.memory.domain.webhook_events import memory_change
 from server.memory.store import key_write_lock
@@ -1451,7 +1452,14 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
         mirror = [
             (
                 (r.org, r.namespace, r.agent, r.user_id, r.session_id, r.memory_key),
-                {"expires_at": naive_expiry},
+                {
+                    "expires_at": naive_expiry,
+                    **(
+                        {"version": versions[r.memory_key]}
+                        if is_content_hash(r.content_sha256)
+                        else {}
+                    ),
+                },
             )
             for r in (by_key[k] for k in versions)
             # a 'high' head keeps no vector: never copy one forward under it
@@ -1459,11 +1467,11 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
         ]
         if mirror:
             try:
-                if input.memory_keys:
-                    await memory_repo.reemit_embedding_rows_for_keys(mirror, ch=ch)
-                else:  # one key: the keyed read the single-key path always ran
-                    (o, n, a, u, s_, k), ov = mirror[0]
-                    await memory_repo.reemit_embedding_rows_for_key(o, n, a, u, s_, k, ch=ch, **ov)
+                # Without a hash, update expiry at the vector's next version only.
+                hashes = {
+                    key: by_key[key[-1]].content_sha256 for key, ov in mirror if "version" in ov
+                }
+                await memory_repo.reemit_embedding_rows_for_keys(mirror, ch=ch, of_content=hashes)
             except Exception as e:  # noqa: BLE001 — expiry mirror is best-effort; memory rows already updated
                 log.warning("memory_embeddings expiry mirror failed (non-fatal): %s", e)
 

@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
+from server.code.domain.lesson import CodeLesson
 from server.code.domain.symbol_body import retained_source_lines
 from server.code.domain.symbol_documentation import symbol_description_preview
 
@@ -165,7 +166,7 @@ class CodeUnit(BaseModel):
     # enrichment blocks (code.symbol fills these; empty lists otherwise)
     recent_prs: list[dict[str, Any]] = Field(default_factory=list)
     examples: list[dict[str, Any]] = Field(default_factory=list)
-    lessons: list[dict[str, Any]] = Field(default_factory=list)
+    lessons: list[CodeLesson] = Field(default_factory=list)
     # True when `lessons` was asked for but its read failed or ran past
     # `code_enrich_timeout_s`: the symbol may have lessons this answer does not carry.
     lessons_unread: bool = False

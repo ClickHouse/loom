@@ -892,13 +892,14 @@ async def test_parked_oversized_source_is_not_hydrated_by_the_shared_label_check
     governed_first: bool,
 ) -> None:
     from server.memory.app import definitions, search_pages
-    from server.memory.app.search import output
+    from server.memory.app.search import guidance, output
     from server.memory.store import reads
 
     store["rows"] = [_row("definition/arr", "ARR")]
     leg = await term_leg._read("o", "n", "what is ARR", set(), None, "m")
     ordinary = _hit("definition/ordinary", 0.5)
     ordinary.namespace = "n"
+    ordinary.version = 1
     ordinary._row_identity = ("_shared", "-", "-")
     tail = [leg.hits[0], ordinary] if governed_first else [ordinary, leg.hits[0]]
     page = json.loads(
@@ -942,6 +943,12 @@ async def test_parked_oversized_source_is_not_hydrated_by_the_shared_label_check
     async def fresh(*args: Any) -> list[bool]:
         return [False] * len(args[-1])
 
+    async def shared_heads(
+        org: str, keys: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        return {key: {"version": 1} for key in keys}
+
+    monkeypatch.setattr(guidance, "shared_guidance_heads", shared_heads)
     monkeypatch.setattr(reads.pg, "enabled", lambda: True)
     monkeypatch.setattr(reads.pg_memory, "heads_for_identity", heads)
     monkeypatch.setattr(reads, "_hydrate", hydrate)

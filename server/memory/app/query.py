@@ -308,6 +308,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         )
     truncated = len(rows) > input.limit
     rows = rows[: input.limit]
+    rows_read = len(rows)
     rows = await _served_by_authority(input, rows, _served)
     if _wants_usage(keep):
         rows = await memory_repo.overlay_usage_totals_many(rows)
@@ -426,6 +427,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                 for r, (pv, pcut) in ((r, _preview_for_list(r, preview_chars)) for r in rows)
             ],
             truncated=truncated,
+            rows_read=rows_read,
         ),
         keep,
     )
@@ -531,6 +533,7 @@ async def _list_by_score(
     if input.quotas:
         rows_dict = _within_quotas(rows_dict, input.quotas, input.limit + 1)
     truncated = len(rows_dict) > input.limit
+    rows_read = min(len(rows_dict), input.limit)
     rows_dict = await memory_repo.served_rows(
         [{**r, "org": input.org, "namespace": input.namespace} for r in rows_dict[: input.limit]]
     )
@@ -544,6 +547,7 @@ async def _list_by_score(
         total=score_total,
         entries=[_score_entry(r) for r in rows_dict],
         truncated=truncated,
+        rows_read=rows_read,
     )
 
 

@@ -410,7 +410,7 @@ async def reemit_embedding_rows_for_keys(
         for r in rows:
             key = identity_key(r)
             want = (of_content or {}).get(key)
-            if want is not None and str(r.get("content_sha256") or "") != want:
+            if want is not None and hash_text(r.get("content_sha256")) != want:
                 continue
             overrides = by_key.get(key)
             row = _copy_row(r, overrides) if overrides is not None else None

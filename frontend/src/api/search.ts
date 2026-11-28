@@ -7,6 +7,7 @@ import type { Identity, RequestOpts, SearchScope } from "../api";
 // ===== memory.search =====
 
 export interface SearchHit {
+  use_guidance?: { next_step: string; reasons: string[] } | null;
   memory_key: string;
   memory_type: string;
   content_excerpt: string;
@@ -24,6 +25,11 @@ export interface SearchHit {
   created_at?: string;
   /** Writer identity; "" when the leg did not read it. */
   agent?: string;
+  user_id?: string;
+  session_id?: string;
+  /** The revision the hit (and its guidance) was made for. */
+  version?: number;
+  version_text?: string;
   /** Server provenance note for the hit ("fact hit from namespace x;
    *  similarity=0.62; ..."). Rides at k ≤ 15 by default and at any k under
    * `explain: true`. */

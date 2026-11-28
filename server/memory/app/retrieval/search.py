@@ -10,6 +10,7 @@ import logging
 from collections.abc import Awaitable, Sequence
 from typing import Any
 
+from server.core.hashing import hash_text
 from server.core.repo_base import _default_client
 from server.memory.app.retrieval.chunks import _search_memory_chunks
 from server.memory.app.retrieval.fact_rank import (
@@ -238,6 +239,7 @@ def _fact_rows_to_hits(
             valid_at=_iso_date(str(r.get("valid_at", ""))),
             status=str(r.get("status") or ""),
             version=int(r.get("version") or 0),
+            content_sha256=hash_text(r.get("content_sha256")),
             created_at=_iso_date(str(r.get("created_at", ""))),
             source_resource_id=str(r.get("source_resource_id") or ""),
             source_class=str(r.get("source_class") or ""),

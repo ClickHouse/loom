@@ -6,6 +6,7 @@ with the state of its code on the branch read."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -160,8 +161,13 @@ def test_code_search_runs_as_the_pinned_user_whatever_the_body_says() -> None:
 
 
 def _link(mid: str, *, qn: str = "src.a::Reader::read", state: str = "fresh", **kw: Any) -> dict:
+    from server.memory.app.code_link_reads import inputs_hash
+
     return LINK_COLS | {
         "memory_id": mid,
+        "namespace": "agent-a",
+        "code_namespace": "code-a",
+        "inputs_hash": inputs_hash("a" * 64, [], "code-a", "user"),
         "qualified_name": qn,
         "path": kw.get("path", "src/a.py"),
         "former": kw.get("former", []),
@@ -175,6 +181,11 @@ def _link(mid: str, *, qn: str = "src.a::Reader::read", state: str = "fresh", **
 def _excerpt(mid: str, key: str, *, pinned: int = 0) -> dict:
     return {
         "mid": mid,
+        "memory_id": mid,
+        "content_sha256": b"a" * 64,
+        "user_id": "user",
+        "files": [],
+        "tags": [],
         "memory_key": key,
         "namespace": "agent-a",
         "excerpt": key,
@@ -238,7 +249,12 @@ async def _lessons(
     monkeypatch.setattr(memory_links, "indexed_head", head)
     monkeypatch.setattr(memory_links, "parsed", parsed)
     monkeypatch.setattr(memory_links, "mirror_here", mirror_here)
+
+    async def for_memories(org, ids):
+        return [link for link in links if link["memory_id"] in ids]
+
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, n: "code-a")
+    monkeypatch.setattr(code_links, "for_memories", for_memories)
     monkeypatch.setattr(store, "served_excerpts", served)
     monkeypatch.setattr("server.memory.app.code_link_reads.current_links", current)
     return await code_plane_reads.lessons_for_symbol(
@@ -256,9 +272,111 @@ async def test_symbol_lessons_keep_whole_values_and_honor_an_opt_in_budget(monke
     whole = await _lessons(monkeypatch, links, excerpts, definitions)
     assert whole[0]["excerpt"] == value
     assert len(whole) == 2
-    monkeypatch.setattr(settings, "code_result_lessons_tokens", 80)
+    assert whole[1]["use_guidance"]["next_step"] == "validate_lead"
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 180)
     bounded = await _lessons(monkeypatch, links, excerpts, definitions)
     assert [row["memory_key"] for row in bounded] == ["short"]
+
+
+@pytest.mark.asyncio
+async def test_code_guidance_reads_only_authorized_repository_bindings(monkeypatch) -> None:
+    from server.memory.app import code_link_reads
+
+    allowed = _excerpt("m1", "allowed") | {"namespace": "code-a"}
+    hidden = _excerpt("m2", "hidden") | {"namespace": "code-hidden"}
+    unresolved = _excerpt("m3", "unresolved") | {"namespace": "unbound", "tags": ["repo:abc"]}
+    unbound = _excerpt("m4", "unbound") | {"namespace": "unbound"}
+    visible = _link("m1", state="changed") | {"namespace": "code-a"}
+    stale = _link("m1", state="missing") | {"namespace": "code-a", "inputs_hash": "old"}
+
+    async def readable(org, namespaces):
+        assert namespaces == {"code-a", "code-hidden"}
+        return {"code-a"}
+
+    async def links(org, ids):
+        assert ids == ["m1"]
+        return [visible, stale]
+
+    async def checked_head(org, ns):
+        assert ns == "code-a"
+        return ""
+
+    async def link_cursor(name):
+        assert name == "unparsed/o/code-a"
+        return ""
+
+    monkeypatch.setattr(
+        code_link_reads,
+        "code_namespace_for",
+        lambda org, ns, tags: ns if ns.startswith("code-") else "",
+    )
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    monkeypatch.setattr(code_link_reads.code, "checked_head", checked_head)
+    monkeypatch.setattr(code_link_reads.code, "link_cursor", link_cursor)
+    monkeypatch.setattr(code_link_reads.store, "for_memories", links)
+    assert await code_link_reads.guidance_code_states(
+        "o", [allowed, hidden, unresolved, unbound]
+    ) == ["changed", "unknown", "unknown", "not_applicable"]
+
+
+@pytest.mark.parametrize("state", ["fresh", "moved", "pending"])
+async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, state) -> None:
+    from server.memory.app import code_link_reads
+
+    row = _excerpt("m1", "allowed")
+    indexed = "a" * 40
+    checked = indexed
+    fetched = "b" * 40
+    unparsed = ""
+    complete_during_read = False
+
+    async def readable(org, namespaces):
+        assert namespaces == {"code-a"}
+        return namespaces
+
+    async def links(org, ids):
+        nonlocal checked
+        if complete_during_read:
+            checked = indexed
+        return [_link("m1", state=state)]
+
+    async def all_state_many(pairs):
+        assert pairs == [("o", "code-a")]
+        return {
+            ("o", "code-a"): {
+                "clone_head": {"value": fetched, "detail": "main"},
+                "git_head": {"value": indexed},
+            },
+        }
+
+    async def checked_head(org, ns):
+        return checked
+
+    async def link_cursor(name):
+        return unparsed
+
+    monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda *_: "code-a")
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    monkeypatch.setattr(code_link_reads.store, "for_memories", links)
+    monkeypatch.setattr(
+        code_link_reads.code, "repo_for_namespace", lambda *_: SimpleNamespace(git_branch="main")
+    )
+    monkeypatch.setattr(
+        code_link_reads.code, "CodeRepo", lambda: SimpleNamespace(all_state_many=all_state_many)
+    )
+    monkeypatch.setattr(code_link_reads.code, "checked_head", checked_head)
+    monkeypatch.setattr(code_link_reads.code, "link_cursor", link_cursor)
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    indexed = fetched
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    complete_during_read = True
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    unparsed = '["src/a.py"]'
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    unparsed = '["src/other.py"]'
+    # a link the writer parked behind a running pass is unknown even at the checked head
+    expected = "unknown" if state == "pending" else state
+    assert await code_link_reads.guidance_code_states("o", [row]) == [expected]
 
 
 @pytest.mark.asyncio
@@ -289,6 +407,17 @@ async def test_a_lesson_reads_changed_where_the_definition_differs_from_the_link
     branch = [("src/a.py", "src.a::Reader::read", "h0")]
     out = await _lessons(monkeypatch, links, excerpts, branch, ns="code-a-26-8")
     assert {o["memory_key"]: o["code_state"] for o in out} == {"k1": "changed", "k2": "fresh"}
+    assert out[0]["use_guidance"]["freshness"]["code"] == "changed"
+    assert out[1]["use_guidance"]["freshness"]["code"] == "changed"
+    assert out[1]["use_guidance"]["next_step"] == "recheck_source"
+
+
+@pytest.mark.asyncio
+async def test_symbol_lesson_ignores_a_link_for_a_different_value(monkeypatch) -> None:
+    links = [_link("m1")]
+    excerpts = [_excerpt("m1", "k1") | {"content_sha256": b"b" * 64}]
+    definitions = [("src/a.py", "src.a::Reader::read", "h1")]
+    assert await _lessons(monkeypatch, links, excerpts, definitions) == []
 
 
 @pytest.mark.asyncio
@@ -312,6 +441,23 @@ async def test_a_host_still_cloning_the_mirror_serves_the_lesson_as_trunk_has_it
         monkeypatch, links, [_excerpt("m1", "k1")], branch, ns="code-a-26-8", has_mirror=False
     )
     assert (lesson["code_state"], lesson["suggestion"]) == ("changed", "s")
+
+
+@pytest.mark.asyncio
+async def test_a_fallback_to_trunks_state_gives_no_positive_guidance(monkeypatch) -> None:
+
+    branch = [("src/a.py", "src.a::Reader::read", "h1")]
+
+    for kw in ({"parse_s": settings.memory_code_plane_parse_timeout_s * 2}, {"has_mirror": False}):
+        (lesson,) = await _lessons(
+            monkeypatch, [_link("m1")], [_excerpt("m1", "k1")], branch, ns="code-a-26-8", **kw
+        )
+
+        assert lesson["code_state"] == "unknown"  # trunk's check is not the branch's
+
+        assert lesson["use_guidance"]["freshness"]["code"] == "unknown"
+
+        assert lesson["use_guidance"]["next_step"] != "follow_if_applicable"
 
 
 @pytest.mark.asyncio
@@ -436,7 +582,7 @@ async def test_a_lesson_names_no_place_in_a_trunk_the_caller_may_not_read(monkey
     (lesson,) = await _lessons(
         monkeypatch, [_renamed("m1")], [_excerpt("m1", "k1")], [], has_mirror=False
     )
-    assert (lesson["code_state"], "code_moved" in lesson) == ("moved", False)
+    assert (lesson["code_state"], "code_moved" in lesson) == ("unknown", False)
 
 
 @pytest.mark.asyncio
@@ -619,3 +765,15 @@ def test_symbol_request_budget_preserves_source_before_whole_lessons() -> None:
     assert unit.lessons == [lesson, short]
     unlimited, _, left_out = _budget_definitions([unit], 0)
     assert unlimited[0].lessons == [lesson, short] and left_out == 0
+
+
+async def test_unloaded_code_registry_keeps_recall_guidance_unknown(monkeypatch):
+    from server.code.domain.index.repos import RegistryUnread
+    from server.memory.app import code_link_reads
+
+    def unavailable(*args):
+        raise RegistryUnread("registry unavailable")
+
+    monkeypatch.setattr(code_link_reads, "code_namespace_for", unavailable)
+    row = _excerpt("m1", "readable memory") | {"namespace": "code-a"}
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]

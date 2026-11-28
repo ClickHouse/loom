@@ -113,8 +113,10 @@ class Emitter:
     ) -> str:
         props = schema.get("properties") or {}
         required = set(schema.get("required") or []) - optional
-        if not props:
-            addl = schema.get("additionalProperties")
+        addl = schema.get("additionalProperties")
+        # An explicit unconstrained extra-key schema is a dictionary. Python's
+        # supported TypedDict cannot allow unlisted keys in typed access.
+        if not props or addl == {}:
             inner = self.render(addl) if isinstance(addl, dict) else "Any"
             return f"{name} = dict[str, {inner}]"
         if any(not k.isidentifier() or keyword.iskeyword(k) for k in props):

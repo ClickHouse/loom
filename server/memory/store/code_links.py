@@ -453,6 +453,57 @@ async def _for_code(
     )
 
 
+_BEHIND = (
+    "{_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
+    "AND state != 'pending' AND checked_commit != {{head:String}}"
+)
+
+
+async def behind_digest(
+    org: str, code_namespace: str, head: str, *, ch: _CHClient | None = None
+) -> str:
+    """A digest of the live links not checked at `head`: it changes whenever one is
+    inserted, relinked or removed. A lost link keeps its commit when a recheck rewrites
+    it, so it counts by key and commit, not version: rechecking it changes nothing.
+    One aggregate over the repository's live links, on every pass."""
+    rows = await (ch or _default_client()).query_all(
+        f"SELECT count() AS n, hex(groupBitXor(if(state IN ('unresolved', 'missing'), "
+        f"sipHash64({_KEY}, checked_commit), sipHash64({_KEY}, version)))) AS d "
+        + _BEHIND.format(_LIVE=_LIVE),
+        params={"org": org, "cns": code_namespace, "head": head},
+    )
+    return f"{rows[0]['n']}:{rows[0]['d']}"
+
+
+async def behind(
+    org: str,
+    code_namespace: str,
+    head: str,
+    *,
+    after: tuple[str, ...] | None,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> tuple[list[LinkRow], tuple[str, ...] | None]:
+    """Up to `limit` live links not checked at `head`, in key order after `after`, and
+    the next page's start (None at the end)."""
+    since = f" AND {_past(_KEY_COLUMNS, _KEY_TYPES)}" if after else ""
+    rows = _links(
+        await (ch or _default_client()).query_all(
+            "SELECT * "
+            + _BEHIND.format(_LIVE=_LIVE)
+            + f"{since} ORDER BY {_KEY} LIMIT {{lim:UInt32}}",
+            params={
+                "org": org,
+                "cns": code_namespace,
+                "head": head,
+                "lim": int(limit),
+                **_past_params(after or ()),
+            },
+        )
+    )
+    return rows, _key(rows[-1]) if len(rows) == int(limit) else None
+
+
 async def stale_fingerprints(
     org: str,
     code_namespace: str,

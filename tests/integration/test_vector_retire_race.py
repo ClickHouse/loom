@@ -1436,6 +1436,71 @@ async def test_two_copies_of_a_reindexed_row_under_a_high_head_are_never_made(
             )
 
 
+async def test_hashless_touch_restores_vector_search_eligibility(ch: Any, monkeypatch: Any):
+    from server.memory import store as M
+    from server.memory.api.models_crud import MemoryTouchInput
+    from server.memory.app import handlers
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    value = "The deploy uses blue"
+    version = M.next_version()
+    row = _memory_row(ns, version, value, "") | {"content_sha256": ""}
+    vector = M.build_embedding_row(
+        org=ORG,
+        namespace=ns,
+        agent=AGENT,
+        user_id=USER,
+        session_id=SESSION,
+        memory_key=KEY,
+        memory_type="semantic",
+        scope="private",
+        content_excerpt=value,
+        content_sha256=sha256_value(value),
+        embedding_model="fake",
+        embedding_dim=_DIM,
+        embedding=_wide([0.1, 0.2, 0.3]),
+        version=version,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        expires_at=datetime(2001, 1, 1),
+    )
+    params = {"o": ORG, "n": ns, "k": KEY}
+
+    async def eligible():
+        return await ch.query_all(
+            "SELECT content_excerpt, version, expires_at FROM loom.memory_embeddings FINAL "
+            "WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String} "
+            "AND tombstoned_at IS NULL AND (expires_at IS NULL OR expires_at > now())",
+            params=params,
+        )
+
+    monkeypatch.setattr(handlers, "get_client", lambda: ch)
+    try:
+        await M.insert_memory_versions([row], ch=ch)
+        assert len(await M.insert_embedding_rows([vector], ch=ch)) == 1
+        assert await eligible() == []
+        result = await handlers.handle_memory_touch(
+            MemoryTouchInput(
+                org=ORG,
+                namespace=ns,
+                agent=AGENT,
+                user_id=USER,
+                session_id=SESSION,
+                memory_key=KEY,
+                clear_expiry=True,
+            )
+        )
+        assert result.touched and result.expires_at is None
+        (hit,) = await eligible()
+        assert hit["content_excerpt"] == value and hit["expires_at"] is None
+        assert hit["version"] == version + 1 and hit["version"] != result.version
+    finally:
+        for table in ("memory", "memory_embeddings"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )
+
+
 async def test_copies_that_read_the_head_before_the_high_write_retire_themselves(
     ch: Any, monkeypatch: Any
 ) -> None:
@@ -1453,31 +1518,38 @@ async def test_copies_that_read_the_head_before_the_high_write_retire_themselves
     key = f"r41_{uuid.uuid4().hex[:6]}"
     ident = {"org": ORG, "namespace": ns, "agent": AGENT, "memory_key": key}
     secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
-    await _memory_only_row(ch, ns, key, "OLDVALUE the deploy uses blue")
+    # Hashless touches use the embedding's own next version; exercise that path.
+    row = _memory_row(ns, M.next_version(), "OLDVALUE the deploy uses blue", "")
+    await M.insert_memory_versions([row | {"memory_key": key, "content_sha256": ""}], ch=ch)
 
-    orig = M.reemit_embedding_rows_for_key
+    from server.memory.store import embeddings
+
+    reemit = M.reemit_embedding_rows_for_keys
+    read = embeddings._live_rows_for_keys
     entered = {"A": asyncio.Event(), "B": asyncio.Event()}
     go_a, go_b_read, b_read_done, go_b_insert = (asyncio.Event() for _ in range(4))
     calls: list[str] = []
+    second_touch: asyncio.Task[Any] | None = None
 
-    async def wrapped(o, n, a, u, s, k, *, ch=None, **ov):  # type: ignore[no-untyped-def]
+    async def wrapped(items, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal second_touch
         who = "A" if not calls else "B"
         calls.append(who)
+        if who == "B":
+            second_touch = asyncio.current_task()
         entered[who].set()
-        if who == "A":
-            await go_a.wait()
-            return await orig(o, n, a, u, s, k, ch=ch, **ov)
-        await go_b_read.wait()
-        rows = await M.live_embedding_rows_for_key(
-            ch, org=o, namespace=n, agent=a, user_id=u, session_id=s, memory_key=k
-        )
-        b_read_done.set()
-        await go_b_insert.wait()
-        from server.memory.store.embeddings import reemit_rows
+        await (go_a if who == "A" else go_b_read).wait()
+        return await reemit(items, **kwargs)
 
-        return await reemit_rows(rows, ov, ch=ch)
+    async def paused_read(*args, **kwargs):  # type: ignore[no-untyped-def]
+        rows = await read(*args, **kwargs)
+        if asyncio.current_task() is second_touch and not b_read_done.is_set():
+            b_read_done.set()
+            await go_b_insert.wait()
+        return rows
 
-    monkeypatch.setattr(M, "reemit_embedding_rows_for_key", wrapped)
+    monkeypatch.setattr(M, "reemit_embedding_rows_for_keys", wrapped)
+    monkeypatch.setattr(embeddings, "_live_rows_for_keys", paused_read)
     monkeypatch.setattr(handlers, "get_client", lambda: ch)
     tasks: list[asyncio.Task[Any]] = []
 

@@ -468,6 +468,11 @@ fn memory_list() {
     let encoded = serde_json::to_value(value).unwrap();
     assert!(encoded.is_object());
     assert_eq!(
+        encoded["rows_read"],
+        serde_json::from_str::<serde_json::Value>("0").unwrap(),
+        "memory.list:rows_read"
+    );
+    assert_eq!(
         encoded["total"],
         serde_json::from_str::<serde_json::Value>("0").unwrap(),
         "memory.list:total"
@@ -4970,6 +4975,11 @@ fn context_pack() {
         encoded["blocks"],
         serde_json::from_str::<serde_json::Value>("[]").unwrap(),
         "context.pack:blocks"
+    );
+    assert_eq!(
+        encoded["use_guidance"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "context.pack:use_guidance"
     );
     assert_eq!(
         encoded["section_meta"],

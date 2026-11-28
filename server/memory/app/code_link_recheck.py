@@ -4,7 +4,6 @@ its indexed head: moves, renames, edits, removals, pending names and parse failu
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass
@@ -26,6 +25,7 @@ from server.code.domain.anchor import (
 from server.code.domain.declaration import fingerprint_version
 from server.code.domain.index.repos import repo_for_namespace
 from server.code.domain.successor import Side, Successor, close_to, elsewhere, successor
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app import code_link_policy as policy
@@ -91,8 +91,10 @@ async def recheck_all(result: link_pass.PassResult) -> None:
         granted = (left + rest - 1) // rest
         budget = link_pass.Budget(judgements=granted)
         try:
-            async with link_pass.repository_locks.lease(_lock_name(org, cns)):
-                await _recheck_repository(org, cns, budget, result)
+            # sequential reads see a link another replica inserted under the lease
+            with sequential_reads():
+                async with link_pass.repository_locks.lease(link_pass.lock_name(org, cns)):
+                    await _recheck_repository(org, cns, budget, result)
         except LeaseBusy:
             pass  # another pass is checking this repository
         except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
@@ -110,13 +112,10 @@ async def recheck_repository(org: str, cns: str) -> link_pass.PassResult | None:
     if not settings.memory_code_links_enabled or (org, cns) not in await store.code_namespaces():
         return None
     result = link_pass.PassResult()
-    async with link_pass.repository_locks.lease(_lock_name(org, cns)):
-        await _recheck_repository(org, cns, link_pass.Budget(judgements=0), result)
+    with sequential_reads():
+        async with link_pass.repository_locks.lease(link_pass.lock_name(org, cns)):
+            await _recheck_repository(org, cns, link_pass.Budget(judgements=0), result)
     return result
-
-
-def _lock_name(org: str, cns: str) -> str:
-    return "code_links/" + hashlib.sha256(f"{org}\x1f{cns}".encode()).hexdigest()[:40]
 
 
 async def _recheck_repository(
@@ -126,6 +125,7 @@ async def _recheck_repository(
     files = link_pass.RepoReads(org, cns)
     head = await code.indexed_head(org, cns)
     checked = await code.checked_head(org, cns)
+    behind = await store.behind_digest(org, cns, head) if head else ""  # before any link read
     await _recheck_pending(org, cns, head, files, result)
     await rehash.refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
@@ -145,6 +145,8 @@ async def _recheck_repository(
             checked = cut_at
         await _follow(org, cns, checked, head, files, result)
         await code.set_checked_head(org, cns, head)
+    if head:
+        await _catch_up(org, cns, head, behind, files, result)
     result.wide_ranges += files.wide_ranges
     await policy.apply_policies(org, cns, head, files, budget, result)
 
@@ -270,8 +272,26 @@ async def _retry_unparsed(
     paths = await _unparsed(org, cns)
     if not paths or not head:
         return
+    still, failed = await _recheck_rows(
+        org, cns, head, files, result, await store.for_paths(org, [cns], sorted(paths))
+    )
+    if failed:
+        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
+    await _set_unparsed(org, cns, still)
+
+
+async def _recheck_rows(
+    org: str,
+    cns: str,
+    head: str,
+    files: link_pass.RepoReads,
+    result: link_pass.PassResult,
+    links: list[LinkRow],
+) -> tuple[set[str], set[str]]:
+    """Recheck `links` at `head`, each from the commit it was last checked at; the paths
+    that still do not parse, and those that failed this time."""
     by_commit: dict[str, list[LinkRow]] = defaultdict(list)
-    for a in await store.for_paths(org, [cns], sorted(paths)):
+    for a in links:
         by_commit[a["checked_commit"]].append(a)
     still, failed = set[str](), set[str]()
     for commit, rows in by_commit.items():
@@ -285,9 +305,44 @@ async def _retry_unparsed(
         )
         await _write_moves(await _current_moves(org, moves), head)
         result.rechecked += len(moves)
+    return still, failed
+
+
+async def _catch_up(
+    org: str,
+    cns: str,
+    head: str,
+    now: str,
+    files: link_pass.RepoReads,
+    result: link_pass.PassResult,
+) -> None:
+    """Recheck the links not checked at `head` that no pass followed. A pass at an
+    unchanged head follows nothing, so a link an older build inserted after the last pass
+    read the table, built at another commit, would keep its state. `now` is a digest of
+    those links taken before the pass read any link. It is trusted only as the digest of
+    a set already rechecked: when the cursor holds no verified digest for this head, or a
+    different one, the whole set is rechecked, a page of the batch size per pass in key
+    order, and the digest the sweep started at is stored after its last page. Rechecked
+    links leave the set and lost ones keep their digest, so a sweep that moved links is
+    followed by one that rechecks nothing."""
+    seen = link_pass.Cursor[dict[str, Any]](f"behind/{org}/{cns}", {})
+    before = await seen.read()
+    mine = before.get("head") == head
+    if mine and before.get("links") == now:
+        return
+    after = tuple(before["after"]) if mine and before.get("after") else None
+    target = before["target"] if after else now
+    links, nxt = await store.behind(
+        org, cns, head, after=after, limit=int(settings.memory_code_links_batch)
+    )
+    still, failed = await _recheck_rows(org, cns, head, files, result, links)
+    await _set_unparsed(org, cns, await _unparsed(org, cns) | still)
     if failed:
         result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
-    await _set_unparsed(org, cns, still)
+    if nxt:
+        await seen.write({"head": head, "links": "", "target": target, "after": list(nxt)})
+    else:
+        await seen.write({"head": head, "links": target})
 
 
 async def _unparsed(org: str, cns: str) -> set[str]:
@@ -634,7 +689,7 @@ async def _elsewhere(org: str, cns: str, lost: dict[str, str]) -> dict[str, list
 async def _recheck_pending(
     org: str, cns: str, head: str, files: link_pass.RepoReads, result: link_pass.PassResult
 ) -> None:
-    cursor = link_pass.Cursor[dict[str, Any]](f"{_lock_name(org, cns)}/pending", {})
+    cursor = link_pass.Cursor[dict[str, Any]](f"{link_pass.lock_name(org, cns)}/pending", {})
     state = await cursor.read()
     stored_after = state.get("after")
     after = (int(stored_after[0]), str(stored_after[1])) if stored_after else None
@@ -648,8 +703,9 @@ async def _recheck_pending(
         limit=int(settings.memory_code_links_batch),
     )
     moves = await _resolve_pending(org, cns, head, files, result, rows)
+    moves = await _current_moves(org, moves)  # a drop beside a stale move must not outlive it
     moves += await _file_links_beside(org, cns, moves)
-    await _write_moves(await _current_moves(org, moves), head)
+    await _write_moves(moves, head)
     result.rechecked += len(moves)
     if nxt != after:
         await cursor.write({"before": before, "after": list(nxt)} if nxt else {})

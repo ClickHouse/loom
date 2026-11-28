@@ -16,7 +16,7 @@ import { Select } from "@clickhouse/click-ui/Select";
 import {
   getMemory,
   pinMemory,
-  deleteMemory,
+  deleteMemoryVersion,
   restoreMemory,
   conflictKeys as fetchConflictKeys,
   isAuthDisabled,
@@ -49,7 +49,15 @@ import { Unavailable } from "../components/ui";
 import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { type GatedNamespaceOp, callReason, codeMember, needsLine } from "../lib/callReason";
 import { canCall } from "../lib/canCall";
-import { parseSearchQuery, type SearchQuery, takePendingSearch, toggleQueryToken } from "../lib/memoriesSearch";
+import {
+  parseSearchQuery,
+  type SearchQuery,
+  namesWriter,
+  rowIdentity,
+  rowIds,
+  takePendingSearch,
+  toggleQueryToken,
+} from "../lib/memoriesSearch";
 import { oneOf } from "../lib/oneOf";
 import { isPublicationPending } from "../lib/errors";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
@@ -132,6 +140,8 @@ function MemoryList() {
   const selectable = !pinReason && !deleteReason;
   const inspectedKey = useStore((s) => s.inspectedMemoryKey);
   const inspect = useStore((s) => s.inspect);
+  const inspectedAgent = useStore((s) => s.inspectedAgent);
+  const inspectedOwner = useStore((s) => s.inspectedOwner);
   // Bumped on memory writes from any surface so we re-fetch immediately
   // instead of waiting for the polling cycle.
   const memoriesVersion = useStore((s) => s.memoriesVersion);
@@ -352,23 +362,6 @@ function MemoryList() {
     searching,
     ranking,
   } = useMemorySearch(identity, rawQuery, searchFilter, entries, memoriesVersion);
-  // Each hit's scores and "Why this result", made when the results change rather than in
-  // every render: an element made in render is a new prop each time, and every memoised card
-  // would render again on each keystroke.
-  const { searchScores, searchAsides } = useMemo(() => {
-    const scores = new Map<string, ReactNode>();
-    const asides = new Map<string, ReactNode>();
-    searchHits?.forEach((key, i) => {
-      const hit = searchWhy.get(key);
-      if (keywordKeys.has(key)) asides.set(key, <SearchWhy contains={keywordFor} />);
-      else if (hit) {
-        scores.set(key, <SearchScores hit={hit} />);
-        asides.set(key, <SearchWhy hit={hit} rank={i + 1} />);
-      }
-    });
-    return { searchScores: scores, searchAsides: asides };
-  }, [searchHits, searchWhy, keywordKeys, keywordFor]);
-
   // Fetch conflicts once per identity change; cards consult this set to
   // flag rows that need review. One namespace-wide read beats N per-card calls.
   // Only when the role here is known to allow it: an unknown role sends nothing and the
@@ -400,8 +393,8 @@ function MemoryList() {
     // Fold in search hits fetched from outside the preloaded window so the
     // same filters + ranking below apply to them uniformly.
     if (searchHits != null && searchExtra.size > 0) {
-      const have = new Set(all.map((e) => e.memory_key));
-      const extras = [...searchExtra.values()].filter((e) => !have.has(e.memory_key));
+      const have = new Set(all.map((e) => rowIdentity(identity.namespace, e)));
+      const extras = [...searchExtra.values()].filter((e) => !have.has(rowIdentity(identity.namespace, e)));
       if (extras.length > 0) all = [...all, ...extras];
     }
     // When "Recently deleted" is on, show only tombstoned rows; otherwise
@@ -433,13 +426,37 @@ function MemoryList() {
     }
     if (searchHits != null) {
       // Re-order to the server's relevance ranking; drop entries outside top_k.
-      const rank = new Map(searchHits.map((k, i) => [k, i] as const));
-      all = all
-        .filter((e) => rank.has(e.memory_key))
-        .sort((a, b) => (rank.get(a.memory_key) ?? Infinity) - (rank.get(b.memory_key) ?? Infinity));
+      // A row answers to its own id and to its key's: a hit that names no writer ranks every
+      // row of the key (the old match), one that names it ranks that row alone.
+      const rank = new Map(searchHits.map((id, i) => [id, i] as const));
+      const at = (e: MemoryListEntry) =>
+        Math.min(...rowIds(identity.namespace, e).map((id) => rank.get(id) ?? Infinity));
+      all = all.filter((e) => at(e) !== Infinity).sort((a, b) => at(a) - at(b));
     }
     return all;
-  }, [entries, searchHits, searchExtra, status, showDeleted, agentFilter, typed.agent, activeTags]);
+  }, [entries, searchHits, searchExtra, status, showDeleted, agentFilter, typed.agent, activeTags, identity.namespace]);
+
+  // Each row's scores and "Why this result", made when the results or the rows change rather
+  // than in every render: an element made in render is a new prop each time, and every
+  // memoised card would render again on each keystroke. A ranked hit is shown only on the row
+  // it names in full (agent, user and session) and only while that row is at the revision the
+  // hit was read at: not on a namesake from another session, a row that names no writer, or a
+  // row since written again. A row holding the typed words and no such hit says what it holds.
+  const { searchScores, searchAsides } = useMemo(() => {
+    const scores = new Map<string, ReactNode>();
+    const asides = new Map<string, ReactNode>();
+    const rank = new Map((searchHits ?? []).map((id, i) => [id, i + 1] as const));
+    for (const row of searchHits ? flatList : []) {
+      const id = rowIdentity(identity.namespace, row);
+      const hit = searchWhy.get(id);
+      const at = rank.get(id);
+      if (hit && at && hit.version_text && hit.version_text === row.version_text) {
+        scores.set(id, <SearchScores hit={hit} />);
+        asides.set(id, <SearchWhy hit={hit} rank={at} />);
+      } else if (keywordKeys.has(id)) asides.set(id, <SearchWhy contains={keywordFor} />);
+    }
+    return { searchScores: scores, searchAsides: asides };
+  }, [searchHits, searchWhy, keywordKeys, keywordFor, flatList, identity.namespace]);
 
   // The agents the namespace's rows were written by, gathered as pages and filters load
   // (sentinels "*" and "-" are not writers); a new namespace starts again.
@@ -451,15 +468,9 @@ function MemoryList() {
     });
   }, [entries]);
 
-  // A memory's identity is (org, namespace, agent, user_id, session_id) +
-  // memory_key, and this list spans agents (there is an agent filter chip). The
-  // page identity carries the *session's* agent, so addressing a row by it
-  // misses anything another agent wrote: reads 404 and `memory.delete` returns
-  // `tombstoned: false`. The inspector already solves this by overriding agent
-  // with the row's writer (App.tsx) — bulk actions need the same, per row.
-  // Sentinel agents ("*", "-") are not real writers, so leave those alone.
-  const identityForRow = (rowAgent: string | undefined) =>
-    rowAgent && !SENTINEL_AGENTS.has(rowAgent) ? { ...identity, agent: rowAgent } : identity;
+  const rowById = (id: string) => flatList.find((e) => rowIdentity(identity.namespace, e) === id);
+  const actionIdentity = (e: MemoryListEntry) =>
+    namesWriter(e) ? { ...identity, agent: e.agent ?? "", user_id: e.user_id, session_id: e.session_id } : null;
 
   const bulkPin = async () => {
     if (selected.size === 0 || busy || pinReason) return;
@@ -472,19 +483,24 @@ function MemoryList() {
     let lagging: unknown = null;
     let failure: unknown = null;
     for (const k of keys) {
-      const entry = flatList.find((e) => e.memory_key === k);
-      if (!entry) {
+      const entry = rowById(k);
+      const rowId = entry && actionIdentity(entry);
+      if (!entry?.version_text || !rowId) {
         fail++;
         continue;
       }
-      const rowId = identityForRow(entry.agent);
       try {
-        // pinMemory writes the whole row back; the list view doesn't carry it, so
-        // refetch the row before pinning, by its own user and session.
-        const readId = { ...rowId, user_id: entry.user_id || "-", session_id: entry.session_id || "-" };
-        const got = await getMemory(readId, k);
-        if (got && got.found) {
-          await pinMemory(rowId, k, got);
+        // A point read can fall back to another writer or follow a redirect.
+        const got = await getMemory(rowId, entry.memory_key);
+        if (
+          got?.found &&
+          !got.resolved_from &&
+          got.agent === rowId.agent &&
+          got.user_id === rowId.user_id &&
+          got.session_id === rowId.session_id &&
+          got.version_text === entry.version_text
+        ) {
+          await pinMemory(rowId, entry.memory_key, got);
           ok++;
         } else {
           fail++;
@@ -526,12 +542,14 @@ function MemoryList() {
     let ok = 0,
       fail = 0;
     for (const k of keys) {
-      const entry = flatList.find((e) => e.memory_key === k);
+      const entry = rowById(k);
+      const rowId = entry && actionIdentity(entry);
+      if (!entry?.version_text || !rowId) {
+        fail++;
+        continue;
+      }
       try {
-        // `tombstoned: false` is a 200, not a throw — counting only the absence
-        // of an exception is what made this report "Deleted N" and then show
-        // every row again on refresh.
-        const r = await deleteMemory(identityForRow(entry?.agent), k);
+        const r = await deleteMemoryVersion(rowId, entry.memory_key, entry.version_text);
         if (r.tombstoned) ok++;
         else fail++;
       } catch {
@@ -555,7 +573,11 @@ function MemoryList() {
     () => (listFiltered && !searchActive ? flatList.slice(page * pageSize, (page + 1) * pageSize) : flatList),
     [flatList, listFiltered, searchActive, page, pageSize],
   );
-  const pageKeys = useMemo(() => pageList.map((e) => e.memory_key), [pageList]);
+  // A checkbox names a row by its whole identity, not its key: two rows of a key are two boxes.
+  const pageKeys = useMemo(
+    () => pageList.map((e) => rowIdentity(identity.namespace, e)),
+    [pageList, identity.namespace],
+  );
   // Checkboxes: one row, a Shift-click range, every row on the page; Escape clears them
   // while the drawer is closed (it owns Escape while open).
   const selection = useRowSelection(pageKeys, { enabled: !inspectedKey && selectable });
@@ -564,8 +586,22 @@ function MemoryList() {
   // A selection made before the role fell short is not acted on: the bar goes with the boxes.
   const selecting = selectable && selected.size > 0;
   const openCard = useCallback(
-    (e: MemoryListEntry) => (selecting ? toggleSelect(e.memory_key) : inspect(e.memory_key, { agent: e.agent })),
-    [selecting, toggleSelect, inspect],
+    (e: MemoryListEntry) =>
+      selecting
+        ? toggleSelect(rowIdentity(identity.namespace, e))
+        : inspect(
+            e.memory_key,
+            namesWriter(e)
+              ? {
+                  agent: e.agent,
+                  userId: e.user_id,
+                  sessionId: e.session_id,
+                  namespace: identity.namespace,
+                  exact: true,
+                }
+              : { agent: e.agent },
+          ),
+    [selecting, toggleSelect, inspect, identity.namespace],
   );
 
   // Keyboard nav, active when no inspector is open and not typing: the list is one tab
@@ -946,15 +982,22 @@ function MemoryList() {
             <div className={`space-y-2 ${day ? "mt-2" : ""}`}>
               {items.map((e) => {
                 const isNew = newKeys.has(e.memory_key);
-                const isSelected = selected.has(e.memory_key);
+                const rowId = rowIdentity(identity.namespace, e);
+                const isSelected = selected.has(rowId);
                 const isTombstoned = !!e.tombstoned_at;
-                const isActive = inspectedKey === e.memory_key;
+                // The open row is the one opened, not another row of its key.
+                const isActive =
+                  inspectedKey === e.memory_key &&
+                  (!inspectedAgent || inspectedAgent === "*" || inspectedAgent === e.agent) &&
+                  (!inspectedOwner ||
+                    (inspectedOwner.user_id === (e.user_id || "-") &&
+                      inspectedOwner.session_id === (e.session_id || "-")));
                 return (
                   <ListRow
-                    key={e.memory_key}
+                    key={rowId}
                     data-card=""
                     // Back to this page focuses the card that had the focus.
-                    data-focus-key={`memory:${e.memory_key}`}
+                    data-focus-key={`memory:${rowId}`}
                     checked={isSelected}
                     active={isActive}
                     deleted={isTombstoned}
@@ -965,7 +1008,7 @@ function MemoryList() {
                           checked={isSelected}
                           onClick={(ev) => {
                             ev.stopPropagation();
-                            toggleSelect(e.memory_key, ev.shiftKey);
+                            toggleSelect(rowId, ev.shiftKey);
                           }}
                           aria-label={`Select ${e.memory_key}`}
                           className="list-row-control"
@@ -978,13 +1021,13 @@ function MemoryList() {
                       hasConflict={conflictKeys.has(e.memory_key)}
                       identity={identity}
                       entry={e}
-                      value={e.value !== undefined ? e.value : bulkValues.get(e.memory_key)}
+                      value={e.value !== undefined ? e.value : bulkValues.get(rowId)}
                       active={isActive}
                       onSelect={openCard}
                       onTagClick={toggleTag}
                       activeTags={activeTags}
-                      meta={searchScores.get(e.memory_key)}
-                      aside={searchAsides.get(e.memory_key)}
+                      meta={searchScores.get(rowId)}
+                      aside={searchAsides.get(rowId)}
                     />
                     {isTombstoned && (
                       <div className="flex items-center justify-between mt-1 py-1 text-xs text-text-muted">

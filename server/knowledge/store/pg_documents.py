@@ -297,21 +297,30 @@ class Head(NamedTuple):
     owed: bool
 
 
-async def heads(org: str, namespace: str, uris: Sequence[str]) -> dict[str, Head]:
+async def heads(
+    org: str, namespace: str, uris: Sequence[str], *, columns: tuple[str, ...] = ()
+) -> dict[str, Head]:
     """The heads of these sources (deleted ones included). A key Postgres cannot store
     holds no head (`encode_row` refuses one), and is not sent."""
     uris = [u for u in uris if not pg.unstorable(u)]
     if not uris or pg.unstorable([org, namespace]):
         return {}
+    projection = (
+        "(SELECT jsonb_object_agg(k, h.row->k) FROM unnest($4::text[]) AS f(k) WHERE h.row ? k)"
+        if columns
+        else "h.row"
+    )
+    args: list[Any] = [org, namespace, sorted(set(uris))]
+    if columns:
+        args.append(list(columns))
     got = await pg.fetch(
-        "SELECT h.source_uri, h.row, EXISTS (SELECT 1 FROM loom.knowledge_deliveries d "
+        f"SELECT h.source_uri, {projection} AS row, "
+        "EXISTS (SELECT 1 FROM loom.knowledge_deliveries d "
         "WHERE (d.org, d.namespace, d.source_uri, d.version) = "
         "(h.org, h.namespace, h.source_uri, h.version) AND NOT d.settled) AS owed "
         "FROM loom.knowledge_heads h "
         "WHERE h.org = $1 AND h.namespace = $2 AND h.source_uri = ANY($3::text[])",
-        org,
-        namespace,
-        sorted(set(uris)),
+        *args,
     )
     return {str(r["source_uri"]): Head(decode_row(r["row"]), bool(r["owed"])) for r in got}
 

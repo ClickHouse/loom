@@ -5,6 +5,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { GuidanceLabel } from "./GuidanceLabel";
 import {
   listMemories,
   browseNamespaces,
@@ -20,6 +21,7 @@ import {
   type SearchHit,
 } from "../api";
 import { isCollectionName } from "../lib/namespace";
+import { namesWriter, resolveSearchWriter, rowIdentity, type SearchWriter } from "../lib/memoriesSearch";
 import { sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
@@ -41,6 +43,8 @@ const SearchAnswer = lazy(() => loadSearchAnswer().then((m) => ({ default: m.Sea
 const MEMORY_TOP_K = 8;
 const MEMORY_DEBOUNCE_MS = 200;
 const MEMORY_MIN_CHARS = 2;
+
+type HeaderHit = SearchHit & { inspectWriter?: SearchWriter };
 
 interface NsRow {
   namespace: string;
@@ -96,7 +100,7 @@ export function HeaderSearch({
   // Three newest rows for the empty-state "Recent memories" group; the
   // memory group itself comes from memory.search below.
   const [recent, setRecent] = useState<MemoryListEntry[]>([]);
-  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [hits, setHits] = useState<HeaderHit[]>([]);
   const [searching, setSearching] = useState(false);
   const [docs, setDocs] = useState<KnowledgeEntry[]>([]);
   const [profileSections, setProfileSections] = useState<ProfileEntry[]>([]);
@@ -286,8 +290,25 @@ export function HeaderSearch({
       window.setTimeout(() => {
         if (!live()) return;
         searchMemory(identity, memoryQuery, { top_k: MEMORY_TOP_K, tags, signal })
-          .then((r) => {
-            if (live()) setHits(r.results || []);
+          .then(async (r) => {
+            if (!live()) return;
+            const results = r.results || [];
+            setHits(
+              results.map((hit) => ({
+                ...hit,
+                inspectWriter: namesWriter(hit) && !hit.memory_key.startsWith("chunk:") ? hit : undefined,
+              })),
+            );
+            setSearching(false);
+            await Promise.all(
+              results.map(async (hit, index) => {
+                if (namesWriter(hit)) return;
+                const writer = await resolveSearchWriter(identity, hit, signal);
+                if (live() && writer) {
+                  setHits((shown) => shown.map((row, i) => (i === index ? { ...row, inspectWriter: writer } : row)));
+                }
+              }),
+            );
           })
           .catch(() => {
             if (live()) setHits([]);
@@ -340,10 +361,27 @@ export function HeaderSearch({
     setQ("");
   };
 
-  const openMemory = (e: Pick<MemoryListEntry, "memory_key" | "agent">) => {
-    inspect(e.memory_key, { agent: e.agent });
+  // A row opens as the one written by its agent, user and session: another session's row of
+  // the same key is not it. A listed row that names no writer (an older server) opens by key,
+  // as before. A ranked hit opens only after its writer is known.
+  const openMemory = (
+    e: Pick<MemoryListEntry, "memory_key" | "agent" | "user_id" | "session_id"> & { namespace?: string },
+  ) => {
+    inspect(
+      e.memory_key,
+      namesWriter(e)
+        ? {
+            agent: e.agent,
+            userId: e.user_id,
+            sessionId: e.session_id,
+            namespace: e.namespace || identity?.namespace,
+            exact: true,
+          }
+        : { agent: e.agent || "" },
+    );
     setOpen(false);
   };
+  const openHit = (h: HeaderHit) => h.inspectWriter && openMemory({ memory_key: h.memory_key, ...h.inspectWriter });
 
   const openDocument = (d: KnowledgeEntry) => {
     openDoc(d.source_uri);
@@ -398,7 +436,7 @@ export function HeaderSearch({
     | { kind: "recent"; mem: MemoryListEntry }
     | { kind: "ns"; ns: NsRow }
     | { kind: "profile"; section: ProfileEntry }
-    | { kind: "mem"; mem: SearchHit }
+    | { kind: "mem"; mem: HeaderHit }
     | { kind: "doc"; doc: KnowledgeEntry };
   const activations: Activation[] = useMemo(
     () => [
@@ -491,7 +529,7 @@ export function HeaderSearch({
     else if (a.kind === "recent") openMemory(a.mem);
     else if (a.kind === "ns") switchNs(a.ns.namespace);
     else if (a.kind === "profile") openProfileSection(a.section.label);
-    else if (a.kind === "mem") openMemory({ memory_key: a.mem.memory_key, agent: a.mem.agent || "" });
+    else if (a.kind === "mem") openHit(a.mem);
     else if (a.kind === "doc") openDocument(a.doc);
   };
 
@@ -687,7 +725,7 @@ export function HeaderSearch({
                 {recentShown.map((e, i) => (
                   <button
                     type="button"
-                    key={`${e.agent}::${e.memory_key}`}
+                    key={namesWriter(e) ? rowIdentity(identity?.namespace ?? "", e) : offRecent + i}
                     {...optionProps(offRecent + i)}
                     onClick={() => openMemory(e)}
                   >
@@ -769,9 +807,10 @@ export function HeaderSearch({
                   return (
                     <button
                       type="button"
-                      key={`${e.agent || ""}::${e.memory_key}`}
+                      key={namesWriter(e) ? rowIdentity(identity?.namespace ?? "", e) : idx}
                       {...optionProps(idx)}
-                      onClick={() => openMemory({ memory_key: e.memory_key, agent: e.agent || "" })}
+                      aria-disabled={!e.inspectWriter || undefined}
+                      onClick={() => openHit(e)}
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeIcon kind="memory" />
@@ -782,6 +821,8 @@ export function HeaderSearch({
                         {e.agent ? `${displayAgent(e.agent)} · ` : ""}
                         {e.content_excerpt || "(empty)"}
                       </div>
+                      <GuidanceLabel hit={e} />
+                      {!e.inspectWriter && <div className="pl-6 text-xs text-text-muted">Preview only</div>}
                     </button>
                   );
                 })}

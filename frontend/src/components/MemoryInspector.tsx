@@ -52,7 +52,7 @@ import {
 } from "../api";
 import { LockMemoryDialog, RedactVersionDialog, RejectMemoryDialog } from "../flows/MemoryReasonDialogs";
 import { navigationHref, useStore } from "../lib/state";
-import { openerUsable } from "../lib/place";
+import { keyedTarget, openerUsable } from "../lib/place";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { isPublicationPending } from "../lib/errors";
 import { AgentBadge } from "./AgentBadge";
@@ -144,6 +144,7 @@ function SectionEmpty({ children }: { children: React.ReactNode }) {
 
 interface InspectorProps {
   identity: Identity;
+  verifyWriter?: boolean;
   memoryKey: string;
   onClose: () => void;
   onChanged: () => void;
@@ -170,6 +171,7 @@ interface InspectorProps {
 
 export function MemoryInspector({
   identity,
+  verifyWriter,
   memoryKey,
   onClose,
   onChanged,
@@ -237,23 +239,51 @@ export function MemoryInspector({
   // first render — before Radix moves focus in — and refocused on close. A
   // Radix modal Dialog otherwise restores to its Trigger, which this
   // drawer has none of, so focus would fall to <body>.
-  const [opener] = useState<HTMLElement | null>(() => {
-    if (typeof document === "undefined") return null;
-    const el = document.activeElement;
-    return el instanceof HTMLElement ? el : null;
+  const [{ opener, focusKey }] = useState(() => {
+    const el = typeof document === "undefined" ? null : document.activeElement;
+    return {
+      opener: el instanceof HTMLElement ? el : null,
+      focusKey: el?.closest("[data-focus-key]")?.getAttribute("data-focus-key"),
+    };
   });
   const [openedAt] = useState(() => useStore.getState().navSeq);
   // Set by "Ask about this", which closes the drawer for the assistant panel's field.
   const leaving = useRef(false);
   const inspect = useStore((s) => s.inspect);
-  const openMemory = onInspectMemory ?? inspect;
+  const openMemory = onInspectMemory ?? ((key: string) => inspect(key, { namespace: identity.namespace }));
   // A rename's destination is this row moved: it opens under the writer identity this one
   // was read as. A redirect's target may be another writer's (a deduplicated row's
   // canonical), as may related rows, mentions and provenance links: those open as before.
   const followMoved =
     onInspectMemory ??
     ((key: string) =>
-      inspect(key, { agent: identity.agent, userId: identity.user_id, sessionId: identity.session_id }));
+      inspect(key, {
+        agent: identity.agent,
+        userId: identity.user_id,
+        sessionId: identity.session_id,
+        namespace: identity.namespace,
+        exact: verifyWriter,
+      }));
+  const readMemory = useCallback(async (): Promise<MemoryDetail> => {
+    const row = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+    // A key lookup can fall back to a namesake if the selected writer's row disappeared.
+    if (
+      verifyWriter &&
+      row.found &&
+      (row.agent !== identity.agent || row.user_id !== identity.user_id || row.session_id !== identity.session_id)
+    ) {
+      return {
+        found: false,
+        value: null,
+        memory_type: null,
+        confidence: null,
+        version: null,
+        pinned: false,
+        created_at: null,
+      };
+    }
+    return row;
+  }, [identity, memoryKey, verifyWriter]);
   const searchByTag = useStore((s) => s.searchByTag);
   const openConversationThread = useStore((s) => s.openConversationThread);
   // A dialog over the drawer owns the keys and the outside clicks while it is open.
@@ -340,7 +370,7 @@ export function MemoryInspector({
     // A read for a key the drawer has moved off must not land: its value under the new
     // key would be what Edit, Pin and Verify then write back.
     let live = true;
-    getMemory(identity, memoryKey, { include_recall_breakdown: true })
+    readMemory()
       .then((res) => {
         if (!live) return;
         detailOf.current = inspection.current;
@@ -361,7 +391,7 @@ export function MemoryInspector({
       inspection.current += 1;
       shown.current = null;
     };
-  }, [identity, memoryKey]);
+  }, [identity, memoryKey, readMemory]);
 
   const loadHistory = (key: string) => memoryHistory(identity, key, 8).then((r) => r.rows || []);
   useEffect(() => {
@@ -629,7 +659,7 @@ export function MemoryInspector({
     onChanged();
     if (!showing()) return;
     try {
-      const row = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+      const row = await readMemory();
       if (!showing()) return;
       setDetail(row);
       // A row the write took away leaves no form open behind "not found".
@@ -857,7 +887,7 @@ export function MemoryInspector({
         // restore, so read it again.
         if (r.restored && showing()) {
           const now = inspection.current;
-          getMemory(identity, memoryKey, { include_recall_breakdown: true })
+          readMemory()
             .then((fresh) => {
               if (inspection.current === now) setDetail(fresh);
             })
@@ -870,7 +900,7 @@ export function MemoryInspector({
       // Nothing to restore means the row changed since it was read: show it as it is now.
       toast(r.restored ? "Restored" : "Nothing to restore", r.restored ? "ok" : "info");
       try {
-        const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+        const fresh = await readMemory();
         if (!stale()) setDetail(fresh);
       } catch (e) {
         if (!stale()) toastError("Reload failed", e, { read: true });
@@ -995,7 +1025,10 @@ export function MemoryInspector({
             e.preventDefault();
             // A navigation since the drawer opened (a tag, a graph link) moved the focus to
             // its page; an opener in an assistant panel that closed is hidden.
-            if (!leaving.current && useStore.getState().navSeq === openedAt && openerUsable(opener)) opener?.focus();
+            if (leaving.current || useStore.getState().navSeq !== openedAt) return;
+            // Refreshed lists can replace the opener while the drawer is open.
+            const target = opener?.isConnected ? opener : focusKey ? keyedTarget(focusKey) : null;
+            if (openerUsable(target)) target?.focus();
           }}
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}

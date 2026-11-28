@@ -30,12 +30,19 @@ describe("rememberPlace / readPlace", () => {
       inspected: "a",
       inspectedAgent: "bot",
       inspectedOwner: null,
+      inspectedScope: null,
     });
   });
 
-  it("keeps the user and session an inspected row is filed under", () => {
-    rememberPlace({ key: "a", agent: "bot", owner: { user_id: "ada", session_id: "-" } });
+  it("keeps the complete identity and lookup mode of an inspected row", () => {
+    rememberPlace({
+      key: "a",
+      agent: "bot",
+      owner: { user_id: "ada", session_id: "-" },
+      scope: { namespace: "shared", exact: true },
+    });
     expect(readPlace(history.state)?.inspectedOwner).toEqual({ user_id: "ada", session_id: "-" });
+    expect(readPlace(history.state)?.inspectedScope).toEqual({ namespace: "shared", exact: true });
     rememberPlace({ key: "a", agent: "bot" });
     expect(readPlace(history.state)?.inspectedOwner).toBeNull();
   });

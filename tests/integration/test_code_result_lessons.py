@@ -261,7 +261,11 @@ async def test_lessons_match_the_result_file_by_path(
     keys = {r["memory_key"] for r in rows}
     assert keys == {"notes/exact", "notes/bare", "design/memo", "notes/long"}, rows
     by_key = {r["memory_key"]: r for r in rows}
-    assert by_key["notes/exact"] == {
+    exact = by_key["notes/exact"]
+    guidance = exact["use_guidance"]
+    assert guidance["next_step"] == "validate_lead"
+    assert guidance["freshness"]["code"] == "not_applicable"
+    assert {key: value for key, value in exact.items() if key != "use_guidance"} == {
         "path": PATH,
         "memory_key": "notes/exact",
         "namespace": "dev",

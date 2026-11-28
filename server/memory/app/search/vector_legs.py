@@ -298,6 +298,8 @@ def _stamp_row_fields[HitT](leg_hit: Any, wire_hit: HitT) -> HitT:
         _stamp_row_tags(wire_hit, getattr(leg_hit, "tags", None))
     if (identity := getattr(leg_hit, "identity", None)) is not None:
         wire_hit._row_identity = identity  # type: ignore[attr-defined]
+    if digest := getattr(leg_hit, "content_sha256", ""):
+        wire_hit._row_content_sha256 = digest  # type: ignore[attr-defined]
     if (chunk := getattr(leg_hit, "chunk", None)) is not None:
         wire_hit._row_chunk = chunk  # type: ignore[attr-defined]
     if "folded_from_chunk" in (getattr(leg_hit, "score_components", None) or {}):

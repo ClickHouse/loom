@@ -185,6 +185,37 @@ describe("an entity on a memory opens in place", () => {
     expect(screen.getByRole("button", { name: "Opener" })).not.toHaveFocus();
   });
 
+  it("returns focus to the opener's row when the list replaces its buttons", async () => {
+    const page = (drawer: boolean, generation: number) => (
+      <>
+        <main key={generation}>
+          <div data-focus-key='memory:["ns","bot","user","s1","api/rate-limit"]'>
+            <button type="button" data-row-open="">
+              First writer
+            </button>
+          </div>
+          <div data-focus-key='memory:["ns","bot","user","s2","api/rate-limit"]'>
+            <button type="button" data-row-open="">
+              Second writer
+            </button>
+          </div>
+        </main>
+        {drawer && (
+          <MemoryInspector identity={identity} memoryKey="api/rate-limit" onClose={() => {}} onChanged={() => {}} />
+        )}
+      </>
+    );
+    const { rerender } = render(page(false, 1));
+    const opener = screen.getByRole("button", { name: "Second writer" });
+    opener.focus();
+    rerender(page(true, 1));
+    await screen.findByText("the public API allows 100 requests a minute");
+    rerender(page(true, 2));
+    expect(opener.isConnected).toBe(false);
+    rerender(page(false, 2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Second writer" })).toHaveFocus());
+  });
+
   it("shows a tag by its name, with no '#' glyph", async () => {
     vi.mocked(getMemory).mockResolvedValue({ ...DETAIL, tags: ["ops"] });
     await open();

@@ -11,6 +11,7 @@ from dataclasses import replace
 from typing import Any, NamedTuple
 
 from server.core.ch_params import fitting
+from server.core.hashing import hash_text
 from server.core.repo_base import query_all_sliced
 from server.memory.app.retrieval.side_legs import exclude_pooled
 from server.memory.app.set_chunks import set_chunk_identities
@@ -74,6 +75,7 @@ async def _recency_backfill(
             e.user_id AS user_id,
             e.session_id AS session_id,
             e.version AS version,
+            e.content_sha256 AS content_sha256,
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
         WHERE {" AND ".join(where)}
@@ -108,6 +110,7 @@ async def _recency_backfill(
                 session_id=str(r.get("session_id") or ""),
                 identity=row_identity(r),
                 version=int(r.get("version") or 0),
+                content_sha256=hash_text(r.get("content_sha256")),
                 tags=[str(t) for t in (r.get("tags") or []) if t],
                 score_components={"recency_backfill": 1.0, "rank_score": float(floor)},
             )

@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.core.hashing import hash_text
 from server.core.vectors.private_first import each
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
@@ -142,6 +143,7 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
                 )
                 _stamp_row_tags(hit, row.get("tags"))
                 hit._row_identity = row_identity(row)
+                hit._row_content_sha256 = hash_text(row.get("content_sha256"))
                 present.add(row_key)
                 ctx.all_hits.append(hit)
                 added += 1

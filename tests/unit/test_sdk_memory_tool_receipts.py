@@ -12,6 +12,7 @@ from loom.errors import LoomError
 
 from server.memory.api.models_crud import MemorySetOutput
 from server.memory.api.models_search import MemorySearchOutput, _MemorySearchHit
+from server.memory.domain.use_guidance import guidance_for_row
 
 
 def _agent(reply: dict[str, Any]) -> tuple[Agent, list[dict[str, Any]]]:
@@ -75,6 +76,7 @@ async def test_remember_preserves_the_wire_receipt(receipt: dict[str, Any], stor
 
 @pytest.mark.parametrize("state", ["fresh", "changed", "unresolved", "missing"])
 async def test_recall_keeps_code_state_and_provenance(state: str) -> None:
+    guidance = guidance_for_row({"status": "conflicted"}, code_state=state)
     hit = _MemorySearchHit(
         memory_key="claim",
         memory_type="semantic",
@@ -82,6 +84,7 @@ async def test_recall_keeps_code_state_and_provenance(state: str) -> None:
         similarity=0.9,
         distance=0.1,
         code_state=state,
+        use_guidance=guidance,
         status="conflicted",
         source_class="external",
         source_resource_id="src/reader.py",
@@ -95,6 +98,10 @@ async def test_recall_keeps_code_state_and_provenance(state: str) -> None:
     try:
         out = json.loads(await agent.tools().execute("loom_recall", {"query": "reader"}))
         assert out["abstain"] is False
+        assert out["memories"][0]["use_guidance"] == guidance.model_dump()
+        from loom.memory import _parse_search_hit
+
+        assert _parse_search_hit(reply["results"][0]).use_guidance == guidance.model_dump()
         for field in (
             "code_state",
             "status",

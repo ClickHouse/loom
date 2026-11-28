@@ -9,7 +9,6 @@ from pydantic import (
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
-    field_serializer,
     model_serializer,
 )
 
@@ -18,6 +17,7 @@ from server.memory.api.models_crud import CodeLink
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.rerank_names import RerankName
 from server.memory.domain.search_types import ChunkRef
+from server.memory.domain.use_guidance import UseGuidance
 from server.operations.base import MCP_HIDDEN
 
 # ============================================================
@@ -478,18 +478,29 @@ _USAGE_FIELDS: tuple[str, ...] = (
 TermLegStatus = Literal["complete", "empty", "capped", "timed_out", "failed", "off"]
 
 
-class _MemorySearchHit(BaseModel):
-    @field_serializer("agent")
-    def _writer_agent(self, value: str) -> str:
-        return self._row_identity[0] if self._row_identity is not None else value
+def _omit_schema_default(schema: dict[str, Any]) -> None:
+    schema.pop("default", None)
 
+
+class _MemorySearchHit(BaseModel):
     @model_serializer(mode="wrap")
     def _omit_unrequested(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # `tags` is on the wire only when the request asked for it: None = not
         # requested, so the key is dropped.
         data: dict[str, Any] = handler(self)
+        if not self.version:
+            data.pop("version_text", None)
+        elif "version_text" in data:
+            data["version_text"] = str(self.version)
+        identity = self._row_identity
+        if identity is not None:
+            for name, value in zip(("agent", "user_id", "session_id"), identity, strict=True):
+                if name in data:
+                    data[name] = value
         if self.tags is None:
             data.pop("tags", None)
+        if self.use_guidance is None:
+            data.pop("use_guidance", None)
         # Same rule for the reliance counters (`include_usage`).
         for name in _USAGE_FIELDS:
             if getattr(self, name, None) is None:
@@ -540,6 +551,10 @@ class _MemorySearchHit(BaseModel):
     _row_version: int = 0
     # A chunk made into its row's hit shows the chunk's type, not the row's.
     _chunk_typed: bool = False
+    # Digest recorded by the leg that retrieved this body and digest confirmed by the head.
+    _row_content_sha256: str = ""
+    _guidance_content_sha256: str = ""
+    _guidance_head_version: int = 0
     # The hit's code links in repositories the caller may read, as the search's code
     # annotation read them; None = not read (memory.ask reads them itself then).
     _code_links: list[dict[str, Any]] | None = None
@@ -639,6 +654,8 @@ class _MemorySearchHit(BaseModel):
     superseded_by: str | None = None
     superseded_at: str | None = None
     version: int = 0
+    # Exact decimal revision. Unknown revisions have no wire value or schema default.
+    version_text: str = Field(default="", json_schema_extra=_omit_schema_default)
     # Ingest time (ISO, loom.memory_embeddings.created_at); "" when unknown. The
     # arrival-order recency in memory.ask reads it.
     created_at: str = ""
@@ -666,6 +683,8 @@ class _MemorySearchHit(BaseModel):
     # Provenance: how the content entered memory and whether
     # an attestation is live — so a caller can filter on trust post-hoc.
     verified: bool = False
+    # Use guidance for maintained memory, derived from evidence for the served revision.
+    use_guidance: UseGuidance | None = None
     # Compact agent-facing provenance so a hit can be cited without search_trace.
     explanation: str = ""
     # Provenance: the `session_id` the memory was written under; "" when the

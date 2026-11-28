@@ -9,7 +9,7 @@ and the SDKs the op returns the assembled sections as they are.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -17,8 +17,14 @@ from pydantic import (
     Field,
     SerializerFunctionWrapHandler,
     StrictBool,
+    ValidatorFunctionWrapHandler,
+    WrapValidator,
     model_serializer,
+    with_config,
 )
+from typing_extensions import TypedDict
+
+from server.memory.domain.use_guidance import UseGuidance
 
 
 class SearchInput(BaseModel):
@@ -82,6 +88,27 @@ class LiveSearchResults(BaseModel):
     results: list[LiveSearchHit] = Field(default_factory=list, max_length=10)
 
 
+def _preserve_section_order(value: Any, handler: ValidatorFunctionWrapHandler) -> dict[str, Any]:
+    parsed: dict[str, Any] = handler(value)
+    # Match the assembled response's wire order after validating newly typed fields.
+    return {key: parsed[key] for key in value if key in parsed}
+
+
+@with_config(ConfigDict(extra="allow", json_schema_extra={"additionalProperties": {}}))
+class SearchSectionHit(TypedDict, total=False):
+    """A plane's hit with guidance for the maintained revision it serves."""
+
+    use_guidance: UseGuidance | None
+
+
+@with_config(ConfigDict(extra="allow", json_schema_extra={"additionalProperties": {}}))
+class SearchSection(TypedDict, total=False):
+    """A sparse plane result including its own fields, hits and leg errors."""
+
+    results: list[Annotated[SearchSectionHit, WrapValidator(_preserve_section_order)]]
+    error: str
+
+
 class SearchOutput(BaseModel):
     """The sections, each `{"results": [...], ...}` as its plane's search
     returns it, or `{"error": ..., "results": []}` when that leg failed.
@@ -106,10 +133,10 @@ class SearchOutput(BaseModel):
     # The `memory.search` result plus the scoped repository's decisions, rendered as a
     # reader block, without the hits the calibration flagged below its threshold
     # (unless every hit is flagged).
-    memory: dict[str, Any] = Field(default_factory=dict)
+    memory: Annotated[SearchSection, WrapValidator(_preserve_section_order)] = {}
     # The `knowledge.search` result plus the scoped repository's documents, hits below
     # the knowledge similarity floor dropped.
-    knowledge: dict[str, Any] = Field(default_factory=dict)
+    knowledge: Annotated[SearchSection, WrapValidator(_preserve_section_order)] = {}
     # Profile sections whose label or text matches the query words, then by meaning.
     profile: dict[str, Any] = Field(default_factory=dict)
     # The `conversation.search` hits under `results`.

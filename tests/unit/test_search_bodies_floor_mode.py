@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.evidence import _apply_min_similarity_floor
 from server.memory.app.search.knobs import _floor_mode
@@ -215,6 +217,34 @@ def test_unit_bodies_fill_by_rank_then_escalate(monkeypatch):
     # _apply_bodies must not clip unit bodies afterwards
     _apply_bodies(hits, inp)
     assert hits[0].content_excerpt == long_a
+
+
+@pytest.mark.parametrize("body_version", [43, 44])
+async def test_unit_body_guidance_matches_its_evidence_head(monkeypatch, body_version):
+    from server.core.hashing import served_content_sha256
+    from server.memory import store as memory_repo
+    from server.memory.app.search.payload import _expand_unit_bodies
+    from server.memory.domain.use_guidance import guidance_for_row
+
+    async def fetch(identity, keys, **kw):
+        return [
+            SimpleNamespace(memory_key="a", value="full body", version=body_version, sensitivity="")
+        ]
+
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", fetch)
+    hit = _hit("a", distance=0.1, excerpt="clip")
+    hit.version = 42  # The vector predates the head that supplied guidance.
+    hit.use_guidance = guidance_for_row({"status": "active"})
+    hit._guidance_content_sha256 = served_content_sha256("full body")
+    hit._guidance_head_version = 43
+    inp = SimpleNamespace(
+        bodies="unit", org="o", namespace="n", agent="a", user_id=None, session_id=None
+    )
+
+    await _expand_unit_bodies([hit], inp)
+
+    assert hit.content_excerpt == "full body"
+    assert (hit.use_guidance is not None) == (body_version == 43)
 
 
 def test_unit_bodies_is_a_no_op_for_other_modes_and_fails_open(monkeypatch):

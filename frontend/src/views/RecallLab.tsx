@@ -6,6 +6,7 @@ import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
+import { GuidanceLabel } from "../components/GuidanceLabel";
 import { listMemories, searchMemory, listSearchTraceLog, type SearchHit, type SearchTraceLogRow } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { PageContainer } from "../layout/PageContainer";
@@ -17,7 +18,15 @@ import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
-import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
+import {
+  KEYWORD_PAGE,
+  keywordThenRanked,
+  namesWriter,
+  parseSearchQuery,
+  resolveSearchWriter,
+  rowIdentity,
+  type SearchWriter,
+} from "../lib/memoriesSearch";
 import { signed, termText, whyTerms } from "../lib/whyNote";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 
@@ -263,11 +272,28 @@ function RecallHistory() {
 
 /** One row of the Memories list's search order: a keyword match, a ranked hit, or both. */
 interface RecallRow {
+  id: string;
   key: string;
   text: string;
   memoryType: string;
   keyword: boolean;
+  writer: SearchWriter;
   hit?: SearchHit;
+}
+
+// Writer lookups a search runs at once.
+const LOOKUPS_IN_FLIGHT = 4;
+
+function canInspect(row: RecallRow): boolean {
+  return namesWriter(row.writer) && !row.key.startsWith("chunk:");
+}
+
+function recallRowId(
+  namespace: string,
+  row: Pick<SearchHit, "namespace" | "agent" | "user_id" | "session_id" | "memory_key">,
+  unidentified: string,
+): string {
+  return namesWriter(row) ? rowIdentity(namespace, row) : unidentified;
 }
 
 // The entity boost has its own column; the other terms that moved a hit sit under its score.
@@ -294,17 +320,17 @@ const ASK_HEADERS = [
 /** One scored row: the key opens the memory (a button, so the keyboard reaches it), the
  *  score draws Click UI's table bar against the top ranked hit, and the last cell asks the
  *  assistant about the result (its click, even an unavailable one, opens nothing). */
-function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) => void, query: string): TableRowType {
+function scoreRow(row: RecallRow, i: number, top: number, open: (row: RecallRow) => void, query: string): TableRowType {
   const hit = row.hit;
   const terms = whyTerms(hit?.score_components);
   const entity = terms.find((t) => t.label === ENTITY);
   const width = hit && top > 0 ? Math.max(0, Math.min(100, (hit.rank_score / top) * 100)) : 0;
   return {
-    id: row.key,
+    id: row.id,
     onClick: (e) => {
-      if (!e.defaultPrevented) open(row.key);
+      if (!e.defaultPrevented) open(row);
     },
-    className: "cursor-pointer",
+    className: canInspect(row) ? "cursor-pointer" : undefined,
     items: [
       { className: CARD, label: <span className={`${NUMERIC} text-text-muted`}>{i + 1}</span> },
       {
@@ -313,9 +339,10 @@ function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) =>
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <button
               type="button"
+              disabled={!canInspect(row)}
               onClick={(e) => {
                 e.stopPropagation();
-                open(row.key);
+                open(row);
               }}
               className="min-w-0 max-w-full line-clamp-1 break-all rounded text-left font-mono text-xs text-text"
             >
@@ -332,9 +359,12 @@ function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) =>
       {
         className: CARD_WIDE,
         label: (
-          <span className="line-clamp-1 break-words text-sm" title={row.text}>
-            {row.text}
-          </span>
+          <>
+            <span className="line-clamp-1 break-words text-sm" title={row.text}>
+              {row.text}
+            </span>
+            {hit && <GuidanceLabel hit={hit} reasons />}
+          </>
         ),
       },
       { className: CARD, label: <span className={NUMERIC}>{hit ? hit.similarity.toFixed(3) : "—"}</span> },
@@ -414,7 +444,20 @@ export function RecallLab() {
   // Bumped by Retry: the same query is asked again.
   const [attempt, setAttempt] = useState(0);
   const inspect = useStore((s) => s.inspect);
-  const open = useCallback((key: string) => inspect(key, { agent: "*" }), [inspect]);
+  const open = useCallback(
+    (row: RecallRow) => {
+      if (!canInspect(row)) return;
+      const { key, writer } = row;
+      inspect(key, {
+        agent: writer.agent,
+        userId: writer.user_id,
+        sessionId: writer.session_id,
+        namespace: writer.namespace || identity.namespace,
+        exact: true,
+      });
+    },
+    [identity.namespace, inspect],
+  );
   // The ranked search failed while keyword rows stood: those still show, with this said.
   const [rankedError, setRankedError] = useState<string | null>(null);
   // A result set the search abstained on stays collapsed until the user opts in.
@@ -459,7 +502,7 @@ export function RecallLab() {
         const kw = await listMemories(identity, KEYWORD_PAGE, {
           contains: q,
           // `sensitivity` comes with every entry; naming it would 422 on an older replica
-          fields: ["memory_key", "memory_type", "value"],
+          fields: ["memory_key", "memory_type", "value", "agent", "user_id", "session_id"],
           previewChars: 200,
           signal: ac.signal,
         }).catch(() => null);
@@ -471,29 +514,63 @@ export function RecallLab() {
             )
           : search.then((res) => [res, null] as const));
         if (ac.signal.aborted) return;
-        const keyword = new Map((kw?.entries ?? []).map((e) => [e.memory_key, e] as const));
-        const ranked = new Map((r?.results ?? []).map((h) => [h.memory_key, h] as const));
+        const keyword = new Map(
+          (kw?.entries ?? []).map((e, i) => [recallRowId(identity.namespace, e, `keyword:${i}`), e]),
+        );
+        // A legacy hit omits its writer, and another writer's row can share its key, so a hit
+        // is never dropped here: the lookup below names it, and it merges into the row that
+        // holds it. Several keyword rows share the key, so it stays a preview no one can open.
+        const held = (key: string) => [...keyword.values()].filter((e) => e.memory_key === key).length;
+        const ranked = new Map<string, SearchHit>();
+        (r?.results ?? []).forEach((h, i) => {
+          ranked.set(recallRowId(identity.namespace, h, `ranked:${i}`), h);
+        });
         const order = keywordThenRanked([...keyword.keys()], [...ranked.keys()]);
         setRowsQuery(q);
         setRows(
-          order.map((key) => {
-            const hit = ranked.get(key);
-            const entry = keyword.get(key);
+          order.flatMap((id) => {
+            const hit = ranked.get(id);
+            const entry = keyword.get(id);
+            const row = hit ?? entry;
+            if (!row) return [];
             return {
-              key,
+              id,
+              key: row.memory_key,
               // A high row comes without its value: say so rather than show an empty row.
               text:
                 hit?.content_excerpt ?? (entry?.sensitivity === "high" ? SENSITIVE_LABEL : previewValue(entry?.value)),
               memoryType: hit?.memory_type ?? entry?.memory_type ?? "",
               keyword: entry !== undefined,
+              writer: row,
               hit,
             };
           }),
         );
+        // A lone legacy hit asks which writer holds it, a few lookups at a time, after the rows
+        // are drawn; a hit that resolves to a row already shown is that row.
+        const lookups = [...ranked].filter(([id, h]) => id.startsWith("ranked:") && held(h.memory_key) <= 1);
+        let next = 0;
+        const lookup = async () => {
+          for (let item = lookups[next++]; item && !ac.signal.aborted; item = lookups[next++]) {
+            const [id, h] = item;
+            const writer = await resolveSearchWriter(identity, h, ac.signal).catch(() => undefined);
+            if (!writer || ac.signal.aborted) continue;
+            const named = rowIdentity(identity.namespace, { ...h, ...writer });
+            setRows((cur) =>
+              cur === null
+                ? cur
+                : cur.some((x) => x.id === named)
+                  ? cur.filter((x) => x.id !== id)
+                  : cur.map((x) => (x.id === id ? { ...x, id: named, writer: { ...x.writer, ...writer } } : x)),
+            );
+          }
+        };
+        void Promise.all(Array.from({ length: LOOKUPS_IN_FLIGHT }, lookup));
         // Keyword matches are real matches: the list hedges only when there are none.
         setAbstain(Boolean(r?.abstain) && keyword.size === 0);
         setModel(r?.embedding_model ?? "");
         setRankedError(failure);
+        setLoading(false);
       } catch (e) {
         if (ac.signal.aborted) return;
         setError(e);

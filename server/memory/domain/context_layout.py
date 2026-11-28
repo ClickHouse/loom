@@ -270,20 +270,16 @@ def _own_bookmark(block: Any, mine: str) -> bool:
 STACK_ROW_LAYERS = frozenset({"pinned", "recent_recall", "procedure"})
 
 
-def served_rows(
-    rendered: str,
-    section_names: list[str],
-    item_rows: dict[str, list[tuple[str, str] | None]],
-) -> list[tuple[str, str]]:
-    """The stored rows the rendered pack shows. `rendered` is the answer every caller
-    gets (MCP's lean pack carries it alone); `sections` and `blocks` keep lines the pack's
-    own budget cut, so a row counts only where `rendered` holds it. What a client then
-    discards is its own; a section the answer marks as no answer records no rows (see
-    `_pack_memories`). Each section's item lines start with `- ` (`one_item` indents a
-    continuation), in the order of its `item_rows`; a trim keeps a prefix, so the first n
-    rows of a section whose n item lines `rendered` still holds were shown, a cut one
-    included. `section_names` are the present sections in pack order."""
-    shown: list[tuple[str, str]] = []
+def served_item_counts(
+    rendered: str, section_names: list[str], *, require_citation: bool = False
+) -> dict[str, int]:
+    """Count the rendered item lines that survived each section and pack budget.
+
+    Items are one '- ' bullet each, followed by optional continuation lines.
+    Trimming preserves a prefix and can leave part of its last item.
+    Guidance requires the item's closing citation bracket to survive the cut.
+    """
+    counts: dict[str, int] = {}
     cursor = 0
     for name in section_names:
         start = rendered.find(f"<{name}>\n", cursor)
@@ -292,7 +288,25 @@ def served_rows(
         start += len(name) + 3
         end = rendered.find(f"\n</{name}>", start)
         end = len(rendered) if end < 0 else end
-        lines = sum(1 for line in rendered[start:end].split("\n") if line.startswith("- "))
-        shown += [row for row in item_rows.get(name, [])[:lines] if row]
+        counts[name] = sum(
+            1
+            for line in rendered[start:end].split("\n")
+            if line.startswith("- ")
+            and (not require_citation or (line.startswith("- [") and "]" in line))
+        )
         cursor = end
-    return shown
+    return counts
+
+
+def served_rows(
+    rendered: str,
+    section_names: list[str],
+    item_rows: dict[str, list[tuple[str, str] | None]],
+) -> list[tuple[str, str]]:
+    """The stored rows retained by the rendered pack's token budget."""
+    return [
+        row
+        for name, lines in served_item_counts(rendered, section_names).items()
+        for row in item_rows.get(name, [])[:lines]
+        if row
+    ]

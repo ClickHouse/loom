@@ -721,6 +721,42 @@ ranged `next` read. HTTP and MCP preserve that omission. Enclosing-body lookups 
 unavailable text, and verification cannot use an unread body as negative evidence.
 No source text is fetched from a network or fabricated to fill a gap.
 
+## Memory links written during a recheck
+
+A recheck pass follows a repository's links from its checked head to its indexed head
+under the repository's lease. A writer that links a memory inserts its links under the
+same lease, so a pass that starts after the insert reads the new links.
+
+A pass can run before the writer takes the lease and check a head the writer's links
+were not built at. The writer then finds the indexed head moved and inserts nothing. It
+parks that repository's memories behind the `*` marker, inserts the other repositories
+of the batch and moves the queue cursor on. The pending scan, which runs under the
+lease, links the parked memories at its own head. A writer that finds the lease held
+does the same. No link is stored in a state that waits for a pass, and the read side
+trusts a link only when the checked head is the indexed head.
+
+The indexed head and every read a pass makes of the links run under
+`sequential_reads()`, so the pass sees a head another replica indexed and a link another
+replica inserted under the lease. That holds when state writes are visible to a
+sequential read, which `loom doctor` checks through `select_sequential_consistency`.
+
+A build without the lease, such as the previous build during a rolling upgrade, can
+insert a link built at an older commit after a pass read the table. A pass at an
+unchanged head follows nothing, so each pass takes a digest of the live links not
+checked at its head (`store.behind_digest`, over each key and version, and over each
+key and commit for a lost link) before it reads any link. It trusts that digest only as
+the digest of a set it has already rechecked. When the `behind/` cursor holds no
+verified digest for this head, or a different one, `_catch_up` rechecks the whole set
+from each link's own checked commit. That includes the first pass after an upgrade, a
+pass at a new head (after its follow, which moves the links it loaded out of the set),
+and a pass that finds the digest changed. It reads a page of `memory_code_links_batch`
+links in key order per pass and keeps its place in the cursor. The cursor stores the
+digest the sweep started at only after the last page, so a link that arrives during the
+sweep makes the digest differ and starts another. The check compares digests and never
+timestamps, so no host's clock matters. A recheck moves the links it finds out of that
+set, and a lost link keeps its digest when the recheck rewrites it, so the sweep after
+it rechecks nothing.
+
 ## Invariants
 
 - A code namespace is one branch; every `code_*` row is keyed by `(org, namespace)`.

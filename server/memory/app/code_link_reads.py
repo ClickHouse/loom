@@ -14,9 +14,12 @@ from typing import Any, cast
 
 from server.code.app import memory_links as code
 from server.code.domain.index.remote import repo_tag
-from server.code.domain.index.repos import configured_repos
+from server.code.domain.index.repos import RegistryUnread, configured_repos
+from server.core.hashing import hash_text
 from server.memory.api.models_crud import CodeLink
+from server.memory.app.code_link_pass import unparsed_cursor
 from server.memory.domain import code_change
+from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
@@ -135,6 +138,99 @@ async def readable_namespaces(org: str, namespaces: set[str]) -> set[str]:
         *(row_in_scope(org, ns, Role.VIEWER, hides_answer=False) for ns in names)
     )
     return {ns for ns, ok in zip(names, allowed, strict=True) if ok}
+
+
+def guidance_link_state(links: Sequence[LinkRow], readable: set[str]) -> str:
+    """Current links only. An observed problem outweighs incomplete coverage."""
+    visible = [a for a in links if a["code_namespace"] in readable]
+    state = code_change.worst([a["state"] for a in visible])
+    if state in code_change.DEMOTED:
+        return state
+    if not settings.memory_code_links_enabled or len(visible) != len(links):
+        return "unknown"
+    if not visible or any(not a["complete"] or a["state"] == "pending" for a in visible):
+        return "unknown"
+    return state or "unknown"
+
+
+async def _guidance_coverage(org: str, cns: str) -> tuple[str, set[str]]:
+    checked = await code.checked_head(org, cns)
+    return checked, set(await unparsed_cursor(org, cns).read()) if checked else set()
+
+
+async def _guidance_indexed_heads(org: str, namespaces: list[str]) -> dict[str, str]:
+    if not namespaces:
+        return {}
+    try:
+        return await code.caught_up_heads(org, namespaces)
+    except Exception as error:  # noqa: BLE001 — unavailable coverage leaves guidance uncertain
+        log.debug("Guidance code heads unavailable: %s", type(error).__name__)
+        return {}
+
+
+async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Classify every readable link made from the evidence in the served memory revision."""
+    states = ["unknown"] * len(rows)
+    candidates: dict[int, tuple[str, str, str, str]] = {}
+    for index, row in enumerate(rows):
+        if not {"namespace", "tags", "files", "user_id"} <= row.keys():
+            continue
+        ns = str(row["namespace"])
+        tags = [str(tag) for tag in row["tags"] or ()]
+        try:
+            cns = code_namespace_for(org, ns, tags)
+        except RegistryUnread:
+            continue
+        if not cns:
+            if not any(tag.startswith("repo:") for tag in tags):
+                states[index] = "not_applicable"
+            continue
+        sha = hash_text(row.get("content_sha256"))
+        if row.get("memory_id") and is_content_hash(sha):
+            files = [str(path) for path in row["files"] or ()]
+            inputs = inputs_hash(sha, files, cns, str(row["user_id"]))
+            candidates[index] = (str(row["memory_id"]), ns, cns, inputs)
+    if not candidates:
+        return states
+    try:
+        readable = await readable_namespaces(org, {cns for _, _, cns, _ in candidates.values()})
+        mids = sorted({mid for mid, _, cns, _ in candidates.values() if cns in readable})
+        if not mids:
+            return states
+        # A completion published after the links read cannot vouch for those rows.
+        namespaces = sorted(readable)
+        checked = await asyncio.gather(
+            *(_guidance_coverage(org, cns) for cns in namespaces), return_exceptions=True
+        )
+        coverage = dict(zip(namespaces, checked, strict=True))
+        links = await store.for_memories(org, mids)
+    except Exception as error:  # noqa: BLE001 — unavailable links leave guidance uncertain
+        log.debug("Guidance code links unavailable: %s", type(error).__name__)
+        return states
+    by_revision: dict[tuple[str, str, str, str], list[LinkRow]] = defaultdict(list)
+    for link in links:
+        key = (link["memory_id"], link["namespace"], link["code_namespace"], link["inputs_hash"])
+        by_revision[key].append(link)
+    positive: dict[tuple[str, str], list[tuple[int, str]]] = defaultdict(list)
+    for index, key in candidates.items():
+        rows_for_hit = by_revision.get(key, [])
+        state = guidance_link_state(rows_for_hit, readable)
+        if state in {"fresh", "moved"}:
+            proof = coverage.get(key[2])
+            if not isinstance(proof, tuple):
+                continue
+            checked_head, owed = proof
+            if not checked_head or any(link["path"] in owed for link in rows_for_hit):
+                continue
+            positive[key[2], checked_head].append((index, state))
+        else:
+            states[index] = state
+    indexed = await _guidance_indexed_heads(org, [cns for cns, _ in positive])
+    for (cns, checked_head), hits in positive.items():
+        if indexed.get(cns) == checked_head:
+            for index, state in hits:
+                states[index] = state
+    return states
 
 
 # ---- reads ----------------------------------------------------------------------------

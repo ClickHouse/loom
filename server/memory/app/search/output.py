@@ -11,10 +11,13 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 from server.core.ch import get_client, sequential_reads
 from server.embedding import get_embedder
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import READ_SCOPE_KEY, stored_read_scope
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
 from server.memory.app.search import pg_validation, term_leg
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.evidence import _decorate_hits
+from server.memory.app.search.guidance import attach_search_guidance, hit_in_read_scope
 from server.memory.app.search.knobs import _ground_relative_excerpts_enabled
 from server.memory.app.search.payload import (
     _apply_bodies,
@@ -89,13 +92,21 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         return empty
     readable = await _readable_namespaces(input.org, input.namespace, payload)
     hits, nxt, stale_dropped = await _parked_slice(input, payload, offset, readable)
-    # Hits from a namespace the caller lost are neither served nor counted; the
-    # count is over the whole parked list, the same on every page while the
-    # caller's readable namespaces do not change.
-    withheld = sum(1 for h in payload.get("hits") or [] if h.get("namespace", "") not in readable)
+    # Count authorized first-page hits as well as the tail when access changed.
+    parked_rows = (payload.get("first_page_scope") or []) + (payload.get("hits") or [])
+    same_scope = _same_parked_scope(payload)
+    withheld = sum(
+        1
+        for row in parked_rows
+        if row.get("namespace", "") not in readable
+        or not hit_in_read_scope(
+            row.get("row_identity"),
+            allow_unidentified=same_scope and row.get("source") not in (None, "fact", "anchor"),
+        )
+    )
     # Rows the authority no longer serves stay in it, counted per page in `stale_dropped`;
     # a shared definition withheld since the first page stays in it too, counted nowhere.
-    total = max(0, int(payload.get("candidates_total") or 0) - withheld)
+    total = len(parked_rows) - withheld if withheld else int(payload.get("candidates_total") or 0)
     # A parked page was serialised without tags unless the first call asked; fill on this
     # call's own switch.
     await _fill_hit_tags(hits, input)
@@ -178,14 +189,20 @@ async def _parked_shared_flags(
     return [flags.get(i, False) for i in range(len(hits))]
 
 
+def _same_parked_scope(payload: dict[str, Any]) -> bool:
+    # Identity-less results cannot be re-scoped row by row. Only a page created
+    # under these same predicates can supply one to a narrowed caller.
+    return payload.get(READ_SCOPE_KEY) == stored_read_scope(request_scope())
+
+
 async def _parked_slice(
     input: MemorySearchInput, payload: dict[str, Any], offset: int, readable: set[str]
 ) -> tuple[list[_MemorySearchHit], int, int]:
     """Up to `top_k` readable, still-served hits from `offset`; the next offset (-1 at the
     end) and how many were stale. Checked in two windows at most: `top_k` readable rows,
     then, when the page is still short, `_REFILL_PER_MISSING_HIT` for each hit missing.
-    A replay page skips the authority's check; the shared-definition check runs on every
-    page."""
+    A replay page does not adopt the current head's guidance. On every page the
+    current checks can withhold inaccessible content."""
     from server.memory.app import search_pages as _pages
 
     rows = list(payload.get("hits") or [])
@@ -193,6 +210,7 @@ async def _parked_slice(
     hits: list[_MemorySearchHit] = []
     dropped = 0
     j = offset
+    same_scope = _same_parked_scope(payload)
     for refill in (False, True):
         if len(hits) == top_k or j >= len(rows):
             break
@@ -200,7 +218,10 @@ async def _parked_slice(
         window: list[tuple[int, _MemorySearchHit]] = []
         while j < len(rows) and len(window) < size:
             hit = _pages.unparked(rows[j]) if rows[j].get("namespace", "") in readable else None
-            if hit is not None:
+            if hit is not None and hit_in_read_scope(
+                hit._row_identity,
+                allow_unidentified=same_scope and hit.source not in ("fact", "anchor"),
+            ):
                 window.append((j, hit))
             j += 1
         window_hits = [h for _, h in window]
@@ -216,13 +237,27 @@ async def _parked_slice(
                 whole=input.bodies in ("unit", "source"),
             ),
         )
+        current = await attach_search_guidance(
+            input,
+            [
+                h
+                for h, stale_hit, withheld_hit in zip(
+                    refreshed, stale, definitions_withheld, strict=True
+                )
+                if h is not None and not stale_hit and not withheld_hit
+            ],
+            parked=True,
+            same_parked_scope=same_scope,
+            replay=bool(payload.get("replay")),
+        )
+        current_ids = {id(h) for h in current}
         for (at, _), is_stale, is_withheld, hit in zip(
             window, stale, definitions_withheld, refreshed, strict=True
         ):
             if len(hits) == top_k:
                 j = at  # the first row of the next page
                 break
-            if is_stale:
+            if is_stale or (not is_withheld and hit is not None and id(hit) not in current_ids):
                 dropped += 1
             elif not is_withheld and hit is not None:
                 hits.append(hit)
@@ -266,17 +301,11 @@ def move_stale(hits: list[Any], input: Any) -> list[Any]:
     return out
 
 
-async def _shape_final_hits(
+async def _select_served_hits(
     ctx: SearchContext, final_hits: list[_MemorySearchHit]
-) -> tuple[list[_MemorySearchHit], tuple[int, int, int], list[str]]:
-    """Phase 22: shape the served hits — decorate, prepend recent/anchor rows, body
-    floor, move down those whose code changed, unit and source bodies, relative-date
-    wording, foreign namespace marks, grounded excerpts, optional fields. Returns the
-    hits, the unit-body counts and the namespaces searched."""
+) -> tuple[list[_MemorySearchHit], bool]:
+    """Select and authorize the served rows while their retrieval excerpts are intact."""
     input = ctx.input
-    namespaces = ctx.namespaces
-    actual_work = ctx.actual_work
-    _clock = ctx.clock
     _decorate_hits(final_hits, input=input)
     recent, stale_recent = await _prepend_recent(final_hits, input, ctx.stale_versions)
     anchored, stale_anchor = await _prepend_anchor(recent, input, ctx.stale_versions)
@@ -292,6 +321,18 @@ async def _shape_final_hits(
             code_change.spend_marks(final_hits)
         else:
             final_hits = move_stale(final_hits, input)
+    guided_hits = await attach_search_guidance(input, final_hits, replay=input.as_of is not None)
+    return guided_hits, len(guided_hits) < len(final_hits)
+
+
+async def _shape_final_hits(
+    ctx: SearchContext, final_hits: list[_MemorySearchHit]
+) -> tuple[tuple[int, int, int], list[str]]:
+    """Expand and project the bodies after all verdict inputs have been read."""
+    input = ctx.input
+    namespaces = ctx.namespaces
+    actual_work = ctx.actual_work
+    _clock = ctx.clock
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)
     )
@@ -327,7 +368,7 @@ async def _shape_final_hits(
         actual_work["relative_excerpts_grounded"] = ground_hits(final_hits)
 
     actual_work.update(await _fill_optional_hit_fields(final_hits, input, _namespaces_searched))
-    return final_hits, _unit_bodies, _namespaces_searched
+    return _unit_bodies, _namespaces_searched
 
 
 def _build_search_output(
@@ -430,11 +471,15 @@ async def _finish_search_output(
             from server.memory.app import search_pages as _pages
             from server.settings import settings as _pg_settings
 
+            tail = await attach_search_guidance(
+                input, ctx.page_tail, replay=input.as_of is not None, snapshot_only=True
+            )
             _content = _pages.encode_page(
                 query=input.query,
                 top_k=int(input.top_k),
                 candidates_total=_output.candidates_total,
-                tail=ctx.page_tail,
+                tail=tail,
+                first_page=_output.results,
                 namespaces_searched=_output.namespaces_searched,
                 namespaces_skipped=_output.namespaces_skipped,
                 replay=input.as_of is not None,

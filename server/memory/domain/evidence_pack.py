@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from server.memory.domain.context_layout import label_part, one_item
+from server.memory.domain.use_guidance import UseGuidance
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class EvidenceItem:
     # linked code changed, was not found again or went (` code_state=…` on the line);
     # "" otherwise.
     code_state: str = ""
+    use_guidance: UseGuidance | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,7 @@ class PackedEvidence:
     source_count: int
     truncated: bool
     groups: list[str] = field(default_factory=list)
+    use_guidance: dict[str, UseGuidance] = field(default_factory=dict)
 
 
 def _trim(text: str, char_budget: int) -> tuple[str, bool]:
@@ -100,6 +103,7 @@ def pack_evidence(
     lines: list[str] = []
     citations: list[str] = []
     groups: list[str] = []
+    use_guidance: dict[str, UseGuidance] = {}
     truncated = False
     for item in ordered:
         group = item.group or item.source or "fact"
@@ -114,6 +118,8 @@ def pack_evidence(
             break
         lines.append(line)
         citations.append(item.citation)
+        if item.use_guidance is not None:
+            use_guidance[item.citation] = item.use_guidance
         if group not in groups:
             groups.append(group)
 
@@ -124,4 +130,5 @@ def pack_evidence(
         source_count=len(citations),
         truncated=truncated or trim_truncated,
         groups=groups,
+        use_guidance=use_guidance,
     )

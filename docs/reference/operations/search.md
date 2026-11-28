@@ -33,8 +33,8 @@ Search every plane of the caller's Loom content in one call.
 | --- | --- | --- |
 | `tracker` | `dict[str, Any] \| None` | Cited issue/PR matches, or a duplicate-check verdict for a scoped defect report even with no matches; absent for empty general search or an unavailable, failed or timed-out tracker leg. |
 | `live` | `LiveSearchResults \| None` | Ephemeral connected-source hits; absent unless the optional live leg answered. |
-| `memory` | `dict[str, Any]` | The `memory.search` result plus the scoped repository's decisions, rendered as a reader block, without the hits the calibration flagged below its threshold (unless every hit is flagged). |
-| `knowledge` | `dict[str, Any]` | The `knowledge.search` result plus the scoped repository's documents, hits below the knowledge similarity floor dropped. |
+| `memory` | `SearchSection` | The `memory.search` result plus the scoped repository's decisions, rendered as a reader block, without the hits the calibration flagged below its threshold (unless every hit is flagged). |
+| `knowledge` | `SearchSection` | The `knowledge.search` result plus the scoped repository's documents, hits below the knowledge similarity floor dropped. |
 | `profile` | `dict[str, Any]` | Profile sections whose label or text matches the query words, then by meaning. |
 | `conversations` | `dict[str, Any]` | The `conversation.search` hits under `results`. |
 | `withheld` | `dict[str, Any] \| None` | Counts of hits held back per section by the answer-first rules, with `reason`; absent when nothing was withheld or `explain` is set. |

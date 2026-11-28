@@ -292,10 +292,14 @@ class Emitter:
             if not ref.startswith("#/$defs/") or ref[8:] not in self.defs:
                 raise ValueError(f"{hint}: unresolved ref {ref}")
             key = ref[8:]
+            definition = self.defs[key]
+            if definition.get("additionalProperties") == {} and not definition.get("required"):
+                # Keep sparse, open sections accessible by key and preserve every wire field.
+                return "std::collections::HashMap<String, Value>"
             name = self.ref_names.get(key, type_name(key))
             if name in self.active:
                 raise ValueError(f"{hint}: recursive ref {ref}")
-            self.model(name, self.defs[key], request=self.request)
+            self.model(name, definition, request=self.request)
             return name
         base, nullable = split_nullable(schema)
         if nullable and base != schema:
@@ -748,6 +752,12 @@ def build(selected: tuple[str, ...] | None = None) -> str:
         for request, model in [(False, op.output_model), (True, op.input_model)]:
             schema = schema_for(model, request=request)
             em.defs = schema.get("$defs", {})
+            if not request:
+                for definition in (schema, *em.defs.values()):
+                    lessons = definition.get("properties", {}).get("lessons", {})
+                    if lessons.get("items", {}).get("$ref") == "#/$defs/CodeLesson":
+                        # Preserve existing Rust map access to code lesson fields.
+                        lessons["items"] = {"type": "object", "additionalProperties": True}
             root = operation_type(op, request=request)
             em.ref_names = {}
             for ref, definition in em.defs.items():

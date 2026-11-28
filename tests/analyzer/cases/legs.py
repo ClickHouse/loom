@@ -451,11 +451,13 @@ async def _embedding_stubs(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 async def _keys_and_fence(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory import store as M
+    from server.memory.store import reads
 
     # memory.keys' one read of the namespace, and the write fence's read before an insert
     await M.live_keys(ORG, NS, scope=WHOLE_NAMESPACE, limit=10, ch=ch)
     row = {"agent": AGENT, "user_id": "-", "session_id": "-", "memory_key": "k", "version": 1}
     await M.versions_above(ORG, NS, [row], ch=ch)
+    await reads.guidance_heads([(ORG, NS, AGENT, "-", "-", "k")])
     # memory.import's read of each key's newest version in every session of the identity
     pinned = ReadFilters(scope="own_user", user_id="u1", session_id=None)
     for user_id, scope in (("-", WHOLE_NAMESPACE), ("u1", pinned)):

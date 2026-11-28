@@ -83,7 +83,18 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
         lesson["code_moved"] = [{k: v for k, v in m.items() if v} for m in hit["code_moved"]]
     if hit.get("supersedes_key"):
         lesson["supersedes_key"] = str(hit["supersedes_key"])
+    guidance = hit.get("use_guidance")
+    if guidance and _guidance_matches_code(guidance, lesson["code_state"]):
+        lesson["use_guidance"] = guidance
     return lesson
+
+
+def _guidance_matches_code(guidance: Any, code_state: str) -> bool:
+    if code_state not in code_change.DEMOTED:
+        return True
+    freshness = guidance.get("freshness", {}) if isinstance(guidance, dict) else guidance.freshness
+    state = freshness.get("code") if isinstance(freshness, dict) else freshness.code
+    return state == code_state
 
 
 class Lessons(NamedTuple):

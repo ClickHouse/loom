@@ -636,6 +636,71 @@ async def test_the_real_search_serves_only_decision_rows_from_the_repository(
 
 
 @pytest.mark.asyncio
+async def test_merged_repository_decision_keeps_exact_authorized_guidance(
+    search_env,
+    monkeypatch,
+) -> None:
+    from dataclasses import replace
+
+    from server.memory.app.search import guidance, handle_memory_search
+
+    visible = replace(
+        _svc_hit("decision:evict", sim=0.9, mtype="decision"),
+        identity=("a", "alice", "s1"),
+        version=42,
+    )
+    hidden = replace(
+        _svc_hit("decision:private", sim=0.8, mtype="decision"),
+        identity=("a", "bob", "s1"),
+        version=43,
+    )
+    search_env.hits_by_ns[TRUNK] = [visible, hidden]
+    key = (ORG, TRUNK, "a", "alice", "s1", visible.memory_key)
+    seen: list[tuple[str, ...]] = []
+
+    async def heads(keys: list[tuple[str, ...]]) -> dict[tuple[str, ...], dict[str, Any]]:
+        seen.extend(keys)
+        return {
+            key: {
+                "version": 42,
+                "status": "active",
+                "source_class": "asserted",
+                "verified_by": "human:reviewer",
+                "verified_sha256": "a" * 64,
+                "content_sha256": "a" * 64,
+            }
+        }
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    inp = BASE.model_copy(update={"render": "", "tags": [], "namespace_scope": "this"})
+    set_current_auth(
+        AuthInfo(
+            subject="sa:bot",
+            org=ORG,
+            namespaces=("me", TRUNK),
+            roles=(),
+            is_service_account=True,
+            read_user_id="alice",
+        )
+    )
+    try:
+        direct = await handle_memory_search(
+            inp.model_copy(update={"namespace": TRUNK, "memory_type": "decision"})
+        )
+        merged = await repo_decisions.memory_with_repo_decisions(inp, repo_namespace=TRUNK)
+        payload = await _assemble(monkeypatch, merged, explain=True)
+    finally:
+        set_current_auth(None)
+
+    (direct_hit,) = direct.results
+    assert direct_hit.use_guidance is not None and direct_hit.use_guidance.review == "human"
+    (row,) = payload["memory"]["results"]
+    assert row["memory_key"] == visible.memory_key
+    assert row.get("use_guidance") == direct_hit.use_guidance.model_dump()
+    assert seen == [key, key]
+
+
+@pytest.mark.asyncio
 async def test_an_empty_repository_is_searched_once(search_env, monkeypatch) -> None:
     """The merged pass runs no read-your-writes re-read: an empty trunk is
     not searched again with sequential consistency. The trade-off: a decision
@@ -759,15 +824,27 @@ async def test_a_hit_whose_code_changed_says_so_in_the_block(monkeypatch) -> Non
 async def test_a_later_page_says_a_hits_code_changed_on_its_plain_line(monkeypatch) -> None:
     """A parked page carries no reader block: the agent reads the plain hit lines."""
     from server.memory.app import search_pages
-    from server.memory.app.search import handle_memory_search
+    from server.memory.app.search import guidance, handle_memory_search
     from server.transport import mcp_tools
     from tests.unit._memory_search_pkg import patch_handler_name
 
+    tail = [_changed("evict_rule"), _hit("note-a", 0.7, "me")]
+    for h in tail:  # a parked fact row is served only with a current head to vouch for it
+        h.version, h._row_identity, h._guidance_content_sha256 = 7, ("a", "u", "-"), "a" * 64
+
+    async def heads(keys):
+        return {key: {"version": 7, "status": "active", "content_sha256": "a" * 64} for key in keys}
+
+    async def changed(org, rows):  # the page's current link state, read again on this page
+        return ["changed", "fresh"][: len(rows)]
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    monkeypatch.setattr(guidance, "guidance_code_states", changed)
     content = search_pages.encode_page(
         query=BASE.query,
         top_k=BASE.top_k,
         candidates_total=5,
-        tail=[_changed("evict_rule"), _hit("note-a", 0.7, "me")],
+        tail=tail,
         namespaces_searched=["me"],
         namespaces_skipped=[],
     )
@@ -783,8 +860,8 @@ async def test_a_later_page_says_a_hits_code_changed_on_its_plain_line(monkeypat
     payload = await _assemble(monkeypatch, parked, page=handle)
     answer = mcp_tools.search_answer(payload, {"query": BASE.query, "page": handle}, "me", "s1")
     assert (
-        f"  - [evict_rule] (ns=me){_CODE_NOTE} text of evict_rule\n"
-        "  - [note-a] (ns=me) text of note-a"
+        f"  - [evict_rule] (ns=me){_CODE_NOTE} text of evict_rule [use: recheck_source]\n"
+        "  - [note-a] (ns=me) text of note-a [use: validate_lead]"
     ) in answer["content"][0]["text"]
     stale = answer["structuredContent"]["memory"]["results"][0]
     assert (stale["code_state"], stale["code_changed_since"]) == ("changed", _COMMIT)

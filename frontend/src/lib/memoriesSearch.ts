@@ -3,12 +3,120 @@
 // holds the query (memory.list `contains`, newest first), then the ranked hits they do
 // not already hold.
 
+import {
+  listMemories,
+  storedToken,
+  type Identity,
+  type MemoryListEntry,
+  type MemoryListResponse,
+  type SearchHit,
+} from "../api";
+import { endUserToken, tokenReadScope } from "../views/assistant/tokenScope";
+import { SENTINEL_AGENTS } from "./format";
+
 /** Keyword matches a search shows ahead of the ranked hits (a viewer's list page is 100). */
 export const KEYWORD_PAGE = 100;
 
+/** Whether a row names its writer in full: a server that predates the fields, a shared row
+ *  (`_shared`, `*`) and a chunk without them do not. */
+export function namesWriter(r: { agent?: string; user_id?: string; session_id?: string }): boolean {
+  return Boolean(r.agent && !SENTINEL_AGENTS.has(r.agent) && r.agent !== "_shared" && r.user_id && r.session_id);
+}
+
+/** The pages of one list read, until the list ends or `MAX_PAGES` are read. The server may
+ *  cap a page below `limit` and drop rows it no longer serves, so the next offset is the rows
+ *  it read, and a page that read none ends the read. The last page yielded says whether
+ *  the list was read to its end (`done`). */
+const MAX_PAGES = 10;
+export async function* listPages(
+  id: Identity,
+  limit: number,
+  opts: Parameters<typeof listMemories>[2] & { signal: AbortSignal },
+): AsyncGenerator<MemoryListResponse & { done: boolean }> {
+  for (let offset = 0, n = 0; n < MAX_PAGES && !opts.signal.aborted; n++) {
+    const page = await listMemories(id, limit, { ...opts, offset });
+    const read = page.rows_read || page.entries.length;
+    offset += read;
+    yield { ...page, done: !read || offset >= page.total };
+    if (!read || offset >= page.total) return;
+  }
+}
+
+export type SearchWriter = Pick<SearchHit, "namespace" | "agent" | "user_id" | "session_id">;
+
+/** Older search responses name the agent but may omit its user or session. */
+export async function resolveSearchWriter(
+  identity: Identity,
+  hit: SearchHit,
+  signal: AbortSignal,
+): Promise<SearchWriter | undefined> {
+  const { agent, user_id, session_id } = hit;
+  if (!agent || SENTINEL_AGENTS.has(agent) || agent === "_shared" || hit.memory_key.startsWith("chunk:")) return;
+  if (namesWriter(hit)) return hit;
+
+  // A token that narrows reads is refused the `*` wildcard (`resolve_read_filters`): send the
+  // pinned user, and give up when no user (or, for an own-session token, no session) is known.
+  const scope = tokenReadScope(storedToken());
+  // An end-user token is pinned by its issuer, which its claims do not name: leave the user
+  // out and the server fills in the pinned one (it refuses `*`).
+  const uid = user_id || scope?.readUserId || (endUserToken(storedToken()) ? undefined : scope?.readScope ? "" : "*");
+  const sid = session_id || (scope?.readScope === "own_session" ? "" : "*");
+  if (uid === "" || !sid) return;
+
+  const namespace = hit.namespace || identity.namespace;
+  // The key is unique only when every row under its prefix has been read.
+  const matches: MemoryListEntry[] = [];
+  let done = false;
+  try {
+    for await (const page of listPages({ ...identity, namespace, user_id: uid, session_id: sid }, KEYWORD_PAGE, {
+      agent,
+      prefix: hit.memory_key,
+      include_profile: true,
+      fields: ["agent", "user_id", "session_id"],
+      signal,
+    })) {
+      matches.push(
+        ...page.entries.filter(
+          (row) =>
+            row.memory_key === hit.memory_key &&
+            (!row.agent || row.agent === agent) &&
+            (!user_id || !row.user_id || row.user_id === user_id) &&
+            (!session_id || !row.session_id || row.session_id === session_id),
+        ),
+      );
+      done = page.done;
+      if (matches.length > 1) return;
+    }
+  } catch {
+    return;
+  }
+  const [row] = matches;
+  if (done && !signal.aborted && matches.length === 1 && row && namesWriter(row)) {
+    return { agent: row.agent, user_id: row.user_id, session_id: row.session_id, namespace };
+  }
+}
+
+/** A row's own id: `(namespace, agent, user, session, key)`, which is what two rows of one
+ *  key differ by; `[key]` alone when the row does not name its writer. The two shapes differ
+ *  in length, so a key cannot make one pass for the other. */
+export function rowIdentity(
+  namespace: string,
+  r: { memory_key: string; agent?: string; user_id?: string; session_id?: string; namespace?: string },
+): string {
+  return JSON.stringify(
+    namesWriter(r) ? [r.namespace || namespace, r.agent, r.user_id, r.session_id, r.memory_key] : [r.memory_key],
+  );
+}
+
+/** Every id a row answers to: its own and its key's. A hit that names no writer is the key
+ *  alone (the old match, which keeps every row of the key); a hit that names one matches
+ *  only the row it names. */
+export function rowIds(namespace: string, r: Parameters<typeof rowIdentity>[1]): string[] {
+  return [rowIdentity(namespace, r), JSON.stringify([r.memory_key])];
+}
+
 export function keywordThenRanked(keywordKeys: string[], rankedKeys: string[]): string[] {
-  const keyword = new Set(keywordKeys);
-  return [...keywordKeys, ...rankedKeys.filter((k) => !keyword.has(k))];
+  return [...new Set([...keywordKeys, ...rankedKeys])];
 }
 
 /** A parsed search: the text the server is asked, and the tag and agent filters. */

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { HeaderSearch } from "./HeaderSearch";
 import { sharedMine } from "../lib/sharedReads";
+import { listMemories } from "../api";
 
 // The header search is a WAI-ARIA combobox: focus stays in the input while ↑↓ move the
 // highlighted option, which the input names through aria-activedescendant.
@@ -11,23 +12,36 @@ import { sharedMine } from "../lib/sharedReads";
 const inspect = vi.fn();
 const inspectProfile = vi.fn();
 // What the empty box lists: the newest memories and the profile sections.
+const written = vi.hoisted(() => ({
+  agent: "a",
+  user_id: "u",
+  session_id: "s",
+  namespace: "team",
+  memory_type: "semantic",
+}));
 const catalog = vi.hoisted(() => ({
   recent: [] as Array<{ memory_key: string; agent: string }>,
+  writerRows: [] as Array<Record<string, unknown>>,
   profile: [] as Array<{ label: string; value: string }>,
   docs: [] as Array<{ source_uri: string; title: string; tags: string[]; chunk_count: number }>,
+  // When set, memory.search answers these hits instead of the two coffee ones.
+  hits: null as null | Array<Record<string, unknown>>,
 }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    listMemories: vi.fn(async () => ({ entries: catalog.recent, truncated: false, total: catalog.recent.length })),
+    listMemories: vi.fn(async (_id, _limit, opts) => {
+      const entries = opts?.prefix ? catalog.writerRows : catalog.recent;
+      return { entries, truncated: false, total: entries.length };
+    }),
     listKnowledge: vi.fn(async () => ({ rows: catalog.docs })),
     listProfile: vi.fn(async () => ({ entries: catalog.profile })),
     browseNamespaces: vi.fn(async () => []),
     searchMemory: vi.fn(async () => ({
-      results: [
-        { memory_key: "coffee/order", agent: "a", memory_type: "semantic", content_excerpt: "flat white" },
-        { memory_key: "coffee/shop", agent: "a", memory_type: "semantic", content_excerpt: "corner cafe" },
+      results: catalog.hits ?? [
+        { ...written, memory_key: "coffee/order", content_excerpt: "flat white" },
+        { ...written, memory_key: "coffee/shop", content_excerpt: "corner cafe" },
       ],
     })),
   };
@@ -41,8 +55,10 @@ beforeEach(() => {
   inspect.mockReset();
   inspectProfile.mockReset();
   catalog.recent = [];
+  catalog.writerRows = [];
   catalog.profile = [];
   catalog.docs = [];
+  catalog.hits = null;
   useStore.setState({
     identity: { org: "dev", namespace: "team", agent: "dashboard" },
     view: "memories",
@@ -52,6 +68,35 @@ beforeEach(() => {
 });
 
 describe("HeaderSearch", () => {
+  it.each([false, true])("opens a legacy hit only when its writer is unique (ambiguous: %s)", async (ambiguous) => {
+    catalog.hits = [{ agent: "a", memory_key: "legacy/note", content_excerpt: "old replica" }];
+    const row = { ...written, memory_key: "legacy/note" };
+    catalog.writerRows = ambiguous ? [row, { ...row, session_id: "another" }] : [row];
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "legacy");
+    const option = await screen.findByRole("option", { name: /legacy\/note/ });
+    await waitFor(() =>
+      expect(listMemories).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: "*", session_id: "*" }),
+        expect.any(Number),
+        expect.objectContaining({ prefix: "legacy/note", agent: "a" }),
+      ),
+    );
+    if (ambiguous) expect(option).toHaveAttribute("aria-disabled", "true");
+    else await waitFor(() => expect(option).not.toHaveAttribute("aria-disabled"));
+    await user.click(option);
+    if (ambiguous) expect(inspect).not.toHaveBeenCalled();
+    else
+      expect(inspect).toHaveBeenCalledWith("legacy/note", {
+        agent: "a",
+        userId: "u",
+        sessionId: "s",
+        namespace: "team",
+        exact: true,
+      });
+  });
+
   // The group heading names the type, so a row leads with the type's icon instead of a
   // coloured "memory" badge and carries no memory-type label (the inspector shows it); line
   // 1 is the key, line 2 the excerpt.
@@ -177,7 +222,13 @@ describe("HeaderSearch", () => {
     expect(input).toHaveFocus();
 
     await user.keyboard("{Enter}");
-    expect(inspect).toHaveBeenCalledWith("coffee/shop", { agent: "a" });
+    expect(inspect).toHaveBeenCalledWith("coffee/shop", {
+      agent: "a",
+      userId: "u",
+      sessionId: "s",
+      namespace: "team",
+      exact: true,
+    });
   });
 
   it("opens the panel on focus and keeps it open", async () => {
@@ -234,5 +285,60 @@ describe("HeaderSearch", () => {
     await user.click(input);
     await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{Enter}");
     expect(inspectProfile).toHaveBeenCalledWith("timezone");
+  });
+
+  // Two rows of one key differ by their writer's session: the one clicked opens, exactly.
+  it("opens a hit as the row of its own agent, user and session", async () => {
+    catalog.hits = [
+      {
+        memory_key: "deploy_note",
+        agent: "claude-code",
+        user_id: "user",
+        session_id: "one",
+        namespace: "team",
+        memory_type: "semantic",
+        content_excerpt: "first session",
+      },
+      {
+        memory_key: "deploy_note",
+        agent: "claude-code",
+        user_id: "user",
+        session_id: "two",
+        namespace: "team",
+        memory_type: "semantic",
+        content_excerpt: "second session",
+      },
+    ];
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "deploy");
+    expect(await screen.findByRole("option", { name: /first session/ })).toBeInTheDocument();
+    await user.click(await screen.findByRole("option", { name: /second session/ }));
+    expect(inspect).toHaveBeenCalledWith("deploy_note", {
+      agent: "claude-code",
+      userId: "user",
+      sessionId: "two",
+      namespace: "team",
+      exact: true,
+    });
+  });
+
+  it("labels chunk, shared and writer-less hits as previews", async () => {
+    const full = { user_id: "u", session_id: "s", memory_type: "semantic" };
+    catalog.hits = [
+      { ...full, memory_key: "chunk:doc/1", agent: "claude-code", content_excerpt: "a doc chunk" },
+      { ...full, memory_key: "policy", agent: "_shared", content_excerpt: "a shared row" },
+      { memory_key: "legacy", agent: "claude-code", memory_type: "semantic", content_excerpt: "an older hit" },
+    ];
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "deploy");
+    for (const name of [/a doc chunk/, /a shared row/, /an older hit/]) {
+      const option = await screen.findByRole("option", { name });
+      expect(option).toHaveAttribute("aria-disabled", "true");
+      expect(option).toHaveTextContent("Preview only");
+      await user.click(option);
+    }
+    expect(inspect).not.toHaveBeenCalled();
   });
 });

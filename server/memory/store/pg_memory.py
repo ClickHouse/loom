@@ -51,6 +51,12 @@ from server.memory.store.rows import (
     memory_head_state,
     parse_memory_value,
 )
+from server.memory.store.sql import (
+    PROCEDURE_FIELD_MAX_BYTES,
+    PROCEDURE_INTEGER_SOURCE_HEX,
+    PROCEDURE_INTEGER_TARGET,
+    PROCEDURE_TOTAL_MAX_DIGITS,
+)
 from server.observability import pg_pipeline
 from server.settings import settings
 
@@ -1654,6 +1660,87 @@ async def heads_by_keys(
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
 
 
+async def guidance_heads(
+    keys: Sequence[IdentityKey], columns: tuple[str, ...]
+) -> dict[IdentityKey, dict[str, Any]]:
+    """Current-head evidence and procedure lifecycle fields for authorized exact identities."""
+    keys = [k for k in keys if not pg.unstorable(k)]
+    if not keys:
+        return {}
+    rows = await pg.fetch(
+        f"""
+        SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key,
+               (SELECT jsonb_object_agg(k, c.row->k) FROM unnest($7::text[]) AS f(k)
+                WHERE c.row ? k) AS evidence,
+               CASE WHEN body.fields IS NOT NULL THEN jsonb_build_object(
+                   'quarantined', CASE WHEN jsonb_typeof(body.fields->'quarantined') = 'object'
+                                       THEN '{{}}'::jsonb END,
+                   'template', CASE
+                       WHEN octet_length((body.fields->'template')::text)
+                            > {PROCEDURE_FIELD_MAX_BYTES}
+                           THEN to_jsonb(body.fields->'template' <> '0'::jsonb)
+                       ELSE body.fields->'template' END,
+                   'run_stats', CASE
+                       WHEN jsonb_typeof(body.fields->'run_stats') = 'object'
+                           THEN jsonb_build_object('total', CASE
+                               WHEN octet_length(total.value::text) <= {PROCEDURE_FIELD_MAX_BYTES}
+                                   THEN total.value
+                               WHEN total.value IS NULL THEN NULL
+                               WHEN jsonb_typeof(total.value) = 'number'
+                                   THEN to_jsonb((total.value >= '1'::jsonb)::int)
+                               WHEN jsonb_typeof(total.value) = 'string'
+                                   AND total.text ~ '^[+-]?[0-9]+(_[0-9]+)*$'
+                                   AND ({PROCEDURE_TOTAL_MAX_DIGITS} = 0 OR
+                                       length(translate(total.text, '+_-', ''))
+                                           <= {PROCEDURE_TOTAL_MAX_DIGITS})
+                                   THEN to_jsonb((left(total.text, 1) <> '-'
+                                       AND total.text ~ '[1-9]')::int)
+                               ELSE '"invalid"'::jsonb END)
+                       WHEN octet_length((body.fields->'run_stats')::text)
+                            > {PROCEDURE_FIELD_MAX_BYTES}
+                           THEN 'true'::jsonb
+                       ELSE body.fields->'run_stats' END,
+                   'tags', CASE
+                       WHEN jsonb_typeof(body.fields->'tags') IN ('array', 'object', 'string')
+                           THEN CASE WHEN (body.fields->'tags') ? 'mined'
+                               OR (jsonb_typeof(body.fields->'tags') = 'string'
+                                   AND strpos(body.fields->>'tags', 'mined') > 0)
+                               THEN '["mined"]'::jsonb ELSE '[]'::jsonb END
+                       WHEN octet_length((body.fields->'tags')::text) > {PROCEDURE_FIELD_MAX_BYTES}
+                           THEN 'true'::jsonb
+                       ELSE body.fields->'tags' END
+               )::text END AS procedure_fields
+        {_EXACT_KEYS}
+        CROSS JOIN LATERAL (
+            SELECT CASE WHEN c.row->>'memory_type' = 'procedural' THEN
+                CASE WHEN length(coalesce(c.row->>'value_json', '{{}}')) > 2
+                     THEN c.row->>'value_json' ELSE c.row->>'value' END
+            END AS encoded
+        ) AS proc
+        CROSS JOIN LATERAL (
+            SELECT CASE WHEN pg_input_is_valid(proc.encoded, 'jsonb')
+                              AND proc.encoded IS JSON OBJECT THEN proc.encoded::jsonb END AS fields
+        ) AS body
+        CROSS JOIN LATERAL (
+            SELECT body.fields->'run_stats'->'total' AS value,
+                   btrim(translate(body.fields->'run_stats'->>'total',
+                       convert_from(decode('{PROCEDURE_INTEGER_SOURCE_HEX}', 'hex'), 'UTF8'),
+                       '{PROCEDURE_INTEGER_TARGET}')) AS text
+        ) AS total
+        """,
+        *_key_arrays(keys),
+        list(columns),
+    )
+    evidence = {}
+    for row in rows:
+        decoded = decode_row(row["evidence"] or {})
+        metadata = {c: decoded[c] for c in columns if c in decoded}
+        if row.get("procedure_fields") is not None:
+            metadata["procedure_fields"] = row["procedure_fields"]
+        evidence[identity_key(row)] = metadata
+    return evidence
+
+
 async def heads_on_connection(
     conn: Any,
     keys: Sequence[IdentityKey],
@@ -1811,7 +1898,8 @@ async def history_target(org: str, memory_id: str, version: int) -> dict[str, An
     r = await pg.fetchrow(
         f"SELECT org, memory_id::text AS memory_id, namespace, {_meta('agent')} AS agent, "
         f"user_id, {_meta('session_id')} AS session_id, {_meta('memory_key')} AS memory_key, "
-        "version, content_sha256, row->'tags' AS tags "
+        f"version, content_sha256, {_meta('redacted_at')} AS redacted_at, "
+        "row->>'expires_at' AS expires_at, row->'tags' AS tags "
         "FROM loom.memory_revisions WHERE org = $1 AND memory_id = $2 AND version = $3 LIMIT 1",
         org,
         mid,

@@ -16,6 +16,35 @@ person can attest that a row is true. How the version mirror works is in
 
 ## Operations
 
+### Using retrieved guidance
+
+On a maintained result, `use_guidance.next_step` tells the reader what it can do with
+the served revision. `reasons` lists every applicable reason in precedence order.
+Inspect `source_class`, `lifecycle`, `review`, `freshness.source`, `freshness.code`
+and `dispute` for the underlying facts. The first applicable rule selects the step.
+
+| Evidence                                                                                             | Next step              |
+| ---------------------------------------------------------------------------------------------------- | ---------------------- |
+| Diagnostic-only lifecycle, including a quarantined procedure                                         | `inspect_only`         |
+| Visible unresolved dispute                                                                           | `clarify_dispute`      |
+| Changed or missing source, or changed, unresolved or missing code                                    | `recheck_source`       |
+| Pending review or an attestation covering different content                                          | `obtain_review`        |
+| Unavailable required evidence, or a candidate procedure                                              | `validate_lead`        |
+| Eligible current content with a matching human attestation and applicable freshness checks satisfied | `follow_if_applicable` |
+| Other served claims, including authored claims without review and process-verified claims            | `validate_lead`        |
+
+A person or process attests to a content hash. A missing hash gives `unknown`;
+a successful read showing no verifier gives `none`. Freshness measures the source
+or code the claim describes. A fresh link alone leaves an unreviewed claim a lead.
+A reported conflict calls for investigation. When dispute evidence is unavailable,
+`dispute` is `unknown`. Optional unknown dispute coverage appears in the reasons.
+
+Hosts can validate leads against other sources and follow applicable instructions
+under their own policy. They choose the answer's audience before retrieval and enforce
+the permitted actions. Guidance adds no model call and changes neither publication nor
+procedure matching. Older servers and results without a maintained revision may omit
+the field.
+
 | Operation            | Role   | Answers                                                                                                   |
 | -------------------- | ------ | --------------------------------------------------------------------------------------------------------- |
 | `memory.history`     | viewer | Every version of a key, newest first, including tombstoned and redacted versions.                         |

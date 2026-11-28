@@ -7,8 +7,16 @@ import inspect
 import json
 import re
 
+from server.memory.api.models_loom_search import SearchOutput
+from server.memory.domain.use_guidance import guidance_for_row
 from server.transport import mcp_call, mcp_outcome, mcp_tools
-from server.transport.lean_results import DIAGNOSTIC_KEYS, lean, lean_result
+from server.transport.lean_results import (
+    DIAGNOSTIC_KEYS,
+    lean,
+    lean_pack,
+    lean_result,
+    lean_search_result,
+)
 
 # A representative loom_search payload, cut down: two fact hits, one episodic chunk, the reader paragraph, the
 # retrieval accounting. The answer is one word.
@@ -273,3 +281,43 @@ def test_loom_search_hits_drop_the_metadata_the_model_never_acts_on() -> None:
     h2 = lean_search_result(p, {}, "alice")["memory"]["results"][0]
     assert h2["namespace"] == "core-tracker" and "created_at" not in h2 and h2["valid_at"]
     assert lean_search_result(PAYLOAD, {"explain": True}, "alice") is PAYLOAD
+
+
+def test_lean_mcp_preserves_the_exact_guidance_of_each_served_item() -> None:
+    memory = guidance_for_row({"status": "conflicted"}).model_dump()
+    document = guidance_for_row(
+        {"source_class": "external"}, code_state="not_applicable"
+    ).model_dump()
+    payload = {
+        "memory": {"results": [{"memory_key": "one", "use_guidance": memory}]},
+        "knowledge": {
+            "results": [{"source_uri": "doc", "content": "claim", "use_guidance": document}]
+        },
+    }
+    full = SearchOutput.model_validate(
+        {**payload, "profile": {"error": "unavailable"}}
+    ).model_dump()
+    assert full["memory"] == payload["memory"]
+    assert full["knowledge"] == payload["knowledge"]
+    assert full["profile"] == {"error": "unavailable"}
+    assert SearchOutput(memory={"error": "unavailable", "results": []}).model_dump()["memory"] == {
+        "error": "unavailable",
+        "results": [],
+    }
+    lean_search = lean_search_result(full, {"bodies": "none"})
+    assert lean_search["memory"]["results"][0]["use_guidance"] == memory
+    assert lean_search["knowledge"]["results"][0]["use_guidance"] == document
+    context = lean_pack(
+        {
+            "rendered": "claim",
+            "use_guidance": [
+                {
+                    "section": "knowledge",
+                    "citation": "doc",
+                    "item_index": 0,
+                    "use_guidance": document,
+                }
+            ],
+        }
+    )
+    assert context["use_guidance"][0]["use_guidance"] == document

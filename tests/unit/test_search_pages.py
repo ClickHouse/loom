@@ -9,11 +9,13 @@ import pytest
 
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app import search_pages as sp
+from server.memory.app.search import guidance
+from server.memory.store.rows import IdentityKey
 from tests.unit._memory_search_pkg import patch_handler_name
 
 
 def _hit(key: str, rank: float, ns: str = "ns", session: str = "") -> _MemorySearchHit:
-    return _MemorySearchHit(
+    hit = _MemorySearchHit(
         memory_key=key,
         memory_type="semantic",
         content_excerpt=f"about {key}",
@@ -22,7 +24,18 @@ def _hit(key: str, rank: float, ns: str = "ns", session: str = "") -> _MemorySea
         rank_score=rank,
         namespace=ns,
         session_id=session,
+        version=7,
     )
+    hit._row_identity = ("writer", "user", session or "-")
+    return hit
+
+
+@pytest.fixture(autouse=True)
+def _current_heads(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def heads(keys: list[IdentityKey]) -> dict[IdentityKey, dict[str, Any]]:
+        return {key: {"version": 7, "status": "active"} for key in keys}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
 
 
 def _encode(top_k: int, candidates_total: int, tail: list[_MemorySearchHit], **lists: Any) -> str:
@@ -196,7 +209,7 @@ async def test_serve_parked_page_slices_and_hands_back_the_next_handle(monkeypat
     assert out.next_page == sp.make_handle(key, 2) and out.abstain is False
     # Every page says what the first call read and what the cap left out.
     assert out.namespaces_searched == ["n", "work"] and out.namespaces_skipped == ["home"]
-    # No retrieval ran: the only statement was the blob read.
+    # The blob reader does no new retrieval. Guidance reads the exact authorized heads.
     assert len(ch.queries) == 1 and ch.inserts == []
 
     out2 = await h.handle_memory_search(inp.model_copy(update={"page": out.next_page}))
@@ -242,7 +255,16 @@ async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatc
 
     tail = [_hit("b", 0.8, ns="n"), _hit("c", 0.7, ns="team"), _hit("d", 0.6, ns="home")]
     content = _encode(
-        3, 3, tail, namespaces_searched=["n", "team", "home"], namespaces_skipped=["team", "far"]
+        3,
+        6,
+        tail,
+        first_page=[
+            _hit("first", 1, ns="n"),
+            _hit("revoked", 1, ns="team"),
+            _hit("home", 1, ns="home"),
+        ],
+        namespaces_searched=["n", "team", "home"],
+        namespaces_skipped=["team", "far"],
     )
     key = sp.page_blob_key(content)
     patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
@@ -252,7 +274,7 @@ async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatc
     )
     out = await h.handle_memory_search(page)
     assert [(r.memory_key, r.namespace) for r in out.results] == [("b", "n"), ("d", "home")]
-    assert out.candidates_total == 2
+    assert out.candidates_total == 4
     assert out.namespaces_searched == ["n", "home"]
     assert out.namespaces_skipped == [], "neither a lost namespace nor one never readable"
     assert reads == ["o"], "one read of the caller's namespaces per page, however many"
@@ -327,3 +349,45 @@ async def test_a_page_whose_fan_out_cannot_be_read_serves_the_addressed_namespac
     )
     out = await h.handle_memory_search(page)
     assert [r.memory_key for r in out.results] == ["b"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_user", ["user", "other", None])
+async def test_narrowed_continuation_keeps_chunks_only_under_the_original_scope(
+    monkeypatch, stored_user
+):
+    from server.identity.domain.read_scope import READ_SCOPE_KEY, ReadFilters
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app import search as h
+    from server.memory.app.search import output
+
+    chunk = _hit("chunk", 0.9, ns="n")
+    chunk.source = "chunk"
+    chunk._row_identity = None
+    fact = _hit("fact", 0.8, ns="n")
+    unbound_fact = _hit("unbound", 0.7, ns="n")
+    unbound_fact._row_identity = None
+    scope = ReadFilters("own_user", "user", None)
+    monkeypatch.setattr(output, "request_scope", lambda: scope)
+    monkeypatch.setattr(guidance, "request_scope", lambda: scope)
+    if stored_user is not None:
+        monkeypatch.setattr(sp, "request_scope", lambda: ReadFilters("own_user", stored_user, None))
+    payload = json.loads(_encode(3, 3, [chunk, fact, unbound_fact]))
+    if stored_user is None:
+        payload.pop(READ_SCOPE_KEY)
+    content = json.dumps(payload)
+    _callers_namespaces(monkeypatch, ["n"])
+    patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
+    result = await h.handle_memory_search(
+        MemorySearchInput(
+            org="o",
+            namespace="n",
+            query="q",
+            top_k=3,
+            page=sp.make_handle(sp.page_blob_key(content), 0),
+        )
+    )
+
+    expected = ["chunk", "fact"] if stored_user == "user" else ["fact"]
+    assert [hit.memory_key for hit in result.results] == expected
+    assert result.candidates_total == len(expected)

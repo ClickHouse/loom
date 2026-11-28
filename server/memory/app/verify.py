@@ -40,7 +40,7 @@ from server.core.hashing import served_content_sha256
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryVerifyInput, MemoryVerifyOutput
 from server.memory.domain import trust
-from server.memory.store.rows import version_over
+from server.memory.store.rows import identity_key, version_over
 from server.operations.base import Role
 
 if TYPE_CHECKING:
@@ -185,7 +185,7 @@ async def handle_memory_verify(input: MemoryVerifyInput) -> MemoryVerifyOutput:
     # embeddings mirror (a FINAL read of the row's vector plus a second committed insert,
     # best-effort by contract) runs after this answer on the request's loop, and the next
     # embedding write covers a loss. Three chained round trips (~11 s p50) become one.
-    _schedule_mirror(row, verified=not input.revoke)
+    _schedule_mirror(row, verified=not input.revoke, version=version, content_sha256=sha)
 
     after = trust.verification_state(actor, verified_sha, sha)
     log.info(
@@ -211,16 +211,21 @@ async def handle_memory_verify(input: MemoryVerifyInput) -> MemoryVerifyOutput:
     )
 
 
-def _schedule_mirror(row: MemoryRow, *, verified: bool) -> None:
+def _schedule_mirror(row: MemoryRow, *, verified: bool, version: int, content_sha256: str) -> None:
     """Run the embeddings mirror after the response (drained at shutdown)."""
     from server.memory.app import after_write
 
     after_write.schedule(
-        _mirror_verified_to_embeddings(row, verified=verified), name="memory.verify.mirror"
+        _mirror_verified_to_embeddings(
+            row, verified=verified, version=version, content_sha256=content_sha256
+        ),
+        name="memory.verify.mirror",
     )
 
 
-async def _mirror_verified_to_embeddings(row: MemoryRow, *, verified: bool) -> None:
+async def _mirror_verified_to_embeddings(
+    row: MemoryRow, *, verified: bool, version: int, content_sha256: str
+) -> None:
     """Re-emit the key's live embedding rows with `verified` set so trust-aware ranking
     sees the attestation: every column and the stored vectors carried (no re-embed).
     Best-effort: the attestation on loom.memory is the source of truth; a miss here
@@ -231,15 +236,20 @@ async def _mirror_verified_to_embeddings(row: MemoryRow, *, verified: bool) -> N
     if not is_embedded(row.memory_type, row.sensitivity):  # a 'high' head keeps no vector
         return
     try:
-        await memory_repo.reemit_embedding_rows_for_key(
-            row.org,
-            row.namespace,
-            row.agent,
-            row.user_id,
-            row.session_id,
-            row.memory_key,
+        key = identity_key(row)
+        await memory_repo.reemit_embedding_rows_for_keys(
+            [
+                (
+                    key,
+                    {
+                        "verified": 1 if verified else 0,
+                        "version": version,
+                        "expires_at": row.expires_at,
+                    },
+                )
+            ],
             ch=get_client(),
-            verified=1 if verified else 0,
+            of_content={key: content_sha256},
         )
     except Exception as e:  # noqa: BLE001 — the ranking mirror is best-effort
         log.warning("memory.verify: embedding mirror failed (non-fatal): %s", e)

@@ -63,6 +63,7 @@ _RECALL_HIT_FIELDS = (
     "source_class",
     "source_resource_id",
     "verified",
+    "use_guidance",
     "valid_at",
     "created_at",
     "below_threshold",

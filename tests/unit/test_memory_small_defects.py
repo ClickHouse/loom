@@ -89,6 +89,7 @@ async def test_list_by_score_drops_the_wildcard_axes_and_keeps_the_named_ones(mo
     assert "session_id = {sid:String}" in sql and params["sid"] == "-"
     assert "agent, user_id, session_id," in sql, "the writer columns ride the score read"
     assert [e.agent for e in out.entries] == ["reviewer", "bot"] and out.total == 2
+    assert out.rows_read == 2, "a client pages by the rows the score read returned"
 
     ch.calls.clear()
     await mq._handle_memory_list(

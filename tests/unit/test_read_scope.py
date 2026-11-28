@@ -165,6 +165,15 @@ def test_pinned_user_fills_an_absent_body_user_and_narrows():
     assert (rf.scope, rf.user_id) == ("own_user", "alice")
 
 
+def test_an_end_user_token_fills_an_absent_user_and_refuses_the_wildcard():
+    # the dashboard's legacy-hit lookup sends no user to such a token, never `*`
+    auth = _auth(read_scope="own_user", read_user_id="alice", subject="user:alice")
+    rf = resolve_read_filters(requested=None, user_id="-", session_id="*", auth=auth)
+    assert (rf.scope, rf.user_id, rf.session_id) == ("own_user", "alice", "*")
+    with pytest.raises(AuthInsufficientError):
+        resolve_read_filters(requested=None, user_id="*", session_id="*", auth=auth)
+
+
 def test_pinned_user_refuses_a_body_naming_another_user():
     auth = _auth(read_user_id="alice")
     with pytest.raises(AuthInsufficientError):

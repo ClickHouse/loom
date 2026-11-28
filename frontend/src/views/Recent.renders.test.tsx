@@ -26,6 +26,8 @@ const entry = (memory_key: string): MemoryListEntry => ({
   pinned: false,
   tags: ["alerts"],
   agent: "claude-desktop",
+  user_id: "user",
+  session_id: "one",
   value: `value of ${memory_key}`,
 });
 
@@ -46,6 +48,10 @@ vi.mock("../api", async (importOriginal) => {
     searchMemory: vi.fn(async () => ({
       results: [
         {
+          agent: "claude-desktop",
+          user_id: "user",
+          session_id: "one",
+          version: 1,
           memory_key: "coffee_pref",
           memory_type: "semantic",
           content_excerpt: "prefers oat milk in coffee",

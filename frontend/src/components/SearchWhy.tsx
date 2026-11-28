@@ -1,6 +1,7 @@
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Popover } from "@clickhouse/click-ui/Popover";
 import type { SearchHit } from "../api";
+import { GuidanceLabel } from "./GuidanceLabel";
 import { IconButton } from "./IconButton";
 import { PopoverTrigger } from "./ui/Menu";
 import { termText, whyTerms } from "../lib/whyNote";
@@ -71,6 +72,12 @@ function Ranked({ hit, rank }: { hit: SearchHit; rank: number }) {
     .trim();
   return (
     <>
+      {hit.use_guidance && (
+        <>
+          {hit.content_excerpt?.trim() && <p>Matched text: {hit.content_excerpt}</p>}
+          <GuidanceLabel hit={hit} reasons />
+        </>
+      )}
       <p className="flex flex-wrap gap-x-2">
         <span className="font-medium text-text">#{rank}</span>
         {similarity !== null && <span>similarity {similarity}</span>}

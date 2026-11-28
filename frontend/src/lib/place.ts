@@ -19,6 +19,11 @@ export interface InspectedOwner {
   session_id: string;
 }
 
+export interface InspectedScope {
+  namespace?: string;
+  exact: boolean;
+}
+
 export interface Place {
   scrollTop: number;
   /** The `data-focus-key` of the element that had focus; null when nothing keyed did. */
@@ -28,6 +33,7 @@ export interface Place {
   inspectedAgent: string;
   /** The user and session it was read under; null for the caller's own. */
   inspectedOwner: InspectedOwner | null;
+  inspectedScope?: InspectedScope | null;
 }
 
 /** How long a restore waits for the page to draw what it restores (a lazy chunk, a list
@@ -57,7 +63,7 @@ function mainElement(): HTMLElement | null {
  *  Back should focus when the focused one is not it (a popover link that opened the jump,
  *  where Back should land on the chip that opened the popover). */
 export function rememberPlace(
-  inspected: { key: string | null; agent: string; owner?: InspectedOwner | null },
+  inspected: { key: string | null; agent: string; owner?: InspectedOwner | null; scope?: InspectedScope | null },
   focusKey?: string | null,
 ): void {
   if (typeof window === "undefined") return;
@@ -69,6 +75,7 @@ export function rememberPlace(
     inspected: inspected.key,
     inspectedAgent: inspected.agent,
     inspectedOwner: inspected.owner ?? null,
+    inspectedScope: inspected.scope ?? null,
   };
   patchEntry({ loomPlace: place });
 }
@@ -81,19 +88,39 @@ export function readPlace(state: unknown): Place | null {
   const r = p as Record<string, unknown>;
   return {
     scrollTop: typeof r.scrollTop === "number" ? r.scrollTop : 0,
-    focusKey: typeof r.focusKey === "string" ? r.focusKey : null,
-    inspected: typeof r.inspected === "string" ? r.inspected : null,
-    inspectedAgent: typeof r.inspectedAgent === "string" ? r.inspectedAgent : "",
+    focusKey: text(r.focusKey) ?? null,
+    inspected: text(r.inspected) ?? null,
+    inspectedAgent: text(r.inspectedAgent) ?? "",
     inspectedOwner: owner(r.inspectedOwner),
+    inspectedScope: inspectionScope(r.inspectedScope),
   };
 }
 
+const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+
+function inspectionScope(v: unknown): InspectedScope | null {
+  const o = (v ?? {}) as Partial<InspectedScope>;
+  return typeof o.exact === "boolean" ? { namespace: text(o.namespace), exact: o.exact } : null;
+}
+
 function owner(v: unknown): InspectedOwner | null {
-  if (!v || typeof v !== "object") return null;
-  const o = v as Record<string, unknown>;
-  return typeof o.user_id === "string" && typeof o.session_id === "string"
-    ? { user_id: o.user_id, session_id: o.session_id }
-    : null;
+  const o = (v ?? {}) as Partial<InspectedOwner>;
+  const user_id = text(o.user_id);
+  const session_id = text(o.session_id);
+  return user_id !== undefined && session_id !== undefined ? { user_id, session_id } : null;
+}
+
+/** How the entry's `?memory=` link was opened: the writer agent, user and session and the
+ *  namespace it was read in, as `inspect` stamped them. An entry that remembers none of it
+ *  (an older one, or a bare link) opens the key under every agent, as before. */
+export function readInspect(key: string): Pick<Place, "inspectedAgent" | "inspectedOwner" | "inspectedScope"> {
+  const r = (stateRecord().loomInspect ?? {}) as Record<string, unknown>;
+  const mine = r.key === key;
+  return {
+    inspectedAgent: (mine && text(r.agent)) || "*",
+    inspectedOwner: mine ? owner(r.owner) : null,
+    inspectedScope: mine ? inspectionScope(r.scope) : null,
+  };
 }
 
 /** The label of the entry the current one was reached from ("memory api/rate-limit"), set
@@ -109,7 +136,7 @@ const FOCUSABLE = "a[href], button, input, select, textarea, [tabindex]";
 /** The element a focus key names, or inside it the row's open button (a list row is
  *  keyed; its stretched `data-row-open` button takes the focus, not its checkbox), else
  *  the first focusable. */
-function keyedTarget(key: string): HTMLElement | null {
+export function keyedTarget(key: string): HTMLElement | null {
   const el = document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`);
   if (!el) return null;
   if (el.matches(FOCUSABLE)) return el;

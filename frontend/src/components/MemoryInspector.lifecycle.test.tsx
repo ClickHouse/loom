@@ -125,6 +125,27 @@ afterEach(() => {
 });
 
 describe("MemoryInspector lifecycle actions", () => {
+  it.each([{ agent: "other-agent" }, { user_id: "other-user" }, { session_id: "-" }])(
+    "hides a namesake returned by a writer-checked lookup (%j)",
+    async (otherWriter) => {
+      vi.mocked(api.getMemory).mockResolvedValue({ ...LIVE, ...otherWriter });
+      render(
+        <MemoryInspector identity={row} memoryKey="coffee_pref" verifyWriter onClose={() => {}} onChanged={() => {}} />,
+      );
+      expect(await screen.findByText(/Memory not found/)).toBeInTheDocument();
+      expect(screen.queryByText("oat milk, no sugar")).toBeNull();
+      expect(api.getMemory).toHaveBeenCalledWith(row, "coffee_pref", { include_recall_breakdown: true });
+    },
+  );
+
+  it("shows the selected row when the lookup returns its writer", async () => {
+    vi.mocked(api.getMemory).mockResolvedValue(LIVE);
+    render(
+      <MemoryInspector identity={row} memoryKey="coffee_pref" verifyWriter onClose={() => {}} onChanged={() => {}} />,
+    );
+    expect(await screen.findByText("oat milk, no sugar")).toBeInTheDocument();
+  });
+
   it("shows a viewer each lifecycle action unavailable, with the role it needs, and sends nothing", async () => {
     await open("viewer");
     const list = await menu();

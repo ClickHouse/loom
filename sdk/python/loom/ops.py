@@ -6000,7 +6000,7 @@ class CodeCallersBody(TypedDict, total=False):
 
 
 class CodeCallersOutput(TypedDict, total=False):
-    lessons: NotRequired[list[dict[str, Any]]]
+    lessons: NotRequired[list["CodeLesson"]]
     lessons_left_out: NotRequired[int]
     edges: Required[list["CodeEdgeWire"]]
     seed_symbols: Required[list[str]]
@@ -6022,6 +6022,86 @@ class CodeCallersOutput(TypedDict, total=False):
     by_hop_counts: NotRequired[dict[str, int]]
     candidate_sites: NotRequired[Optional["CodeCandidateSitesWire"]]
     trace_run_id: NotRequired[str]
+
+
+class CodeLesson(TypedDict, total=False):
+    memory_key: NotRequired[str]
+    namespace: NotRequired[str]
+    excerpt: NotRequired[str]
+    code_state: NotRequired[str]
+    path: NotRequired[str]
+    changed_since: NotRequired[str]
+    supersedes_key: NotRequired[str]
+    suggestion: NotRequired[str]
+    owner_symbol: NotRequired[str]
+    linked_symbols: NotRequired[list[str]]
+    use_guidance: NotRequired["UseGuidance"]
+
+
+class UseGuidance(TypedDict, total=False):
+    next_step: Required[
+        Literal[
+            "inspect_only",
+            "clarify_dispute",
+            "recheck_source",
+            "obtain_review",
+            "validate_lead",
+            "follow_if_applicable",
+        ]
+    ]
+    reasons: Required[
+        list[
+            Literal[
+                "diagnostic_only",
+                "dispute_unresolved",
+                "source_recheck_needed",
+                "code_recheck_needed",
+                "review_pending",
+                "review_hash_mismatch",
+                "required_evidence_unknown",
+                "procedure_candidate",
+                "human_review_current",
+                "process_review_current",
+                "no_attestation",
+                "review_unknown",
+                "source_asserted",
+                "source_unchanged",
+                "code_unchanged",
+                "freshness_unknown",
+                "dispute_unknown",
+            ]
+        ]
+    ]
+    source_class: Required[
+        Literal["asserted", "extracted", "observed", "derived", "imported", "external", "unknown"]
+    ]
+    lifecycle: Required["GuidanceLifecycle"]
+    review: Required[Literal["human", "process", "stale", "none", "unknown"]]
+    freshness: Required["GuidanceFreshness"]
+    dispute: Required[Literal["unresolved", "none", "unknown"]]
+
+
+class GuidanceLifecycle(TypedDict, total=False):
+    status: Required[str]
+    procedure_status: Required[
+        Literal[
+            "candidate",
+            "exercised",
+            "authored",
+            "quarantined",
+            "template",
+            "not_applicable",
+            "unknown",
+        ]
+    ]
+    review_requirement: Required[Literal["pending", "none", "unknown"]]
+
+
+class GuidanceFreshness(TypedDict, total=False):
+    source: Required[Literal["unchanged", "changed", "missing", "not_applicable", "unknown"]]
+    code: Required[
+        Literal["fresh", "moved", "changed", "unresolved", "missing", "not_applicable", "unknown"]
+    ]
 
 
 class CodeEdgeWire(TypedDict, total=False):
@@ -6105,7 +6185,7 @@ class CodeContextPackBody(TypedDict, total=False):
 
 
 class CodeContextPackOutput(TypedDict, total=False):
-    lessons: NotRequired[list[dict[str, Any]]]
+    lessons: NotRequired[list["CodeLesson"]]
     lessons_left_out: NotRequired[int]
     context: Required[str]
     tokens_used: Required[int]
@@ -6471,7 +6551,7 @@ class CodeUnit(TypedDict, total=False):
     score: NotRequired[float]
     recent_prs: NotRequired[list[dict[str, Any]]]
     examples: NotRequired[list[dict[str, Any]]]
-    lessons: NotRequired[list[dict[str, Any]]]
+    lessons: NotRequired[list["CodeLesson"]]
     lessons_unread: NotRequired[bool]
     churn: NotRequired[int]
     amp: NotRequired[int]
@@ -6550,7 +6630,7 @@ class CodeEnclosingBody(TypedDict, total=False):
 
 
 class CodeEnclosingOutput(TypedDict, total=False):
-    lessons: NotRequired[list[dict[str, Any]]]
+    lessons: NotRequired[list["CodeLesson"]]
     lessons_left_out: NotRequired[int]
     results: Required[list[dict[str, Any]]]
     resolved: Required[int]
@@ -6751,7 +6831,7 @@ class CodeGrepBody(TypedDict, total=False):
 
 
 class CodeGrepOutput(TypedDict, total=False):
-    lessons: NotRequired[list[dict[str, Any]]]
+    lessons: NotRequired[list["CodeLesson"]]
     lessons_left_out: NotRequired[int]
     matches: Required[list[dict[str, Any]]]
     related: NotRequired[Optional["RelatedGrepEvidence"]]
@@ -6896,7 +6976,7 @@ class CodeImpactBody(TypedDict, total=False):
 
 
 class CodeImpactOutput(TypedDict, total=False):
-    lessons: NotRequired[list[dict[str, Any]]]
+    lessons: NotRequired[list["CodeLesson"]]
     lessons_left_out: NotRequired[int]
     impacted_symbols: Required[list[dict[str, Any]]]
     impacted_tests: Required[list[dict[str, Any]]]
@@ -7163,7 +7243,7 @@ class CodeOutlineBody(TypedDict, total=False):
 
 
 class CodeOutlineOutput(TypedDict, total=False):
-    lessons: NotRequired[list[dict[str, Any]]]
+    lessons: NotRequired[list["CodeLesson"]]
     lessons_left_out: NotRequired[int]
     path: Required[str]
     entries: Required[list[dict[str, Any]]]
@@ -7302,7 +7382,7 @@ class CodeReadBody(TypedDict, total=False):
 
 
 class CodeReadOutput(TypedDict, total=False):
-    lessons: NotRequired[list[dict[str, Any]]]
+    lessons: NotRequired[list["CodeLesson"]]
     lessons_left_out: NotRequired[int]
     results: Required[list["CodeReadRange"]]
     as_of: Required[dict[str, Any]]
@@ -7911,7 +7991,7 @@ class CodeSearchBody(TypedDict, total=False):
 
 
 class CodeSearchOutput(TypedDict, total=False):
-    lessons: NotRequired[list[dict[str, Any]]]
+    lessons: NotRequired[list["CodeLesson"]]
     lessons_left_out: NotRequired[int]
     results: Required[list["CodeUnit"]]
     route: Required[str]
@@ -8863,6 +8943,7 @@ class ContextPackOutput(TypedDict, total=False):
     rendered: Required[str]
     sections: Required[dict[str, str]]
     blocks: NotRequired[list["ContextBlock"]]
+    use_guidance: NotRequired[list["ContextUseGuidance"]]
     section_meta: NotRequired[dict[str, dict[str, Any]]]
     section_count: Required[int]
     truncated: NotRequired[bool]
@@ -8886,6 +8967,13 @@ class ContextBlock(TypedDict, total=False):
     priority: NotRequired[int]
     truncated: NotRequired[bool]
     source_count: NotRequired[int]
+
+
+class ContextUseGuidance(TypedDict, total=False):
+    section: Required[str]
+    citation: Required[str]
+    item_index: Required[int]
+    use_guidance: Required["UseGuidance"]
 
 
 class ConversationAppendInput(TypedDict, total=False):
@@ -11894,6 +11982,7 @@ class KnowledgeSearchOutput(TypedDict, total=False):
 
 
 class SearchHit(TypedDict, total=False):
+    use_guidance: NotRequired[Optional["UseGuidance"]]
     source_uri: Required[str]
     chunk_idx: Required[int]
     content: Required[str]
@@ -13039,6 +13128,7 @@ class MemorySearchHit(TypedDict, total=False):
     superseded_by: NotRequired[Optional[str]]
     superseded_at: NotRequired[Optional[str]]
     version: NotRequired[int]
+    version_text: NotRequired[str]
     created_at: NotRequired[str]
     namespace: NotRequired[str]
     code_state: NotRequired[
@@ -13051,6 +13141,7 @@ class MemorySearchHit(TypedDict, total=False):
     source_resource_id: NotRequired[str]
     source_class: NotRequired[str]
     verified: NotRequired[bool]
+    use_guidance: NotRequired[Optional["UseGuidance"]]
     explanation: NotRequired[str]
     session_id: NotRequired[str]
     speaker: NotRequired[str]
@@ -14169,6 +14260,7 @@ class MemoryForFileHit(TypedDict, total=False):
     code_state: NotRequired[
         Union[Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal[""]]
     ]
+    use_guidance: NotRequired[Optional["UseGuidance"]]
     code_moved: NotRequired[list["CodeLink"]]
 
 
@@ -14851,6 +14943,7 @@ class MemoryListBody(TypedDict, total=False):
 class MemoryListOutput(TypedDict, total=False):
     entries: Required[list["MemoryListEntry"]]
     truncated: Required[bool]
+    rows_read: NotRequired[int]
     total: NotRequired[int]
     today: NotRequired[int]
     namespace_version: NotRequired[str]
@@ -16461,6 +16554,7 @@ class MemoryStackOutput(TypedDict, total=False):
 
 
 class StackEntry(TypedDict, total=False):
+    use_guidance: NotRequired[Optional["UseGuidance"]]
     section: Required[Literal["profile", "pinned", "recent_recall", "procedure", "knowledge"]]
     memory_key: NotRequired[str]
     memory_type: NotRequired[str]
@@ -18859,6 +18953,7 @@ class ProcedureMatchOutput(TypedDict, total=False):
 
 
 class ProcedureMatch(TypedDict, total=False):
+    use_guidance: NotRequired[Optional["UseGuidance"]]
     name: Required[str]
     situation: Required[str]
     steps: Required[list[str]]
@@ -19480,8 +19575,8 @@ class SearchQueryOutput(TypedDict, total=False):
 
     tracker: NotRequired[Optional[dict[str, Any]]]
     live: NotRequired[Optional["LiveSearchResults"]]
-    memory: NotRequired[dict[str, Any]]
-    knowledge: NotRequired[dict[str, Any]]
+    memory: NotRequired["SearchSection"]
+    knowledge: NotRequired["SearchSection"]
     profile: NotRequired[dict[str, Any]]
     conversations: NotRequired[dict[str, Any]]
     withheld: NotRequired[Optional[dict[str, Any]]]
@@ -19504,6 +19599,9 @@ class LiveSearchHit(TypedDict, total=False):
     provider: Required[Literal["gdrive", "notion", "linear"]]
     content: NotRequired[str]
     live: NotRequired[Literal[True]]
+
+
+SearchSection = dict[str, Any]
 
 
 class SessionBriefDeleteInput(TypedDict, total=False):

@@ -140,14 +140,14 @@ def _explained(arguments: dict[str, Any] | None) -> bool:
 # breakpoints acts on, and that harness calls /v1/context.pack (the plugin
 # hooks do). Untrimmed, a pack of tokens_estimate ~1,000 costs ~3,600
 # response tokens over MCP.
-PACK_KEEP: tuple[str, ...] = ("rendered", "truncated")
+PACK_KEEP: tuple[str, ...] = ("rendered", "truncated", "use_guidance")
 
 
 def lean_pack(payload: Any) -> Any:
     """The MCP shape of a context.pack: the rendered bundle once, the
-    citations of its blocks (deduplicated, in pack order), `truncated` when
-    set, and the memory section's abstain / retrieval_risk verdict — the
-    one piece of section accounting a reader acts on."""
+    citations of its blocks (deduplicated, in pack order), guidance for
+    rendered items, `truncated` when set, and the memory section's abstain / retrieval_risk verdict.
+    """
     if not isinstance(payload, dict) or "rendered" not in payload:
         return payload
     out: dict[str, Any] = {k: payload[k] for k in PACK_KEEP if payload.get(k)}

@@ -78,3 +78,12 @@ def test_relocated_code_links_round_trip() -> None:
     }
     assert _parse_search_hit(base | {"code_moved": [link]}).code_moved == [link]
     assert _parse_search_hit(base).code_moved == []
+
+
+def test_the_exact_revision_reaches_the_hit() -> None:
+    base = {"memory_key": "k", "memory_type": "semantic", "content_excerpt": "x"}
+    base |= {"distance": 0.1, "similarity": 0.9}
+    assert _parse_search_hit(base | {"version_text": "9007199254740993"}).version_text == (
+        "9007199254740993"
+    )
+    assert _parse_search_hit(base).version_text == ""

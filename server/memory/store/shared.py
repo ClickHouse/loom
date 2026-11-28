@@ -13,15 +13,16 @@ let the two go out of sync.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from server.core.repo_base import _CHClient, _default_client
+from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.core.rmt_carry import register
 from server.memory.domain.definitions import DEFINITION_KEY_PREFIX
 from server.memory.domain.memory_types import DEFINITION
 from server.memory.domain.search_types import SHARED_AGENT
-from server.memory.store.sql import _SEQUENTIAL
+from server.memory.store.sql import _SEQUENTIAL, read_your_writes_enabled
 
 # Every persisted column of loom.shared, in DDL order. `ch.insert` takes its
 # column list from the row, and FINAL serves the DDL default of a column the
@@ -193,6 +194,27 @@ async def repair_shared_embeddings(
             mark(False)
             written.append(row)
     return written
+
+
+async def guidance_heads(
+    org: str, keys: Sequence[tuple[str, str]]
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Current lifecycle of shared rows named by the authorized search window."""
+    if not keys:
+        return {}
+    rows = await query_all_sliced(
+        _default_client(),
+        f"""
+        SELECT namespace, memory_key, version, superseded_by, tombstoned_at
+        FROM loom.shared FINAL
+        PREWHERE org = {{org:String}}
+          AND (namespace, memory_key) IN {{keys:Array(Tuple(String, String))}}
+        {_SEQUENTIAL if read_your_writes_enabled() else ""}
+        """,
+        {"org": org, "keys": sorted(set(keys))},
+        "keys",
+    )
+    return {(str(r["namespace"]), str(r["memory_key"])): r for r in rows}
 
 
 async def fetch_shared(

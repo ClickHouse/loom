@@ -22,6 +22,7 @@ from server.memory.api.models_context import ContextPackInput
 from server.memory.api.models_lifecycle import _StackEntry
 from server.memory.app import context_pack, stack, stack_knowledge
 from server.memory.domain.context_layout import _DEFAULT_SECTION_TOKENS
+from server.memory.domain.use_guidance import guidance_for_row
 from server.settings import settings
 
 
@@ -112,6 +113,10 @@ def world(monkeypatch):
             tags=[],
             distance=0.1,
             similarity=0.9,
+            use_guidance=guidance_for_row(
+                {"source_class": "imported" if name.startswith("private") else "asserted"},
+                code_state="not_applicable",
+            ),
         )
 
     class Renderer:
@@ -172,8 +177,11 @@ def world(monkeypatch):
             "private-stack" * (50 if large and private else 1) if private else "ordinary-stack",
             [],
             0.1,
+            source_class="imported" if private else "asserted",
         )
-        ordinary = ChunkHit("docs", "ordinary-stack", 0, "ordinary-stack", [], 0.2)
+        ordinary = ChunkHit(
+            "docs", "ordinary-stack", 0, "ordinary-stack", [], 0.2, source_class="asserted"
+        )
         knowledge = stack_knowledge.StackKnowledge(
             [mixed], [ordinary], SearchProofs(plan, "fake", (items["stack"],)) if private else None
         )
@@ -188,11 +196,19 @@ async def test_loss_of_either_pool_rebuilds_the_entire_ordinary_pack(world, pool
     checked = world.build()
     mixed = await checked.current()
     assert "private-direct" in mixed.rendered and "private-stack" in mixed.rendered
+    assert [item.use_guidance.source_class for item in mixed.use_guidance] == [
+        "imported",
+        "imported",
+    ]
     world.state.revoked.add(pool)
     actual = await checked.current()
     expected = await world.build(private=False).current()
     assert actual.model_dump() == expected.model_dump()
     assert actual._served_rows == expected._served_rows
+    assert [item.use_guidance.source_class for item in actual.use_guidance] == [
+        "asserted",
+        "asserted",
+    ]
     assert checked.lost and checked.fresh()
     assert world.state.renders == ["ordinary-direct"]
     assert (await checked.current()).model_dump() == expected.model_dump()
@@ -333,3 +349,47 @@ async def test_accounting_wait_cannot_publish_a_mixed_pack_after_either_pool_cha
     with pytest.raises(request_tail.RequiredTailError):
         await request_tail.RequestTailMiddleware(app)({"type": "http"}, None, send)
     assert sent == [] and world.state.renders == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("section", ["pinned", "recent"])
+async def test_stack_excludes_mirror_rows_without_matching_postgres_heads(monkeypatch, section):
+    from server.memory.api.models_lifecycle import MemoryStackInput
+    from server.memory.app import for_file
+
+    row = {
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": "k",
+        "memory_id": "memory",
+        "version": 10,
+        "value": '"stale text"',
+    }
+
+    class Mirror:
+        async def query_all(self, sql, **kwargs):
+            return [row]
+
+    async def heads(keys):
+        assert keys == [("o", "n", "a", "-", "-", "k")]
+        return {keys[0]: {"version": 11}}
+
+    monkeypatch.setattr(for_file.pg, "enabled", lambda: True)
+    monkeypatch.setattr(for_file.memory_reads, "guidance_heads", heads)
+    fill = stack._StackFill(budget=100)
+    reader = stack._stack_pinned if section == "pinned" else stack._stack_recent
+    await reader(Mirror(), MemoryStackInput(org="o", namespace="n", agent="a"), fill)
+    assert fill.entries == []
+
+
+@pytest.mark.asyncio
+async def test_stack_guidance_recognizes_quarantined_and_candidate_procedures():
+    rows = [
+        {"memory_type": "procedural", "status": "active", "value": '{"quarantined": {}}'},
+        {"memory_type": "procedural", "status": "active", "value": '{"tags": ["mined"]}'},
+    ]
+    guidance = await stack.recall_guidance_for_rows("o", rows)
+    assert [item.lifecycle.procedure_status for item in guidance] == ["quarantined", "candidate"]
+    assert [item.next_step for item in guidance] == ["inspect_only", "validate_lead"]

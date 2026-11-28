@@ -26,11 +26,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from server.core import pg
 from server.core.datetimes import naive_utc_now
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import READ_SCOPE_KEY, stored_read_scope
 from server.memory.domain.search_types import RowKey, hit_row_key
 from server.settings import settings
 
@@ -62,19 +65,18 @@ def split_tail(pool: list[Any], final: list[Any]) -> tuple[int, list[Any]]:
 
 def _parked(hit: Any) -> dict[str, Any]:
     """A hit as a page stores it, with what a later page's checks read, off the wire: the
-    row's identity, which tells a shared definition, and under the Postgres authority what
-    its check reads (`row_chunk`, `row_version`, `chunk_typed`)."""
+    row's identity and revision, plus Postgres chunk validation fields."""
     if not hasattr(hit, "model_dump"):
-        return dict(hit)
-    out: dict[str, Any] = hit.model_dump()
+        return {key: value for key, value in dict(hit).items() if key != "use_guidance"}
+    out: dict[str, Any] = hit.model_dump(exclude={"use_guidance"})
     if getattr(hit, "_row_identity", None) is not None:
         out["row_identity"] = list(hit._row_identity)
-    if not pg.enabled():
-        return out
-    if getattr(hit, "_row_chunk", None) is not None:
+    if pg.enabled() and getattr(hit, "_row_chunk", None) is not None:
         out["row_chunk"] = list(hit._row_chunk)
     if getattr(hit, "_row_version", 0):
         out["row_version"] = int(hit._row_version)
+    if hit._guidance_content_sha256:
+        out["guidance_content_sha256"] = hit._guidance_content_sha256
     if getattr(hit, "_chunk_typed", False):
         out["chunk_typed"] = True
     return out
@@ -86,9 +88,11 @@ def unparked(row: dict[str, Any]) -> _MemorySearchHit | None:
     from server.memory.api.models_search import _MemorySearchHit
 
     r = dict(row)
+    r.pop("use_guidance", None)
     identity, chunk = r.pop("row_identity", None), r.pop("row_chunk", None)
     row_version = int(r.pop("row_version", 0) or 0)
     chunk_typed = bool(r.pop("chunk_typed", False))
+    digest = str(r.pop("guidance_content_sha256", "") or "")
     try:
         hit = _MemorySearchHit.model_validate(r)
     except Exception:  # noqa: BLE001 — a row this build cannot read is skipped
@@ -99,6 +103,7 @@ def unparked(row: dict[str, Any]) -> _MemorySearchHit | None:
         hit._row_chunk = tuple(chunk)
     hit._row_version = row_version
     hit._chunk_typed = chunk_typed
+    hit._guidance_content_sha256 = digest
     return hit
 
 
@@ -111,6 +116,7 @@ def encode_page(
     namespaces_searched: list[str],
     namespaces_skipped: list[str],
     replay: bool = False,
+    first_page: Sequence[Any] = (),
 ) -> str:
     """`replay`: the search was an `as_of` replay, whose pages the Postgres authority does
     not check (`pg_validation`)."""
@@ -123,7 +129,18 @@ def encode_page(
         "namespaces_searched": namespaces_searched,
         "namespaces_skipped": namespaces_skipped,
         "hits": hits,
+        READ_SCOPE_KEY: stored_read_scope(request_scope()),
     }
+    if first_page:
+        # Scope metadata lets later pages count the original hits without keeping their text.
+        page["first_page_scope"] = [
+            {
+                "namespace": hit.namespace,
+                "row_identity": hit._row_identity,
+                "source": hit.source,
+            }
+            for hit in first_page
+        ]
     if replay:
         page["replay"] = True
     return json.dumps(

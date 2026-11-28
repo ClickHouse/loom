@@ -8,6 +8,7 @@ import logging
 import re
 from typing import Any
 
+from server.core.hashing import hash_text
 from server.core.vectors.private_first import each
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app.search.context import SearchContext
@@ -367,6 +368,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                     memory_key=mk,
                     memory_type=str(row.get("memory_type") or "semantic"),
                     version=int(row.get("version") or 0),
+                    status=str(row.get("status") or ""),
                     content_excerpt=str(row.get("content_excerpt") or ""),
                     distance=1.0 - sim,
                     similarity=sim,
@@ -383,6 +385,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 )
                 _stamp_row_tags(hit, row.get("tags"))
                 hit._row_identity = row_identity(row)
+                hit._row_content_sha256 = hash_text(row.get("content_sha256"))
                 seen.setdefault((ns, mk), []).append(hit)
                 pooled.add(row_key)
                 ctx.all_hits.append(hit)

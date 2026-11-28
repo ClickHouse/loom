@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -157,6 +158,133 @@ async def test_fast_budget_spends_no_llm_call(search_env) -> None:
     out = await _run(search_env, retrieval_budget="fast", top_k=1)
     assert search_env.judge_calls == []
     assert out.retrieval_work["llm_calls_total"] == 0
+
+
+@pytest.mark.parametrize(
+    "unavailable_head", [{"tombstoned_at": "now"}, {"expires_at": "2000-01-01"}]
+)
+async def test_verdict_abstains_when_guidance_drops_the_last_hit(
+    search_env, monkeypatch: pytest.MonkeyPatch, unavailable_head: dict[str, str]
+) -> None:
+    from server.memory.app.search import guidance
+
+    hit = replace(_svc_hit("blue", sim=0.95), identity=("a", "-", "-"), version=42)
+    search_env.hits = [hit]
+    head: dict[str, Any] = {"version": hit.version, "status": "active"}
+
+    async def heads(keys):
+        assert keys == [("o", "ns", "a", "-", "-", "blue")]
+        return {keys[0]: head}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    monkeypatch.setattr(guidance, "naive_utc_now", lambda: datetime(2000, 1, 2))
+    live = await _run(search_env)
+    assert [row.memory_key for row in live.results] == ["blue"]
+    assert not live.abstain and live.retrieval_confidence > 0
+
+    head.update(unavailable_head)
+    unavailable = await _run(search_env)
+    assert unavailable.results == []
+    assert unavailable.abstain and unavailable.abstain_code == "no_match"
+    assert unavailable.retrieval_confidence == 0.0 and unavailable.retrieval_risk == "abstain"
+
+
+async def test_verdict_keeps_belief_support_for_a_retained_hit(search_env, monkeypatch) -> None:
+    from server.memory.app.search import evidence_support, guidance
+
+    retained = _svc_hit("retained", sim=0.75)
+    removed = replace(_svc_hit("removed", sim=0.95), identity=("a", "-", "-"), version=42)
+
+    async def heads(keys):
+        return {keys[0]: {"version": 42, "tombstoned_at": "now"}}
+
+    async def support(sql, params):
+        return [{"n": int(("ns", "retained") in params["keys"])}]
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    monkeypatch.setattr(evidence_support, "get_client", lambda: SimpleNamespace(query_all=support))
+    search_env.hits = [retained]
+    baseline = await _run(search_env)
+    search_env.hits = [removed, retained]
+    result = await _run(search_env)
+
+    assert [row.memory_key for row in result.results] == ["retained"]
+    assert result.retrieval_confidence == baseline.retrieval_confidence
+    assert "evidence_support=1" in baseline.calibration_explanation
+    assert result.calibration_explanation == baseline.calibration_explanation
+
+
+async def test_verdict_uses_the_retained_excerpt_when_bodies_are_omitted(search_env, monkeypatch):
+    from server.memory.app.search import guidance
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_identifier_grounding", True)
+    retained = replace(_svc_hit("retained", sim=0.85), content_excerpt="PR 123 needs review")
+    removed = replace(_svc_hit("removed", sim=0.95), identity=("a", "-", "-"), version=42)
+
+    async def heads(keys):
+        return {keys[0]: {"version": 42, "tombstoned_at": "now"}}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    search_env.hits = [removed, retained]
+    result = await _run(search_env, query="PR 123", bodies="none")
+
+    assert [(hit.memory_key, hit.content_excerpt) for hit in result.results] == [("retained", "")]
+    assert not result.abstain
+
+
+async def test_belief_support_binds_exact_namespace_and_key_pairs(monkeypatch) -> None:
+    from server.memory.app.search import evidence_support
+
+    queries = []
+
+    async def support(sql, params):
+        queries.append((" ".join(sql.split()), params))
+        return [{"n": 0}]
+
+    monkeypatch.setattr(evidence_support, "get_client", lambda: SimpleNamespace(query_all=support))
+    hits = [
+        SimpleNamespace(namespace="a", memory_key="x"),
+        SimpleNamespace(namespace="b", memory_key="y"),
+    ]
+    assert await evidence_support._evidence_support_count(_input(), hits) == 0
+    [(sql, params)] = queries
+    assert "(namespace, memory_key) IN {keys:Array(Tuple(String, String))}" in sql
+    assert "GROUP BY namespace, memory_key, evidence_id" in sql
+    assert params == {"org": "o", "keys": [("a", "x"), ("b", "y")]}
+
+
+@pytest.mark.parametrize("governed", [False, True])
+async def test_verdict_describes_survivors_outside_the_original_verdict_pool(governed):
+    from server.memory.api.models_search import _MemorySearchHit
+    from server.memory.app.search.verdict import _verdict_after_guidance
+
+    dropped = _MemorySearchHit(
+        memory_key="dropped",
+        memory_type="semantic",
+        content_excerpt="old",
+        distance=0.1,
+        similarity=0.9,
+    )
+    survivor = _MemorySearchHit(
+        memory_key="survivor",
+        memory_type="definition" if governed else "semantic",
+        content_excerpt="current",
+        distance=1.0 if governed else 0.25,
+        similarity=0.0 if governed else 0.75,
+        governed=governed,
+    )
+    ctx = SimpleNamespace(input=_input(), actual_work={}, query_triples=[])
+    run = SimpleNamespace(ns_calibration=None, graph_seeds=0, graph_neighbors=0, triples_matched=0)
+    calibration, verdict = await _verdict_after_guidance(ctx, run, [dropped], [survivor], 0)
+
+    assert verdict == (False, "", "")
+    if governed:
+        assert calibration.confidence == 0.0
+        assert calibration.explanation == "only governed definitions survived"
+    else:
+        assert calibration.confidence > 0.0
+        assert "top_similarity=0.75" in calibration.explanation
 
 
 async def test_weak_top_hit_makes_no_hyde_call(search_env) -> None:

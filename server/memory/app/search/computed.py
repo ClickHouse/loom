@@ -268,10 +268,6 @@ async def _floor_and_computed_evidence(
                 namespace=input.namespace,
             ),
         )
-    evidence_support_count = 0
-    try:
-        evidence_support_count = await _evidence_support_count(input, final_hits)
-    except Exception as e:  # noqa: BLE001
-        log.warning("evidence support lookup failed (non-fatal): %s", e)
+    evidence_support_count = await _evidence_support_count(input, final_hits)
     _clock.mark("evidence_support")
     return final_hits, derived_aggregate, evidence_support_count

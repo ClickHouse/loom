@@ -194,6 +194,7 @@ export async function whoami(asToken?: string): Promise<WhoAmI> {
 }
 
 export interface MemoryListEntry {
+  version_text?: string;
   memory_key: string;
   memory_type: string; // semantic/episodic/procedural/preference + custom types
   confidence: number;
@@ -235,6 +236,9 @@ export type VerificationState = "human" | "process" | "stale" | "none";
 export interface MemoryListResponse {
   entries: MemoryListEntry[];
   truncated: boolean;
+  // Rows the page read from `offset` before the server dropped any: the next offset is
+  // `offset + rows_read`, not `offset + entries.length`.
+  rows_read?: number;
   // Total rows in this namespace scope, ignoring the page `limit`. Lets the
   // UI show "N of TOTAL" instead of "N of <page cap>".
   total: number;
@@ -459,6 +463,7 @@ export async function listMemories(
     known_version?: string;
     fields?: string[];
     previewChars?: number;
+    prefix?: string;
     // Only rows whose value or key holds this text, any case.
     contains?: string;
     // Only rows carrying every one of these tags, in any case.
@@ -488,6 +493,7 @@ export async function listMemories(
       // carries nothing else.
       ...(opts.fields ? { fields: opts.fields } : {}),
       ...(opts.previewChars ? { preview_chars: opts.previewChars } : {}),
+      ...(opts.prefix ? { prefix: opts.prefix } : {}),
       ...(opts.contains ? { contains: opts.contains } : {}),
       ...(opts.pinnedOnly ? { pinned_only: true } : {}),
       ...(opts.conflictedOnly ? { conflicted_only: true } : {}),
@@ -546,6 +552,7 @@ export async function restoreMemory(
 /** Wire shape returned by /v1/memory.get. `found=false` means the row
  *  doesn't exist; gate on it before reading the other fields. */
 export interface MemoryDetail {
+  version_text?: string | null;
   found: boolean;
   memory_id?: string;
   value: unknown;
@@ -653,31 +660,6 @@ export interface MemoryById {
   created_at: string | null;
   /** '' | low | medium | high; a high row is read by key in Memories, not shown here. */
   sensitivity?: string;
-}
-
-/** `omit_high_value`: a high row answers without its value, and no sensitive read is
- *  audited, for a view that only names the row. */
-export async function getMemoryById(
-  org: string,
-  memoryId: string,
-  opts: { omit_high_value?: boolean } & RequestOpts = {},
-): Promise<MemoryById> {
-  const body: Record<string, unknown> = { org, memory_id: memoryId };
-  if (opts.omit_high_value) body["omit_high_value"] = true;
-  return post<MemoryById>("/v1/memory.get_by_id", body, opts.signal);
-}
-
-/** POST /v1/memory.bulk_get — N keys in one CH round-trip. `agent: "*"` is the
- *  namespace-wide lookup the Memories list needs: the page mixes writers, and under the
- *  wildcard the server opens the unset user/session axes the same way memory.get does.
- *  `results` holds the hits keyed by memory_key; `missing` the keys with no live row. */
-export async function bulkGetMemories(
-  id: Identity,
-  keys: string[],
-  opts: RequestOpts = {},
-): Promise<{ results: Record<string, MemoryDetail>; missing: string[] }> {
-  if (keys.length === 0) return { results: {}, missing: [] };
-  return post("/v1/memory.bulk_get", { ...id, memory_keys: keys }, opts.signal);
 }
 
 export async function setMemory(
@@ -819,6 +801,15 @@ export async function deleteMemory(id: Identity, key: string): Promise<{ tombsto
   });
 }
 
+/** Tombstone only the selected writer's listed revision. */
+export async function deleteMemoryVersion(
+  id: Identity,
+  key: string,
+  version: string,
+): Promise<{ tombstoned: boolean }> {
+  return post("/v1/memory.delete_version", { ...id, memory_key: key, version });
+}
+
 /** POST /v1/memory.move: rename `fromKey` to `toKey`. The destination is written through
  *  memory.set; the source becomes a `status='duplicate'` redirect (`keepRedirect`,
  *  default) or is tombstoned. Mirrors
@@ -922,37 +913,6 @@ export async function listPendingApprovals(
   return post<{ rows: PendingApproval[] }>("/v1/grants.pending_for_me", body, opts.signal);
 }
 
-export async function createGrant(
-  id: Pick<Identity, "org" | "namespace">,
-  subject: string,
-  role: GrantRole,
-  /** The server refuses a create below the subject's current role (409
-   *  GRANT_WOULD_DOWNGRADE) unless `replace` is set. Only the explicit "change role"
-   *  control passes it; "add member" never does, so re-adding an existing admin as writer
-   *  cannot demote them. */
-  opts: { replace?: boolean } = {},
-): Promise<unknown> {
-  return post("/v1/grants.create", {
-    org: id.org,
-    namespace: id.namespace,
-    subject,
-    role,
-    granted_by: "dashboard",
-    ...(opts.replace ? { replace: true } : {}),
-  });
-}
-
-export async function revokeGrant(
-  id: Pick<Identity, "org" | "namespace">,
-  subject: string,
-): Promise<{ revoked: boolean }> {
-  return post<{ revoked: boolean }>("/v1/grants.revoke", {
-    org: id.org,
-    namespace: id.namespace,
-    subject,
-  });
-}
-
 export async function approveGrant(
   id: Pick<Identity, "org" | "namespace">,
   subject: string,
@@ -977,20 +937,6 @@ export interface ConnectedAgentRow {
   namespaces_touched: number;
   primary_namespace: string;
   cost_usd: number;
-}
-
-/** Per-agent rollup over agent_events. Filters out sentinels server-side
- *  so the UI only sees real clients. Empty namespace = org-wide. */
-export async function listConnectedAgents(
-  id: Pick<Identity, "org"> & { namespace?: string; window_hours?: number },
-  opts: RequestOpts = {},
-): Promise<{ rows: ConnectedAgentRow[]; window_hours: number }> {
-  const body: Record<string, unknown> = {
-    org: id.org,
-    window_hours: id.window_hours ?? 24,
-  };
-  if (id.namespace) body["namespace"] = id.namespace;
-  return post("/v1/agents.connected", body, opts.signal);
 }
 
 /** The sidebar badge's number — agents first seen inside the window that did something — as one aggregate, no rows. */
@@ -1073,37 +1019,6 @@ export interface AllowlistRow {
   reason: string;
 }
 
-export async function listAllowlist(
-  id: Pick<Identity, "org" | "namespace">,
-  opts: { limit?: number } & RequestOpts = {},
-): Promise<{ rows: AllowlistRow[] }> {
-  return post(
-    "/v1/conflicts.allowlist_list",
-    {
-      org: id.org,
-      namespace: id.namespace,
-      limit: opts.limit || 100,
-    },
-    opts.signal,
-  );
-}
-
-export async function removeAllowlist(
-  id: Pick<Identity, "org" | "namespace">,
-  memory_key_a: string,
-  memory_key_b: string,
-  opts: { reason?: string; removed_by?: string } = {},
-): Promise<{ removed: boolean }> {
-  return post("/v1/conflicts.allowlist_remove", {
-    org: id.org,
-    namespace: id.namespace,
-    memory_key_a,
-    memory_key_b,
-    reason: opts.reason ?? "",
-    removed_by: opts.removed_by ?? "",
-  });
-}
-
 export async function resolveConflict(
   id: Pick<Identity, "org" | "namespace">,
   memory_id: string,
@@ -1151,13 +1066,6 @@ export async function getBudgetStatus(
   return post("/v1/cost.budget_status", { org: id.org, namespace: id.namespace }, opts.signal);
 }
 
-/** Org-wide 24h LLM spend rollup (all namespaces in the org). For
- *  admin visibility into "what's this tenant burning across the
- *  whole org" without per-namespace summation. */
-export async function getOrgBudgetStatus(id: Pick<Identity, "org">, opts: RequestOpts = {}): Promise<BudgetStatus> {
-  return post("/v1/cost.budget_status", { org: id.org }, opts.signal);
-}
-
 // ============================================================
 // Self-service namespace membership
 // ============================================================
@@ -1201,10 +1109,6 @@ export interface ClaimReleaseResponse {
   namespace: string;
   previous_owner: string;
   grants_revoked: number;
-}
-
-export async function claimRelease(org: string, namespace: string, reason: string = ""): Promise<ClaimReleaseResponse> {
-  return post<ClaimReleaseResponse>("/v1/admin/claim_release", { org, namespace, reason });
 }
 
 /** Mint a JWT for a chosen namespace. Returns 404 if LOOM_SELF_SIGNUP=off. */
@@ -1297,30 +1201,6 @@ export interface CopyToResult {
   target_key: string;
 }
 
-// Self-service copy of a memory into another namespace (memory.copy_to).
-// Non-destructive: the source stays put; the target row is re-embedded under
-// the target namespace's own embedder. Needs WRITER on the target namespace.
-export async function copyMemoryTo(
-  source: Identity,
-  memoryKey: string,
-  toNamespace: string,
-  opts: { targetKey?: string; rationale?: string } = {},
-): Promise<CopyToResult> {
-  return post<CopyToResult>("/v1/memory.copy_to", {
-    from_org: source.org,
-    from_namespace: source.namespace,
-    memory_key: memoryKey,
-    // A row opened under its user and session is copied as that exact row; otherwise the
-    // newest row of the key, whoever wrote it, as the Memories list shows it.
-    ...(source.user_id || source.session_id
-      ? { from_agent: source.agent, from_user_id: source.user_id ?? "-", from_session_id: source.session_id ?? "-" }
-      : { from_agent: "*" }),
-    to_namespace: toNamespace,
-    target_key: opts.targetKey ?? null,
-    rationale: opts.rationale ?? "",
-  });
-}
-
 export interface SharingAgentRow {
   agent: string;
   writes: number;
@@ -1354,10 +1234,6 @@ export interface SharingSummary {
   /** Per agent × namespace. */
   agent_namespaces: SharingAgentNamespaceRow[];
   namespaces: SharingNamespaceRow[];
-}
-
-export async function getMySharingSummary(opts: RequestOpts = {}): Promise<SharingSummary> {
-  return getJson<SharingSummary>("/v1/me/sharing-summary", opts);
 }
 
 export interface TokenEntry {
@@ -1443,10 +1319,6 @@ export async function createToken(opts: {
   };
 }
 
-export async function revokeToken(name: string): Promise<void> {
-  await post("/v1/me/service_accounts.revoke", { name });
-}
-
 export interface BrowseEntry {
   namespace: string;
   kind?: "memory" | "code" | "tracker" | "qa" | "bench";
@@ -1467,19 +1339,6 @@ export interface BrowseEntry {
   guide_summary?: string;
 }
 
-export async function browseNamespaces(
-  org: string,
-  opts: { query?: string; limit?: number; kinds?: string[]; includeClosed?: boolean } & RequestOpts = {},
-): Promise<BrowseEntry[]> {
-  const body: Record<string, unknown> = { org };
-  if (opts.query) body["query"] = opts.query;
-  if (opts.limit) body["limit"] = opts.limit;
-  if (opts.kinds && opts.kinds.length) body["kinds"] = opts.kinds;
-  if (opts.includeClosed) body["include_closed"] = true;
-  const r = await post<{ rows: BrowseEntry[] }>("/v1/namespace.browse", body, opts.signal);
-  return r.rows;
-}
-
 /** One saved revision of a namespace's guide: who saved it, when and why (`namespace.guide_history`). */
 export interface GuideRevision {
   revision: number;
@@ -1489,21 +1348,6 @@ export interface GuideRevision {
 }
 
 export const GUIDE_HISTORY_LIMIT = 50;
-
-/** The guide's revisions, newest first, the current one among them. */
-export async function guideHistory(
-  org: string,
-  namespace: string,
-  limit: number,
-  opts: RequestOpts = {},
-): Promise<GuideRevision[]> {
-  const r = await post<{ revisions: GuideRevision[] }>(
-    "/v1/namespace.guide_history",
-    { org, namespace, limit },
-    opts.signal,
-  );
-  return r.revisions;
-}
 
 /** A namespace's guide (`namespace.guide_get`); `revision` 0 when it never had one. */
 export interface NamespaceGuide {
@@ -1530,14 +1374,6 @@ export async function getNamespaceGuide(
   opts: RequestOpts = {},
 ): Promise<NamespaceGuide> {
   return post<NamespaceGuide>("/v1/namespace.guide_get", { org, namespace }, opts.signal);
-}
-
-export async function saveNamespaceGuide(
-  org: string,
-  namespace: string,
-  edit: { content: string; summary?: string; note: string; expected_revision: number },
-): Promise<GuideSaveResult> {
-  return post<GuideSaveResult>("/v1/namespace.guide_set", { org, namespace, ...edit });
 }
 
 export interface JoinResponse {
@@ -1680,3 +1516,4 @@ export * from "./api/runs";
 export * from "./api/facts";
 export * from "./api/tracker";
 export * from "./api/assistant";
+export * from "./api/memoryReads";

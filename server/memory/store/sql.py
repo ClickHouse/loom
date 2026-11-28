@@ -6,10 +6,85 @@ tuple type.
 
 from __future__ import annotations
 
+import sys
+import unicodedata
 from typing import Any
 
 # The value memory.get serves: the native JSON column when populated, else the stored text.
 SERVED_VALUE = "if(length(toString(value_json)) > 2, toString(value_json), value)"
+# The file projection also names its display column `value`. Read the stored column here.
+_PROCEDURE_BODY = SERVED_VALUE.replace(", value)", ", memory.value)")
+
+
+# Preserve short scalar values for the classifier without transferring arbitrary JSON.
+# not a setting: the classifier reads scalars only, a wider field is substituted
+PROCEDURE_FIELD_MAX_BYTES = 128
+# not a setting: mirrors Python's own int() digit limit
+PROCEDURE_TOTAL_MAX_DIGITS = sys.get_int_max_str_digits()
+
+# Normalize the characters Python accepts in integer strings before checking the
+# ASCII grammar. ASCII control characters accepted by str.isspace() can fail int().
+_DECIMAL_DIGITS = tuple(ch for ch in map(chr, range(128, sys.maxunicode + 1)) if ch.isdecimal())
+_INTEGER_WHITESPACE = "\t\n\v\f\r" + "".join(
+    ch for ch in map(chr, range(128, 0x3001)) if ch.isspace()
+)
+PROCEDURE_INTEGER_SOURCE_HEX = ("".join(_DECIMAL_DIGITS) + _INTEGER_WHITESPACE).encode().hex()
+PROCEDURE_INTEGER_TARGET = "".join(
+    str(unicodedata.decimal(ch)) for ch in _DECIMAL_DIGITS
+) + " " * len(_INTEGER_WHITESPACE)
+
+
+def _procedure_field(path: str, oversized: str) -> str:
+    raw = f"JSONExtractRaw({_PROCEDURE_BODY}, {path})"
+    integer = (
+        f"trimBoth(translateUTF8(JSONExtractString({raw}), "
+        f"unhex('{PROCEDURE_INTEGER_SOURCE_HEX}'), '{PROCEDURE_INTEGER_TARGET}'))"
+    )
+    substitute = oversized.format(raw=raw, string=integer)
+    return (
+        f"if(length({raw}) > {PROCEDURE_FIELD_MAX_BYTES}, {substitute}, "
+        f"ifNull(nullIf({raw}, ''), 'null'))"
+    )
+
+
+_PROCEDURE_TEMPLATE = _procedure_field(
+    "'template'", "if(toFloat64OrNull({raw}) = 0, 'false', 'true')"
+)
+_PROCEDURE_TOTAL = _procedure_field(
+    "'run_stats', 'total'",
+    f"""if(isNotNull(toFloat64OrNull({{raw}})),
+        if(toFloat64OrNull({{raw}}) >= 1, '1', '0'),
+        arrayMap(digits -> if(
+            match(digits, '^[+-]?[0-9]+(_[0-9]+)*$')
+                AND ({PROCEDURE_TOTAL_MAX_DIGITS} = 0 OR
+                    length(replaceRegexpAll(digits, '[+_-]', '')) <= {PROCEDURE_TOTAL_MAX_DIGITS}),
+            if(NOT startsWith(digits, '-') AND match(digits, '[1-9]'), '1', '0'),
+            '"invalid"'), [{{string}}])[1])""",
+)
+_PROCEDURE_TAGS = _procedure_field("'tags'", "'true'")
+
+PROCEDURE_GUIDANCE_FIELDS = f"""
+    if(memory_type = 'procedural' AND JSONType({_PROCEDURE_BODY}) = 'Object',
+        concat(
+            '{{"quarantined":',
+                if(JSONType({_PROCEDURE_BODY}, 'quarantined') = 'Object', '{{}}', 'null'),
+            ',"template":', {_PROCEDURE_TEMPLATE},
+            ',"run_stats":',
+                if(JSONType({_PROCEDURE_BODY}, 'run_stats') = 'Object',
+                   concat('{{"total":', {_PROCEDURE_TOTAL}, '}}'),
+                   {_procedure_field("'run_stats'", "'true'")}),
+            ',"tags":',
+                if(JSONType({_PROCEDURE_BODY}, 'tags') IN ('Array', 'Object', 'String'),
+                    if(arrayExists(tag -> JSONExtractString(tag) = 'mined',
+                                   JSONExtractArrayRaw({_PROCEDURE_BODY}, 'tags'))
+                       OR JSONHas({_PROCEDURE_BODY}, 'tags', 'mined')
+                       OR position(JSONExtractString({_PROCEDURE_BODY}, 'tags'), 'mined') > 0,
+                       '["mined"]', '[]'),
+                    {_PROCEDURE_TAGS}),
+            '}}'
+        ), '') AS procedure_fields
+"""
+
 
 # A high row is reachable by key, never pushed into a code or edit prompt.
 FILE_LISTING_VISIBLE = """

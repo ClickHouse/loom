@@ -34,6 +34,7 @@ from server.code.domain.anchor import (
     resolve,
 )
 from server.code.domain.declaration import fingerprint_version
+from server.core.ch import sequential_reads
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app.code_link_reads import (
     SERVED,
@@ -44,6 +45,7 @@ from server.memory.app.code_link_reads import (
 from server.memory.domain.code_link_keys import IDENTITY, QueuePosition
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
+from server.memory.store.key_write_lock import LeaseBusy
 from server.settings import settings
 
 # names and links read of one memory at most
@@ -130,27 +132,70 @@ async def _link_org(
     result.unlinked += len(stale)
     linked: list[str] = []
     for cns, memories in todo.items():
-        files = link_pass.RepoReads(org, cns)
-        try:
-            rows_out, gone, unparsed = await link_each(org, cns, memories, existing, files)
-        except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
-            result.failed(f"link {org}/{cns}: {e}", e, f"{cns}:link")
-            out += [_awaiting(r, cns) for r in memories]
-            continue
-        if unparsed:
-            paths = ", ".join(sorted({path for _, path in unparsed}))
-            result.errors.append(f"link {org}/{cns}: did not parse: {paths}")
-            out += [_awaiting(r, cns) for r, _ in unparsed]
-            waiting = {r["mid"] for r, _ in unparsed}
-            memories = [r for r in memories if r["mid"] not in waiting]
-        out += rows_out + store.tombstones(gone)
-        result.linked += len(rows_out)
-        result.unlinked += len(gone)
-        linked += [r["mid"] for r in memories]
+        waiting, made = await _link_repository(org, cns, memories, existing, result)
+        out += waiting
+        linked += made
     await store.insert(out)
     if linked and rereads:
         read = {r["mid"]: r["inputs"] for memories in todo.values() for r in memories}
         await _relink_rewritten(org, linked, read, result, rereads - 1)
+
+
+async def _link_repository(
+    org: str,
+    cns: str,
+    memories: list[dict[str, Any]],
+    existing: dict[str, list[LinkRow]],
+    result: link_pass.PassResult,
+) -> tuple[list[LinkRow], list[str]]:
+    """Link one repository's `memories`: the `*` markers of those that must wait, and the
+    ids of those linked."""
+    files = link_pass.RepoReads(org, cns)
+    try:
+        rows_out, gone, unparsed = await link_each(org, cns, memories, existing, files)
+    except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
+        result.failed(f"link {org}/{cns}: {e}", e, f"{cns}:link")
+        return [_awaiting(r, cns) for r in memories], []
+    waiting = [_awaiting(r, cns) for r, _ in unparsed]
+    if unparsed:
+        paths = ", ".join(sorted({path for _, path in unparsed}))
+        result.errors.append(f"link {org}/{cns}: did not parse: {paths}")
+        parked = {r["mid"] for r, _ in unparsed}
+        memories = [r for r in memories if r["mid"] not in parked]
+    if not await _insert_at_head(org, cns, rows_out + store.tombstones(gone)):
+        # its pending scan, under the lease, links them at its own head
+        link_pass.log.debug("link %s/%s: a recheck is ahead of these links", org, cns)
+        return waiting + [_awaiting(r, cns) for r in memories], []
+    result.linked += len(rows_out)
+    result.unlinked += len(gone)
+    return waiting, [r["mid"] for r in memories]
+
+
+async def _insert_at_head(org: str, cns: str, inserted: list[LinkRow]) -> bool:
+    """Insert one repository's `inserted` links under its recheck lease, if its indexed
+    head is still the one they were built at. False, nothing inserted, when a pass holds
+    the lease or checked a later head: it never saw these links, and the caller leaves
+    them to its pending scan. A pass that starts after the insert reads them
+    (docs/architecture/code-index-architecture.md)."""
+    built = {
+        r["checked_commit"]
+        for r in inserted
+        if r["path"] and r["state"] != "pending" and r["tombstoned_at"] is None
+    }
+    if not built:
+        if inserted:
+            await store.insert(inserted)
+        return True
+    try:
+        async with link_pass.repository_locks.lease(link_pass.lock_name(org, cns)):
+            with sequential_reads():
+                now = await code.indexed_head(org, cns)
+            if built != {now}:
+                return False
+            await store.insert(inserted)
+    except LeaseBusy:
+        return False
+    return True
 
 
 async def _relink_rewritten(
@@ -186,8 +231,9 @@ async def link_each(
 ) -> tuple[list[LinkRow], list[LinkRow], list[tuple[dict[str, Any], str]]]:
     """`_link`, and the memories it could not link, each with the file it names that does
     not parse; the others are linked all the same."""
+    head = await code.indexed_head(org, cns)  # one head for the batch, as its insert checks
     try:
-        return *await _link(org, cns, memories, existing, files), []
+        return *await _link(org, cns, memories, existing, files, head), []
     except code.ParseFailed:
         pass
     rows: list[LinkRow] = []
@@ -195,7 +241,7 @@ async def link_each(
     unparsed: list[tuple[dict[str, Any], str]] = []
     for m in memories:
         try:
-            made, dropped = await _link(org, cns, [m], existing, files)
+            made, dropped = await _link(org, cns, [m], existing, files, head)
         except code.ParseFailed as e:
             unparsed.append((m, e.path))
             continue
@@ -210,11 +256,12 @@ async def _link(
     memories: list[dict[str, Any]],
     existing: dict[str, list[LinkRow]],
     files: link_pass.RepoReads,
+    head: str | None = None,
 ) -> tuple[list[LinkRow], list[LinkRow]]:
     """The link rows of `memories` (one repository's) at its indexed head, and their
     existing links that no longer hold. Before the repository's first index each memory
     gets a `*` marker instead, resolved once the index exists."""
-    head = await code.indexed_head(org, cns)
+    head = await code.indexed_head(org, cns) if head is None else head
     if not head:
         markers = [_awaiting(r, cns) for r in memories]
         old = [a for r in memories for a in existing.get(r["mid"], [])]

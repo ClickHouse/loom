@@ -13,6 +13,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from server.memory.domain.use_guidance import UseGuidance
+
 
 class ProcedureAddInput(BaseModel):
     org: str
@@ -99,6 +101,7 @@ ProcedureStatus = Literal["template", "exercised", "authored", "candidate", "qua
 
 
 class _ProcedureMatch(BaseModel):
+    use_guidance: UseGuidance | None = None
     name: str
     situation: str  # the stored situation that matched
     steps: list[str]

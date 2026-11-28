@@ -21,6 +21,8 @@ const entry = (memory_key: string): MemoryListEntry => ({
   pinned: false,
   tags: [],
   agent: "claude-desktop",
+  user_id: "-",
+  session_id: "-",
   value: `value of ${memory_key}`,
 });
 
@@ -32,6 +34,9 @@ const hit = (memory_key: string, rank_score: number): SearchHit => ({
   similarity: 0.6,
   rank_score,
   confidence: 1,
+  agent: "claude-desktop",
+  user_id: "-",
+  session_id: "-",
   score_components: { semantic: 0.6 },
 });
 
@@ -117,6 +122,67 @@ describe("Recall Lab and the Memories list", () => {
     // The keyword rows say why they lead; the ranked one says what ranked it.
     expect(screen.getAllByText("keyword match")).toHaveLength(2);
     expect(screen.getAllByText("semantic +0.60")).toHaveLength(2);
+  });
+
+  it("shows one row for a memory the keyword read and a legacy ranked hit both hold", async () => {
+    const held = { ...entry("older_azure"), user_id: "u", session_id: "s" };
+    const page = { entries: [held], total: 1, today: 0, truncated: false };
+    vi.mocked(listMemories).mockResolvedValueOnce(page);
+    vi.mocked(listMemories).mockResolvedValueOnce(page); // the lookup finds the same row
+    // A legacy hit names its agent but not the user or session.
+    vi.mocked(searchMemory).mockResolvedValueOnce({
+      results: [{ ...hit("older_azure", 0.9), user_id: undefined, session_id: undefined }],
+      embedding_model: "m",
+    });
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
+    await screen.findByText("keyword match", {}, { timeout: 3000 });
+    await waitFor(() => expect(screen.getAllByText("older_azure")).toHaveLength(1));
+  });
+
+  it("keeps a legacy hit that another writer's row of the same key holds", async () => {
+    const held = { ...entry("older_azure"), user_id: "u", session_id: "s" };
+    const other = { ...entry("older_azure"), user_id: "v", session_id: "t" };
+    vi.mocked(listMemories)
+      .mockResolvedValueOnce({ entries: [held], total: 1, today: 0, truncated: false })
+      .mockResolvedValueOnce({ entries: [other], total: 1, today: 0, truncated: false });
+    vi.mocked(searchMemory).mockResolvedValueOnce({
+      results: [{ ...hit("older_azure", 0.9), user_id: undefined, session_id: undefined }],
+      embedding_model: "m",
+    });
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
+    await waitFor(() => expect(screen.getAllByText("older_azure")).toHaveLength(2), { timeout: 3000 });
+  });
+
+  it("keeps a legacy hit as a preview when several keyword rows share its key", async () => {
+    const rows = ["s1", "s2"].map((session_id) => ({ ...entry("older_azure"), user_id: "u", session_id }));
+    vi.mocked(listMemories).mockResolvedValueOnce({ entries: rows, total: 2, today: 0, truncated: false });
+    vi.mocked(searchMemory).mockResolvedValueOnce({
+      results: [{ ...hit("older_azure", 0.9), user_id: undefined, session_id: undefined }],
+      embedding_model: "m",
+    });
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
+    await waitFor(() => expect(screen.getAllByText("older_azure")).toHaveLength(3), { timeout: 3000 });
+    expect(vi.mocked(listMemories)).toHaveBeenCalledTimes(1); // no lookup for an ambiguous key
+  });
+
+  it("draws the rows while a writer lookup hangs", async () => {
+    vi.mocked(listMemories)
+      .mockResolvedValueOnce({ entries: [], total: 0, today: 0, truncated: false })
+      .mockReturnValueOnce(new Promise(() => {}));
+    vi.mocked(searchMemory).mockResolvedValueOnce({
+      results: [{ ...hit("solo_azure", 0.9), user_id: undefined, session_id: undefined }],
+      embedding_model: "m",
+    });
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
+    expect(await screen.findByText("solo_azure", {}, { timeout: 3000 })).toBeTruthy();
   });
 
   it("shows a high keyword match as sensitive, not as an empty row", async () => {

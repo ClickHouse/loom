@@ -151,3 +151,12 @@ async def test_key_correction_cannot_widen_an_unnamed_user_scope(user_id: str | 
         assert calls == []
     finally:
         await agent.close()
+
+
+def test_memory_search_hit_guidance_type_is_resolvable():
+    from typing import get_type_hints
+
+    from loom.memory import MemorySearchHit
+    from loom.ops import UseGuidance
+
+    assert get_type_hints(MemorySearchHit)["use_guidance"] == UseGuidance | None

@@ -422,6 +422,73 @@ async def memory_rows_by_identity_keys(
     return {identity_key(r): _hydrate(r) for r in rows}
 
 
+_GUIDANCE_COLUMNS = (
+    "memory_id",
+    "version",
+    "source_class",
+    "status",
+    "requires_review",
+    "content_sha256",
+    "verified_by",
+    "verified_at",
+    "verified_sha256",
+    "sensitivity",
+    "tombstoned_at",
+    "redacted_at",
+    "expires_at",
+    "valid_to",
+    "tags",
+    "files",
+    "source_resource_id",
+    "source_trace",
+)
+
+
+async def count_belief_support(ch: _CHClient, org: str, keys: list[tuple[str, str]]) -> int:
+    """Count live belief sources for the given namespace and memory key pairs."""
+    rows = await ch.query_all(
+        """
+        SELECT count() AS n
+        FROM (
+            SELECT namespace, memory_key, evidence_id,
+                   argMax(tombstoned_at, created_at) AS tomb_latest
+            FROM loom.memory_belief_sources
+            WHERE org = {org:String}
+              AND (namespace, memory_key) IN {keys:Array(Tuple(String, String))}
+            GROUP BY namespace, memory_key, evidence_id
+            HAVING tomb_latest IS NULL
+        )
+        """,
+        params={"org": org, "keys": keys},
+    )
+    return int(rows[0]["n"]) if rows else 0
+
+
+async def guidance_heads(keys: Sequence[IdentityKey]) -> dict[IdentityKey, dict[str, Any]]:
+    """Current guidance metadata and procedure lifecycle fields."""
+    from server.memory.store.sql import PROCEDURE_GUIDANCE_FIELDS
+
+    if not keys:
+        return {}
+    if pg.enabled():
+        return await pg_memory.guidance_heads(keys, _GUIDANCE_COLUMNS)
+    columns = ", ".join(_GUIDANCE_COLUMNS)
+    rows = await query_all_sliced(
+        _default_client(),
+        f"""
+        SELECT org, namespace, agent, user_id, session_id, memory_key,
+               {columns}, {PROCEDURE_GUIDANCE_FIELDS}
+        FROM loom.memory FINAL
+        PREWHERE (org, namespace, agent, user_id, session_id, memory_key)
+                 IN {{keys:{_IDENTITY_KEY_TUPLE}}}
+        {_SEQUENTIAL if read_your_writes_enabled() else ""}
+        """,
+        {"keys": sorted(set(keys))},
+        "keys",
+    )
+    return {identity_key(r): r for r in rows}
+
+
 async def clickhouse_head_versions(
     keys: Sequence[IdentityKey], *, ch: _CHClient | None = None
 ) -> dict[IdentityKey, int]:

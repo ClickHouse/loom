@@ -45,7 +45,15 @@ def _row(key: str, **kw: Any) -> Any:
 def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     ch = _CH()
     calls: dict[str, Any] = {"many": [], "one": [], "reemit_many": [], "reemit_one": []}
-    rows = {k: _row(k, entities=["mergetree"], reinforcement_count=4) for k in ("a", "b")}
+    rows = {
+        k: _row(
+            k,
+            entities=["mergetree"],
+            reinforcement_count=4,
+            content_sha256=k * 64 if k != "c" else "",
+        )
+        for k in ("a", "b", "c")
+    }
     ch.heads = {identity_key(row): row for row in rows.values()}
 
     async def _get_many(
@@ -58,8 +66,9 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         calls["one"].append(key)
         return rows.get(key)
 
-    async def _reemit_many(items: list[Any], *, ch: Any = None, batch: int = 500) -> int:
+    async def _reemit_many(items: list[Any], *, ch: Any = None, of_content: Any = None) -> int:
         calls["reemit_many"].append(items)
+        calls["content_hashes"] = of_content
         return len(items)
 
     async def _reemit_one(*args: Any, ch: Any = None, **ov: Any) -> int:
@@ -87,8 +96,9 @@ async def test_clear_expiry_on_one_key(stubs: dict[str, Any]) -> None:
     ((table, rows),) = stubs["ch"].inserts
     assert table == "loom.memory" and rows[0]["expires_at"] is None
     assert rows[0]["entities"] == ["mergetree"] and rows[0]["reinforcement_count"] == 4
-    ((args, ov),) = stubs["calls"]["reemit_one"]
-    assert args[-1] == "a" and ov == {"expires_at": None}
+    ([(key, ov)],) = stubs["calls"]["reemit_many"]
+    assert key[-1] == "a" and ov == {"expires_at": None, "version": out.version}
+    assert stubs["calls"]["content_hashes"][key] == "a" * 64
 
 
 @pytest.mark.asyncio
@@ -113,7 +123,8 @@ async def test_many_keys_are_one_read_one_insert_one_reemit(stubs: dict[str, Any
     )
     (items,) = stubs["calls"]["reemit_many"]
     assert [k[-1] for k, _ in items] == ["a", "b"] and all(
-        ov == {"expires_at": None} for _, ov in items
+        ov == {"expires_at": None, "version": res.version}
+        for (_, ov), res in zip(items, out.results[:2], strict=True)
     )
     assert stubs["calls"]["reemit_one"] == []
 
@@ -199,3 +210,15 @@ async def test_the_heads_a_touch_writes_from_are_whole_rows() -> None:
     ch = _SQLCapture()
     await mr.get_many_by_keys(ident, ["k"], ch=ch, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
     assert "last_reinforced_at" not in ch.sql[1].split("FROM loom.memory", 1)[0]
+
+
+@pytest.mark.asyncio
+async def test_hashless_touch_updates_embedding_expiry_without_pinning_its_version(stubs):
+    out = await mem_handlers.handle_memory_touch(
+        MemoryTouchInput(org="o", namespace="n", agent="a", memory_key="c", clear_expiry=True)
+    )
+    assert out.touched and out.expires_at is None
+    ([(key, overrides)],) = stubs["calls"]["reemit_many"]
+    assert key[-1] == "c"
+    assert overrides == {"expires_at": None}
+    assert stubs["calls"]["content_hashes"] == {}
