@@ -466,7 +466,7 @@ The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
 | PostToolUse (Loom tools)                          | `loom-mentor-hint.mjs`      | lifts a result's `hint` into context, once per hint code per session                                                                                                                                                                                                                                                                                                            | `LOOM_MENTOR_HINTS=off`                                                                                     |
 | PostToolUse (Edit, Write, MultiEdit)              | `loom-blast-radius.mjs`     | one line from `code.impact`: callers, tests reaching the change, co-change files not yet touched                                                                                                                                                                                                                                                                                | `LOOM_BLAST_RADIUS=off`                                                                                     |
 | UserPromptSubmit                                  | `loom-record.mjs`           | the prompt's one process: runs `loom-prompt-pack` and `loom-prompt-recall` in the hook and prints their context as one answer, and hands the prompt's recording scripts (`loom-run`, the namespace audit) to a detached process                                                                                                                                                 | each script's own                                                                                           |
-| PostToolUse, PostToolUseFailure, Stop, SessionEnd | `loom-record.mjs`           | runs the event's recording scripts (the rows for those events, the gates excepted) in one detached process, so the session does not wait for their requests                                                                                                                                                                                                                     | each script's own                                                                                           |
+| PostToolUse, PostToolUseFailure, Stop, SessionEnd | `loom-record.mjs`           | runs the event's recording scripts (the rows below for those events, the gates excepted) in one process: detached after a tool call and at Stop, so the session does not wait for their requests, and in the hook itself at SessionEnd                                                                                                                                          | each script's own                                                                                           |
 | PostToolUse, PostToolUseFailure (any tool)        | `loom-capture.mjs`          | one episodic observation per tool call (`observe.record`); a failed call is typed `error`                                                                                                                                                                                                                                                                                       | none                                                                                                        |
 | Stop, SessionEnd                                  | `loom-conversation.mjs`     | appends new chat turns to the conversation plane (`conversation.append`)                                                                                                                                                                                                                                                                                                        | `LOOM_CAPTURE_CONVERSATIONS=false`                                                                          |
 | Stop                                              | `loom-usage.mjs`            | posts the session's token usage to `cost.record_turns`                                                                                                                                                                                                                                                                                                                          | `LOOM_USAGE=off`                                                                                            |
@@ -508,19 +508,23 @@ that knows its outcome calls `run.complete` itself.
 
 **Safety.** A hook never blocks the agent on the network.
 
-- The scripts that only record (the run's open and close, tool observations,
-  conversation turns, usage, the working-memory note, session memory, the session brief)
-  do not hold the session at a prompt, after a tool call, at Stop or at SessionEnd: one
-  launcher (`hooks/loom-record.mjs`) writes the event to a private file, starts one
-  detached process that runs them, and exits. That process outlives the hook, the session
+- The scripts that only record (the run's open, tool observations, conversation turns,
+  usage, the working-memory note) do not hold the session at a prompt, after a tool call
+  or at Stop: one launcher (`hooks/loom-record.mjs`) writes the event to a private file,
+  starts one detached process that runs them, and exits. That process outlives the hook
   and the client's process. It does not outlive a machine or container that is torn down
-  when the client exits (a container whose entrypoint is the client), which loses what the
-  process had not sent by then: the session's close first.
+  when the client exits, which loses what the process had not sent by then.
 - At a prompt the launcher also runs the two lookups the prompt waits for (the code
   pointers and the recall) in its own process and prints what they found as one answer,
-  so a prompt starts one process. PreCompact runs the scripts as hooks of their own.
+  so a prompt starts one process.
+- At SessionEnd the launcher runs the scripts itself (the last turns, the run's close,
+  session memory, the session brief) and returns when they have, in about half a second.
+  The run's close is answered by then. What the flusher carries (the last turns, session
+  memory, the brief) has been handed to it, and a host torn down in that instant can lose
+  it. PreCompact runs the scripts as hooks of their own.
 - The namespace audit is asked once per session by the first prompt's detached process,
-  and the first Stop that finds its verdict tells it: no Stop waits for the audit.
+  and the first Stop that finds its verdict tells it. A Stop asks in place only when
+  that process died before its answer.
 - Their writes are fire-and-forget; slow ones (conversation, session memory, session
   brief) go to a detached flusher (`hooks/loom-flush.mjs`).
 - Every request aborts after 5 × the `/v1/health` round trip, clamped to 3–8 s and cached
@@ -529,7 +533,8 @@ that knows its outcome calls `run.complete` itself.
   without it. With no token or no server, every hook exits 0.
 
 **SessionEnd budget.** Claude Code shares about 1.5 s across all SessionEnd hooks. The
-plugin's one entry, the launcher, hands the event off and returns well inside it.
+plugin's one entry, the launcher, declares `timeout: 10` so it is not cancelled before the
+scripts it runs have returned.
 
 ### Recalled content and local data
 
@@ -661,7 +666,7 @@ fault unless `LOOM_INJECT_CONTEXT=false` or `LOOM_CODE_MAP=false` is set.
 | a hook added in a new release never fires                    | the installed plugin is older than the server      | `claude plugin update loom@loom`                                                                                                                                                                                   |
 | every tool listed twice                                      | a user-scope `loom` MCP entry beside the plugin    | `claude mcp remove loom`                                                                                                                                                                                           |
 | reads denied in a repo you work on locally                   | the checkout is indexed and the file is unmodified | `--config local_first=true` or `LOOM_CODE_LOCAL_FIRST=on`                                                                                                                                                          |
-| `Hook cancelled` at exit                                     | SessionEnd hooks ran past the client's budget      | update the plugin (its SessionEnd entry hands the event off and returns at once)                                                                                                                                   |
+| `Hook cancelled` at exit                                     | SessionEnd hooks ran past the client's budget      | update the plugin (its entry declares `timeout: 10`)                                                                                                                                                               |
 
 ## Other clients
 

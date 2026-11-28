@@ -141,7 +141,8 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-record.mjs", "SessionEnd"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-record.mjs", "SessionEnd"],
+            "timeout": 10
           }
         ]
       }

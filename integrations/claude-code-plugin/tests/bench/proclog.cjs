@@ -22,13 +22,5 @@ if (log) {
     boot,
     at: Date.now(),
   });
-  // `cpu` is the process's own user and system time: unlike `life`, it does
-  // not grow with what else the machine is running.
-  const cpu = () => {
-    const u = process.cpuUsage();
-    return (u.user + u.system) / 1000;
-  };
-  process.on("exit", () =>
-    line({ k: "exit", pid: process.pid, life: process.uptime() * 1000, cpu: cpu(), at: Date.now() }),
-  );
+  process.on("exit", () => line({ k: "exit", pid: process.pid, life: process.uptime() * 1000, at: Date.now() }));
 }

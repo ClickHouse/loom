@@ -9,10 +9,12 @@
 //
 //   UserPromptSubmit  → asks, and keeps the verdict in the session's state.
 //                       Claude Code runs this in loom-record's detached
-//                       process, so no prompt and no Stop waits for the audit.
+//                       process, so the prompt does not wait for the audit.
 //   Stop              → tells a stored verdict once, with no call. A wiring
 //                       that starts this script at Stop only (Codex, a
-//                       hand-wired client) asks here, on the first Stop.
+//                       hand-wired client) asks here, on the first Stop, as
+//                       does a Stop that finds an ask past the request bound
+//                       with no verdict: its process died.
 //
 // Fail-open everywhere: no token, no scope, server down or slower than the
 // hook's bound, a healthy namespace, a stop this hook caused — the agent
@@ -22,6 +24,7 @@ import {
   envSwitch,
   postBounded,
   readStdinJson,
+  requestTimeoutMs,
   resolveScope,
   resolveServerUrl,
   resolveToken,
@@ -59,7 +62,7 @@ async function main() {
     if (decision.ask) {
       writeJsonFile(cp, decision.state);
       const line = await verdict(payload, token);
-      // Read again: a Stop may have marked the session while this one asked.
+      // Read again: a Stop that found this ask overdue has asked in place and marked the session.
       writeJsonFile(cp, { ...readJsonFile(cp), line });
     }
     scheduleExit(0);
@@ -72,7 +75,7 @@ async function main() {
     return;
   }
   const state = readJsonFile(cp);
-  const decision = decideAudit(state);
+  const decision = decideAudit(state, requestTimeoutMs());
   if (decision.cache !== state) writeJsonFile(cp, decision.cache);
   const line = decision.audit ? await verdict(payload, token) : decision.line;
   const out = healthPayload(line);

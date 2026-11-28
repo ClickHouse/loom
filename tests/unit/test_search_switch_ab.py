@@ -46,5 +46,3 @@ def test_plugin_manifest_version_moved_with_the_run_hook() -> None:
         for grp in hooks["hooks"]["UserPromptSubmit"]
         for h in grp["hooks"]
     )
-    launcher = (root / "hooks" / "loom-record.mjs").read_text()
-    assert 'UserPromptSubmit: ["loom-run",' in launcher

@@ -85,8 +85,16 @@ async function main() {
     // SessionEnd or a second prompt that comes first finds a begin to ask again. A
     // resumed session's previous run id stays until the answer, as it did while the
     // prompt waited here.
-    writeJsonFile(sp, { ...prior, attempted: true, body, at: Date.now() });
+    const at = Date.now();
+    writeJsonFile(sp, { ...prior, attempted: true, body, at });
     const res = await postBoundedResult("run.begin", body, opts);
+    // A SessionEnd or a later prompt that came before the answer has written its own
+    // state: marked begun now, a run SessionEnd closed would keep a resumed session's
+    // next prompt from opening one.
+    if (readRunState(sessionId).at !== at) {
+      scheduleExit(0);
+      return;
+    }
     const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
     // 408, 429 and a 2xx with no usable id may still have opened the run.
     const transient = res.status === 408 || res.status === 429 || res.status >= 500 || res.status < 300;

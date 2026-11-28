@@ -15,7 +15,8 @@
 // printed and the agent stops as normal.
 //
 // The session's state file says how far that has got:
-//   {asked_at}              a detached copy is asking (started at a prompt)
+//   {asked_at}              a detached copy is asking (started at a prompt);
+//                           past the request bound it died before its answer
 //   {asked_at, line}        it has the verdict: the line, or "" for none
 //   {..., audited_at}       a Stop has told the agent, or had nothing to tell
 
@@ -65,15 +66,17 @@ export function decideAsk(state) {
 /** What a Stop does, once per session. A verdict a detached copy stored is
  *  told (`line`) with no call; while that copy is still asking the Stop
  *  passes, and a later one tells. With no copy at work (a wiring that starts
- *  this script at Stop only) the first Stop asks (`audit`). `cache` is the
- *  state to keep: the one given when nothing changed. */
-export function decideAudit(state) {
+ *  this script at Stop only), or one that asked more than `boundMs` ago, the
+ *  request bound, and stored no verdict (it died before its answer), this
+ *  Stop asks (`audit`). `cache` is the state to keep: the one given when
+ *  nothing changed. */
+export function decideAudit(state, boundMs, now = Date.now()) {
   if (state && state.audited_at) return { audit: false, cache: state };
   if (state && typeof state.line === "string") {
-    return { audit: false, line: state.line, cache: { ...state, audited_at: Date.now() } };
+    return { audit: false, line: state.line, cache: { ...state, audited_at: now } };
   }
-  if (state && state.asked_at) return { audit: false, cache: state };
-  return { audit: true, cache: { ...(state || {}), audited_at: Date.now() } };
+  if (state && state.asked_at && now - state.asked_at <= boundMs) return { audit: false, cache: state };
+  return { audit: true, cache: { ...(state || {}), audited_at: now } };
 }
 
 /** Stop-hook payload: the line as a block-once reason; empty text = no output. */

@@ -16,9 +16,9 @@ function wired(event) {
 }
 
 test("a script the launcher runs is never wired beside it", () => {
-  // The launcher runs an event's recording scripts in one detached process
-  // and its lookups in its own; one wired directly as well would run twice
-  // and hold the host for its request.
+  // The launcher runs an event's recording scripts in one process (a
+  // detached one, or its own at SessionEnd) and its lookups in its own; one
+  // wired directly as well would run twice and hold the host for its request.
   for (const [event, scripts] of Object.entries(RECORDERS)) {
     const names = wired(event);
     const run = [...scripts, ...(LOOKUPS[event] || [])];
@@ -36,20 +36,26 @@ test("a script the launcher runs is never wired beside it", () => {
   );
 });
 
-test("a prompt starts one process", () => {
+test("a prompt starts one process, which opens the session's run", () => {
   assert.deepEqual(wired("UserPromptSubmit"), ["loom-record"]);
+  assert.ok(RECORDERS.UserPromptSubmit.includes("loom-run"));
 });
 
 test("the Stop gates are wired directly: the host reads what they print", () => {
   assert.deepEqual(wired("Stop"), ["loom-record", "loom-test-gate", "loom-validate-gate", "loom-namespace-health"]);
 });
 
-test("the SessionEnd hook asks for no longer than the host's default budget", () => {
-  // Claude Code gives the event 1.5 s by default. The launcher hands the
-  // payload off and exits, so it needs no `timeout` of its own.
+test("the SessionEnd hook declares a timeout: Claude Code gives the event 1.5 s by default", () => {
+  // The launcher runs the event's five recording scripts in its own process
+  // and waits for them: a slow server or a loaded machine passes the default
+  // budget, and a launcher killed there leaves their requests unsent. A
+  // `timeout` raises the event budget to match (docs: hooks-guide,
+  // limitations), up to 60 s.
   const hooks = manifest.hooks.SessionEnd.flatMap((g) => g.hooks);
-  assert.deepEqual(wired("SessionEnd"), ["loom-record"]);
-  for (const h of hooks) assert.equal(h.timeout, undefined, h.args[0]);
+  assert.equal(hooks.length, 1);
+  for (const h of hooks) {
+    assert.ok(Number.isInteger(h.timeout) && h.timeout >= 5 && h.timeout <= 60, `${h.args[0]}: timeout=${h.timeout}`);
+  }
 });
 
 test("the Codex hooks.json carries only the fields Codex's strict parser accepts", () => {

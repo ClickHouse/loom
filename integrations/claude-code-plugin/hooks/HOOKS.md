@@ -28,27 +28,27 @@ is JSON on stdin.
   dropped unparsed.
 - **A recording script does not hold the session.** The scripts that only
   send data print nothing the host reads. Claude Code's wiring starts them
-  through `loom-record`. At a prompt, after a tool call, at Stop and at
-  SessionEnd it writes the payload to a job file
-  (`loom-record-<Event>-<ms>-<pid>.json`, mode 0600), starts one detached
-  process that runs the event's recording scripts on it, and exits, so the
-  host waits for node to start, one file write and one spawn, whatever the
-  server's round trip. With no credential it starts nothing. The job file is
-  on disk before the hook returns and the detached process has its own
-  session and no inherited stdio, so the hand-off outlives the hook, the
-  session and the host process. It does not outlive a machine or container
-  that is torn down when the client exits (a container whose entrypoint is
-  the client): what the process had not sent by then is lost, the session's
-  close first. When the detached process cannot be started, the event's
-  records are lost; when it dies, its job file stays, the client status
-  check counts it, and `node loom-record.mjs <Event> - <job file>` replays
-  it. Either way no cursor has moved, so the next Stop sends the
-  conversation turns again. The job file holds the payload as the host sent
-  it, tool input and output included; what the scripts send is redacted.
-  That process has no stderr: to see a recording script's error under
-  `LOOM_HOOK_DEBUG=on`, start the script itself with the payload on stdin.
-  PreCompact stays direct, so the working-memory note is written before the
-  compaction's primer reads it.
+  through `loom-record`. At a prompt, after a tool call and at Stop it writes
+  the payload to a job file (`loom-record-<Event>-<ms>-<pid>.json`, mode 0600), starts
+  one detached process that runs the event's recording scripts on it, and
+  exits, so the host waits for node to start, one file write and one spawn,
+  whatever the server's round trip. With no credential it starts nothing.
+  The job file is on disk before the hook returns and the detached process
+  has its own session and no inherited stdio, so the hand-off outlives the
+  hook and the host process. It does not outlive a machine or container
+  that is torn down when the client exits: what the process had not sent by
+  then is lost. At SessionEnd `loom-record` therefore runs the scripts in
+  its own process and exits when they have returned (**SessionEnd budget**,
+  below). When the detached process cannot be started, the event's records
+  are lost; when it dies, its job file stays, the client status check counts
+  it, and `node loom-record.mjs <Event> - <job file>` replays it. Either
+  way no cursor has moved, so the next Stop sends the conversation turns
+  again. The job file holds the payload as the host sent it, tool input and
+  output included; what the scripts send is redacted. That process has no
+  stderr: to see a recording script's error under `LOOM_HOOK_DEBUG=on`,
+  start the script itself with the payload on stdin. PreCompact stays
+  direct, so the working-memory note is written before the compaction's
+  primer reads it.
 - **A prompt waits for one process.** `loom-record` runs the two lookups a
   prompt waits for (`loom-prompt-pack`, `loom-prompt-recall`) in the hook
   itself, side by side, and prints what they found as one
@@ -85,35 +85,35 @@ wrong type is dropped.
 Timeouts are the host's default unless noted. "Output" is what the host
 receives on stdout.
 
-| Event                                             | Script                | Reads                              | Output                   | Side effects                                                                                                                                                                                                          | Off                                |
-| ------------------------------------------------- | --------------------- | ---------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| SessionStart                                      | loom-session-start    | cwd, session_id                    | primer text              | context.pack, code.repos/index_status/map, task.counts, namespace.get, session.brief_list, collection.list; GET /v1/health: its round trip is cached as the RTT bound, its `version` feeds the server version warning | `LOOM_INJECT_CONTEXT=false`        |
-| UserPromptSubmit                                  | loom-record           | the payload                        | JSON additionalContext   | starts one detached process, which runs the event's `detached` rows; runs the event's `in loom-record` rows itself and prints their context as one answer                                                             | each script's own                  |
-| UserPromptSubmit, in loom-record                  | loom-prompt-pack      | prompt, cwd, session_id            | its context              | code.search                                                                                                                                                                                                           | `LOOM_PROMPT_PACK=off`             |
-| UserPromptSubmit, in loom-record                  | loom-prompt-recall    | prompt, cwd, session_id            | its context              | context.pack                                                                                                                                                                                                          | `LOOM_PROMPT_RECALL=off`           |
-| UserPromptSubmit, detached                        | loom-run              | prompt, session_id                 | none                     | run.begin on the first prompt; appends the turn journal                                                                                                                                                               | `LOOM_RUN_LEDGER=off`              |
-| UserPromptSubmit, detached                        | loom-namespace-health | cwd, session_id                    | none                     | namespace.audit, once per session; the verdict goes to the session's state file                                                                                                                                       | `LOOM_NAMESPACE_HEALTH=off`        |
-| PreToolUse Read\|Grep\|Bash                       | loom-code-shunt       | tool_name, tool_input, cwd         | JSON permission decision | code.repos; deny text                                                                                                                                                                                                 | `LOOM_CODE_SHUNT=off`              |
-| PreToolUse Edit\|Write\|MultiEdit\|NotebookEdit   | loom-file-context     | tool_input, session_id             | JSON additionalContext   | memory.for_file                                                                                                                                                                                                       | `LOOM_FILE_CONTEXT=off`            |
-| PostToolUse loom tools                            | loom-mentor-hint      | tool_name, tool_response           | JSON additionalContext   | none                                                                                                                                                                                                                  | `LOOM_MENTOR_HINTS=off`            |
-| PostToolUse Edit\|Write\|MultiEdit                | loom-blast-radius     | tool_input, cwd                    | JSON additionalContext   | code.impact                                                                                                                                                                                                           | `LOOM_BLAST_RADIUS=off`            |
-| PostToolUse, PostToolUseFailure, Stop, SessionEnd | loom-record           | the payload                        | none                     | starts one detached process, which runs the event's `detached` rows                                                                                                                                                   | each script's own                  |
-| PostToolUse, PostToolUseFailure, detached         | loom-capture          | tool_*, session_id, cwd            | none                     | observe.record; code.outcome; the recalled-keys stash                                                                                                                                                                 | no token                           |
-| PreCompact                                        | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
-| PreCompact                                        | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set                                                                                                                                                                                                    | `LOOM_WORKING_MEMORY=off`          |
-| PreCompact                                        | loom-session-brief    | transcript, cwd                    | none                     | session.brief_save via the flusher                                                                                                                                                                                    | `LOOM_SESSION_BRIEF=off`           |
-| Stop, detached                                    | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
-| Stop, detached                                    | loom-conversation     | transcript, last_assistant_message | none                     | conversation.append via the flusher                                                                                                                                                                                   | `LOOM_CAPTURE_CONVERSATIONS=false` |
-| Stop, detached                                    | loom-usage            | transcript                         | none                     | cost.record_turns                                                                                                                                                                                                     | `LOOM_USAGE=off`                   |
-| Stop                                              | loom-test-gate        | transcript, cwd                    | JSON block once          | code.test_gate                                                                                                                                                                                                        | `LOOM_TEST_GATE=off`               |
-| Stop                                              | loom-validate-gate    | transcript                         | JSON block once          | namespace.validate                                                                                                                                                                                                    | `LOOM_VALIDATE_GATE=off`           |
-| Stop                                              | loom-namespace-health | session_id                         | JSON block once          | none: tells the stored verdict once (a wiring with no detached process asks namespace.audit here, on the first Stop)                                                                                                  | `LOOM_NAMESPACE_HEALTH=off`        |
-| Stop, detached                                    | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set when the note changed                                                                                                                                                                              | `LOOM_WORKING_MEMORY=off`          |
-| SessionEnd, detached                              | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
-| SessionEnd, detached                              | loom-conversation     | transcript                         | none                     | the turns since the last Stop                                                                                                                                                                                         | as Stop                            |
-| SessionEnd, detached                              | loom-run              | transcript, reason                 | none                     | run.complete                                                                                                                                                                                                          | `LOOM_RUN_LEDGER=off`              |
-| SessionEnd, detached                              | loom-session-memory   | transcript                         | none                     | memory.set_from_messages via the flusher                                                                                                                                                                              | `LOOM_SESSION_MEMORY=off`          |
-| SessionEnd, detached                              | loom-session-brief    | transcript, cwd                    | none                     | session.brief_save via the flusher                                                                                                                                                                                    | `LOOM_SESSION_BRIEF=off`           |
+| Event                                                          | Script                | Reads                              | Output                   | Side effects                                                                                                                                                                                                          | Off                                |
+| -------------------------------------------------------------- | --------------------- | ---------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| SessionStart                                                   | loom-session-start    | cwd, session_id                    | primer text              | context.pack, code.repos/index_status/map, task.counts, namespace.get, session.brief_list, collection.list; GET /v1/health: its round trip is cached as the RTT bound, its `version` feeds the server version warning | `LOOM_INJECT_CONTEXT=false`        |
+| UserPromptSubmit                                               | loom-record           | the payload                        | JSON additionalContext   | starts one detached process, which runs the event's `detached` rows; runs the event's `in loom-record` rows itself and prints their context as one answer                                                             | each script's own                  |
+| UserPromptSubmit, in loom-record                               | loom-prompt-pack      | prompt, cwd, session_id            | its context              | code.search                                                                                                                                                                                                           | `LOOM_PROMPT_PACK=off`             |
+| UserPromptSubmit, in loom-record                               | loom-prompt-recall    | prompt, cwd, session_id            | its context              | context.pack                                                                                                                                                                                                          | `LOOM_PROMPT_RECALL=off`           |
+| UserPromptSubmit, detached                                     | loom-run              | prompt, session_id                 | none                     | run.begin on the first prompt; appends the turn journal                                                                                                                                                               | `LOOM_RUN_LEDGER=off`              |
+| UserPromptSubmit, detached                                     | loom-namespace-health | cwd, session_id                    | none                     | namespace.audit, once per session; the verdict goes to the session's state file                                                                                                                                       | `LOOM_NAMESPACE_HEALTH=off`        |
+| PreToolUse Read\|Grep\|Bash                                    | loom-code-shunt       | tool_name, tool_input, cwd         | JSON permission decision | code.repos; deny text                                                                                                                                                                                                 | `LOOM_CODE_SHUNT=off`              |
+| PreToolUse Edit\|Write\|MultiEdit\|NotebookEdit                | loom-file-context     | tool_input, session_id             | JSON additionalContext   | memory.for_file                                                                                                                                                                                                       | `LOOM_FILE_CONTEXT=off`            |
+| PostToolUse loom tools                                         | loom-mentor-hint      | tool_name, tool_response           | JSON additionalContext   | none                                                                                                                                                                                                                  | `LOOM_MENTOR_HINTS=off`            |
+| PostToolUse Edit\|Write\|MultiEdit                             | loom-blast-radius     | tool_input, cwd                    | JSON additionalContext   | code.impact                                                                                                                                                                                                           | `LOOM_BLAST_RADIUS=off`            |
+| PostToolUse, PostToolUseFailure, Stop, SessionEnd (timeout 10) | loom-record           | the payload                        | none                     | after a tool call and at Stop, starts one detached process, which runs the event's `detached` rows; at SessionEnd, runs the event's `in loom-record` rows itself                                                      | each script's own                  |
+| PostToolUse, PostToolUseFailure, detached                      | loom-capture          | tool_*, session_id, cwd            | none                     | observe.record; code.outcome; the recalled-keys stash                                                                                                                                                                 | no token                           |
+| PreCompact                                                     | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
+| PreCompact                                                     | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set                                                                                                                                                                                                    | `LOOM_WORKING_MEMORY=off`          |
+| PreCompact                                                     | loom-session-brief    | transcript, cwd                    | none                     | session.brief_save via the flusher                                                                                                                                                                                    | `LOOM_SESSION_BRIEF=off`           |
+| Stop, detached                                                 | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
+| Stop, detached                                                 | loom-conversation     | transcript, last_assistant_message | none                     | conversation.append via the flusher                                                                                                                                                                                   | `LOOM_CAPTURE_CONVERSATIONS=false` |
+| Stop, detached                                                 | loom-usage            | transcript                         | none                     | cost.record_turns                                                                                                                                                                                                     | `LOOM_USAGE=off`                   |
+| Stop                                                           | loom-test-gate        | transcript, cwd                    | JSON block once          | code.test_gate                                                                                                                                                                                                        | `LOOM_TEST_GATE=off`               |
+| Stop                                                           | loom-validate-gate    | transcript                         | JSON block once          | namespace.validate                                                                                                                                                                                                    | `LOOM_VALIDATE_GATE=off`           |
+| Stop                                                           | loom-namespace-health | cwd, session_id                    | JSON block once          | none: tells the stored verdict once (namespace.audit is asked here by a wiring with no detached process, on the first Stop, and when the prompt's ask is overdue)                                                     | `LOOM_NAMESPACE_HEALTH=off`        |
+| Stop, detached                                                 | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set when the note changed                                                                                                                                                                              | `LOOM_WORKING_MEMORY=off`          |
+| SessionEnd, in loom-record                                     | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
+| SessionEnd, in loom-record                                     | loom-conversation     | transcript                         | none                     | the turns since the last Stop                                                                                                                                                                                         | as Stop                            |
+| SessionEnd, in loom-record                                     | loom-run              | transcript, reason                 | none                     | run.complete, awaited                                                                                                                                                                                                 | `LOOM_RUN_LEDGER=off`              |
+| SessionEnd, in loom-record                                     | loom-session-memory   | transcript                         | none                     | memory.set_from_messages via the flusher                                                                                                                                                                              | `LOOM_SESSION_MEMORY=off`          |
+| SessionEnd, in loom-record                                     | loom-session-brief    | transcript, cwd                    | none                     | session.brief_save via the flusher                                                                                                                                                                                    | `LOOM_SESSION_BRIEF=off`           |
 
 A `detached` row runs in the process `loom-record` starts and an
 `in loom-record` row in `loom-record` itself, not as a hook of its own; the
@@ -273,9 +273,11 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   never answered; any other 4xx is final for the session); every prompt is also
   appended to the turn journal, which clients without a parseable
   transcript read. Under Claude Code the begin runs in the detached process,
-  so the prompt does not wait for it; the session's run state holds the
-  begin's body from the ask until the answer, and a SessionEnd that comes
-  first asks again with it. SessionEnd closes the run with the last
+  so the prompt does not wait for it, and a tool observation sent before the
+  answer carries the derived id as well; the session's run state holds the
+  begin's body from the ask until the answer, a SessionEnd that comes first
+  asks again with it, and an answer that arrives after that close is
+  dropped. SessionEnd closes the run with the last
   assistant text, `outcome: none` and the recalled keys, awaited and then
   exited at once; the hook never claims which memories were used.
 - **loom-validate-gate.** Collects the memory keys this session wrote
@@ -291,10 +293,12 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   Under Claude Code the detached process of the session's first prompt asks
   and keeps the verdict in the session's state file, and the first Stop that
   finds it tells it with no call of its own; a Stop that comes while the
-  audit is unanswered passes, and a later one tells. The verdict is the
-  namespace's last day as of that prompt. A wiring that starts the script at
-  Stop only (Codex, a hand-wired client) asks on the first Stop and waits for
-  the answer. Later stops make no call.
+  audit is unanswered passes, and a later one tells, so a session whose only
+  Stop comes before the answer is not told. A Stop that finds the ask older
+  than the request bound with no verdict (the detached process died) asks in
+  place. The verdict is the namespace's last day as of that prompt. A wiring
+  that starts the script at Stop only (Codex, a hand-wired client) asks on
+  the first Stop and waits for the answer. Later stops make no call.
 - **loom-test-gate.** With uncommitted changes this session made in a
   loom-indexed repo (dirty paths the transcript shows an edit tool targeted
   or a shell command named, written since the session's first row; a tree
@@ -342,14 +346,18 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 ## SessionEnd budget
 
 Claude Code gives all SessionEnd hooks a shared 1.5 s budget by default.
-Loom registers one, `loom-record`, which hands the payload to a detached
-process and exits: node's start, one file write and one spawn, well inside
-that budget, so the entry declares no `timeout`. The detached process runs
-the event's five recording scripts after the client has gone: the last
-turns, `observe.crystallize`, `run.complete`, session memory and the brief.
-A host torn down when the client exits ends that process, and what it had
-not sent is lost. Codex gives the event one second and starts each script
-itself, so `loom-run.mjs` awaits its `run.complete` and exits at once.
+Loom registers one, `loom-record`, which runs the event's five recording
+scripts in its own process and exits when they have returned: about half a
+second, most of it the conversation script's settle. It is not handed off,
+because nothing may be left of the host a moment later. By the time the hook
+returns `run.complete` is answered, `observe.crystallize` is sent, and the
+flushers that carry session memory and the brief have run beside it for most
+of that time; the last turns are handed to a flusher just before, and a host
+torn down in that instant can lose them. The entry declares `timeout: 10`,
+which raises the event budget to match: on the default budget a slow server
+or a loaded machine gets the launcher killed with its requests unsent. Codex
+gives the event one second and starts each script itself, so `loom-run.mjs`
+awaits its `run.complete` and exits at once.
 
 ## Local-first mode (off by default)
 

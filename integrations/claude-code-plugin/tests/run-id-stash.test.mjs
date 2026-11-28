@@ -153,6 +153,18 @@ test("a run.begin that never answered is asked again at SessionEnd, and the run 
   });
 });
 
+test("a begin answered after SessionEnd closed the run does not mark it begun again", async () => {
+  const tmp = freshTmp();
+  // Under Claude Code the prompt's begin runs detached, so a short session can end before
+  // its answer: this is the state SessionEnd leaves when it has asked again and closed the run.
+  const closed = () => writeJsonFile(sessionStatePath("run", "s4b", { tmp }), { run_id: "0a1b2c3d" });
+  await withServer({ beginRunId: "0a1b2c3d", onBegin: closed }, async (url) => {
+    await runHook("UserPromptSubmit", { session_id: "s4b", cwd: tmp, prompt: "p" }, { tmp, url });
+  });
+  // Still closed, so a resumed session's next prompt opens a new run.
+  withTmpdir(tmp, () => assert.deepEqual(readRunState("s4b"), { run_id: "0a1b2c3d" }));
+});
+
 test("a begin whose answer was lost is recovered, not duplicated, on the next prompt", async () => {
   // One server: the first begin commits but its answer arrives after the hook's
   // timeout; the retry gets the same id (the server's begin is idempotent).

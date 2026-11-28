@@ -2,30 +2,36 @@
 // One process per event for the scripts the host need not start one by one.
 // A script that only sends data (a tool observation, the conversation, usage,
 // the working-memory note, the run's open and close, the namespace audit, the
-// session's hand-offs) prints nothing the host reads, so the host does not
-// wait for it: one detached process runs an event's recording scripts. The
-// two lookups a prompt does wait for run in the hook itself, side by side,
-// and their context goes to the host as one answer.
+// session's hand-offs) prints nothing the host reads, so one process runs an
+// event's recording scripts, and the host waits for it only where nothing
+// may be left to finish the work afterwards. The two lookups a prompt does
+// wait for run in the hook itself, side by side, and their context goes to
+// the host as one answer.
 //
 //   node loom-record.mjs <Event> [client]
-//       what the host runs, with the payload on stdin. The payload goes to
-//       a private job file, one detached copy of this script is started on
+//       what the host runs, with the payload on stdin.
+//       At a prompt, after a tool call and at Stop the payload goes to a
+//       private job file, one detached copy of this script is started on
 //       it, and the hook exits; at a prompt it first runs the lookups and
 //       prints what they found. With no credential there is nothing to
 //       record, and nothing is started.
+//       At SessionEnd the event's scripts run here and the hook exits when
+//       they have returned: a host that is torn down when the client exits
+//       (a container whose entrypoint is the client, a CI runner that kills
+//       what a job leaves behind) would end a detached copy before it had
+//       sent anything.
 //   node loom-record.mjs <Event> <client or -> <job file>
 //       the detached copy, and the replay of a job file a dead copy left:
 //       runs the event's recording scripts in this one process, each as if
 //       the host had started it, then removes the job file.
 //
-// A hand-off outlives the hook, the session and the host process: the job
-// file is on disk before the hook returns, and the copy runs in its own
-// session with no inherited stdio (lib/flush-job.mjs), so neither's exit
-// ends it. It does not outlive the machine: a host torn down when the client
-// exits (a container whose entrypoint is the client) loses what a copy had
-// not sent by then, the session's close first. A copy that cannot be started
-// records nothing for that event, and one that dies leaves its job file to
-// be replayed; no cursor has moved, so the next Stop sends the conversation
+// A hand-off outlives the hook and the host process: the job file is on disk
+// before the hook returns, and the copy runs in its own session with no
+// inherited stdio (lib/flush-job.mjs), so neither's exit ends it. It does
+// not outlive the machine: a host torn down at the client's exit loses what
+// a copy had not sent by then. A copy that cannot be started records
+// nothing for that event, and one that dies leaves its job file to be
+// replayed; no cursor has moved, so the next Stop sends the conversation
 // turns again.
 
 import { spawnDetached } from "../lib/flush-job.mjs";
@@ -65,13 +71,18 @@ export function mergedContext(event, answers) {
 
 async function hook(script, event, client) {
   const raw = await readStdinText();
-  // Left open, a stdin its host never closes would hold this process.
-  process.stdin.destroy();
+  if (event === "SessionEnd") {
+    // Left open, a stdin its host never closes would hold this process
+    // through the exit grace after the records are sent.
+    process.stdin.destroy();
+    return run(raw, RECORDERS[event]);
+  }
   // An agent's token is left to the copy: renewing one is a request.
   if (agentMode() || resolveToken()) {
     spawnDetached([script, event, client || "-"], raw, { kind: `record-${event}` });
   }
   const answer = LOOKUPS[event] ? mergedContext(event, await run(raw, LOOKUPS[event])) : null;
+  // Exits itself: a host that never closes stdin would hold the process open.
   if (answer) printHookAnswer(answer, () => process.exit(0));
   else process.exit(0);
 }

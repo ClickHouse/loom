@@ -79,14 +79,16 @@ test("renderHealth: many codes are capped with a +N tail", () => {
   );
 });
 
+const BOUND_MS = 3000;
+
 test("decideAudit: with no copy at work the first stop audits, every later one passes", () => {
-  const first = decideAudit({});
+  const first = decideAudit({}, BOUND_MS);
   assert.equal(first.audit, true);
   assert.ok(first.cache.audited_at > 0);
-  const second = decideAudit(first.cache);
+  const second = decideAudit(first.cache, BOUND_MS);
   assert.equal(second.audit, false);
   assert.equal(second.cache, first.cache);
-  assert.equal(decideAudit(null).audit, true);
+  assert.equal(decideAudit(null, BOUND_MS).audit, true);
 });
 
 test("decideAsk: a prompt's copy asks once per session, and not after a stop has", () => {
@@ -95,27 +97,40 @@ test("decideAsk: a prompt's copy asks once per session, and not after a stop has
   assert.ok(first.state.asked_at > 0);
   assert.equal(decideAsk(first.state).ask, false);
   assert.equal(decideAsk({ ...first.state, line: "" }).ask, false);
-  assert.equal(decideAsk(decideAudit({}).cache).ask, false);
+  assert.equal(decideAsk(decideAudit({}, BOUND_MS).cache).ask, false);
   assert.equal(decideAsk(null).ask, true);
 });
 
 test("decideAudit: a stop passes while a copy is asking, tells its verdict once, and never audits", () => {
   const asking = decideAsk({}).state;
-  const pending = decideAudit(asking);
+  const pending = decideAudit(asking, BOUND_MS);
   assert.deepEqual([pending.audit, pending.line], [false, undefined]);
   assert.equal(pending.cache, asking, "nothing to write: a later stop still tells");
 
   const line = "loom: namespace ns has 1 critical usage finding (x) — run /loom-optimize";
-  const told = decideAudit({ ...asking, line });
+  const told = decideAudit({ ...asking, line }, BOUND_MS);
   assert.deepEqual([told.audit, told.line], [false, line]);
   assert.ok(told.cache.audited_at > 0);
-  const after = decideAudit(told.cache);
+  const after = decideAudit(told.cache, BOUND_MS);
   assert.deepEqual([after.audit, after.line], [false, undefined]);
 
   // A healthy namespace, or an audit that did not answer: nothing to tell, once.
-  const quiet = decideAudit({ ...asking, line: "" });
+  const quiet = decideAudit({ ...asking, line: "" }, BOUND_MS);
   assert.deepEqual([quiet.audit, quiet.line], [false, ""]);
   assert.ok(quiet.cache.audited_at > 0);
+});
+
+test("decideAudit: a copy that asked past the request bound and stored no verdict died, so the stop audits", () => {
+  const asked = { asked_at: 1000 };
+  assert.equal(decideAudit(asked, BOUND_MS, 1000 + BOUND_MS).audit, false, "still inside its bound");
+  const overdue = decideAudit(asked, BOUND_MS, 1001 + BOUND_MS);
+  assert.equal(overdue.audit, true);
+  assert.deepEqual(overdue.cache, { asked_at: 1000, audited_at: 1001 + BOUND_MS });
+  // The stop has marked the session: no later one asks, and the copy does not either.
+  assert.equal(decideAudit(overdue.cache, BOUND_MS).audit, false);
+  assert.equal(decideAsk(overdue.cache).ask, false);
+  // A verdict, however late, is told with no call.
+  assert.equal(decideAudit({ ...asked, line: "" }, BOUND_MS, 1001 + BOUND_MS).audit, false);
 });
 
 test("healthPayload: the line rides a block-once reason, nothing else", () => {

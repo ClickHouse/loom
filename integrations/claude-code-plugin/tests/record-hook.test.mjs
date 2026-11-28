@@ -1,9 +1,9 @@
-// The launcher: at a prompt, after a tool call, at Stop and at SessionEnd the
-// host waits for a hand-off, not for a recording request; at a prompt it
-// also waits for the two lookups, in the same process. Each case runs
-// hooks/loom-record.mjs as the host does against a fake Loom that keeps its
-// answers back until the test lets them go, so "the hook returned" and "the
-// record arrived" are observed apart.
+// The launcher: at a prompt, after a tool call and at Stop the host waits for
+// a hand-off, not for a recording request; at a prompt it also waits for the
+// two lookups, in the same process; at SessionEnd it waits for the records.
+// Each case runs hooks/loom-record.mjs as the host does against a fake Loom
+// that keeps its answers back until the test lets them go, so "the hook
+// returned" and "the record arrived" are observed apart.
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -18,6 +18,7 @@ import { removeSandbox } from "./hook-sandbox.mjs";
 import { LOOKUPS, RECORDERS, mergedContext } from "../hooks/loom-record.mjs";
 import { cachePathFor } from "../lib/repo-scope.mjs";
 import { readRunState, writeRunBegun } from "../lib/run-hook.mjs";
+import { sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HOOK = path.join(root, "hooks", "loom-record.mjs");
@@ -126,19 +127,6 @@ function env(box, url, extra = {}) {
 function dyingCopy(box) {
   const preload = path.join(box.dir, "die-as-copy.cjs");
   fs.writeFileSync(preload, "if (process.argv[4] && /loom-record\\.mjs$/.test(process.argv[1])) process.exit(1);\n");
-  return { NODE_OPTIONS: `--require ${preload}` };
-}
-
-/** Environment in which a detached copy of the launcher starts its work
- *  `ms` late: whatever ends the host in that time ends it before the copy has
- *  sent anything. */
-function slowCopy(box, ms) {
-  const preload = path.join(box.dir, "slow-copy.cjs");
-  fs.writeFileSync(
-    preload,
-    `if (process.argv[4] && /loom-record\\.mjs$/.test(process.argv[1]))
-       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${ms});\n`,
-  );
   return { NODE_OPTIONS: `--require ${preload}` };
 }
 
@@ -403,47 +391,68 @@ test("where no copy asked, the first Stop asks and later ones pass", async () =>
   }
 });
 
-test("the SessionEnd hook returns while the server has answered nothing, and the session's close still arrives", async () => {
+test("a Stop asks in place when the prompt's copy asked long ago and left no verdict", async () => {
   const box = sandbox();
-  const loom = await heldLoom();
+  const loom = await heldLoom({ replies: { "namespace.audit": AUDIT } });
+  loom.release();
+  const stop = () =>
+    runLauncher(["Stop"], env(box, loom.url), payload("Stop", box, { stop_hook_active: false }), { script: HEALTH });
   try {
-    withTmpdir(box.tmp, () => writeRunBegun(SESSION, `cc-${SESSION}`));
-    const r = await runHook("SessionEnd", box, loom.url);
-    assert.deepEqual(r, { code: 0, stdout: "", stderr: "" });
-    await arrived(loom, ["observe.crystallize", "run.complete"]);
-    loom.release();
-    // The conversation hook reads the transcript only after its settle; it,
-    // session memory and the brief go through the flusher.
-    await arrived(loom, ["memory.set_from_messages", "conversation.append", "session.brief_save"]);
-    assert.ok(await recorded(box), `left behind: ${handedOff(box)}`);
+    // A copy killed between its ask and its answer leaves this behind.
+    writeJsonFile(sessionStatePath("nshealth", SESSION, { tmp: box.tmp }), { asked_at: Date.now() - 60000 });
+    assert.match(JSON.parse((await stop()).stdout).reason, /exact_key_store/);
+    assert.deepEqual(await stop(), { code: 0, stdout: "", stderr: "" });
+    assert.deepEqual(loom.ops, ["namespace.audit"]);
   } finally {
     await loom.close();
     await removeSandbox(box);
   }
 });
 
-test("a hand-off does not wait on a stdin its host leaves open", async () => {
+test("the SessionEnd hook returns with its records sent, and the run's close does not end the scripts beside it", async () => {
+  const box = sandbox();
+  const loom = await heldLoom();
+  loom.release(); // run.complete is awaited: answer at once
+  try {
+    withTmpdir(box.tmp, () => writeRunBegun(SESSION, `cc-${SESSION}`));
+    // A hand-off, had there been one, would stay: the copy dies at its start.
+    const r = await runHook("SessionEnd", box, loom.url, dyingCopy(box));
+    assert.deepEqual(r, { code: 0, stdout: "", stderr: "" });
+    // Nothing is left to a process that a torn-down host would end first.
+    assert.deepEqual(handedOff(box), []);
+    for (const op of ["observe.crystallize", "run.complete"]) assert.ok(loom.ops.includes(op), `${op} not sent yet`);
+    // The conversation hook reads the transcript only after its settle, which
+    // outlasts the run's close; it, session memory and the brief go through
+    // the flusher.
+    await arrived(loom, ["memory.set_from_messages", "conversation.append", "session.brief_save"]);
+  } finally {
+    await loom.close();
+    await removeSandbox(box);
+  }
+});
+
+test("the SessionEnd hook does not wait on a stdin its host leaves open", async () => {
   const box = sandbox();
   const loom = await heldLoom();
   loom.release();
   try {
     withTmpdir(box.tmp, () => writeRunBegun(SESSION, `cc-${SESSION}`));
-    // An exit grace no test waits out: the hook returns once stdin's one
-    // second is up, not when its host closes the pipe.
+    // An exit grace no test waits out: the hook returns when its records are sent.
     const hookEnv = env(box, loom.url, { LOOM_HOOK_EXIT_MS: "60000" });
     const started = Date.now();
     const r = await runLauncher(["SessionEnd"], hookEnv, payload("SessionEnd", box), { leaveOpen: true });
     const waited = Date.now() - started;
     assert.deepEqual(r, { code: 0, stdout: "", stderr: "" });
+    assert.ok(loom.ops.includes("run.complete"), `run.complete not sent; seen: ${loom.ops.join(", ")}`);
+    // The launcher's own bound ends a process that stdin holds open at 16 s.
     assert.ok(waited < 10000, `the hook returned after ${waited} ms`);
-    await arrived(loom, ["run.complete"]);
   } finally {
     await loom.close();
     await removeSandbox(box);
   }
 });
 
-// SessionEnd: five scripts in the copy ask for the scope. A prompt: two
+// SessionEnd: five scripts in the hook ask for the scope. A prompt: two
 // lookups in the hook, two recorders in the copy. Asked once per script,
 // their git calls would keep the first script's request from leaving.
 for (const [event, processes] of [
@@ -482,42 +491,30 @@ for (const [event, processes] of [
   });
 }
 
-test("the session's close outlives the process group that ran the SessionEnd hook", {
-  skip: process.platform === "win32",
-}, async () => {
+test("the hand-off outlives the process group that ran the hook", { skip: process.platform === "win32" }, async () => {
   const box = sandbox();
   const loom = await heldLoom();
-  withTmpdir(box.tmp, () => writeRunBegun(SESSION, `cc-${SESSION}`));
   // A stand-in host in its own process group: it runs the hook, says so, and stays.
   const host = spawn(
     process.execPath,
     [
       "-e",
       `const { spawn } = require("node:child_process");
-       const hook = spawn(process.execPath, [process.argv[1], "SessionEnd"], { stdio: ["pipe", "ignore", "ignore"] });
+       const hook = spawn(process.execPath, [process.argv[1], "PostToolUse"], { stdio: ["pipe", "ignore", "ignore"] });
        hook.on("close", () => process.stdout.write("returned"));
        hook.stdin.end(process.argv[2]);
        setInterval(() => {}, 1000);`,
       HOOK,
-      payload("SessionEnd", box),
+      payload("PostToolUse", box),
     ],
-    {
-      env: env(box, loom.url, slowCopy(box, 1500)),
-      cwd: os.tmpdir(),
-      detached: true,
-      stdio: ["ignore", "pipe", "ignore"],
-    },
+    { env: env(box, loom.url), cwd: os.tmpdir(), detached: true, stdio: ["ignore", "pipe", "ignore"] },
   );
   try {
     await new Promise((resolve) => host.stdout.once("data", resolve));
     const gone = new Promise((resolve) => host.once("close", resolve));
     process.kill(-host.pid, "SIGKILL");
     await gone;
-    // The host is gone and nothing has been sent: the copy is the only sender.
-    assert.deepEqual(loom.ops, []);
-    await arrived(loom, ["observe.crystallize", "run.complete"]);
-    loom.release();
-    assert.ok(await recorded(box), `left behind: ${handedOff(box)}`);
+    await arrived(loom, ["observe.record"]);
   } finally {
     await loom.close();
     await removeSandbox(box);
