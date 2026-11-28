@@ -201,9 +201,14 @@ LIMIT 50;
 -- Keep partial counts only while the domain is disclosed and final counts are unavailable.
 CREATE OR REPLACE VIEW loom_product_analytics.loom_adoption_live_domains AS
 SELECT snapshot.day, snapshot.installation_id, snapshot.loom_version, snapshot.observed_at AS reported_at,
+       arrayMap(item -> CAST((
+           item.domain, item.active_accounts,
+           if(completed.present = 0, item.successful_requests, completed.requests[item.domain]),
+           item.serving_processes
+       ), 'Tuple(domain String, active_accounts UInt64, successful_requests UInt64, serving_processes Nullable(UInt64))'),
        arrayFilter(item -> completed.present = 0 OR (
-           has(completed.names, item.domain) AND NOT has(completed.measured, item.domain)
-       ), snapshot.domain_activity) AS domain_activity
+           mapContains(completed.requests, item.domain) AND NOT has(completed.measured, item.domain)
+       ), snapshot.domain_activity)) AS domain_activity
 FROM (
     SELECT day, installation_id, loom_version, observed_at, domain_activity
     FROM loom_product_analytics.adoption_domain_snapshots FINAL
@@ -217,7 +222,8 @@ FROM (
 ) AS snapshot
 LEFT JOIN (
     SELECT day, installation_id, 1 AS present,
-           arrayMap(item -> item.domain, user_domains) AS names,
+           mapFromArrays(arrayMap(item -> item.domain, user_domains),
+                         arrayMap(item -> item.successful_requests, user_domains)) AS requests,
            arrayMap(item -> item.domain, domain_activity) AS measured
     FROM loom_product_analytics.loom_external_adoption_windows
     WHERE schema_version = 3 AND window_end = toDateTime(day + 1, 'UTC')

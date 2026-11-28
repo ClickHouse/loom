@@ -128,7 +128,8 @@ The directory shows successful requests and distinct active installations by
 domain in its selected window, including today's snapshots. Active users and
 serving processes use the latest measured day. Completed daily counts replace the
 snapshot counts for the same installation and domain. If a completed report lists
-a domain without counts, the directory can display its recent snapshot. The directory uses snapshots observed
+a domain without detailed counts, the directory uses its final request total and
+can display recent snapshot counts for users and processes. The directory uses snapshots observed
 within the past two hours. The first activity date can precede the selected window.
 The public response contains counts and version labels. Account identifiers and
 serving process names stay on the installation.

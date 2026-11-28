@@ -159,7 +159,12 @@ const headers = [
       const freshActiveDomains = page.getElementById("adoption-active-domains");
       if (freshActiveDomains && activeDomains?.innerHTML !== freshActiveDomains.innerHTML)
         activeDomains?.replaceWith(freshActiveDomains);
-      if (fresh.innerHTML !== section.innerHTML) section.replaceWith(fresh);
+      if (fresh.innerHTML !== section.innerHTML) {
+        const scrollLeft = section.querySelector("table")?.parentElement?.scrollLeft ?? 0;
+        section.replaceWith(fresh);
+        const tableContainer = fresh.querySelector("table")?.parentElement;
+        if (tableContainer) tableContainer.scrollLeft = scrollLeft;
+      }
     } catch {
       // The next refresh retries the request.
     } finally {

@@ -741,6 +741,7 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
         "last_seen": "2026-11-27",
     }
     assert domain_rows["new.example"]["successful_requests"] == 2
-    assert domain_rows["capped.example"]["successful_requests"] == 3
+    assert domain_rows["capped.example"]["successful_requests"] == 4
+    assert domain_rows["capped.example"]["active_accounts"] == 1
     assert domain_rows["shared.example"]["active_installations"] == 2
     assert domain_rows["shared.example"]["loom_version"] == "1.3.0"
