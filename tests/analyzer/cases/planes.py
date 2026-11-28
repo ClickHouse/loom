@@ -649,10 +649,11 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await C.allowlist_list(ORG, NS, ch=ch)
     await C.allowlist_remove(ORG, NS, "k1", "k2", "note", _DT, ch=ch)
     await C.list_conflicted(ORG, NS, before_version=5 if f else None, ch=ch, scope=WHOLE_NAMESPACE)
-    await C.lookup_keys_for_ids(ORG, [_UUID], ch=ch, namespace=NS)
     await C.lookup_target(ORG, NS, _UUID, ch=ch)
     await C.mark_active_by_ids(ORG, [_UUID], ch=ch, namespace=NS)
-    await C.tombstone_ids(ORG, [_UUID], "note", _DT, ch=ch, namespace=NS)
+    await C.settle(
+        ORG, namespace=NS, tombstone=[_UUID], activate=[], audit_note="note", when=_DT, ch=ch
+    )
     await B.find_active_pattern(_UUID, org=ORG if f else None, ch=ch)
     await B.list_for_scope(ORG, NS, scope="namespace" if f else None, ch=ch)
     await B.tombstone_pattern(_UUID, _DT, ch=ch)

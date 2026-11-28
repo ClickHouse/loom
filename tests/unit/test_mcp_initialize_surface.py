@@ -16,6 +16,7 @@ exercised in-process via TestClient.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import re
 from typing import Any
 
@@ -61,6 +62,22 @@ def test_annotations_destructive_for_delete_and_erasure_ops() -> None:
         ann = mcp_tools._tool_annotations(OPERATIONS_BY_NAME[name])
         assert ann["readOnlyHint"] is False, name
         assert ann["destructiveHint"] is True, name
+
+
+async def test_a_resolve_that_tombstones_is_listed_as_destructive() -> None:
+    # No word of `conflicts.resolve` says delete, and `revise` and `contract` tombstone
+    # the side that loses: the op is marked, so a client asks before it runs the tool.
+    assert OPERATIONS_BY_NAME["conflicts.resolve"].destructive
+    listed = {d["name"]: d for d in await mcp._tools_descriptor(toolset="all")}
+    assert listed["loom_conflicts_resolve"]["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+    }
+    # The mark never makes a read destructive, and the queue's read stays a read.
+    marked_read = dataclasses.replace(OPERATIONS_BY_NAME["memory.get"], destructive=True)
+    assert mcp_tools._tool_annotations(marked_read)["destructiveHint"] is False
+    assert listed["loom_conflicts_list"]["annotations"]["readOnlyHint"] is True
 
 
 def test_annotations_erasure_reads_are_not_destructive() -> None:

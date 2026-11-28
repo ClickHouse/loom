@@ -146,6 +146,81 @@ def test_a_hidden_op_is_refused_as_a_direct_call_is(monkeypatch: pytest.MonkeyPa
     )
 
 
+def test_an_agent_settles_a_conflict_over_mcp_and_the_queues_own_views_stay_hidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With auth on, the agent that owns the namespace runs conflicts.resolve through
+    loom_op with its writer's token, and is refused once its owner grant is lowered.
+    The Review queue's suggestions and allowlist stay off MCP."""
+    import time
+
+    from server.core import grant_cache
+    from server.operations.base import grant_rank
+
+    held = {"fleet-a": "admin"}
+
+    async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
+        mine = held if subject == "sa:fleet:a" else {}
+        return grant_cache.GrantMap(ranks={ns: grant_rank(role) for ns, role in mine.items()})
+
+    monkeypatch.setattr(grant_cache, "grant_map", grant_map)
+    seen: list[Any] = []
+    tool = "loom_conflicts_resolve"
+    op = mcp_call.TOOLS_BY_NAME[tool]
+
+    async def _handler(inp: Any) -> Any:
+        seen.append(inp)
+        return op.output_model(
+            resolved=True, decision=inp.decision, affected_memory_ids=[inp.memory_id]
+        )
+
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, tool, dataclasses.replace(op, handler=_handler))
+
+    async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return {"org": "acme", "namespace": "fleet-a", "agent": "a"}
+
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
+    now = int(time.time())
+    tok = mint_token(  # as a workload trust's exchange mints it for agent `a`
+        subject="sa:fleet:a",
+        org="acme",
+        namespaces=["fleet-a"],
+        roles=[],
+        ns_roles={"fleet-a": "writer"},
+        ttl_seconds=300,
+        is_service_account=True,
+        parent_subjects=["sa:fleet"],
+        parent_iats=[now],
+        issued_at=now,
+    )
+    client = _client(monkeypatch, authed=True)
+
+    def post(op_name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        r = client.post(
+            "/mcp", json=_call(op_name, arguments), headers={"Authorization": f"Bearer {tok}"}
+        )
+        return r.json()["result"]
+
+    settle = {"memory_id": "m1", "decision": "revise"}
+    body = post("conflicts.resolve", settle)
+    assert not body.get("isError"), body
+    assert body["structuredContent"]["affected_memory_ids"] == ["m1"]
+    assert [(i.namespace, i.decision) for i in seen] == [("fleet-a", "revise")]
+    # Another admin op stays an admin's, and so does this one without the owner grant.
+    assert post("memory.reindex")["structuredContent"]["code"] == "AUTH_INSUFFICIENT"
+    held["fleet-a"] = "writer"
+    assert post("conflicts.resolve", settle)["structuredContent"]["code"] == "AUTH_INSUFFICIENT"
+    assert len(seen) == 1
+
+    by_name = {r["op"] for r in mcp_op.catalog("conflicts", limit=1000)["ops"]}
+    assert {"conflicts.list", "conflicts.resolve"} <= by_name
+    listed = {t["name"] for t in asyncio.run(_tools_descriptor(toolset="all"))}
+    assert {"loom_conflicts_list", "loom_conflicts_resolve"} <= listed
+    for hidden in ("conflicts.propose_revision", "conflicts.allowlist_remove"):
+        refused = post(hidden)
+        assert refused["isError"] and refused["structuredContent"]["code"] == "OP_NOT_ON_MCP"
+
+
 def test_an_unknown_op_names_the_nearest_ones() -> None:
     _, early = mcp_op.route(_call("tracker.flakey"), toolset="coding", auth=None)
     assert early is not None

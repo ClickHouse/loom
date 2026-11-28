@@ -45,9 +45,9 @@ Revoke an allow decision; the pair will re-flag on future writes.
 
 ## `conflicts.list`
 
-List unresolved conflicts where two memories contradict each other.
+List unresolved conflicts: memories flagged as contradicting another, each with its peers' ids in `conflict_with`.
 
-`POST /v1/conflicts.list` · MCP `loom_conflicts_list` · role `viewer` · read · not listed under the MCP `all` toolset
+`POST /v1/conflicts.list` · MCP `loom_conflicts_list` · role `viewer` · read
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -89,9 +89,9 @@ Return non-destructive revise/contract/allow suggestions.
 
 ## `conflicts.resolve`
 
-Pick the winner of a conflict (keep A, keep B, keep both, merge).
+Settle a conflict for one `memory_id`: `revise` keeps it and tombstones its peers, `contract` tombstones it and reactivates the peers, `allow` keeps all as distinct facts.
 
-`POST /v1/conflicts.resolve` · MCP `loom_conflicts_resolve` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
+`POST /v1/conflicts.resolve` · MCP `loom_conflicts_resolve` · role `admin` · idempotent · audited
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -99,13 +99,13 @@ Pick the winner of a conflict (keep A, keep B, keep both, merge).
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `memory_id` | `str` | required | The conflicted memory the decision is about (an org-wide id); it must live in `namespace`. |
 | `decision` | `Literal['revise', 'contract', 'allow']` | required | `revise` keeps it and tombstones the peers; `contract` tombstones it and reactivates the peers; `allow` reactivates all and allowlists each key pair. |
-| `peer_id` | `str \| None` | `None` | Optional: scope the resolve to one specific peer (revise against just that one). |
+| `peer_id` | `str \| None` | `None` | Optional: scope the resolve to one specific peer (revise against just that one), which must be flagged too. |
 | `reason` | `str` | `''` | Why; appended to tombstoned rows' `source_trace` and stored on allowlist rows (first 512 characters). |
 | `resolved_by` | `str` | `''` | Who resolved it, recorded beside `reason` (first 128 characters); not checked against the token. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `resolved` | `bool` | False when the memory or the named peer is unknown, or the memory is not in `namespace`; nothing was written then. |
+| `resolved` | `bool` | False when the memory or the peer named in `peer_id` is unknown, is not in `namespace`, or is not one side of an unresolved conflict (a memory that is not flagged, or a proposal awaiting review), also when a row the resolve would write… |
 | `decision` | `Literal['revise', 'contract', 'allow']` | The decision, echoed. |
 | `affected_memory_ids` | `list[str]` | Every memory id this call tombstoned or reactivated. |
 | `resolved_at` | `datetime \| None` | When the resolve ran (UTC); null when nothing was resolved. |

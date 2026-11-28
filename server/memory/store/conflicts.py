@@ -4,9 +4,10 @@ loom.conflict_allowlist.
 Conflict semantics: when memory.set writes a row that's
 semantically close to an existing row in the same scope, both get
 `status='conflicted'` and link to each other via `conflict_with`.
-Operators resolve in the dashboard's Review queue; the three decisions are
-`revise` (target wins), `contract` (target loses), `allow`
-(both legit; remember the pair via loom.conflict_allowlist).
+The namespace's admin resolves in the dashboard's Review queue or with
+`conflicts.resolve`, as does an agent of a workload trust on its own
+namespace; the three decisions are `revise` (target wins), `contract` (target
+loses), `allow` (both legit; remember the pair via loom.conflict_allowlist).
 
 This repo carries the SQL for:
   - listing conflicted rows for the operator surface
@@ -18,14 +19,17 @@ This repo carries the SQL for:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.delete_marks import carried_trace
+
+if TYPE_CHECKING:
+    from server.memory.store.rows import MemoryRow
 
 
 async def list_conflicted(
@@ -208,8 +212,8 @@ async def lookup_target(
     """Fetch one target row's id + conflict_with set + status, in `namespace` (a
     namespace restored from another's snapshot keeps its memory ids).
 
-    Used by resolve as the precheck: if None, the target is already
-    tombstoned and we return resolved=False.
+    Used by `conflicts.propose_revision`. A resolve reads the authority's head
+    instead (`conflicts_ops._sides`): its answer decides a tombstone.
     """
     ch = ch or _default_client()
     r = await ch.query_one(
@@ -225,24 +229,46 @@ async def lookup_target(
     return None if r is None else ConflictTarget.from_row(r)
 
 
-async def tombstone_ids(
+async def settle(
     org: str,
-    memory_ids: list[str],
-    audit_note: str,
-    when: datetime,
     *,
     namespace: str,
+    tombstone: list[str],
+    activate: list[str],
+    audit_note: str,
+    when: datetime,
+    skip: Callable[[MemoryRow], bool] | None = None,
     ch: _CHClient | None = None,
-) -> list[dict[str, Any]]:
-    """Tombstone N rows of `namespace` by memory_id. `audit_note` is appended to
-    source_trace so the resolution-audit trail is queryable.
-    Empty list short-circuits (an empty IN would mutate every row).
+) -> list[dict[str, Any]] | None:
+    """A resolve's one write to `namespace`: the `tombstone` rows are tombstoned, with
+    `audit_note` appended to source_trace so the resolution-audit trail is queryable, and
+    the `activate` rows are set status='active'. Every head is read current and judged
+    before a row is written, and the rows go in one insert, committed only over the
+    heads read: a head that moves in between answers 503. `skip(head)` raises to refuse
+    the write, or leaves a head, which leaves them all: the write is whole or not made.
+    The ids are the rows' own, as stored.
 
-    Returns each tombstoned row's identity tuple, memory_key, memory_id and
-    tombstone version, for the handler's webhook events."""
-    if not memory_ids:
-        return []
+    Returns each tombstoned row's identity tuple, memory_key, memory_id and tombstone
+    version, for the handler's webhook events; None when nothing was written."""
     import server.memory.store as memory_repo
+
+    if set(tombstone) & set(activate):
+        raise ValueError("a row is on both sides of the write")
+    if not tombstone:
+        if not activate:
+            return None
+        written = await memory_repo.write_versions_by_ids(
+            org,
+            activate,
+            lambda _row: {"status": "active"},
+            ch=ch,
+            namespace=namespace,
+            skip=skip,
+            strong=True,
+            exact=True,
+            whole=True,
+        )
+        return [] if written else None
 
     def _note(row: memory_repo.MemoryRow) -> dict[str, Any]:
         trace = carried_trace(row.source_trace)  # the delete_version marker is not carried
@@ -250,14 +276,20 @@ async def tombstone_ids(
 
     # The tombstone must reach memory_embeddings too, or the losing side of a
     # conflict keeps surfacing in search.
-    return await memory_repo.tombstone_cascade_by_ids(
+    tombstoned = await memory_repo.tombstone_cascade_by_ids(
         org,
-        memory_ids,
+        tombstone,
         when=when,
         update=_note,
         ch=ch,
         namespace=namespace,
+        skip=skip,
+        strong=True,
+        beside={memory_id: {"status": "active"} for memory_id in activate},
+        exact=True,
+        whole=True,
     )
+    return tombstoned or None
 
 
 async def mark_active_by_ids(
@@ -279,30 +311,6 @@ async def mark_active_by_ids(
         ch=ch,
         namespace=namespace,
     )
-
-
-async def lookup_keys_for_ids(
-    org: str,
-    memory_ids: list[str],
-    *,
-    namespace: str,
-    ch: _CHClient | None = None,
-) -> dict[str, str]:
-    """Resolve memory_id → memory_key for the listed rows of `namespace`. Used by
-    the resolve(allow) path to canonicalize allowlist pairs."""
-    if not memory_ids:
-        return {}
-    ch = ch or _default_client()
-    rows = await ch.query_all(
-        """
-        SELECT memory_id, memory_key FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND memory_id IN {ids:Array(UUID)}
-          AND tombstoned_at IS NULL
-        """,
-        params={"org": org, "ns": namespace, "ids": memory_ids},
-    )
-    return {str(r["memory_id"]): r["memory_key"] for r in rows}
 
 
 async def allowlist_list(

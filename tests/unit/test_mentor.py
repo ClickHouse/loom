@@ -1697,8 +1697,8 @@ def test_a_call_hint_on_mcp_names_ops_for_its_listing() -> None:
 
 
 def test_no_hint_text_writes_an_op_as_a_call_or_names_a_hidden_op() -> None:
-    """The handshake renders hint texts as it renders tool descriptions. A hidden
-    op named in prose is one the user acts on, and its note says so (conflicts)."""
+    """The handshake renders hint texts as it renders tool descriptions, so no prose
+    names an op MCP does not serve."""
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.operations.toolsets import _MCP_HIDDEN_OPS
 
@@ -1709,7 +1709,7 @@ def test_no_hint_text_writes_an_op_as_a_call_or_names_a_hidden_op() -> None:
             if name not in OPERATIONS_BY_NAME:
                 continue
             assert not paren, f"{name}( in {text!r}"
-            assert name not in _MCP_HIDDEN_OPS or name.startswith("conflicts."), text
+            assert name not in _MCP_HIDDEN_OPS, text
     # a plane's `when` carries no note, so it names no hidden op at all
     for _, _, when, _ in mentor_rules.PLANES:
         assert not any(op in when for op in _MCP_HIDDEN_OPS), when

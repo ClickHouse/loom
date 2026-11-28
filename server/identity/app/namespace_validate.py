@@ -179,7 +179,7 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "warning",
         "A write flagged as semantically colliding with an existing fact, "
         "still unresolved past conflict_age_seconds. Resolve it with "
-        "conflicts.resolve (keep / replace / allow) or in the dashboard's Review queue.",
+        "conflicts.resolve (revise / contract / allow) or in the dashboard's Review queue.",
         f"""
         SELECT count() OVER () AS total, memory_key,
                toString(memory_id) AS memory_id,

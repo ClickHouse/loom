@@ -1231,13 +1231,18 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # ---- Conflicts (contradicting memories) ----
     "conflicts.list": (
-        "List unresolved conflicts where two memories contradict each "
-        "other. Use when the user wants to review and reconcile "
-        "competing facts."
+        "List unresolved conflicts: memories flagged as contradicting "
+        "another, each with its peers' ids in `conflict_with`. Read it "
+        "before settling one with conflicts.resolve."
     ),
     "conflicts.resolve": (
-        "Pick the winner of a conflict (keep A, keep B, keep both, "
-        "merge). Call when the user reviews a conflict and decides."
+        "Settle a conflict for one `memory_id`: `revise` keeps it and "
+        "tombstones its peers, `contract` tombstones it and reactivates "
+        "the peers, `allow` keeps all as distinct facts. Only memories "
+        "`conflicts.list` shows are decided or changed. A locked memory "
+        "is never tombstoned (423). Needs the namespace's admin; an agent "
+        "of a workload trust also settles its own namespace. Where a user "
+        "owns the facts, ask which one stands first."
     ),
     "conflicts.allowlist_list": (
         "List (memory_key, memory_key) pairs marked as known-non-"

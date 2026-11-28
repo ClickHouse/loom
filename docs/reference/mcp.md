@@ -255,8 +255,9 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   `namespace` stays as an optional property. Hidden fields stay accepted by
   name.
 - **Annotations.** `readOnlyHint`, `destructiveHint` and `idempotentHint` are
-  derived from the registry (role, idempotency, audit, destructive verbs in the
-  name). `readOnlyHint` is true only for an idempotent viewer op that is
+  derived from the registry (role, idempotency, audit, and a destructive verb in
+  the name or the op's `destructive` mark, which `conflicts.resolve` carries for
+  its tombstones). `readOnlyHint` is true only for an idempotent viewer op that is
   neither audited nor marked `writes`, so a client that auto-approves read-only
   tools never runs a state change unprompted. They are hints; the role check at
   call time is the boundary.
@@ -282,8 +283,8 @@ listed or callable. See
 
 **Hidden ops** (`_MCP_HIDDEN_OPS` in `server/operations/toolsets.py`) are neither
 listed nor callable over MCP: the per-store searches `loom_search` replaces
-(`memory.search`, `knowledge.search`, `conversation.search`), review queues,
-snapshot and restore, policy administration, audit and cost dashboards, code-index
+(`memory.search`, `knowledge.search`, `conversation.search`), the learnings review
+queue, the conflict queue's suggestions and allowlist, snapshot and restore, policy administration, audit and cost dashboards, code-index
 ingest. A call to one answers `isError` with code `OP_NOT_ON_MCP` and what to use
 instead. They stay reachable over HTTP and the SDKs. On the `assistant` toolset
 `memory.search` and `knowledge.search` are listed and callable, and a call to any

@@ -291,6 +291,17 @@ authenticated call, from `gates.authorize` in both transports:
    change has superseded, and otherwise answers 503; the single grant lookup
    (`authz.grant_role_for`) counts a failed read as no grant.
 
+Both transports call the gate through `authorize_op` (`server/code/app/member_writes.py`),
+which may admit a call the gate refused for its role. An agent of a workload trust calls
+an owner's op (`agents.OWNER_OPS`: `conflicts.resolve`) on its own namespace: it holds the
+owner's `admin` grant there, and its token names the namespace as a writer's. The rule
+(`agents.owns`) admits it while that grant is live and the gate passes it as a writer,
+so another org, an ended trust and a token that may not write there are refused as on
+any write. It never applies to a [restricted namespace](#restricted-namespaces), and
+it reaches no namespace the agent was lent or granted and no other admin op.
+`conflicts.resolve` refuses to tombstone a locked row (423 `LOCKED`), whoever calls it,
+so the rule gives the agent no way past a lock that `memory.delete` refuses it.
+
 The `all_mine` fan-out and the org-wide rollups use the same predicate, so they never
 exceed the gate.
 

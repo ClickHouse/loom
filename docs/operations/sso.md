@@ -229,7 +229,10 @@ asks for another lifetime up to that maximum (below), and its writes are stamped
   the others. A grant an admin made stays (409). An admin of the namespace
   grants or revokes `sa:fleet:b` with `grants.create` and `grants.revoke`; an
   agent's token takes any grant its subject holds in the org, as writer at
-  most. A token names lent namespaces by name while all its namespaces, its
+  most. On its own namespace, unless it is restricted, an agent also settles conflicts
+  ([`conflicts.resolve`](../features/memory/conflicts-and-refusal.md#resolving-conflicts),
+  an admin's operation anywhere else) while it holds the owner grant its first
+  exchange wrote. A token names lent namespaces by name while all its namespaces, its
   own and the trust's included, fit 4,096 bytes of the token (fifteen of the
   longest names, more of shorter ones), which keeps it under a proxy's 8 KB
   header limit; a share that would pass that is refused, and one that only

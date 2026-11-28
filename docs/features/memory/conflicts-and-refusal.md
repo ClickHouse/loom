@@ -135,7 +135,17 @@ To change a pinned value, call `memory.update` (keeps the pin) or `memory.pin` (
 | `conflicts.allowlist_list`   | viewer | Pairs marked as known-distinct.                                                          |
 | `conflicts.allowlist_remove` | admin  | Remove a pair; it is flagged again on later writes.                                      |
 
-These are HTTP, SDK (`agent.conflicts.*`) and dashboard operations, not MCP tools.
+All five are HTTP, SDK (`agent.conflicts.*`) and dashboard operations. `conflicts.list`
+and `conflicts.resolve` are MCP tools too: the `all` toolset lists both, `readonly` lists
+`conflicts.list`, and every other toolset except `assistant` reaches them through
+`loom_op`.
+
+`conflicts.resolve` needs `admin`, with one exception: an agent of a workload trust
+settles the conflicts of its own namespace. It holds that namespace's owner grant, its
+token names the namespace as a writer's, and nobody may be at a dashboard for it. The
+exception holds while the owner grant is live. It reaches no namespace the agent was
+lent or granted, no restricted namespace and no other admin operation
+([bots and CI](../../operations/sso.md#bots-and-ci)).
 
 `conflicts.resolve(memory_id, decision)`:
 
@@ -146,7 +156,23 @@ These are HTTP, SDK (`agent.conflicts.*`) and dashboard operations, not MCP tool
 | `allow`    | Both are distinct: every row returns to `active` and each key pair goes on the allowlist (`loom.conflict_allowlist`). |
 
 `reason` and `resolved_by` go to the audit trail. A resolve's tombstones are ordinary
-tombstones: `memory.restore` revives them within 14 days.
+tombstones: `memory.restore` revives them within 14 days. A locked memory is never
+tombstoned: a `revise` or `contract` that would tombstone one answers 423 `LOCKED` and
+changes nothing, and `allow` still settles the pair.
+
+A resolve decides a row that `conflicts.list` shows. On a row that is not flagged, or on
+a proposal awaiting review, it answers `resolved: false` and changes nothing. Of the
+peers it writes the flagged ones only. A row keeps its `conflict_with` once its conflict
+is settled, so a peer settled earlier, revised since or still a proposal is neither
+tombstoned nor returned to `active`; `allow` still puts its pair on the allowlist. With
+`peer_id` the peer named must be flagged too, or the answer is `resolved: false`.
+
+The rows a resolve changes go in one insert, committed over the rows as the resolve read
+them. A change another call makes in between refuses it, and no row is written: the
+answer is `resolved: false` when a row no longer awaits a decision, 423 `LOCKED` when a
+row it would tombstone was locked, and 503 `ADMISSION_CONTENDED` when the change lands
+as the insert is committed. A refused resolve changes no memory, and a 503 can be
+retried as it is.
 
 ```python
 from loom import Agent
@@ -397,6 +423,7 @@ See the [configuration reference](../../reference/configuration.md#conflict-dete
 - **Fake embedders give string-similarity verdicts.** A checkout's fake embedder does not
   model meaning. With adaptivity off, re-bench the fallback thresholds after changing
   the embedder.
-- **`conflicts.resolve` is admin.** A writer settles its own contradiction with
-  `memory.update` on the peer the `next` hint names.
+- **`conflicts.resolve` is admin**, but for a workload trust's agent on its own
+  namespace. Any other writer settles its own contradiction with `memory.update` on the
+  peer the `next` hint names.
 - **A pattern matches values, not keys**, and a substring pattern is case-sensitive.

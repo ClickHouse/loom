@@ -1,6 +1,7 @@
 """conflicts.resolve acts only on rows of the body's namespace.
 
-The transport authorizes ADMIN on the body's `namespace`, and a conflict is
+The transport admits the ADMIN of the body's `namespace`, or the agent that owns
+it, and a conflict is
 surfaced within one namespace, so every row the resolve reads, tombstones,
 re-activates or pairs in the allowlist is read and written there. A target
 elsewhere reads like an unknown id: resolved=False, nothing written; a peer
@@ -26,7 +27,6 @@ from server.auth.jwt import AuthInfo
 from server.core.ch import sequential_reads_active
 from server.memory.api.models_conflicts import ConflictsResolveInput
 from server.memory.app import conflicts_ops as h
-from server.memory.store.conflicts import ConflictTarget
 
 T_OWN, P_OWN, P_OWN2 = (f"1111111{i}-1111-1111-1111-111111111111" for i in range(3))
 T_FOREIGN, P_FOREIGN = (f"2222222{i}-2222-2222-2222-222222222222" for i in range(2))
@@ -40,7 +40,7 @@ class _Table:
     activated: list[str] = field(default_factory=list)
     allowlisted: list[dict[str, Any]] = field(default_factory=list)
     count_reads_consistent: list[bool] = field(default_factory=list)
-    # Deleted in the authority, while ClickHouse's copy still reads live.
+    # The authority holds no live head for these.
     deleted: set[str] = field(default_factory=set)
 
 
@@ -60,33 +60,15 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
         }
     )
 
-    async def _lookup(org: str, namespace: str, memory_id: str, **_: Any) -> ConflictTarget | None:
-        row = t.rows.get(memory_id)
-        if row is None or namespace != row["namespace"]:
-            return None
-        return ConflictTarget.from_row(
-            {
-                "memory_id": memory_id,
-                "conflict_with": row["conflict_with"],
-                "status": "conflicted",
-                "namespace": row["namespace"],
-            }
-        )
-
     def _in(namespace: str, ids: list[str]) -> list[str]:
         return [i for i in ids if i in t.rows and t.rows[i]["namespace"] == namespace]
 
-    async def _tombstone(
-        org: str, ids: list[str], *_: Any, namespace: str, **__: Any
+    async def _settle(
+        org: str, *, namespace: str, tombstone: list[str], activate: list[str], **_: Any
     ) -> list[dict[str, Any]]:
-        t.tombstoned.extend(_in(namespace, ids))
-        return []
-
-    async def _activate(org: str, ids: list[str], *, namespace: str, **_: Any) -> None:
-        t.activated.extend(_in(namespace, ids))
-
-    async def _keys(org: str, ids: list[str], *, namespace: str, **_: Any) -> dict[str, str]:
-        return {i: t.rows[i]["key"] for i in _in(namespace, ids)}
+        t.tombstoned.extend(_in(namespace, tombstone))
+        t.activated.extend(_in(namespace, activate))
+        return [{"memory_id": i} for i in _in(namespace, tombstone)]
 
     async def _count(org: str, namespace: str, **_: Any) -> int:
         t.count_reads_consistent.append(sequential_reads_active())
@@ -100,13 +82,16 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
         row = t.rows.get(memory_id)
         if row is None or namespace not in (None, row["namespace"]) or memory_id in t.deleted:
             return None
-        return SimpleNamespace(namespace=row["namespace"])
+        return SimpleNamespace(
+            memory_id=memory_id,
+            memory_key=row["key"],
+            namespace=row["namespace"],
+            status="conflicted",
+            conflict_with=row["conflict_with"],
+        )
 
     monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
-    monkeypatch.setattr(repo, "lookup_target", _lookup)
-    monkeypatch.setattr(repo, "tombstone_ids", _tombstone)
-    monkeypatch.setattr(repo, "mark_active_by_ids", _activate)
-    monkeypatch.setattr(repo, "lookup_keys_for_ids", _keys)
+    monkeypatch.setattr(repo, "settle", _settle)
     monkeypatch.setattr(repo, "allowlist_insert", _allow)
     monkeypatch.setattr(repo, "count_conflicted", _count)
     h.reset_conflicts_count_cache()
@@ -263,7 +248,7 @@ async def test_a_count_that_fails_after_the_writes_still_answers_the_applied_res
 async def test_a_target_the_authority_deleted_resolves_nothing(
     table: _Table, admin_of_a: None
 ) -> None:
-    """ClickHouse's copy may not hold the authority's delete of the target yet."""
+    """The authority's head decides, whatever a copy that trails it still holds."""
     table.deleted.add(T_OWN)
     out = await _resolve(T_OWN, "revise")
     assert out.resolved is False and table.tombstoned == [] and table.activated == []

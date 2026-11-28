@@ -76,6 +76,8 @@ async def write_versions_by_ids(
     on_unconfirmed: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     judged: bool = False,
     strict: bool = False,
+    exact: bool = False,
+    whole: bool = False,
 ) -> int:
     """Write a new version of each live row in `memory_ids`: `update(existing)`'s
     overrides on every persisted column carried forward, a fresh `version` unless it
@@ -88,7 +90,9 @@ async def write_versions_by_ids(
     after the write (the conflict resolver's) on the write it judged
     (`conflicts.judged_write`), and the status mirror copies only that write's vector
     rows (`mirror_status_to_embeddings(judged=True)`). `strict`: a failed status
-    mirror raises instead of being logged.
+    mirror raises instead of being logged. `exact`: the rows are committed only over the
+    heads read here, else 503 (`insert_versions_over_heads`). `whole`: with an id that is
+    not found or that `skip` leaves, nothing is written.
     Returns the rows written, or confirmed."""
 
     if not memory_ids:
@@ -106,9 +110,9 @@ async def write_versions_by_ids(
         rows.append(build_memory_version_row(existing, **overrides))
         sources.append(existing)
 
-    if not rows:
+    if not rows or (whole and len(rows) < len(found)):
         return 0
-    await insert_versions_over_heads(rows, sources, ch=ch)
+    await insert_versions_over_heads(rows, sources, ch=ch, exact=exact)
     confirmed = rows
     if on_written is not None:
         # Under Postgres the commit is over each head read (`heads_unchanged(exact=True)`)
@@ -555,7 +559,7 @@ async def supersede_duplicates(
     ('active','duplicate','conflicted'), so the EMBEDDINGS write is what
     removes the row from recall; the loom.memory write keeps the audit trail
     and the `superseded_by` back-pointer consistent (mirror of
-    conflicts_repo.tombstone_ids).
+    conflicts_repo.settle).
 
     `victims`: dicts carrying `memory_id`, the embedding identity
     (`agent`, `user_id`, `session_id`, `memory_key`) and `superseded_by`
@@ -1247,10 +1251,16 @@ async def tombstone_cascade_by_ids(
     namespace: str,
     skip: Callable[[MemoryRow], bool] | None = None,
     strong: bool = False,
+    beside: Mapping[str, Mapping[str, Any]] | None = None,
+    exact: bool = False,
+    whole: bool = False,
 ) -> list[dict[str, Any]]:
     """Tombstone rows by memory_id AND mirror the tombstone onto every tier
     search reads (`strong`: the rows read current, for a `skip` that must see a write
-    just made).
+    just made). `beside`: other rows of `namespace`, by memory_id, each written with its
+    overrides in the same insert as the tombstones; the ids of both sides are then the
+    rows' own, and a row read under an id that is on neither side refuses the write.
+    `exact` and `whole`: as on `write_versions_by_ids`; a write not made returns nothing.
 
     A tombstone that reaches only `loom.memory` is not a tombstone: search
     reads `loom.memory_embeddings` on its own predicates and never joins the
@@ -1278,9 +1288,18 @@ async def tombstone_cascade_by_ids(
     # a head written on a replica whose clock is ahead.
     drawn: int | None = None
     decision_version = 0  # the highest of the decision rows' tombstones
+    listed = {str(m) for m in memory_ids}
 
     def _tombstone(existing: MemoryRow) -> dict[str, Any]:
         nonlocal drawn, decision_version
+        if beside is not None:
+            mid = str(existing.memory_id)
+            if (other := beside.get(mid)) is not None:
+                return dict(other)
+            if mid not in listed:
+                # Asked for under another spelling of its id: which side it is on is
+                # not known, and a row to keep must not get the tombstone.
+                raise ValueError(f"memory {mid} is on neither side of the write")
         if drawn is None:
             drawn = next_version()
         v = version_over(existing, drawn)
@@ -1299,9 +1318,19 @@ async def tombstone_cascade_by_ids(
         return overrides
 
     # `write_versions_by_ids` mirrors the tombstone onto memory_embeddings at its version.
-    await write_versions_by_ids(
-        org, memory_ids, _tombstone, ch=ch, namespace=namespace, skip=skip, strong=strong
+    written = await write_versions_by_ids(
+        org,
+        [*memory_ids, *(beside or ())],
+        _tombstone,
+        ch=ch,
+        namespace=namespace,
+        skip=skip,
+        strong=strong,
+        exact=exact,
+        whole=whole,
     )
+    if not written:
+        return []
     # A decision's record goes with its writer's row, as on memory.delete; under Postgres
     # the tombstone's publication retires it (`pg_publish.retire_decision_records`).
     keys = sorted(decisions)

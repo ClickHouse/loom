@@ -171,7 +171,9 @@ A call on `(org, namespace)` is allowed when:
    [restricted namespaces](#restricted-namespaces-classificationrestricted));
 2. for a **scoped** token (`ns_roles`): its role for that namespace reaches the op's role,
    and a write also needs the namespace in `ns_write` when the token has one. Nothing else
-   widens it, except that a viewer grant lets it read a code namespace;
+   widens it, except that a viewer grant lets it read a code namespace, and that an agent
+   of a workload trust settles the conflicts of its own namespace
+   ([resolving conflicts](../features/memory/conflicts-and-refusal.md#resolving-conflicts));
 3. for a **flat** token: the token covers the namespace (`namespaces` for reads, `ns_write`
    for writes) and a role in `roles` reaches the op's role, or a live grant on the
    namespace does.
