@@ -41,7 +41,12 @@ async def handle_code_test_gate(input: CodeTestGateInput) -> CodeTestGateOutput:
     """Pre-PR obligations for a diff: tests to run (evidence-ordered, with a run command
     when derivable), the touched definitions a coverage run measured unexecuted and the
     ones the index links no test to. See code/domain/index/test_gate.py for the rules."""
-    from server.code.domain.index.test_gate import GateInputs, build_gate, is_test_path
+    from server.code.domain.index.test_gate import (
+        NEIGHBOR_FILL,
+        GateInputs,
+        build_gate,
+        is_test_path,
+    )
 
     require_code_intel()
     if not (input.files or input.diff):
@@ -77,6 +82,9 @@ async def handle_code_test_gate(input: CodeTestGateInput) -> CodeTestGateOutput:
         ),
         key=lambda r: (r["path"], r["start_line"]),
     )
+    # A changed source file that touches no definition (unindexed, a script module, a
+    # document) is a change no definition answers for.
+    unseen = set(src_paths) - {t["path"] for t in touched}
 
     with code_span("test_gate.hop_walk", seeds=len(seed_ids), depth=input.depth) as sp:
         known_paths, bare_paths = _graph_paths(src_paths, symbol_rows)
@@ -94,7 +102,9 @@ async def handle_code_test_gate(input: CodeTestGateInput) -> CodeTestGateOutput:
                 symbol_rows,
                 depth=input.depth,
                 read_limit=_GATE_READ_LIMIT,
-                neighbors=input.limit,
+                # Enough to fill the list: a neighbour that is already a row leaves the
+                # list one row longer, so one fewer is needed.
+                neighbors=NEIGHBOR_FILL,
             ),
             _declined_safe(repo, org, ns, touched),
             _scip_coverage(repo, org, ns, known_paths, symbol_rows),
@@ -131,13 +141,13 @@ async def handle_code_test_gate(input: CodeTestGateInput) -> CodeTestGateOutput:
     )
     # The graph is never proof that no test runs a definition: the answer is `measured`
     # only when a coverage run settled every touched definition and every changed line sat
-    # in one.
+    # in one. The graph's own causes stay beside it: they limit `tests` either way.
     causes = [
         *env.causes,
-        *([CAUSE_UNMAPPED] if unmapped else []),
+        *([CAUSE_UNMAPPED] if unmapped or unseen else []),
         *([CAUSE_NO_COVERAGE] if gate.unmeasured else []),
     ]
-    measured = bool(touched) and not unmapped and not gate.unmeasured
+    measured = bool(touched) and not unmapped and not unseen and not gate.unmeasured
     trace_run_id = new_trace_run_id()
     schedule_code_trace(
         org=org,
@@ -182,6 +192,6 @@ async def handle_code_test_gate(input: CodeTestGateInput) -> CodeTestGateOutput:
         unlinked_capped=gate.unlinked_total > len(gate.unlinked),
         by_hop_counts=by_hop_counts,
         epistemic="measured" if measured else "lower_bound",
-        causes=[] if measured else causes,
+        causes=causes,
         trace_run_id=trace_run_id,
     )

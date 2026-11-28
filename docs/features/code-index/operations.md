@@ -464,8 +464,14 @@ where to investigate; it does not establish that an API remains compatible.
 `code.test_gate` takes `files` and/or a `diff` against the revision the index holds: the
 working tree against `HEAD`, a pull request against its merge base. Each changed line
 touches the innermost function or class it sits in, so a diff with three lines of context
-touches only the definitions it edits. A line outside every definition touches nothing
-and adds `unmapped_changes` to `causes`.
+touches only the definitions it edits. Added lines that replace nothing touch the
+definition that holds the lines on both sides of them. When the diff carries its lines
+and not only its hunk headers, the added text decides two more cases: lines that are all
+decorators touch the definition below them, and in Python a run indented as deep as the
+line above it touches the definition that line ends. Text added directly above a
+definition is otherwise a new definition, which the index does not hold. A changed line
+outside every definition touches nothing and adds `unmapped_changes` to `causes`; so does
+a changed source file that touches no definition.
 
 Each row of `tests` is one test file with the kind of evidence in `why`, strongest first:
 
@@ -474,31 +480,41 @@ Each row of `tests` is one test file with the kind of evidence in `why`, stronge
 - `coverage`: an imported coverage run the index verified measured the file executing a
   touched definition, named in `links_to`.
 - `static_call`: a call chain links one of the file's tests to a touched definition
-  (`links_to`), with the nearest `hop`, how many of its tests do (`callers`) and a
-  `confidence`.
-- `file_neighbor`: the file calls `callees` other definitions of the edited files. It is
-  the nearest test of the file and says nothing about a touched definition.
+  (`links_to`), with the nearest `hop` and how many of its tests do (`callers`).
+- `stem_partner`: the file's name holds the stem of an edited file (`test_foo.py` for
+  `foo.py`), among the test map's rows. It says nothing about a touched definition.
 - `test_map`: mined history ties the file to an edited file, and says nothing about a
   touched definition.
+- `file_neighbor`: the file calls `callees` other definitions of the edited files and says
+  nothing about a touched definition. Neighbours are a lead when little else is known:
+  they are listed only while the other kinds leave fewer than four rows, and never more
+  than fill the list to four.
 
 A `static_call` row carries `via` when the chain does not start at the definition itself:
 `constructor` (the test calls the class of a touched `__init__` or `__new__`), `enclosing`
 (it calls the function a touched nested function is defined in) or `fixture` (it reaches
 through a fixture). Within a kind the nearest hop is first, then the file linked to more
-of the touched definitions, then the one with more tests doing so.
+of the touched definitions, then the one with more tests doing so. A test file is listed
+once, under its strongest kind.
 
 The touched definitions land in two lists with different meanings:
 
 - `untested` holds the definitions an imported coverage run measured unexecuted, with the
-  run's `commit`. It is empty unless such a run exists at a revision the index verified.
+  run's `commit`. It is empty unless such a run exists at a revision the index verified. A
+  definition the index holds only a one-line extent for is never measured: whether its
+  declaration line ran says nothing about its body.
 - `unlinked` holds the definitions no coverage run measured and no call chain links a test
   to. It does not say that no test runs them: tests reach code through fixtures,
   string-dispatched entry points and public APIs the call graph holds no edge for. A
-  `file_neighbor` or `test_map` row never takes a definition off this list.
+  `stem_partner`, `test_map` or `file_neighbor` row never takes a definition off this list.
 
-`obligations` is true while `tests` or `untested` is non-empty. `epistemic` is `measured`
-when a verified coverage run settled every touched definition and every changed line sat
-in one, and `lower_bound` otherwise; the op never answers `exact`.
+`obligations` is true while `tests` or `untested` is non-empty. A green test says as much
+as its row's `why`: a `coverage` or `static_call` test ran against a touched definition, a
+`stem_partner`, `test_map` or `file_neighbor` test is about the file and may not run the
+changed code. `epistemic` is `measured` when a verified coverage run settled every touched
+definition, every changed line sat in one and every changed source file touched one, and
+`lower_bound` otherwise; the op never answers `exact`. `causes` lists what limits the
+answer under either value: the call graph's own causes limit `tests`.
 
 ## History, PRs and releases
 

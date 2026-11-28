@@ -146,14 +146,26 @@ async def measured_for(
     return out
 
 
+def body_extents(row: dict[str, Any]) -> list[tuple[str, int, int]]:
+    """(symbol_id, start, end) of every tier row of a definition that holds a body: the
+    row's `extents`, or its own span. A one-line extent is left out: a compiler row may be
+    the declaration line only, and whether that line ran says nothing about the body."""
+    own = (
+        str(row.get("symbol_id") or ""),
+        int(row.get("start_line") or 0),
+        int(row.get("end_line") or 0),
+    )
+    return [e for e in row.get("extents") or [own] if 0 < e[1] < e[2]]
+
+
 async def measured_definitions(
     repo: CodeRepo, org: str, ns: str, rows: list[dict[str, Any]]
 ) -> dict[str, dict[str, Any]]:
-    """What a coverage run measured of each definition row (`symbol_id`, `path`,
-    `start_line`, `end_line`): symbol_id -> {executed, commit}. A definition is absent
-    unless the run measured its file at the commit the index parsed both the file and the
-    definition's span at; one measured unexecuted also needs the run at the index
-    watermark, as the coverage claim's `uncovered` does. No coverage rows, one read."""
+    """What a coverage run measured of each definition row (`symbol_id`, `path` and its
+    spans, see `body_extents`): symbol_id -> {executed, commit}. A definition is absent
+    unless the run measured its file at the commit the index parsed both the file and one
+    of the definition's body extents at; one measured unexecuted also needs the run at the
+    index watermark, as the coverage claim's `uncovered` does. No coverage rows, one read."""
     paths = list(dict.fromkeys(str(r.get("path") or "") for r in rows if r.get("path")))
     files = await repo.coverage_files_for(org, ns, paths) if paths else {}
     if not files:
@@ -172,14 +184,18 @@ async def measured_definitions(
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
         path, sid = str(r.get("path") or ""), str(r.get("symbol_id") or "")
-        start, end = int(r.get("start_line") or 0), int(r.get("end_line") or 0)
-        if path not in files or start <= 0 or end < start:
+        if path not in files:
             continue
         commit = str(files[path].get("commit_sha") or "")
-        span_commit = parsed_at.get((sid, start, end), "")
-        if not verified_source(path, commit, head, indexed, {path: {span_commit}}):
-            continue
-        executed = cr.intersects(cr.json_ranges(str(files[path].get("lines") or "[]")), start, end)
-        if executed or commit == head:
+        ran = cr.json_ranges(str(files[path].get("lines") or "[]"))
+        verified = [
+            (start, end)
+            for extent_id, start, end in body_extents(r)
+            if verified_source(
+                path, commit, head, indexed, {path: {parsed_at.get((extent_id, start, end), "")}}
+            )
+        ]
+        executed = any(cr.intersects(ran, start, end) for start, end in verified)
+        if verified and (executed or commit == head):
             out[sid] = {"executed": executed, "commit": commit}
     return out

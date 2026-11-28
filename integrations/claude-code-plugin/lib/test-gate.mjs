@@ -98,20 +98,6 @@ function short(qname) {
   return parts.length > 2 ? parts.slice(-2).join("::") : String(qname || "");
 }
 
-/**
- * The tests the gate asks to run: every test it lists on evidence about the
- * change (a changed test, a coverage run, a call chain, the test map), then
- * the tests that call other definitions of the edited files, up to `maxRuns`
- * tests in all. A file neighbour says nothing about the touched definitions,
- * so thirty of them are not thirty obligations.
- */
-export function askedTests(gate, maxRuns = 4) {
-  const tests = gate && Array.isArray(gate.tests) ? gate.tests : [];
-  const linked = tests.filter((t) => t && t.why !== "file_neighbor");
-  const neighbors = tests.filter((t) => t && t.why === "file_neighbor");
-  return [...linked, ...neighbors.slice(0, Math.max(0, maxRuns - linked.length))];
-}
-
 /** `names` as a bounded list: the first `max`, then how many more of `total`. */
 function listed(names, max, total = names.length) {
   const shown = names.slice(0, max);
@@ -126,7 +112,7 @@ function listed(names, max, total = names.length) {
  */
 export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists } = {}) {
   if (!gate || !gate.obligations) return "";
-  const indexed = askedTests(gate, maxRuns);
+  const indexed = Array.isArray(gate.tests) ? gate.tests : [];
   // A test map may retain a deleted path, or the checkout may differ from
   // the indexed revision. Never prescribe a command whose target is absent.
   // Keep that evidence visible: an unavailable test is not a green test.
@@ -201,14 +187,14 @@ function runList(tests, { maxRuns, python }) {
 
 /**
  * The tests of a `code.test_gate` answer about `rel` alone that the
- * edit-time line names: the asked ones (`askedTests`) the checkout has. For
- * a source file they are the tests the index links to it, then tests that
- * call other definitions of the file; for a test file, the file itself.
+ * edit-time line names: the ones the checkout has. For a source file they
+ * are the tests the index links to it, or failing those up to four tests
+ * that call other definitions of the file; for a test file, the file itself.
  * A file under a tests directory that no runner takes (a fixture, a
  * conftest) is not a test to run for its own change.
  */
 export function adviceTests(rel, gate, testExists) {
-  return askedTests(gate).filter(
+  return (gate && Array.isArray(gate.tests) ? gate.tests : []).filter(
     (t) =>
       t && t.test_path && (t.run || String(t.test_path) !== rel) && (!testExists || testExists(String(t.test_path))),
   );
@@ -922,16 +908,16 @@ function wholeRuns(objs, { root, cwd, since } = {}) {
 /**
  * True when the gate's ask is to run tests this checkout has and the
  * transcript already answers it: the person's latest prompt ends by saying
- * not to run tests, or `wholeRuns` holds every asked test (`askedTests`: its
- * file, or a directory above it); `lastModified()` is the tree's newest file
- * time in epoch ms. The stop then names no unexecuted definition either. A
+ * not to run tests, or `wholeRuns` holds every named test (its file, or a
+ * directory above it); `lastModified()` is the tree's newest file time in
+ * epoch ms. The stop then names no unexecuted definition either. A
  * gate that names a test missing from the checkout, or only unexecuted
  * definitions, still asks; so does one whose tests another runner runs,
  * unless the person ruled the run out. A Codex rollout answers nothing, so
  * its stop blocks.
  */
 export function runAnswered(gate, objs, { root, cwd, testExists, lastModified } = {}) {
-  const tests = askedTests(gate);
+  const tests = gate && Array.isArray(gate.tests) ? gate.tests : [];
   const paths = [...new Set(tests.map((t) => String(t.test_path || "")))];
   if (!paths.length || !paths.every((p) => p && testExists(p))) return false;
   if (declinesTests(objs)) return true;

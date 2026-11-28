@@ -9,10 +9,27 @@ import re
 from bisect import bisect_left, bisect_right
 from typing import Any, NamedTuple
 
+from server.code.domain.extract.treesitter import lang_for_path
+from server.code.domain.index import coverage_runs as cr
+
 # What a diff's changed lines are matched against. A class is a definition a diff can edit
 # outside every method (an attribute, a decorator), and a line of its body is not the
 # method's below it.
 DEFINITION_KINDS = ("function", "method", "fixture", "class")
+
+
+class Insertion(NamedTuple):
+    """A run of added lines that replaces nothing. The two flags are read from the added
+    text, so a hunk sent without its lines leaves both False."""
+
+    # The old line the run follows (0 at the top of the file).
+    after: int
+    # Every added line is a decorator or annotation (`@name`): the run decorates the
+    # definition that starts on the next line. A new function added there has other lines.
+    decorates: bool = False
+    # The first added line is indented at least as deep as the old line above it: where
+    # indentation is the block structure, the run continues the block that line closes.
+    continues: bool = False
 
 
 class Hunk(NamedTuple):
@@ -23,9 +40,8 @@ class Hunk(NamedTuple):
     name: str
     # Old-side line ranges the hunk deletes or replaces, inclusive.
     removed: tuple[tuple[int, int], ...]
-    # For each run of added lines that replaces nothing, the old line it follows (0 at the
-    # top of the file).
-    inserted: tuple[int, ...]
+    # The runs of added lines that replace nothing.
+    inserted: tuple[Insertion, ...]
 
 
 def _hunk_context_name(ctx: str) -> str:
@@ -99,7 +115,7 @@ def _parse_unified_diff_full(
             if old_count:
                 removed = [(old_start, old_start + old_count - 1)]
             else:
-                inserted = [old_start]
+                inserted = [Insertion(old_start)]
         changes[path].append(Hunk(nm, tuple(removed), tuple(inserted)))
     return ranges, names, changes
 
@@ -118,18 +134,41 @@ def _file_header_at(lines: list[str], i: int, *, body_seen: bool) -> bool:
     return False
 
 
+_DECORATOR_RE = re.compile(r"\s*@\w")
+
+
+def _indent(text: str) -> int:
+    text = text.expandtabs()
+    return len(text) - len(text.lstrip())
+
+
+def _insertion(after: int, added: list[str], above: str | None) -> Insertion:
+    """The insertion of `added` after old line `after`, whose text is `above` when the
+    hunk showed it."""
+    lines = [a for a in added if a.strip()]
+    if not lines:
+        return Insertion(after)
+    return Insertion(
+        after,
+        decorates=all(_DECORATOR_RE.match(a) for a in lines),
+        continues=bool(above and above.strip()) and _indent(lines[0]) >= _indent(above or ""),
+    )
+
+
 def _hunk_body(
     lines: list[str], i: int, old_start: int, old_left: int, new_left: int
-) -> tuple[list[tuple[int, int]], list[int], int]:
+) -> tuple[list[tuple[int, int]], list[Insertion], int]:
     """(removed, inserted, next index): the old-side changes of the hunk body starting at
     `lines[i]`, read for as long as the header's line counts last. A run of added lines
     that follows removed lines replaces them and is no insertion of its own."""
     removed: list[tuple[int, int]] = []
-    inserted: list[int] = []
+    runs: list[tuple[int, list[str], str | None]] = []  # (after, added lines, the line above)
     # A zero-count old range names the line the hunk follows, any other its first line.
     old = old_start if old_left else old_start + 1
     in_run = False  # inside a run of changed lines that already removed or inserted
     seen = False
+    above: str | None = None  # the old line before the next one, when the hunk showed it
+    adding: list[str] | None = None  # the added lines of an insertion still being read
     while i < len(lines) and (old_left > 0 or new_left > 0):
         line = lines[i]
         if line.startswith("\\"):  # "\ No newline at end of file"
@@ -142,18 +181,23 @@ def _hunk_body(
                 removed[-1] = (removed[-1][0], old)
             else:
                 removed.append((old, old))
+            above, adding = line[1:], None
             old, old_left, in_run = old + 1, old_left - 1, True
         elif line.startswith("+") and new_left > 0:
             if not in_run:
-                inserted.append(old - 1)
+                adding = []
+                runs.append((old - 1, adding, above))
+            if adding is not None:
+                adding.append(line[1:])
             new_left, in_run = new_left - 1, True
         elif (line.startswith(" ") or not line) and old_left > 0 and new_left > 0:
+            above, adding = line[1:], None
             old, old_left, new_left, in_run = old + 1, old_left - 1, new_left - 1, False
         else:
             break
         seen = True
         i += 1
-    return removed, inserted, i
+    return removed, [_insertion(*r) for r in runs], i
 
 
 def _name_matches(qualified: str, header_name: str) -> bool:
@@ -172,56 +216,104 @@ def _span(r: dict[str, Any]) -> tuple[int, int]:
     return start, max(start, int(r["end_line"] or 0))
 
 
-def _hunk_rows(rows: list[dict[str, Any]], hunk: Hunk) -> tuple[list[dict[str, Any]], int]:
-    """(the rows of one file the hunk edits, its changed lines that sit in none of them).
-    The edited definition is the innermost one whose span holds a changed line. An
-    insertion sits between two old lines and is inside a definition that holds both, or
-    directly above one (a decorator). `rows` is ordered widest span first."""
-    out: dict[str, dict[str, Any]] = {}
-    unmapped = 0
-    lo = min((_span(r)[0] for r in rows), default=1)
-    hi = max((_span(r)[1] for r in rows), default=0)
-    lines: list[int] = []
-    for a, b in hunk.removed:
-        # Lines outside every definition of the file need no walk: a header may claim any range.
-        inside = range(max(a, lo), min(b, hi) + 1)
-        lines.extend(inside)
-        unmapped += (b - a + 1) - len(inside)
-    lines = sorted(set(lines))
+def _clip(ranges: list[cr.Range], within: list[cr.Range]) -> list[cr.Range]:
+    """The parts of `ranges` inside `within`; both sorted and disjoint."""
+    out: list[cr.Range] = []
+    j = 0
+    for a, b in ranges:
+        while j < len(within) and within[j][1] < a:
+            j += 1
+        k = j
+        while k < len(within) and within[k][0] <= b:
+            out.append((max(a, within[k][0]), min(b, within[k][1])))
+            k += 1
+    return out
+
+
+def _innermost(
+    rows: list[dict[str, Any]], points: list[int], *, gap: bool = False
+) -> dict[int, dict[str, Any]]:
+    """The innermost row whose span holds each of `points` (sorted); with `gap`, the
+    innermost that holds the point and the line after it. `rows` is ordered widest span
+    first, so the innermost is written last."""
     owner: dict[int, dict[str, Any]] = {}
-    for r in rows:  # widest first, so the innermost definition is written last
+    for r in rows:
         start, end = _span(r)
-        for n in lines[bisect_left(lines, start) : bisect_right(lines, end)]:
+        for n in points[bisect_left(points, start) : bisect_right(points, end - gap)]:
             owner[n] = r
-    for n in lines:
-        if n in owner:
-            out[str(owner[n]["symbol_id"])] = owner[n]
-        else:
-            unmapped += 1
-    for after in hunk.inserted:
-        holders = [r for r in rows if _span(r)[0] <= after and after + 1 <= _span(r)[1]]
-        row = (holders or [r for r in rows if _span(r)[0] == after + 1])[-1:]
-        if row:
-            out[str(row[0]["symbol_id"])] = row[0]
-        else:
-            unmapped += 1
-    return list(out.values()), unmapped
+    return owner
 
 
-def _header_row(rows: list[dict[str, Any]], hunk: Hunk) -> dict[str, Any] | None:
-    """The definition a hunk's header names, for a hunk whose lines sit in none: the
-    nearest same-named row above the hunk, and only one the index holds no body extent
-    for (a compiler row of one line), where line numbers cannot tell."""
-    first = min([a for a, _ in hunk.removed] + list(hunk.inserted), default=0)
-    above = [
-        r
-        for r in rows
-        if _name_matches(str(r["qualified_name"]), hunk.name) and _span(r)[0] <= first
-    ]
-    if not above:
-        return None
-    row = max(above, key=lambda r: _span(r)[0])
-    return row if _span(row)[0] == _span(row)[1] else None
+class _FileSpans:
+    """The definition rows of one file, read for where a changed line sits."""
+
+    def __init__(self, rows: list[dict[str, Any]], hunks: list[Hunk], *, indented: bool) -> None:
+        # Widest span first: the innermost definition is the last one written.
+        self.rows = sorted(rows, key=lambda r: _span(r)[0] - _span(r)[1])
+        self.covered = cr.merge_ranges(_span(r) for r in self.rows)
+        self.indented = indented
+        self.starts = {_span(r)[0]: r for r in self.rows}
+        self.ends = {_span(r)[1]: r for r in self.rows}
+        gaps = sorted({ins.after for h in hunks for ins in h.inserted})
+        self.holders = _innermost(self.rows, gaps, gap=True)
+        # Rows the index holds no body extent for (a compiler row of one line), by bare name.
+        self.stubs: dict[str, list[dict[str, Any]]] = {}
+        for r in self.rows:
+            if _span(r)[0] == _span(r)[1]:
+                bare = str(r["qualified_name"]).rsplit("::", 1)[-1]
+                self.stubs.setdefault(bare, []).append(r)
+
+    def inserted_in(self, ins: Insertion) -> dict[str, Any] | None:
+        """The definition an insertion edits. It sits between two old lines and is inside
+        the innermost definition that holds both. The added text can say more: decorators
+        edit the definition that starts below them, and in an indented language a run as
+        deep as the line above continues the definition that line ends. Text added
+        directly above a definition is otherwise a new one, which the index does not hold."""
+        if ins.decorates and ins.after + 1 in self.starts:
+            return self.starts[ins.after + 1]
+        if self.indented and ins.continues and ins.after in self.ends:
+            return self.ends[ins.after]
+        return self.holders.get(ins.after)
+
+    def holds(self, hunk: Hunk) -> bool:
+        """Whether a changed line of the hunk sits in a definition."""
+        for a, b in hunk.removed:
+            i = bisect_left(self.covered, (a, 0))
+            if (i < len(self.covered) and self.covered[i][0] <= b) or (
+                i and self.covered[i - 1][1] >= a
+            ):
+                return True
+        return any(self.inserted_in(ins) is not None for ins in hunk.inserted)
+
+    def header_row(self, hunk: Hunk) -> dict[str, Any] | None:
+        """The definition a hunk's header names, for a hunk whose lines sit in none: the
+        nearest same-named row above the hunk, and only one the index holds no body extent
+        for, where line numbers cannot tell."""
+        first = min([a for a, _ in hunk.removed] + [ins.after for ins in hunk.inserted], default=0)
+        above = [
+            r
+            for r in self.stubs.get(hunk.name.rsplit("::", 1)[-1], [])
+            if _name_matches(str(r["qualified_name"]), hunk.name) and _span(r)[0] <= first
+        ]
+        return max(above, key=lambda r: _span(r)[0]) if above else None
+
+    def edited(self, hunks: list[Hunk]) -> tuple[list[dict[str, Any]], int]:
+        """(the rows the hunks edit, their changed lines that sit in none). The edited
+        definition is the innermost one whose span holds a changed line. The removed
+        ranges are merged before the walk, so its cost follows the file's extent and not
+        what the hunk headers claim."""
+        removed = cr.merge_ranges(r for h in hunks for r in h.removed)
+        inside = _clip(removed, self.covered)
+        lines = [n for a, b in inside for n in range(a, b + 1)]
+        out = {str(r["symbol_id"]): r for r in _innermost(self.rows, lines).values()}
+        unmapped = cr.lines_in(removed) - len(lines)
+        for ins in dict.fromkeys(ins for h in hunks for ins in h.inserted):
+            row = self.inserted_in(ins)
+            if row is None:
+                unmapped += 1
+            else:
+                out[str(row["symbol_id"])] = row
+        return list(out.values()), unmapped
 
 
 def _touched_rows_for_diff(
@@ -229,9 +321,10 @@ def _touched_rows_for_diff(
     changes: dict[str, list[Hunk]],
 ) -> tuple[list[dict[str, Any]], list[str], int]:
     """(the touched definition rows in seed order, the ids the walk seeds, the changed
-    lines of indexed files that sit in no definition). A file with hunks touches the
-    definitions its changed lines sit in; a file without hunks (files-only shape) touches
-    every function in it. Pure, so the diff shape's seed rule is testable without a repo."""
+    lines that sit in no definition, counted in the files `symbol_rows` has a row of). A
+    file with hunks touches the definitions its changed lines sit in; a file without hunks
+    (files-only shape) touches every function in it. Pure, so the diff shape's seed rule
+    is testable without a repo."""
     by_path: dict[str, list[dict[str, Any]]] = {}
     for r in symbol_rows:
         by_path.setdefault(str(r["path"]), []).append(r)
@@ -242,32 +335,37 @@ def _touched_rows_for_diff(
         if not hunks:
             touched_rows += [{**r, "via": "file"} for r in rows if str(r.get("kind")) != "class"]
             continue
-        rows = sorted(rows, key=lambda r: _span(r)[0] - _span(r)[1])
-        edited: set[str] = set()
+        spans = _FileSpans(rows, hunks, indented=lang_for_path(p) == "python")
+        by_lines: list[Hunk] = []
         for hunk in hunks:
-            found, missed = _hunk_rows(rows, hunk)
-            named = _header_row(rows, hunk) if not found and hunk.name else None
-            edited |= {str(r["qualified_name"]) for r in found}
+            named = spans.header_row(hunk) if hunk.name and not spans.holds(hunk) else None
             if named is not None:
                 touched_rows.append({**named, "via": "header"})
             else:
-                unmapped += missed
+                by_lines.append(hunk)
+        found, missed = spans.edited(by_lines)
+        unmapped += missed
+        edited = {str(r["qualified_name"]) for r in found}
         # A definition the two tiers hold as two rows is edited in both, whichever row's
         # span held the line (the compiler's may be its declaration line only).
         touched_rows += [{**r, "via": "hunk"} for r in rows if str(r["qualified_name"]) in edited]
     # Both tiers index the same definition under different symbol_ids: one row per (path,
-    # qualified_name), scip first, carrying every id of the rows it stands for (`tier_ids`).
-    # The walk seeds all of them: parser-tier edges point at the parser-tier id, and a
-    # definition seeded by its compiler id alone would lose the callers only the parser saw.
+    # qualified_name), scip first, carrying every id of the rows it stands for (`tier_ids`)
+    # and the span of each (`extents`). The walk seeds all the ids: parser-tier edges point
+    # at the parser-tier id, and a definition seeded by its compiler id alone would lose the
+    # callers only the parser saw. A coverage run is read against all the extents: the
+    # compiler's may be the declaration line only.
     kept: dict[tuple[str, str], dict[str, Any]] = {}
     for r in sorted(touched_rows, key=lambda r: 0 if str(r["tier"]) == "scip" else 1):
         key = (str(r["path"]), str(r["qualified_name"]))
         ids = r.get("tier_ids") or [r["symbol_id"]]
+        extent = (str(r["symbol_id"]), *_span(r))
         if key in kept:
             first = kept[key]
             first["tier_ids"] = list(dict.fromkeys([*first["tier_ids"], *map(str, ids)]))
+            first["extents"].append(extent)
         else:
-            kept[key] = {**r, "tier_ids": list(dict.fromkeys(map(str, ids)))}
+            kept[key] = {**r, "tier_ids": list(dict.fromkeys(map(str, ids))), "extents": [extent]}
     # Deterministic, explainable order: the definitions a changed line sits in, then the
     # ones only a hunk header names, then whole-file seeds.
     rank = {"hunk": 0, "header": 1, "file": 2}

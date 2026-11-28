@@ -179,7 +179,7 @@ class _Repo:
     async def test_map_for(self, org, ns, paths, *, limit=30):
         return []
 
-    async def test_files_calling(self, org, ns, ids, *, limit=30):
+    async def test_files_calling(self, org, ns, definitions, *, limit):
         return []
 
     async def coverage_files_for(self, org, ns, paths):

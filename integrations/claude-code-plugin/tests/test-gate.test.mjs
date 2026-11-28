@@ -7,7 +7,6 @@ import path from "node:path";
 import {
   advicePayload,
   adviceTests,
-  askedTests,
   checkoutPython,
   decideBlock,
   gateMode,
@@ -186,23 +185,6 @@ test("a definition a coverage run measured unexecuted asks for a test", () => {
   // Runs at two commits name neither.
   const mixed = { ...measured, untested: [measured.untested[0], { qualified_name: "pkg.mod::f", commit: "ffff" }] };
   assert.match(renderGate(mixed), /measured unexecuted: Parser::reset, pkg\.mod::f\. /);
-});
-
-test("a stop asks for the tests about the change, and for file neighbours only up to the cap", () => {
-  const t = (why, i) => ({ test_path: `tests/test_${why}_${i}.py`, why, run: `pytest tests/test_${why}_${i}.py` });
-  const neighbors = Array.from({ length: 30 }, (_, i) => t("file_neighbor", i));
-  const paths = (tests) => tests.map((x) => x.test_path);
-  // No test is linked to the change: the four neighbours that call the most of the file.
-  assert.deepEqual(paths(askedTests({ tests: neighbors })), paths(neighbors.slice(0, 4)));
-  // One linked test leaves room for three; five leave none, and all five are asked.
-  const one = [t("static_call", 0), ...neighbors];
-  assert.deepEqual(paths(askedTests({ tests: one })), paths([one[0], ...neighbors.slice(0, 3)]));
-  const five = [t("changed_test", 0), ...[1, 2, 3].map((i) => t("static_call", i)), ...neighbors, t("test_map", 4)];
-  assert.deepEqual(paths(askedTests({ tests: five })), paths(five.filter((x) => x.why !== "file_neighbor")));
-  const text = renderGate({ obligations: true, tests: one });
-  assert.match(text, /run: pytest tests\/test_static_call_0\.py tests\/test_file_neighbor_0\.py /);
-  assert.doesNotMatch(text, /test_file_neighbor_3|more\)/);
-  assert.deepEqual(askedTests(null), []);
 });
 
 test("plain pytest runs fold into one command; a run with an option stays its own", () => {
@@ -873,22 +855,6 @@ test("a run of a subset or of another file answers nothing", () => {
     answered([edit(), bash("pytest tests/test_a.py -qq; pytest tests/test_b.py -q", "2 passed in 0.10s")]),
     false,
   );
-});
-
-test("file neighbours past the cap do not keep a run from answering the gate", () => {
-  const neighbors = Array.from({ length: 30 }, (_, i) => ({
-    test_path: `tests/test_n${i}.py`,
-    why: "file_neighbor",
-    run: `pytest tests/test_n${i}.py`,
-  }));
-  const gate = {
-    obligations: true,
-    tests: [{ test_path: "tests/test_a.py", why: "static_call", run: "pytest tests/test_a.py" }, ...neighbors],
-  };
-  const ran = (paths) => [edit(), bash(`pytest ${paths.join(" ")}`, "===== 9 passed in 0.12s =====")];
-  const asked = ["tests/test_a.py", "tests/test_n0.py", "tests/test_n1.py", "tests/test_n2.py"];
-  assert.equal(answered(ran(asked), gate), true);
-  assert.equal(answered(ran(asked.slice(0, 3)), gate), false);
 });
 
 test("a gate that asks for more than a pytest run of present tests still asks", () => {

@@ -9,7 +9,11 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.code.app.coverage_freshness import measured_definitions, partition_coverage_rows
+from server.code.app.coverage_freshness import (
+    body_extents,
+    measured_definitions,
+    partition_coverage_rows,
+)
 from server.code.app.symbol.edges import _GRAPH_EDGE_KINDS
 from server.code.domain.index import coverage_runs as cr
 from server.code.store.index import CodeRepo
@@ -143,11 +147,27 @@ async def _coverage(
     for row in current:
         ranges = cr.evidence_ranges(str(row.get("evidence") or ""))
         for r in executed:
-            if str(r["path"]) == str(row.get("src_path")) and cr.intersects(
-                ranges, int(r["start_line"] or 0), int(r["end_line"] or 0)
+            if str(r["path"]) == str(row.get("src_path")) and any(
+                cr.intersects(ranges, start, end) for _, start, end in body_extents(r)
             ):
                 tests.setdefault(str(row.get("test_path") or ""), set()).add(str(r["symbol_id"]))
     return measured, [{"test_path": tp, "roots": sorted(ids)} for tp, ids in tests.items() if tp]
+
+
+def _other_definitions(
+    symbol_rows: list[dict[str, Any]], roots: dict[str, set[str]]
+) -> dict[str, str]:
+    """Edge target id -> the definition it is an id of, for the definitions of the edited
+    files the walk does not seed. A definition both tiers hold has two ids and is one
+    definition. Ordered by path and line: the neighbour read takes the first ids."""
+    names: dict[tuple[str, str], str] = {}
+    out: dict[str, str] = {}
+    for r in sorted(symbol_rows, key=lambda r: (str(r["path"]), int(r["start_line"] or 0))):
+        name = names.setdefault((str(r["path"]), str(r["qualified_name"])), str(r["symbol_id"]))
+        for sid in r.get("tier_ids") or [r["symbol_id"]]:
+            if str(sid) not in roots:
+                out.setdefault(str(sid), name)
+    return out
 
 
 async def link_tests(
@@ -168,10 +188,9 @@ async def link_tests(
     if not symbol_rows:
         return Links()
     roots, stands = _seed_roots(touched, symbol_rows)
-    others = [str(r["symbol_id"]) for r in symbol_rows if str(r["symbol_id"]) not in roots]
     (impacted, capped), near, (measured, coverage) = await asyncio.gather(
         _walk(repo, org, ns, roots, stands, depth=depth, read_limit=read_limit),
-        repo.test_files_calling(org, ns, others, limit=neighbors),
+        repo.test_files_calling(org, ns, _other_definitions(symbol_rows, roots), limit=neighbors),
         _coverage(repo, org, ns, touched),
     )
     return Links(

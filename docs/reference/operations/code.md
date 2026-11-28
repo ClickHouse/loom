@@ -1743,7 +1743,7 @@ The pre-PR question in one call: for THIS change, which tests must run, and whic
 | `unlinked` | `list[dict[str, Any]]` | Touched source definitions no coverage run measured and no call chain links a test to: {qualified_name, path, start_line}. |
 | `changed_files` | `list[str]` | The change as the gate saw it. |
 | `touched_symbols` | `list[dict[str, Any]]` | The source definitions the change touches, {qualified_name, path, start_line, tier}, by path and line (first 200). |
-| `obligations` | `bool` | True while `tests` or `untested` is non-empty: run the tests, then rely on green; write a test for (or explain) the untested rows. |
+| `obligations` | `bool` | True while `tests` or `untested` is non-empty: run the tests, whose green says as much as each row's `why` (a `coverage` or `static_call` test ran against a touched definition; a `stem_partner`, `test_map` or `file_neighbor` test is about… |
 | `tests_total` | `int` | Rows of `tests` before `limit`. |
 | `untested_total` | `int` | Rows of `untested` before `limit`. |
 | `unlinked_total` | `int` | Rows of `unlinked` before `limit`. |
@@ -1751,8 +1751,8 @@ The pre-PR question in one call: for THIS change, which tests must run, and whic
 | `untested_capped` | `bool` | True when `limit` cut `untested` short of `untested_total`. |
 | `unlinked_capped` | `bool` | True when `limit` cut `unlinked` short of `unlinked_total`. |
 | `counts_floor` | `bool` | Same epistemic contract as code.callers: the graph is a floor, so a test missing from `tests` is one the index cannot see. |
-| `epistemic` | `str` | `measured` when a verified coverage run settled every touched definition and every changed line sat in one; otherwise `lower_bound` with `causes`. |
-| `causes` | `list[str]` | Why `epistemic` is lower_bound, from code.callers' causes (unresolved_calls, ambiguous_calls, treesitter_only_files, external_calls, truncated: a hop read hit its row limit) and two of its own: `unmapped_changes` (a changed line of an… |
+| `epistemic` | `str` | `measured` when a verified coverage run settled every touched definition, every changed line sat in one and every changed source file touched one; otherwise `lower_bound`. |
+| `causes` | `list[str]` | What limits the answer, from code.callers' causes (unresolved_calls, ambiguous_calls, treesitter_only_files, external_calls, truncated: a hop read hit its row limit), which limit `tests` under either `epistemic`, and two of its own that… |
 | `by_hop_counts` | `dict[int, int]` | Distinct symbols reached per hop BEFORE any slicing: {1: n, 2: m}. |
 | `trace_run_id` | `str` | Id of this call's row in `loom.code_search_trace`. |
 

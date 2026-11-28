@@ -427,11 +427,11 @@ record: the run and its usage counters.
   asked about yet this session (`adviceFiles`, `adviceLines` in
   lib/test-gate.mjs; at most four per call; a comment-only change is not
   asked about) and prints one line per file as additionalContext on that
-  tool result: the commands of the asked tests (`askedTests`: every test
-  code.test_gate lists on evidence about the change, then tests that call
-  other definitions of the file, up to four in all) that the checkout
-  has, or the file's own command when it is a test. A file with no such
-  test gets the changed definitions the index links no test to. A file is asked about at its first change only, so a function
+  tool result: the commands of the tests the index links to the file
+  (failing those, up to four tests that call other definitions of the
+  file) that the checkout has, or the file's own command when it is a
+  test. A file with no such test gets the changed definitions the index
+  links no test to. A file is asked about at its first change only, so a function
   changed later in it is not named; one the server gave no answer for is
   asked about once more. A test is named once per session, and not when
   the call's own command runs it in this checkout as a whole command
@@ -446,7 +446,7 @@ record: the run and its usage counters.
   in either mode), it sends the change's paths, hunk
   ranges and function names only (`diffHeaders`) to code.test_gate for its
   obligations and blocks the stop once per distinct change with a reason
-  naming them: the asked tests and the definitions a coverage run measured
+  naming them: the tests and the definitions a coverage run measured
   unexecuted. A definition the index links no test to is named beside the
   tests ("the index links no test to") and holds no stop by itself. By default a stop passes, and asks the server nothing, when
   the transcript holds a shell command that starts a test runner and

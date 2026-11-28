@@ -623,18 +623,21 @@ class EdgesMixin(CodeRepoBase):
         }
 
     async def test_files_calling(
-        self, org: str, ns: str, symbol_ids: list[str], *, limit: int = 30
+        self, org: str, ns: str, definitions: dict[str, str], *, limit: int
     ) -> list[dict[str, Any]]:
-        """Test files with a live `calls` edge into `symbol_ids` (the first 1,000), each
-        with how many of them it calls (`callees`), most first, then by path. One grouped
-        read on the edge table's (org, namespace, tier, to_symbol_id) prefix; the test-path
-        filter runs before the cap, so production callers take none of it."""
-        ids = [s for s in dict.fromkeys(symbol_ids) if s][:1000]
+        """Test files with a live `calls` edge into `definitions` (edge target id -> the
+        definition it is an id of; the first 1,000 ids in the caller's order), each with
+        how many of the definitions it calls (`callees`), most first, then by path. One
+        grouped read on the edge table's (org, namespace, tier, to_symbol_id) prefix; the
+        test-path filter runs before the cap, so production callers take none of it."""
+        ids = [s for s in definitions if s][:1000]
         if not ids:
             return []
         rows: list[dict[str, Any]] = await self._ch.query_all(
             """
-            SELECT path, uniqExact(to_symbol_id) AS callees
+            SELECT path,
+                   uniqExact(transform(to_symbol_id, {ids:Array(String)},
+                                       {names:Array(String)}, to_symbol_id)) AS callees
             FROM (
                 SELECT tier, to_symbol_id, from_symbol_id, path, line,
                        argMax(tombstoned_at IS NULL, version) AS is_live
@@ -653,6 +656,7 @@ class EdgesMixin(CodeRepoBase):
                 "org": org,
                 "ns": ns,
                 "ids": ids,
+                "names": [definitions[s] for s in ids],
                 "test_path_pattern": TEST_PATH_PATTERN,
                 "limit": int(limit),
             },

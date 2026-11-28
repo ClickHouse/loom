@@ -55,8 +55,9 @@ CAUSE_CTOR = "ctor_edges_absent"
 CAUSE_STALE = "scip_stale_files"
 # The walk stopped before the graph did: whatever else holds, the rows are part of it.
 CAUSE_TRUNCATED = "truncated"
-# code.test_gate only. A changed line of an indexed file sits in no definition the index
-# holds (module-level code), so no definition answers for it.
+# code.test_gate only. A changed line sits in no definition the index holds (module-level
+# code, text added above a definition, a file with no definition or one the index does not
+# hold), so no definition answers for it.
 CAUSE_UNMAPPED = "unmapped_changes"
 # code.test_gate only. No verified coverage run measured a touched definition: its status
 # comes from the static graph, which cannot show that no test runs it.

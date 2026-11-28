@@ -84,7 +84,8 @@ def test_the_server_reads_the_same_ranges_and_names(tmp_path: Path) -> None:
     assert _parse_unified_diff_full(sent) == _parse_unified_diff_full(diff)
     ranges, names, changes = _parse_unified_diff_full(sent)
     # the first hunk replaces old line 10, the new file's hunk inserts at its top
-    assert (changes["src/a.cpp"][0].removed, changes["n.py"][0].inserted) == (((10, 10),), (0,))
+    assert changes["src/a.cpp"][0].removed == ((10, 10),)
+    assert [ins.after for ins in changes["n.py"][0].inserted] == [0]
     assert {
         "PrivateKey::verify",
         "Foo::bar",

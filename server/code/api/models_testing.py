@@ -22,7 +22,8 @@ class CodeTestGateInput(_CodeIdentity):
     definitions and one boolean, `obligations`, that a Stop hook or CI step can gate on.
     Tests come back in EVIDENCE order — a changed test file, then tests a coverage run
     measured executing a touched definition, then tests a call chain links to one, then
-    tests that call other definitions of the edited files, then the mined test map —
+    the stem partner of a changed source file, then the mined test map, then (while the
+    list is shorter than four) tests that call other definitions of the edited files —
     each row saying why it is there and how to run it (or `run_unknown` when the harness
     is not derivable from the path; never a guessed command)."""
 
@@ -31,8 +32,12 @@ class CodeTestGateInput(_CodeIdentity):
     files: list[str] = Field(default_factory=list, max_length=50)
     # A unified diff against the revision the index holds (the working tree against HEAD, a
     # pull request against its merge base). Each changed line touches the innermost
-    # function or class it sits in; a line in neither touches nothing. A file with no
-    # hunks, as from `files` alone, touches every function in it.
+    # function or class it sits in; a line in neither touches nothing. Added lines that
+    # replace nothing touch the definition that holds the lines on both sides of them;
+    # decorators touch the definition below, and Python lines indented as deep as the line
+    # above touch the definition that line ends (both need the diff's lines, not only its
+    # hunk headers). A file with no hunks, as from `files` alone, touches every function
+    # in it.
     diff: str = Field(default="", max_length=200_000)
     # Reverse-edge hops to look for tests through. Two is code.impact's
     # ceiling; three reaches integration tests that sit behind a fixture.
@@ -164,14 +169,15 @@ class CodeTestGateOutput(BaseModel):
     # (a coverage run measured it executing a touched definition; `links_to`),
     # `static_call` (a call chain links its tests to a touched definition: `hop` of the
     # nearest, `callers` how many of its tests do, `links_to` naming up to ten of the
-    # definitions, `confidence` 0.9 at one hop, 0.8 at two and 0.6 at three,
-    # `via` `constructor` when the test calls the class of a touched constructor,
-    # `enclosing` when it calls the function a touched nested function is defined in or
-    # `fixture` when it reaches through a fixture), `file_neighbor` (it calls `callees`
-    # other definitions of the edited files and says nothing about the touched ones),
-    # `test_map` (mined history about the file: `src_path`, `confidence`). Within a kind
-    # the nearest hop is first, then the file linked to more of the touched definitions,
-    # then the one with more tests or callees.
+    # definitions, `via` `constructor` when the test calls the class of a touched
+    # constructor, `enclosing` when it calls the function a touched nested function is
+    # defined in or `fixture` when it reaches through a fixture), `stem_partner` (its name
+    # holds the stem of a changed source file: `src_path`), `test_map` (mined history
+    # about the file: `src_path`, `confidence`), `file_neighbor` (it calls `callees` other
+    # definitions of the edited files and says nothing about the touched
+    # ones; listed only while the other kinds leave fewer than four rows, and never more
+    # than fill the list to four). Within a kind the nearest hop is first, then the file
+    # linked to more of the touched definitions, then the one with more tests or callees.
     tests: list[dict[str, Any]] = Field(default_factory=list)
     # Touched source definitions a coverage run measured unexecuted, at a commit the index
     # verified: {qualified_name, path, start_line, commit}. Empty without such a run.
@@ -179,15 +185,19 @@ class CodeTestGateOutput(BaseModel):
     # Touched source definitions no coverage run measured and no call chain links a test
     # to: {qualified_name, path, start_line}. Not proof that no test runs them: tests reach
     # code through fixtures, string dispatch and entry points the graph has no edge for. A
-    # `file_neighbor` or `test_map` row never takes a definition off this list.
+    # `stem_partner`, `test_map` or `file_neighbor` row never takes a definition off this
+    # list.
     unlinked: list[dict[str, Any]] = Field(default_factory=list)
     # The change as the gate saw it.
     changed_files: list[str] = Field(default_factory=list)
     # The source definitions the change touches, {qualified_name, path, start_line, tier},
     # by path and line (first 200).
     touched_symbols: list[dict[str, Any]] = Field(default_factory=list)
-    # True while `tests` or `untested` is non-empty: run the tests, then rely on green;
-    # write a test for (or explain) the untested rows. `unlinked` alone asks for nothing.
+    # True while `tests` or `untested` is non-empty: run the tests, whose green says as
+    # much as each row's `why` (a `coverage` or `static_call` test ran against a touched
+    # definition; a `stem_partner`, `test_map` or `file_neighbor` test is about the file
+    # and may not run the changed code), and write a test for (or explain) the untested
+    # rows. `unlinked` alone asks for nothing.
     obligations: bool = False
     # Rows of `tests` before `limit`.
     tests_total: int = 0
@@ -204,16 +214,18 @@ class CodeTestGateOutput(BaseModel):
     # Same epistemic contract as code.callers: the graph is a floor, so a test missing
     # from `tests` is one the index cannot see.
     counts_floor: bool = True
-    # `measured` when a verified coverage run settled every touched definition and every
-    # changed line sat in one; otherwise `lower_bound` with `causes`. The gate never
-    # answers `exact`: a static graph cannot show that no test runs a definition.
+    # `measured` when a verified coverage run settled every touched definition, every
+    # changed line sat in one and every changed source file touched one; otherwise
+    # `lower_bound`. The gate never answers `exact`: a static graph cannot show that no
+    # test runs a definition.
     epistemic: str = "lower_bound"
-    # Why `epistemic` is lower_bound, from code.callers' causes (unresolved_calls,
+    # What limits the answer, from code.callers' causes (unresolved_calls,
     # ambiguous_calls, treesitter_only_files, external_calls, truncated: a hop read hit its
-    # row limit) and two of its own: `unmapped_changes` (a changed line of an indexed file
-    # sits in no definition) and `no_coverage` (no verified coverage run measured a touched
-    # definition). Empty when `epistemic` is measured, or when the change touches no
-    # indexed source definition.
+    # row limit), which limit `tests` under either `epistemic`, and two of its own that
+    # make it `lower_bound`: `unmapped_changes` (a changed line sits in no definition the
+    # index holds: module-level code, text added above a definition, a file with no
+    # definition or one the index does not hold) and `no_coverage` (no verified coverage
+    # run measured a touched definition).
     causes: list[str] = Field(default_factory=list)
     # Distinct symbols reached per hop BEFORE any slicing: {1: n, 2: m}.
     # The true size of the radius when `truncated` says the rows are a page.

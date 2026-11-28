@@ -340,6 +340,7 @@
 27e07e7e4595	ALTER TABLE loom.task_events DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 27eb9abf58ee	SELECT count() AS n FROM loom.search_misses WHERE org = {org:String} AND (has({spellings:Array(String)}, asker) OR has({spellings:Array(String)}, lowerUTF8(user_id))) AND ?
 280ae87ab0d8	INSERT INTO loom.oauth_signin_state (claim_key, value, expires_at) SETTINGS keeper_map_strict_mode = ?, max_execution_time = ? VALUES ({k:String}, {v:String}, {e:UInt32})
+28100d01f424	SELECT path, uniqExact(transform(to_symbol_id, {ids:Array(String)}, {names:Array(String)}, to_symbol_id)) AS callees FROM ( SELECT tier, to_symbol_id, from_symbol_id, path, line, argMax(tombstoned_at
 2847ee772f55	SELECT count() AS n FROM loom.memory_code_links WHERE org = {org:String} AND namespace = {ns:String} AND agent = {a:String} AND user_id = {u:String} AND session_id = {s:String} AND memory_key = {k:Str
 28541ece7d0e	ALTER TABLE loom.memory_embeddings UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND has(tags, ?) AND hasAny(tags, {src:Array(String)}) AND hasAny(arrayMap(
 2869ad9e327d	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
@@ -1064,7 +1065,6 @@
 7ba38135d909	WITH (SELECT toFloat64(count()) FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL) AS n_keys, (SELECT mapFromArrays(groupArray(s), groupA
 7baded054596	SELECT count() AS n FROM loom.knowledge_ingestions WHERE org = {org:String} AND namespace = {ns:String} AND ?
 7bb1d4059098	SELECT (SELECT count() FROM ( SELECT e.org AS org, e.namespace AS namespace, e.memory_key AS memory_key FROM ( SELECT org, namespace, agent, user_id, memory_key FROM loom.entity_vectors FINAL WHERE to
-7bb3901d8e50	SELECT path, uniqExact(to_symbol_id) AS callees FROM ( SELECT tier, to_symbol_id, from_symbol_id, path, line, argMax(tombstoned_at IS NULL, version) AS is_live FROM loom.code_edges WHERE org = {org:St
 7bb9d891b190	SELECT thread_id, msg_id, role, content_excerpt AS embedded_text, ts, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.conversation_embeddings FINAL WHERE org = {org:String} AND nam
 7bcba9ce8741	SELECT state_value FROM loom.code_index_state FINAL WHERE org = {org:String} AND namespace = {ns:String} AND state_key = ? LIMIT ?
 7c06e9fdda88	ALTER TABLE loom.knowledge_uploads DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?

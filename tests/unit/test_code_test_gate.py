@@ -76,6 +76,15 @@ def test_run_overrides_win_and_bad_json_is_ignored() -> None:
     )
 
 
+def test_stem_partners_follow_the_worker_rule() -> None:
+    srcs = ["src/Storages/MergeTree/MergeTreeData.cpp", "src/IO/io.cpp", "server/foo.py"]
+    assert tg.stem_partners("src/Storages/MergeTree/tests/gtest_merge_tree_data.cpp", srcs) == []
+    assert tg.stem_partners("src/Storages/tests/gtest_mergetreedata.cpp", srcs) == [srcs[0]]
+    assert tg.stem_partners("tests/unit/test_foo.py", srcs) == ["server/foo.py"]
+    # short stems never match: "io" is inside everything
+    assert tg.stem_partners("tests/unit/test_io.py", srcs) == []
+
+
 def _touched(sid: str, path: str, name: str = "f") -> dict[str, Any]:
     return {"symbol_id": sid, "qualified_name": name, "path": path, "start_line": 1}
 
@@ -90,10 +99,11 @@ def test_build_gate_orders_by_evidence_and_dedupes() -> None:
         touched=[_touched("s1", "src/alpha.py", "alpha"), _touched("s2", "src/b.py", "b")],
         impacted={
             "t1": _node("test_b_hop", "tests/unit/test_hop.py", 2, ["s2"]),
+            "t2": _node("test_m", "tests/unit/test_mapped.py", 1, ["s1"]),
             "c1": _node("caller", "src/c.py", 1, ["s1"]),
         },
         test_map=[
-            {"test_path": "tests/unit/test_hop.py", "src_path": "src/b.py", "confidence": 0.4},
+            {"test_path": "tests/unit/test_mapped.py", "src_path": "src/b.py", "confidence": 0.4},
             {
                 "test_path": "tests/unit/test_alpha.py",
                 "src_path": "src/alpha.py",
@@ -109,24 +119,93 @@ def test_build_gate_orders_by_evidence_and_dedupes() -> None:
         coverage=[{"test_path": "tests/unit/test_ran.py", "roots": ["s1"]}],
     )
     g = tg.build_gate(inp)
+    # Five rows are about the change, so no file neighbour is listed.
     assert [(r["test_path"], r["why"]) for r in g.tests] == [
         ("tests/unit/test_zeta.py", "changed_test"),
         ("tests/unit/test_ran.py", "coverage"),
+        ("tests/unit/test_mapped.py", "static_call"),
         ("tests/unit/test_hop.py", "static_call"),
-        ("tests/unit/test_near.py", "file_neighbor"),
-        ("tests/unit/test_alpha.py", "test_map"),
+        ("tests/unit/test_alpha.py", "stem_partner"),
     ]
     # A test file keeps its first (strongest) evidence: the changed test is also in the
-    # map, and the call chain's test is also a neighbour and in the map.
+    # map, and a test a call chain links names its definition, whatever the map says of it.
     assert g.tests[0]["evidence"] == "in the diff"
     assert g.tests[1]["links_to"] == ["alpha"]
-    hop = g.tests[2]
+    assert g.tests[2]["links_to"] == ["alpha"] and "src_path" not in g.tests[2]
+    hop = g.tests[3]
     assert hop["hop"] == 2 and hop["evidence"] == "test_b_hop reaches the change in 2 hop(s)"
-    assert hop["links_to"] == ["b"] and hop["callers"] == 1 and hop["confidence"] == 0.8
+    assert hop["links_to"] == ["b"] and hop["callers"] == 1 and "confidence" not in hop
     assert hop["run"] == "pytest tests/unit/test_hop.py" and hop["run_unknown"] is False
-    assert g.tests[3]["callees"] == 3 and g.tests[4]["src_path"] == "src/alpha.py"
+    assert g.tests[4]["src_path"] == "src/alpha.py" and "confidence" not in g.tests[4]
     assert g.tests_total == 5 and g.untested == [] and g.unlinked == []
     assert g.obligations is True
+
+
+def test_a_map_row_follows_the_call_chain_rows_and_its_stem_partner() -> None:
+    g = tg.build_gate(
+        tg.GateInputs(
+            changed_paths=["src/alpha.py"],
+            touched=[_touched("s1", "src/alpha.py", "alpha")],
+            impacted={"t": _node("test_x", "tests/unit/test_chain.py", 1, ["s1"])},
+            test_map=[
+                {
+                    "test_path": "tests/unit/test_low.py",
+                    "src_path": "src/alpha.py",
+                    "confidence": 0.2,
+                },
+                {
+                    "test_path": "tests/unit/test_high.py",
+                    "src_path": "src/alpha.py",
+                    "confidence": 0.9,
+                },
+                {
+                    "test_path": "tests/unit/test_alpha.py",
+                    "src_path": "src/alpha.py",
+                    "confidence": 0.1,
+                },
+            ],
+        )
+    )
+    assert [(r["test_path"], r["why"]) for r in g.tests] == [
+        ("tests/unit/test_chain.py", "static_call"),
+        ("tests/unit/test_alpha.py", "stem_partner"),
+        ("tests/unit/test_high.py", "test_map"),
+        ("tests/unit/test_low.py", "test_map"),
+    ]
+    assert g.tests[2]["confidence"] == 0.9
+
+
+def test_file_neighbours_fill_a_short_list_and_take_no_rows_place() -> None:
+    """Thirty neighbour files beside one test-map row: the map row is listed, and the
+    neighbours fill the list to four, whatever the page limit."""
+    neighbors = [{"path": f"tests/test_n{i:02}.py", "callees": 30 - i} for i in range(30)]
+    mapped = {"test_path": "tests/test_history.py", "src_path": "src/a.py", "confidence": 0.3}
+
+    def gate(**kw: Any) -> tg.Gate:
+        return tg.build_gate(
+            tg.GateInputs(
+                changed_paths=["src/a.py"],
+                touched=[_touched("s1", "src/a.py", "a")],
+                impacted=kw.get("impacted", {}),
+                test_map=kw.get("test_map", []),
+                neighbors=neighbors,
+                limit=30,
+            )
+        )
+
+    g = gate(test_map=[mapped])
+    assert [(r["test_path"], r["why"]) for r in g.tests] == [
+        ("tests/test_history.py", "test_map"),
+        ("tests/test_n00.py", "file_neighbor"),
+        ("tests/test_n01.py", "file_neighbor"),
+        ("tests/test_n02.py", "file_neighbor"),
+    ]
+    assert g.tests_total == 4 and g.tests[1]["callees"] == 30
+    # With nothing else known the four neighbours that call the most of the file are the lead.
+    assert [r["test_path"] for r in gate().tests] == [f"tests/test_n0{i}.py" for i in range(4)]
+    # Four tests a call chain links leave room for none.
+    linked = {f"t{i}": _node(f"test_{i}", f"tests/test_linked_{i}.py", 1, ["s1"]) for i in range(4)}
+    assert {r["why"] for r in gate(impacted=linked).tests} == {"static_call"}
 
 
 def test_static_rows_put_the_file_with_more_links_and_more_tests_first() -> None:
@@ -155,7 +234,6 @@ def test_static_rows_put_the_file_with_more_links_and_more_tests_first() -> None
     assert by_path["tests/test_b.py"]["links_to"] == ["m::A::__init__", "m::f"]
     assert by_path["tests/test_a.py"]["callers"] == 2
     assert by_path["tests/test_a.py"]["via"] == "constructor"
-    assert by_path["tests/test_a.py"]["confidence"] == 0.9
     assert "via" not in by_path["tests/test_b.py"]
 
 
@@ -279,6 +357,7 @@ class _Repo:
         }
         self.neighbors: list[dict[str, Any]] = []
         self.neighbor_ids: list[str] = []
+        self.neighbor_definitions: dict[str, str] = {}
         self.coverage_files: dict[str, dict[str, Any]] = {}
         self.coverage_rows: list[dict[str, Any]] = []
         self.kinds: tuple[str, ...] = ()
@@ -294,8 +373,9 @@ class _Repo:
         assert direction == "callers"
         return [e for sid in ids for e in self.callers.get(sid, [])]
 
-    async def test_files_calling(self, org, ns, ids, *, limit=30):
-        self.neighbor_ids = list(ids)
+    async def test_files_calling(self, org, ns, definitions, *, limit):
+        self.neighbor_ids = list(definitions)
+        self.neighbor_definitions = dict(definitions)
         return self.neighbors[:limit]
 
     async def test_map_for(self, org, ns, paths, *, limit=30):
@@ -357,11 +437,11 @@ async def test_handler_diff_shape_walks_roots_to_tests(intel) -> None:
     assert repo.kinds == ("function", "method", "fixture", "class")
     # the neighbours are asked for the file's other definitions only
     assert repo.neighbor_ids == ["sB"]
-    assert [t["why"] for t in out.tests] == ["static_call", "file_neighbor", "test_map"]
+    assert [t["why"] for t in out.tests] == ["static_call", "test_map", "file_neighbor"]
     assert out.tests[0]["test_path"] == "src/tests/gtest_parts.cpp"
     assert out.tests[0]["hop"] == 2 and out.tests[0]["run_unknown"] is True
     assert out.tests[0]["links_to"] == ["DB::A::f"]
-    assert out.tests[2]["run"] == "tests/clickhouse-test 01234_a"
+    assert out.tests[1]["run"] == "tests/clickhouse-test 01234_a"
     # a call chain links a test to f; nothing was measured
     assert out.untested == [] and out.unlinked == [] and out.obligations is True
     assert out.tests_total == 3 and out.counts_floor is True
@@ -518,6 +598,51 @@ async def test_a_coverage_run_decides_untested_and_makes_the_answer_measured(int
     assert out.unlinked == [] and out.obligations is True
     assert (out.epistemic, out.causes) == ("measured", [])
     assert out.tests[0]["why"] == "coverage" and out.tests[0]["links_to"] == ["pkg.w::helper"]
+
+
+async def test_a_one_line_compiler_row_is_measured_on_the_parser_rows_body(intel) -> None:
+    """The compiler tier may hold a definition as its declaration line only. Whether that
+    line ran says nothing about the body: the run is read against the parser row's extent,
+    and a definition with no extent wider than a line is not measured."""
+    repo = _py_repo()
+    repo.symbols = [
+        _sym("fH", "pkg.w::helper", "pkg/w.py", 44, 44),
+        {**_sym("pH", "pkg.w::helper", "pkg/w.py", 44, 50), "tier": "treesitter"},
+        _sym("fS", "pkg.w::stub", "pkg/w.py", 60, 60),
+    ]
+    # the body of helper ran (46-48), its declaration line did not; line 60 ran
+    repo.coverage_files = {
+        "pkg/w.py": {"commit_sha": "c" * 40, "lines": "[[46, 48], [60, 60]]", "tests": 1}
+    }
+    out = await _gate(intel, repo, diff=_one_line("pkg/w.py", 47))
+    assert [t["qualified_name"] for t in out.touched_symbols] == ["pkg.w::helper"]
+    assert out.untested == [] and out.epistemic == "measured"
+
+    out = await _gate(intel, repo, diff=_one_line("pkg/w.py", 60))
+    assert [t["qualified_name"] for t in out.touched_symbols] == ["pkg.w::stub"]
+    assert out.untested == [] and out.epistemic == "lower_bound"
+    assert "no_coverage" in out.causes
+
+
+async def test_measured_needs_every_changed_source_file_to_touch_a_definition(intel) -> None:
+    """A coverage run settled every definition of one file; the other changed file holds
+    no definition the index knows, so the change was not measured as a whole."""
+    repo = _py_repo()
+    repo.coverage_files = {"pkg/w.py": {"commit_sha": "c" * 40, "lines": "[[1, 99]]", "tests": 2}}
+    out = await _gate(intel, repo, files=["pkg/w.py"])
+    assert out.epistemic == "measured" and out.untested == []
+    out = await _gate(intel, repo, files=["pkg/w.py", "pkg/script.py"])
+    # the index holds nothing of the second file, which is the graph's own cause too
+    assert out.epistemic == "lower_bound"
+    assert out.causes == ["external_calls", "unmapped_changes"]
+
+
+async def test_a_neighbour_counts_a_definition_both_tiers_hold_once(intel) -> None:
+    repo = _py_repo()
+    repo.symbols[3] = {**repo.symbols[3], "tier_ids": ["fH", "pH"]}
+    await _gate(intel, repo, diff=_one_line("pkg/w.py", 30))
+    # every id of a definition stands for that definition, in path and line order
+    assert repo.neighbor_definitions == {"cW": "cW", "mI": "mI", "fH": "fH", "pH": "fH"}
 
 
 async def test_a_coverage_run_of_another_revision_measures_nothing(intel) -> None:
