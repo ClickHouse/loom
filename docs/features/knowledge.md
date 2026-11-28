@@ -139,8 +139,12 @@ and databases are shared with, whose credential is the integration's token; and
 ([recordings](#a-recording-source)). The `knowledge_source_sync` worker pulls each
 source's files into the namespace's documents ([syncing](#syncing-a-source)); `list`
 says whether this deployment runs it (`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`,
-off by default). The design of connected accounts and access that follows the store's
-permissions is in [document sources](../architecture/document-sources.md).
+off by default). An operator who keeps members' credentials off the deployment sets
+`LOOM_KNOWLEDGE_SOURCE_SELF_SERVICE_ENABLED=false`: `add` and `rotate` then answer
+`SELF_SERVICE_OFF` before any probe or write, the other source operations still answer,
+`list` says so (`self_service`), and the dashboard offers neither. The design of
+connected accounts and access that follows the store's permissions is in
+[document sources](../architecture/document-sources.md).
 
 Open **Settings → Connected accounts** to connect your Google Drive, Notion or Linear
 account. Choose **Connect**, complete the provider's consent screen, and return to the
