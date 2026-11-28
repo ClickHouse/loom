@@ -56,7 +56,7 @@ from server.memory.store.rows import identity_key, version_over
 from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
 
     from server.memory.store import MemoryRow
 
@@ -166,6 +166,35 @@ async def handle_memory_update_by_id(input: MemoryUpdateByIdInput) -> MemoryUpda
     if existing is None:
         return MemoryUpdateByIdOutput(updated=False)
     return await _update_live_row(input, existing, ch, op="memory.update_by_id")
+
+
+async def revise_as_pipeline(
+    org: str, namespace: str, memory_id: str, value: str, *, if_match_sha256: str
+) -> MemoryUpdateByIdOutput:
+    """memory.update_by_id's write for a pipeline of Loom's own that read the row and its
+    namespace itself, so no caller is authorized: `value` over the head that hashes
+    `if_match_sha256` (409 PRECONDITION_FAILED once it moved), the row's cap kept. The
+    version stays its writer's row (`actor` carried: a member still revises and deletes
+    the rule they wrote) and is `derived`, since its text is no longer what the writer
+    stated; the audit row names the enclosing `pipeline_actor`."""
+    import server.memory.store as memory_repo
+
+    existing = await memory_repo.get_by_id(
+        memory_id, org=org, namespace=namespace, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+    )
+    if existing is None:
+        return MemoryUpdateByIdOutput(updated=False)
+    input = MemoryUpdateByIdInput(
+        org=org,
+        memory_id=memory_id,
+        value=value,
+        if_match_sha256=if_match_sha256,
+        char_limit=existing.char_limit,  # None would drop the row's cap
+    )
+    stamp = {"actor": str(existing.actor or ""), "source_class": "derived"}
+    return await _update_live_row(
+        input, existing, get_client(), op="memory.update_by_id", stamp=stamp
+    )
 
 
 async def handle_memory_update(input: MemoryUpdateInput) -> MemoryUpdateOutput:
@@ -604,11 +633,11 @@ async def _update_post_write(
 
 
 async def _update_live_row(
-    input: Any, existing: MemoryRow, ch: Any, *, op: str
+    input: Any, existing: MemoryRow, ch: Any, *, op: str, stamp: Mapping[str, str] | None = None
 ) -> MemoryUpdateByIdOutput:
     """A conditional update re-reads the head under the key's write lock."""
     if not input.if_match_sha256:
-        return await _write_revision(input, existing, ch, op=op)
+        return await _write_revision(input, existing, ch, op=op, stamp=stamp)
     import server.memory.store as memory_repo
 
     async with key_write_lock.key_write_locks.hold(
@@ -629,7 +658,7 @@ async def _update_live_row(
         )
         if head is None:
             return MemoryUpdateByIdOutput(updated=False)
-        return await _write_revision(input, head, ch, op=op)
+        return await _write_revision(input, head, ch, op=op, stamp=stamp)
 
 
 # Its own function: _write_revision is at the function-length gate's 50 statements.
@@ -874,12 +903,14 @@ async def _refuse_blacklisted(
 
 
 async def _write_revision(
-    input: Any, existing: MemoryRow, ch: Any, *, op: str
+    input: Any, existing: MemoryRow, ch: Any, *, op: str, stamp: Mapping[str, str] | None = None
 ) -> MemoryUpdateByIdOutput:
     """The write half shared by memory.update_by_id and memory.update:
     lock, expiry/revive, hash precondition, char cap, blacklist, one new
     version row, its audit row, embedding refresh. `input` carries value / tags / concepts /
-    if_match_sha256 / char_limit / revive (and, for memory.update, confidence)."""
+    if_match_sha256 / char_limit / revive (and, for memory.update, confidence). `stamp` is
+    the version's `actor` and `source_class` where a pipeline decides them
+    (`revise_as_pipeline`); else the reviser is its actor and the row keeps its class."""
     import server.memory.store as memory_repo
 
     _lock.assert_unlocked(existing, "value", op=op)
@@ -951,7 +982,7 @@ async def _write_revision(
         updated_at=memory_repo.written_now(),
         run_id=revision_run_id,
         # This version's author is the reviser, not the original writer.
-        actor=app_provenance.writer_actor(fallback=existing.actor),
+        **({"actor": app_provenance.writer_actor(fallback=existing.actor)} | dict(stamp or {})),
         tombstoned_at=None,
         char_limit=effective_char_limit,
         content_sha256=new_sha,

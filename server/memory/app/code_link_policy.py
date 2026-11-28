@@ -1,5 +1,7 @@
-"""A namespace's code-change policy, run on the links a change left due: `revise`
-asks the judge whether a changed claim still holds."""
+"""What the link pass does with the memories a change left due: a memory whose link
+followed a rename has its text brought up to it where that is certain
+(`code_renames.revise`), and under the namespace's `revise` policy the judge is asked
+whether a changed claim still holds."""
 
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ from server.code.domain.anchor import Definition
 from server.code.domain.declaration import fingerprint_version
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
-from server.memory.app import code_link_judge
+from server.memory.app import code_link_judge, code_renames
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app.code_link_reads import (
     SERVED,
@@ -54,8 +56,11 @@ async def apply_policies(
     result: link_pass.PassResult,
 ) -> None:
     """Run the policy of each memory a change in `cns` left due and clear the marks it
-    settled; what fails or is past the judgement budget stays due. An org whose model
-    calls are switched off is left as it is: its links stay due, nothing written."""
+    settled; what fails or is past the judgement budget stays due. A memory due for a
+    link that followed a rename has its text revised first (`code_renames.revise`): once
+    written, its links are of its old text and the link pass makes them again. An org
+    whose model calls are switched off is left as it is: its links stay due, nothing
+    written."""
     if await customer.switched_off(org):
         return
     # a page a few times the budget: what is left over is read by the next pass
@@ -63,9 +68,9 @@ async def apply_policies(
     if not due:
         return
     links: dict[str, list[LinkRow]] = defaultdict(list)
+    pending: dict[str, list[LinkRow]] = defaultdict(list)  # names that wait for a definition
     for a in await store.for_memories(org, due):
-        if a["state"] != "pending":
-            links[a["memory_id"]].append(a)
+        (pending if a["state"] == "pending" else links)[a["memory_id"]].append(a)
     heads = {h["mid"]: h for h in await store.memory_heads(org, due)}
     policies = await store.code_change_policies(
         org, sorted({h["namespace"] for h in heads.values()})
@@ -83,6 +88,12 @@ async def apply_policies(
                 a for a in links[mid] if a["inputs_hash"] == want and a["code_namespace"] == cns
             ]
             out: _Revised | None = _Revised()
+            if any(a["state"] == "moved" and a["policy_due"] for a in mine):
+                if not budget.revises:
+                    continue  # the link worker's: every mark of the memory stays
+                # planned over every link made from the memory as it is, waiting names too
+                made = [a for a in links[mid] + pending[mid] if a["inputs_hash"] == want]
+                result.renamed += await code_renames.revise(org, row, made)
             if mine:
                 policy = code_change.policy_of(policies.get(str(row["namespace"]), ""))
                 spent = budget.judgements

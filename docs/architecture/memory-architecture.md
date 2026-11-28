@@ -1148,6 +1148,7 @@ term plus a tag boost can exceed the gap between a good and a mediocre match.
 | `reflection_distill`\*    | Recent sessions without an outcome                           | Outcome labels, then `reflection` memories hidden from unfiltered recall                       | Yes |
 | `entity_communities`\*    | The co-occurrence graph                                      | `entity_communities`                                                                           | No  |
 | `recalibration`           | The embedder's score distribution                            | Calibration thresholds                                                                         | No  |
+| `memory_code_links`       | Memory writes, each repository's links and its indexed head  | `memory_code_links` rows; a revised version of a memory whose text names renamed code          | Yes |
 
 \* Off by default (`LOOM_PROFILE_CONSOLIDATION_ENABLED`,
 `LOOM_REFLECTION_DISTILL_ENABLED`, `LOOM_ENTITY_COMMUNITIES_ENABLED`).
@@ -1198,6 +1199,19 @@ tags are the union of its sources'. A summary its writer tags `consolidated` and
 `src:<key>` for each source is downgraded or retired as its sources are deleted: a `src:`
 tag names a key of the row's own namespace, and a user erasure retires the row only
 through a key the user wrote there. A `definition` never joins a cluster.
+
+`memory_code_links` calls the model only under a namespace's `revise` policy. It is the
+one worker that revises a memory's text unasked: when a link follows a definition
+renamed or moved with its code unchanged, the pass swaps the old name or path for the
+new one in the memory's text, where the plan of
+`server/memory/domain/code_rename.py` offers the edit, no person pinned, locked or
+verified the memory, no principal attested its text, and the repository is indexed on
+one branch. The revision goes through `memory.update_by_id`'s write
+(`update.revise_as_pipeline`) on the hash of the text it was planned for, with that
+write's blacklist check, conflict check, embedding, audit row and `memory.revised`
+event, and it closes the facts the old value stated, as any revision does. `memory.history`
+keeps the text it replaced ([memories linked to
+code](../concepts/memory.md#memories-linked-to-code)).
 
 A worker leg that catches its own failure calls `pass_context.note_failure`, so the
 supervisor counts it. A worker that declares `owned_tables` runs its first pass at boot
@@ -1663,6 +1677,10 @@ writes no outbox rows ([rule 22](rolling-upgrades.md#the-rules)).
   worker's `users_behind` trust a profile row only when its `actor` is
   `worker:structured-profile`, so a caller who writes the profile key with `memory.set`
   cannot forge a served profile or mark a user current.
+- The link pass's revision of a memory's text after a rename keeps the row's `actor`
+  (the row stays its writer's: a code-namespace member may still revise and delete the
+  rule they wrote) and writes `source_class` `derived`, since the text is no longer what
+  the writer stated. Its audit row names `process:code_rename`.
 - A `high`-sensitivity row and a non-searchable type have no embedding row.
 - Every vector leg filters `embedding_dim > 0`.
 - Merge, duplicate and pinned rejection are decided before the insert; only the LLM

@@ -243,6 +243,103 @@ async def test_only_revise_judges_and_every_other_policy_just_clears_the_mark(wo
 
 
 @pytest.mark.asyncio
+async def test_a_memory_due_for_a_followed_rename_has_its_text_revised_under_every_policy(
+    world, monkeypatch
+) -> None:
+    asked: list[tuple[str, list[str]]] = []
+
+    async def revise(org, head, links):
+        assert all(a["inputs_hash"] == _inputs(head) for a in links)
+        asked.append((head["mid"], sorted(a["state"] for a in links)))
+        return head["mid"] != "prose"  # its plan withholds
+
+    monkeypatch.setattr(code_link_policy.code_renames, "revise", revise)
+    world.rows.update(
+        renamed=_row("renamed"),
+        prose=_row("prose"),
+        flagged=_row("flagged", namespace="agent-f"),
+        still=_row("still"),
+        older=_row("older"),
+    )
+    world.states.update(
+        renamed=["moved", "pending"],
+        prose=["moved"],
+        flagged=["fresh", "moved"],
+        still=["fresh"],
+        older=["moved"],
+    )
+    world.stale.add("older")  # links made for an older value: relinking comes first
+    world.policy["agent-f"] = code_change.FLAG
+    result = await _apply()
+    # planned over every link made from the memory as it is, a waiting name included;
+    # never for a memory with no moved link
+    assert asked == [
+        ("renamed", ["moved", "pending"]),
+        ("prose", ["moved"]),
+        ("flagged", ["fresh", "moved"]),
+    ]
+    assert result.renamed == 2 and result.as_dict()["renamed"] == 2
+    # written or withheld, the mark goes: a withheld text is the report's to list
+    assert _cleared(world) == ["flagged", "prose", "renamed", "still"]
+    assert all(r["state"] != "pending" for r in world.cleared)  # no link of the policy's
+    assert world.judged == []
+
+
+@pytest.mark.asyncio
+async def test_a_recheck_in_a_callers_request_revises_no_text_and_leaves_it_due(
+    world, monkeypatch
+) -> None:
+    async def revise(org, head, links):
+        raise AssertionError("the link worker revises, as itself")
+
+    monkeypatch.setattr(code_link_policy.code_renames, "revise", revise)
+    world.rows.update(renamed=_row("renamed"), gone=_row("gone"))
+    world.states.update(renamed=["moved", "fresh"], gone=["missing"])
+    result = code_link_pass.PassResult()
+    files = code_link_pass.RepoReads("o", "code-a")
+    budget = code_link_pass.Budget(judgements=0, revises=False)
+    await code_link_policy.apply_policies("o", "code-a", "c2", files, budget, result)
+    assert _cleared(world) == ["gone"] and result.renamed == 0
+    assert [r for r in world.cleared if r["memory_id"] == "renamed"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_revision_that_fails_leaves_its_memory_due_and_the_pass_goes_on(
+    world, monkeypatch
+) -> None:
+    async def revise(org, head, links):
+        if head["mid"] == "a":
+            raise RuntimeError("the embedder is away")
+        return True
+
+    monkeypatch.setattr(code_link_policy.code_renames, "revise", revise)
+    for m in ("a", "b"):
+        world.rows[m] = _row(m)
+        world.states[m] = ["moved"]
+    result = await _apply()
+    assert _cleared(world) == ["b"] and result.renamed == 1
+    assert result.errors == ["policy o/a: the embedder is away"]
+
+
+@pytest.mark.asyncio
+async def test_a_callers_recheck_asks_for_no_judgement_and_no_revision(monkeypatch) -> None:
+    asked: list[code_link_pass.Budget] = []
+
+    async def recheck(org, cns, budget, result):
+        asked.append(budget)
+
+    async def namespaces(*_a, **_kw):
+        return [("o", "code-a")]
+
+    monkeypatch.setattr(code_link_recheck, "_recheck_repository", recheck)
+    monkeypatch.setattr(code_links.store, "code_namespaces", namespaces)
+    monkeypatch.setattr(settings, "memory_code_links_enabled", True)
+    assert await code_link_recheck.recheck_repository("o", "code-a") is not None
+    assert asked == [code_link_pass.Budget(judgements=0, revises=False)]
+    assert code_link_pass.Budget(judgements=3).revises  # the worker's own pass
+
+
+@pytest.mark.asyncio
 async def test_revise_suggests_within_the_budget_and_the_rest_stays_due(world, monkeypatch) -> None:
     monkeypatch.setattr(settings, "memory_code_links_revise_per_pass", 1)
     for m in ("a", "b"):
@@ -3579,6 +3676,31 @@ async def _moves_written(monkeypatch, moves, revise=()) -> list[dict[str, Any]]:
     monkeypatch.setattr(code_link_policy, "revised_namespaces", revised)
     await code_link_recheck._write_moves(moves, "c2")
     return written
+
+
+@pytest.mark.asyncio
+async def test_a_link_that_reads_moved_is_due_for_its_memorys_text(monkeypatch) -> None:
+    """Under any policy: the pass that follows a rename or a file's move leaves the link
+    due, so its memory's text is planned once, by this pass or the one that resumes it."""
+    from server.code.domain.anchor import Link
+
+    at = {"org": "o", "namespace": "ns", "memory_id": "m1", "version": 4}
+    at |= {"body_hash": "h1", "checked_hash": "h1", "anchored_path": "m.py"}
+    symbol = _full(at | {"path": "m.py", "qualified_name": "m::f", "anchored_name": "m::f"})
+    file = _full(at | {"path": "m.py", "qualified_name": ""})
+    moves = [
+        code_link_recheck.Move(symbol, Link("m.py", "m::g", "h1", "moved", checked_hash="h1")),
+        code_link_recheck.Move(file, Link("n.py", "", "h1", "moved", checked_hash="h1")),
+        # its lines shifted: it is where its memory says
+        code_link_recheck.Move(symbol, Link("m.py", "m::f", "h1", start_line=3, end_line=9)),
+    ]
+    written = await _moves_written(monkeypatch, moves)
+    live = [r for r in written if r["tombstoned_at"] is None]
+    assert [(r["path"], r["qualified_name"], r["state"], r["policy_due"]) for r in live] == [
+        ("m.py", "m::g", "moved", 1),
+        ("n.py", "", "moved", 1),
+        ("m.py", "m::f", "fresh", 0),
+    ]
 
 
 @pytest.mark.asyncio

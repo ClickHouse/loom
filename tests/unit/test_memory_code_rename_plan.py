@@ -1,18 +1,24 @@
 """The edits that bring a memory's text up to a rename its link followed: which
-spellings are edited, which withhold the whole memory and why, and what the listing
-namespace.validate reads returns."""
+spellings are edited, which withhold the whole memory and why, what the listing
+namespace.validate reads returns, and which memories the link pass revises itself."""
 
 from __future__ import annotations
 
 import json
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 
 from server.code.domain.anchor import Definition
+from server.core.errors import BackendUnavailableError, PreconditionFailedError
 from server.core.hashing import served_content_sha256
-from server.memory.app import code_link_reads, code_renames
+from server.llm import customer
+from server.memory.api.models_crud import MemoryUpdateByIdOutput
+from server.memory.app import code_link_reads, code_renames, update
+from server.memory.app import provenance as app_provenance
 from server.memory.domain.code_rename import REASONS, Plan, plan, revised, written_as
 
 RULES = "rules-1"
@@ -677,3 +683,149 @@ async def test_an_old_path_past_the_store_reads_cap_is_still_asked_for(
         ("src/old/f000.py", "src/new/f000.py")
     ]
     assert sum("edits" in r for r in rows.values()) == last
+
+
+# ---- the revision the link pass makes ---------------------------------------------------
+
+TEXT = "`read_rows` retries twice."
+
+
+@pytest.fixture
+def writer(listing: dict, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """`listing` with its repository indexed on one branch and memory.update_by_id's
+    write captured: what it was called with, as whom and for whom."""
+    listing |= {"written": [], "branches": ["code"], "refusal": None}
+
+    async def revise_as_pipeline(
+        org: str, namespace: str, memory_id: str, value: str, *, if_match_sha256: str
+    ) -> MemoryUpdateByIdOutput:
+        if listing["refusal"] is not None:
+            raise listing["refusal"]
+        listing["written"].append(
+            {
+                "at": (org, namespace, memory_id),
+                "value": value,
+                "if_match": if_match_sha256,
+                "actor": app_provenance.writer_actor(),
+                "for": customer.attribution(),
+            }
+        )
+        return MemoryUpdateByIdOutput(updated=True)
+
+    def repos() -> list[SimpleNamespace]:
+        return [SimpleNamespace(org="o", repo="acme/x", namespace=ns) for ns in listing["branches"]]
+
+    monkeypatch.setattr(update, "revise_as_pipeline", revise_as_pipeline)
+    monkeypatch.setattr(code_renames, "configured_repos", repos)
+    monkeypatch.setattr(
+        code_renames,
+        "repo_for_namespace",
+        lambda org, ns: next((c for c in repos() if c.namespace == ns), None),
+    )
+    return listing
+
+
+async def _revise(world: dict[str, Any], text: Any = TEXT, **head: Any) -> bool:
+    """The link pass's revision of one memory holding `text`, linked by `RENAMED`."""
+    link = head.pop("link", RENAMED) | {"memory_id": "m1", "inputs_hash": "inputs"}
+    return await code_renames.revise("o", _head("m1", text, **head), [link])
+
+
+@pytest.mark.asyncio
+async def test_the_link_pass_writes_the_edits_a_plan_offers(writer: dict) -> None:
+    assert await _revise(writer, actor="human:alice", user_id="u1")
+    (written,) = writer["written"]
+    assert written["at"] == ("o", "ns", "m1")
+    assert written["value"] == "`fetch_rows` retries twice."
+    # over the text it was planned for: refused once the memory moved on
+    assert written["if_match"] == served_content_sha256(TEXT)
+    # the audit row names the pipeline; the embedding is made for the memory's writer
+    assert written["actor"] == code_renames.ACTOR
+    assert (written["for"].org, written["for"].namespace) == ("o", "ns")
+    assert (written["for"].subject, written["for"].user_id) == ("alice", "u1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "read_rows retries twice.",  # a word of the prose
+        "`read_rows` was renamed last week.",  # a sentence about the name
+        {"claim": TEXT},  # not one string
+        "`Reader` wraps the socket.",  # names nothing old
+    ],
+)
+async def test_a_text_its_plan_withholds_is_left_as_it_is(writer: dict, text: Any) -> None:
+    assert not await _revise(writer, text)
+    assert writer["written"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "head",
+    [
+        {"pinned": 1},
+        {"lock_mode": "read_only", "lock_until": None},
+        {"verified_by": "human:alice", "verified_sha256": "s"},
+        # a service account's attestation of this text would be left stale
+        {"verified_by": "process:ci", "verified_sha256": "s"},
+        {"sensitivity": "high"},
+        {"status": "superseded"},
+        {"tombstoned_at": "2031-01-01 00:00:00"},
+    ],
+)
+async def test_a_memory_someone_stands_behind_or_no_read_serves_is_left(
+    writer: dict, head: dict
+) -> None:
+    assert not await _revise(writer, **head)
+    assert writer["written"] == []
+    # an attestation of an earlier text binds nothing: the memory is revised
+    assert await _revise(writer, verified_by="process:ci", verified_sha256="older")
+
+
+@pytest.mark.asyncio
+async def test_a_repository_indexed_on_two_branches_keeps_its_memories_text(writer: dict) -> None:
+    """Another branch may still define the old name, and the memory linked again from
+    its revised text would no longer be served there."""
+    writer["branches"] = ["code", "code-release"]
+    assert not await _revise(writer)
+    writer["branches"] = []  # the repository is no longer configured
+    assert not await _revise(writer)
+    assert writer["written"] == []
+
+
+@pytest.mark.asyncio
+async def test_links_made_from_an_earlier_text_revise_nothing(writer: dict) -> None:
+    link = RENAMED | {"memory_id": "m1", "inputs_hash": "older"}
+    assert not await code_renames.revise("o", _head("m1", TEXT), [link])
+    # nor does a memory none of whose links moved
+    assert not await _revise(writer, link=_link(PATH, NEW))
+    assert writer["written"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        HTTPException(status_code=409, detail={"code": "PRECONDITION_FAILED"}),
+        HTTPException(status_code=423, detail={"code": "LOCKED"}),
+        PreconditionFailedError("the memory changed"),
+    ],
+)
+async def test_a_revision_the_write_refuses_leaves_the_text(
+    writer: dict, refusal: Exception
+) -> None:
+    writer["refusal"] = refusal
+    assert not await _revise(writer)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure", [HTTPException(status_code=503), BackendUnavailableError("clickhouse is away")]
+)
+async def test_a_revision_that_fails_raises_so_the_memory_stays_due(
+    writer: dict, failure: Exception
+) -> None:
+    writer["refusal"] = failure
+    with pytest.raises(type(failure)):
+        await _revise(writer)

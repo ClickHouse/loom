@@ -4,7 +4,8 @@ links them, follows a rename, flags a changed body, leaves a memory whose code i
 out of search (and serves it again when the code comes back), honours the namespace
 policy and the person's holds, resolves a name once it is merged, and serves the links
 on code.symbol, memory.for_file, memory.get and memory.search, branch by branch. Loom
-never writes the memory itself.
+writes a memory's text only to bring it up to a rename its link followed, where the
+repository is indexed on one branch.
 
 Handlers run in-process; skips without LOOM_CH_HOST (house rule).
 """
@@ -1669,6 +1670,53 @@ async def test_validate_lists_the_edit_a_followed_rename_allows_and_an_update_ap
     after = await renames_for((MEM, TRUNK))
     assert after.totals == {"prose_occurrence": 1}
     assert [s["memory_key"] for s in after.samples] == ["fetch-rows-prose"]
+
+
+async def test_the_link_pass_revises_a_memorys_text_after_a_rename_on_a_one_branch_repository(
+    env,
+) -> None:
+    """With the repository indexed on trunk alone, the pass that follows a rename brings
+    the text of a memory nobody holds up to it: one revision through memory.update_by_id's
+    write, still its writer's row, `derived`, the text it replaced in the history. A
+    pinned memory and one that writes the name as a word of the prose keep their text.
+    The next pass links the revised memory where the code is and revises nothing."""
+    from server.code.domain.index.repos import configured_repos, set_registry_repos
+    from server.memory.api.models_temporal import MemoryHistoryInput
+    from server.memory.app.curation import handle_memory_history
+
+    repo = env
+    set_registry_repos([c for c in configured_repos() if c.namespace == TRUNK], frozenset())
+    path = "src/widgets/io.py"
+    src = "def fetch_rows(conn, n):\n    rows = conn.read(n)\n    return [r for r in rows if r]\n"
+    c1 = repo.commit({path: src})
+    await _index(TRUNK, repo, c1, [path])
+    text, pinned_text = "`fetch_rows` drops empty rows", "`fetch_rows` needs an open connection"
+    prose_text = "fetch_rows reads a batch from the connection"
+    mid = await _remember(MEM, "fetch-rows", text)
+    pinned = await _remember(MEM, "fetch-rows-pinned", pinned_text, pinned=True)
+    prose = await _remember(MEM, "fetch-rows-prose", prose_text, files=[path])
+    await _pass()
+    before = await _row(mid)
+    c2 = repo.commit({path: src.replace("fetch_rows", "load_rows")})
+    await _index(TRUNK, repo, c2, [path])
+    result = await _pass()
+    assert result.renamed == 1
+    after = await _row(mid)
+    assert after.value == "`load_rows` drops empty rows" and after.version > before.version
+    assert (after.actor, after.source_class) == (before.actor, "derived")
+    assert (await _row(pinned)).value == pinned_text
+    assert (await _row(prose)).value == prose_text
+    history = await handle_memory_history(
+        MemoryHistoryInput(org=ORG, namespace=MEM, agent="claude-code", memory_key="fetch-rows")
+    )
+    versions = {str(r.value): r.source_class for r in history.rows}
+    assert history.rows[0].value == after.value
+    assert versions == {after.value: "derived", text: before.source_class}
+
+    again = await _pass()
+    assert again.renamed == 0 and (await _row(mid)).version == after.version
+    (link,) = await _links(mid)
+    assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "fresh")
 
 
 async def test_validate_counts_unlinked_code_memories_by_cause(env) -> None:

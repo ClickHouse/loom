@@ -510,9 +510,10 @@ commits its hashes were taken at. When its old text is gone from git, a link tha
 it takes the text the next check finds and a changed one stays `changed`; one whose old
 text no longer parses keeps its last state, and the worker reports it.
 
-Loom never writes the memory, so after a rename its text still says the old name. The
-reads that serve its links (listed below, `namespace.validate` apart) name where the
-code is now. A link that is `fresh`, `moved` or `changed` at another path or symbol than
+After a rename a memory's text still says the old name until it is revised, by the
+link pass where the swap is certain ([below](#a-memorys-text-after-a-rename)) or by a
+person. Until then the reads that serve its links (listed below, `namespace.validate`
+apart) name where the code is now. A link that is `fresh`, `moved` or `changed` at another path or symbol than
 the memory was written against is served with both: the current `path`, `symbol`,
 `start_line` and `end_line` (trunk's, at the link's last check), and `was_path` and
 `was_symbol`, the oldest of the identities the link keeps (its last 16; a claim the
@@ -657,15 +658,45 @@ linked, is not counted. How far each repository's links trail its
 index is a gauge, and a health warning when it lasts
 ([monitoring](../operations/monitoring.md#what-to-alert-on)).
 
+### A memory's text after a rename
+
 A `moved` link is at its code, and the memory's text may still name the old definition or
-path. `namespace.validate` lists each memory whose text does under the `info` finding
-`code_rename_edits`, with either the `edits` its text allows (replace `old` with `new`
-from `start` to `end`, counted in Unicode code points of the text, where the text reads
-`old`) and the `content_sha256` they are of, or the one `reason` no edit is offered. The finding's `totals` count the memories by `edits` and by reason. Loom
-writes nothing: to apply an edit, read the sentence it changes, then call `memory.update`
-on the key with the revised text and `if_match_sha256` set to the listed hash. That is a
-revision by the caller, with its conflict check, and it is refused when the memory changed
-after the report read it. The link pass then links the revised memory where the code is.
+path. The link pass that follows the rename plans the edits that bring the text up to it
+and applies them itself when all of these hold:
+
+- the plan offers edits: none of the reasons in the table below applies;
+- no person holds the memory (pinned, locked or verified), and no service account
+  attested the text as it is, which a revision would leave stale;
+- the memory is served and not labelled `high`;
+- the repository is indexed on one branch. Another indexed branch may still define the
+  old name, and a memory linked again from its revised text is no longer served there.
+
+The revision is one `memory.update_by_id` write on the hash of the text the edits were
+planned for, so a memory rewritten in the meantime is left alone. It runs that write's
+blacklist and conflict checks, embeds the new text and closes the facts the old value
+stated, as any revision does. The new version stays its writer's row (`actor` is
+kept), carries `source_class` `derived`, and leaves an audit row by `process:code_rename`
+and a `memory.revised` event; `memory.history` keeps the text it replaced. A row its
+writer asserted is `derived` from then on, so search no longer prefers it in a near-tie
+(`memory_search_asserted_boost_scale`). The next pass
+links the revised memory where the code is, and it reads `fresh`. The `memory_code_links`
+pass outcome counts the memories revised as `renamed`. A link followed with an edit to
+its code reads `changed` and its memory's text is never revised: whether the claim still
+holds is the `revise` policy's question. A recheck made inside a `code.refresh` call
+revises nothing and leaves the memory to the worker's next pass.
+
+Every other memory keeps its text. `namespace.validate` lists each memory whose text
+still names an old definition or path under the `info` finding `code_rename_edits`,
+with either the `edits` its text allows (replace `old` with `new` from `start` to `end`,
+counted in Unicode code points of the text, where the text reads `old`) and the
+`content_sha256` they are of, or the one `reason` no edit is offered. The finding's
+`totals` count the memories by `edits` and by reason. A memory listed with `edits` is one
+the link pass leaves (held, attested, or in a repository indexed on more than one
+branch) or has not reached yet. The report writes nothing: to apply an edit, read the
+sentence it changes, then call `memory.update` on the key with the revised text and
+`if_match_sha256` set to the listed hash. That is a revision by the caller, with its
+conflict check, and it is refused when the memory changed after the report read it. The
+link pass then links the revised memory where the code is.
 
 An edit is offered only for a name written as code (a whole backticked identifier, an
 `A::b`, or a call written `a.b(` or `name()`) and for a whole repository path, in the

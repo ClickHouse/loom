@@ -9,6 +9,8 @@ off skips the check; the row's own key is excluded by the check itself.
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -23,7 +25,7 @@ from server.memory.app import restore as _restore_mod
 from server.memory.app import stack as _stack_mod
 from server.memory.app import update as update_mod
 from server.memory.domain.conflicts import ConflictPeer, ConflictResult
-from server.memory.store import MemoryRow
+from server.memory.store import MemoryRow, key_write_lock
 from server.memory.store import conflict_candidates as conflict_candidates
 
 _NOW = datetime.now(UTC).replace(tzinfo=None)
@@ -311,6 +313,55 @@ async def test_an_update_is_judged_against_its_rows_user(wired, monkeypatch) -> 
         MemoryUpdateByIdInput(org="test", memory_id=_ID_A, value="Deploys happen on Friday")
     )
     assert calls.check[0]["new_user_id"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_a_pipelines_revision_keeps_the_rows_writer_and_is_derived(
+    wired, monkeypatch
+) -> None:
+    """Loom's own revision of a row: the version stays its writer's (a member's right to
+    their own row goes with `actor`) under the row's cap, its class is `derived` on the
+    row and its search document, the audit row names the pipeline, and it lands only
+    over the head it was planned for."""
+    from server.core.hashing import served_content_sha256
+    from server.memory.domain.provenance import pipeline_actor
+    from server.observability import audit
+
+    audited: list[dict[str, Any]] = []
+
+    async def emit(**kw: Any) -> None:
+        audited.append(kw)
+
+    @contextlib.asynccontextmanager
+    async def no_lease(*_key: str) -> AsyncIterator[None]:
+        yield  # no Keeper here: the key's lease is free
+
+    monkeypatch.setattr(audit, "emit", emit)
+    monkeypatch.setattr(key_write_lock.key_write_locks, "hold", no_lease)
+    row = _row(actor="human:alice", source_class="asserted", status="active", char_limit=400)
+    ch, calls = wired(ConflictResult(verdict="clear", peers=[]), row=row)
+    planned_on = served_content_sha256(row.value)
+    with pipeline_actor("process:code_rename"):
+        out = await update_mod.revise_as_pipeline(
+            "test", "personal", _ID_A, "Deploys happen on Thursday", if_match_sha256=planned_on
+        )
+        ((_, rows),) = ch.inserts
+        with pytest.raises(HTTPException) as refused:
+            await update_mod.revise_as_pipeline(
+                "test", "personal", _ID_A, "Deploys happen on Friday", if_match_sha256="0" * 64
+            )
+        missing = await update_mod.revise_as_pipeline(
+            "test", "personal", _ID_P, "Deploys happen on Friday", if_match_sha256=planned_on
+        )
+    assert out.updated and rows[0]["value"] == '"Deploys happen on Thursday"'
+    assert (rows[0]["actor"], rows[0]["source_class"]) == ("human:alice", "derived")
+    assert rows[0]["char_limit"] == 400
+    assert calls.embedding_rows[0]["source_class"] == "derived"
+    (event,) = audited
+    assert (event["event_type"], event["actor"]) == ("memory.update_by_id", "process:code_rename")
+    assert event["subject"]["source_class"] == "derived"
+    assert refused.value.status_code == 409 and len(ch.inserts) == 1
+    assert not missing.updated
 
 
 def test_own_key_is_excluded_by_the_check_itself() -> None:
