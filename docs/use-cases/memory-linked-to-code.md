@@ -116,6 +116,10 @@ minutes.
 
 ## Check a lesson after a code edit
 
+Try the check with a sample retry rule in the
+[code-linked memory Playground](https://loom.clickhouse.com/playground/source-change).
+Change the retry status and see whether the saved lesson still matches the function.
+
 On the repository's indexed trunk, save a lesson such as `` `fetch_page()` retries on code 115 ``
 with the repository tag or in its code namespace, as above. Use a name that resolves to
 one definition. After the link pass, read that definition with `code.symbol` and look for
