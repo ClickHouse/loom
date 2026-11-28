@@ -211,6 +211,10 @@ def _name_matches(qualified: str, header_name: str) -> bool:
     return False
 
 
+def _bare(name: str) -> str:
+    return name.rsplit("::", 1)[-1]
+
+
 def _span(r: dict[str, Any]) -> tuple[int, int]:
     start = int(r["start_line"] or 0)
     return start, max(start, int(r["end_line"] or 0))
@@ -256,12 +260,13 @@ class _FileSpans:
         self.ends = {_span(r)[1]: r for r in self.rows}
         gaps = sorted({ins.after for h in hunks for ins in h.inserted})
         self.holders = _innermost(self.rows, gaps, gap=True)
-        # Rows the index holds no body extent for (a compiler row of one line), by bare name.
-        self.stubs: dict[str, list[dict[str, Any]]] = {}
-        for r in self.rows:
-            if _span(r)[0] == _span(r)[1]:
-                bare = str(r["qualified_name"]).rsplit("::", 1)[-1]
-                self.stubs.setdefault(bare, []).append(r)
+        # Rows by bare name in line order, with their start lines: a hunk header names a
+        # definition, and the nearest one above the hunk is found by bisection.
+        self.named: dict[str, tuple[list[int], list[dict[str, Any]]]] = {}
+        for r in sorted(self.rows, key=lambda r: _span(r)[0]):
+            starts, same = self.named.setdefault(_bare(str(r["qualified_name"])), ([], []))
+            starts.append(_span(r)[0])
+            same.append(r)
 
     def inserted_in(self, ins: Insertion) -> dict[str, Any] | None:
         """The definition an insertion edits. It sits between two old lines and is inside
@@ -290,12 +295,11 @@ class _FileSpans:
         nearest same-named row above the hunk, and only one the index holds no body extent
         for, where line numbers cannot tell."""
         first = min([a for a, _ in hunk.removed] + [ins.after for ins in hunk.inserted], default=0)
-        above = [
-            r
-            for r in self.stubs.get(hunk.name.rsplit("::", 1)[-1], [])
-            if _name_matches(str(r["qualified_name"]), hunk.name) and _span(r)[0] <= first
-        ]
-        return max(above, key=lambda r: _span(r)[0]) if above else None
+        starts, same = self.named.get(_bare(hunk.name), ([], []))
+        for r in reversed(same[: bisect_right(starts, first)]):
+            if _name_matches(str(r["qualified_name"]), hunk.name):
+                return r if _span(r)[0] == _span(r)[1] else None
+        return None
 
     def edited(self, hunks: list[Hunk]) -> tuple[list[dict[str, Any]], int]:
         """(the rows the hunks edit, their changed lines that sit in none). The edited

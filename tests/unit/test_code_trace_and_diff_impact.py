@@ -240,6 +240,21 @@ def test_lines_in_no_definition_are_counted_and_a_header_does_not_claim_them() -
     assert names == [r["qualified_name"] for r in _ROWS] and unmapped == 10**9 - 72
 
 
+def test_a_header_names_only_the_nearest_definition_above_and_only_one_without_a_body() -> None:
+    rows = [_row("d", "m::f", 5, 5), _row("b", "m::f", 30, 40)]
+
+    def via(first: int) -> list[tuple[str, str]]:
+        touched, _, _ = _touched_rows_for_diff(
+            rows, {"pkg/m.py": [Hunk("f", ((first, first),), ())]}
+        )
+        return [(r["symbol_id"], r["via"]) for r in touched]
+
+    # below a one-line row the index holds no body of: the header is all there is
+    assert via(10) == [("d", "header")]
+    # below the definition with a body, the name is that one's, and its body ended
+    assert via(50) == []
+
+
 def test_overlapping_hunks_cost_one_walk_of_the_file() -> None:
     """A headers-only diff may hold thousands of hunks that each claim most of a large
     file. Their ranges are merged before the walk: the touched set is what one hunk over
