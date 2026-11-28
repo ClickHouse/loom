@@ -6,9 +6,9 @@ mode: wide
 pagination: false
 ---
 
-# ClickHouse Loom documentation
+# Loom documentation
 
-Give agents access to shared memory, cited documents, and indexed code through MCP, HTTP, or the SDKs.
+Install Loom, connect your agents, and give them access to shared memory, cited documents, and indexed code.
 
 [Install Loom](getting-started/quickstart.md)
 [Try the playground](https://loom.clickhouse.com/playground/source-change)

@@ -1,0 +1,45 @@
+---
+import { Link } from "@clickhouse/click-ui/Link";
+import { documentationOverview } from "./documentation-link";
+import { frameCopy } from "./site-frame-copy";
+import { siteLocales, type SiteLocale } from "./site-locales";
+
+interface Props {
+  locale?: string;
+}
+
+const language = Astro.props.locale ?? "en";
+const locale = Object.hasOwn(siteLocales, language) ? (language as SiteLocale) : "en";
+const overview = documentationOverview(locale);
+const current = Astro.url.pathname.replace(/\/$/, "") === overview.href;
+---
+
+<Link
+  className="docs-home-link"
+  href={overview.href}
+  hrefLang={overview.hreflang}
+  aria-current={current ? "page" : undefined}
+  data-docs-overview={current ? "" : undefined}
+>{frameCopy[locale].docs}</Link>
+
+<style>
+  :global(.docs-home-link) {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 2.75rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: var(--blume-foreground);
+  }
+
+  :global(.docs-home-link:is(:hover, [aria-current="page"])) {
+    color: var(--blume-foreground);
+    text-decoration: underline;
+    text-decoration-color: var(--blume-accent);
+    text-underline-offset: 0.45rem;
+  }
+
+  @media (min-width: 64rem) {
+    :global(.docs-home-link) { display: none; }
+  }
+</style>
