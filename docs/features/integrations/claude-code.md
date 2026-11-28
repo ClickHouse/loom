@@ -600,7 +600,7 @@ an indexed checkout, the tool call that first changes a file comes back with one
 line when Loom has a test to name for it:
 
 ```text
-Loom tests for src/flask/blueprints.py: python3 -m pytest tests/test_blueprints.py
+Loom tests for src/app/router.py: .venv/bin/python -m pytest tests/test_router.py
 ```
 
 - **What it names.** For a source file, the tests `code.test_gate` links to it through
