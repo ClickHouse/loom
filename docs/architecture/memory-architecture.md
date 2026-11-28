@@ -1204,10 +1204,13 @@ through a key the user wrote there. A `definition` never joins a cluster.
 one worker that revises a memory's text unasked: when a link follows a definition
 renamed or moved with its code unchanged, the pass swaps the old name or path for the
 new one in the memory's text, where the plan of
-`server/memory/domain/code_rename.py` offers the edit, no person pinned, locked or
-verified the memory, no principal attested its text, and the repository is indexed on
-one branch. The revision goes through `memory.update_by_id`'s write
-(`update.revise_as_pipeline`) on the hash of the text it was planned for, with that
+`server/memory/domain/code_rename.py` offers the edit, the row is `active`, no person
+pinned, locked or verified the memory, no principal attested its text, and the
+repository is indexed on one branch. The revision goes through `memory.update_by_id`'s
+write (`update.revise_as_pipeline`) on the hash of the text it was planned for. A pin,
+an attestation and a status change leave that hash as it was, so the write checks them
+again on the head it reads under the key's lock and refuses a row someone stands behind
+or that is no longer `active`. It runs with that
 write's blacklist check, conflict check, embedding, audit row and `memory.revised`
 event, and it closes the facts the old value stated, as any revision does. Nobody asked
 for it, so it changes that row alone: it is written only when the conflict check is

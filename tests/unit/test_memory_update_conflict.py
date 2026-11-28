@@ -434,6 +434,60 @@ async def test_a_pipelines_revision_close_to_another_memory_is_refused(
     assert not calls.marked and not calls.refined and not calls.superseded
 
 
+_ACTIVE = {"actor": "human:alice", "source_class": "asserted", "status": "active"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("read", "since"),
+    [
+        ("active", {"pinned": True}),
+        ("active", {"verified_by": "human:bob"}),
+        # a service account's attestation of this text would be left stale
+        ("active", {"verified_by": "process:ci"}),
+        ("active", {"status": "superseded"}),
+        ("active", {"status": "duplicate", "duplicate_of": _ID_P}),
+        ("active", {"status": "conflicted"}),
+        # flagged before the pipeline read it: a `clear` check would drop its side alone
+        ("conflicted", {"status": "conflicted"}),
+    ],
+    ids=["pinned", "verified", "attested", "superseded", "duplicate", "flagged", "conflicted"],
+)
+async def test_a_pipelines_revision_is_refused_over_a_head_held_or_retired_since_it_was_read(
+    wired, pipeline, monkeypatch, read: str, since: dict[str, Any]
+) -> None:
+    """A pin, an attestation and a status change leave the content hash as the pipeline
+    read it, so the hash precondition passes: the head read under the key's lock is the
+    one that decides. Refused (409) before the embedding call, with nothing written."""
+    from server.core.hashing import served_content_sha256
+
+    row = _row(**_ACTIVE | {"status": read})
+    sha = served_content_sha256(row.value)
+    attestation = {"verified_sha256": sha} if "verified_by" in since else {}
+    ch, calls = wired(ConflictResult(verdict="clear", peers=[]), row=row)
+    reads = iter([row, _row(**_ACTIVE | since | attestation)])
+
+    async def get_by_id(memory_id: str, **_: Any) -> MemoryRow:
+        return next(reads)  # the pipeline's read, then the write's under the lock
+
+    monkeypatch.setattr("server.memory.store.get_by_id", get_by_id)
+    with pytest.raises(PreconditionFailedError) as refused:
+        await _revise_as_pipeline(row)
+    assert refused.value.status_code == 409 and next(reads, None) is None
+    assert ch.inserts == [] and calls.check == [] and calls.embedding_rows == []
+    assert pipeline == []
+
+
+@pytest.mark.asyncio
+async def test_an_attestation_of_an_earlier_text_holds_no_pipeline_revision(
+    wired, pipeline
+) -> None:
+    """It binds nothing of the text as it is: a caller's own revision left it behind."""
+    row = _row(**_ACTIVE, verified_by="process:ci", verified_sha256="0" * 64)
+    ch, _calls = wired(ConflictResult(verdict="clear", peers=[]), row=row)
+    assert (await _revise_as_pipeline(row)).updated and len(ch.inserts) == 1
+
+
 def test_own_key_is_excluded_by_the_check_itself() -> None:
     """The row's earlier versions share its key; check_on_commit's candidate
     query excludes the caller's own key, so an update is never its own peer."""

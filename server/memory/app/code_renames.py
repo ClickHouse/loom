@@ -43,8 +43,8 @@ OFFERED = "edits"
 # Who the audit row of a revision `revise` makes names. The version stays its writer's.
 ACTOR = "process:code_rename"
 # The statuses memory.update_by_id's write refuses a revision with: the memory moved
-# since it was planned, expired, is locked, or the new value is refused or is close to
-# another memory's. Its text stays.
+# since it was planned, expired, is locked, was pinned, attested or retired since it was
+# read, or the new value is refused or is close to another memory's. Its text stays.
 _REFUSED = (404, 409, 422, 423)
 
 # A memory to plan: its head and the links made from it as it is now.
@@ -128,13 +128,16 @@ async def revise(org: str, head: dict[str, Any], links: Sequence[LinkRow]) -> bo
 
 
 def _revisable(org: str, head: dict[str, Any], links: Sequence[LinkRow]) -> bool:
-    """Loom may revise the memory's text itself: a report may quote it, no person holds
-    it (pinned, locked, verified), no principal attested the text as it is (a revision
-    would leave the attestation stale), and its repository is indexed on one branch.
-    Another branch may still have the old name, and a memory linked again from its
-    revised text keeps no link to it."""
+    """Loom may revise the memory's text itself: a report may quote it, it is `active`
+    (a `conflicted` one is already close to another memory), no person holds it (pinned,
+    locked, verified), no principal attested the text as it is (a revision would leave
+    the attestation stale), and its repository is indexed on one branch. Another branch
+    may still have the old name, and a memory linked again from its revised text keeps
+    no link to it. The write checks the hold and the status again on the head it reads
+    under the key's lock (`update.revise_as_pipeline`)."""
     attested = attests(head.get("verified_by"), head.get("verified_sha256"), head.get("sha"))
-    if not _quotable(head) or code_change.held(head) or attested:
+    active = _quotable(head) and head["status"] == "active"
+    if not active or code_change.held(head) or attested:
         return False
     cns = links[0]["code_namespace"]
     cfg = repo_for_namespace(org, cns)

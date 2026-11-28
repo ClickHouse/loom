@@ -172,8 +172,11 @@ verified the lesson, no service account attested its text, and the repository is
 on one branch ([what it writes](../concepts/memory.md#a-memorys-text-after-a-rename)).
 The revision keeps the lesson's writer, and `memory.history` shows the text it replaced.
 A lesson its writer asserted is marked `derived`; any other keeps its `source_class`.
-A lesson whose revised text would duplicate or contradict another memory keeps its text.
-To keep a lesson's wording as written, pin or lock it.
+A lesson whose revised text would duplicate or contradict another memory keeps its text,
+as does one already flagged `conflicted`. In an org whose model calls are switched off
+the pass revises nothing, since a revision embeds the new text; it takes the lessons up
+once the calls are back on. To keep a lesson's wording as written, pin or lock it: a
+hold that lands while the pass runs is read again before the revision is written.
 
 For every other lesson, `namespace.validate` lists what a rewrite would be:
 

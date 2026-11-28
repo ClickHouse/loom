@@ -773,6 +773,8 @@ async def test_a_text_its_plan_withholds_is_left_as_it_is(writer: dict, text: An
         {"verified_by": "process:ci", "verified_sha256": "s"},
         {"sensitivity": "high"},
         {"status": "superseded"},
+        # flagged against another memory: a revision would drop the flag on its side alone
+        {"status": "conflicted"},
         {"tombstoned_at": "2031-01-01 00:00:00"},
     ],
 )

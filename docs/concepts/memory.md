@@ -667,12 +667,18 @@ and applies them itself when all of these hold:
 - the plan offers edits: none of the reasons in the table below applies;
 - no person holds the memory (pinned, locked or verified), and no service account
   attested the text as it is, which a revision would leave stale;
-- the memory is served and not labelled `high`;
+- the memory is `active` and not labelled `high`. One flagged `conflicted` keeps its
+  text: a revision would drop the flag on its side while the other memory keeps its own;
 - the repository is indexed on one branch. Another indexed branch may still define the
-  old name, and a memory linked again from its revised text is no longer served there.
+  old name, and a memory linked again from its revised text is no longer served there;
+- the org's model calls are not switched off. The revision embeds the new text, so the
+  pass revises nothing in such an org and takes its memories up once the calls are back
+  on.
 
 The revision is one `memory.update_by_id` write on the hash of the text the edits were
-planned for, so a memory rewritten in the meantime is left alone. It runs that write's
+planned for, so a memory rewritten in the meantime is left alone. The write reads the
+memory again under its key's lock, and one pinned, verified, attested or no longer
+`active` since the pass read it keeps its text. It runs that write's
 blacklist and conflict checks, embeds the new text and closes the facts the old value
 stated, as any revision does. Nobody asked for it, so it changes that memory alone. It is
 not written where a caller's revision would do more: the conflict check finds the revised
@@ -698,9 +704,13 @@ with either the `edits` its text allows (replace `old` with `new` from `start` t
 counted in Unicode code points of the text, where the text reads `old`) and the
 `content_sha256` they are of, or the one `reason` no edit is offered. The finding's
 `totals` count the memories by `edits` and by reason. A memory listed with `edits` is one
-the link pass leaves (held, attested, in a repository indexed on more than one branch,
-or close to another memory once revised) or has not reached yet. The report writes nothing: to apply an edit, read the
-sentence it changes, then call `memory.update` on the key with the revised text and
+the link pass left (held, attested, flagged `conflicted`, in a repository indexed on more
+than one branch, or close to another memory once revised) or has not reached yet. The
+pass decides once, when its link follows the rename: a memory it left then is not
+revised later, and neither is one whose link already read `moved` under a build that
+revises no text ([rule 67](../architecture/rolling-upgrades.md#the-rules)). Those stay
+listed until a principal applies the edit. The report writes nothing: to apply an edit,
+read the sentence it changes, then call `memory.update` on the key with the revised text and
 `if_match_sha256` set to the listed hash. That is a revision by the caller, with its
 conflict check, and it is refused when the memory changed after the report read it. The
 link pass then links the revised memory where the code is.

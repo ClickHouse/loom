@@ -49,6 +49,7 @@ from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.trust import attests, row_content_sha256
 from server.memory.store import key_write_lock, pg_memory
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.lifecycle import finish_followups
@@ -176,11 +177,12 @@ async def revise_as_pipeline(
     """memory.update_by_id's write for a pipeline of Loom's own that read the row and its
     namespace itself, so no caller is authorized: `value` over the head that hashes
     `if_match_sha256` (409 PRECONDITION_FAILED once it moved), the row's cap kept.
-    Nobody asked for the revision, so it changes this row alone: it is refused (409)
-    where a caller's would mark the row a duplicate, flag or retire a peer, or queue
-    the pair for the conflict resolver (`_refuse_unsettled`), and it retires no same-key
-    row. The version stays its writer's row and is never promoted (`_authorship`); the
-    audit row names the enclosing `pipeline_actor`."""
+    Nobody asked for the revision, so it is refused (409) over a head someone stands
+    behind or that is not `active` (`_refuse_stood_behind`), and it changes this row
+    alone: it is refused (409) where a caller's would mark the row a duplicate, flag or
+    retire a peer, or queue the pair for the conflict resolver (`_refuse_unsettled`),
+    and it retires no same-key row. The version stays its writer's row and is never
+    promoted (`_authorship`); the audit row names the enclosing `pipeline_actor`."""
     import server.memory.store as memory_repo
 
     existing = await memory_repo.get_by_id(
@@ -595,6 +597,18 @@ def _authorship(existing: MemoryRow, pipeline: bool) -> dict[str, str]:
     return {"actor": str(existing.actor or ""), "source_class": str(source_class or "")}
 
 
+def _refuse_stood_behind(head: MemoryRow) -> None:
+    """A pipeline's revision is refused over the head read under the key's lock when
+    someone stands behind its text or the row is not `active`. Pinning, memory.verify
+    and a status change leave the content hash as the pipeline read it, so
+    `if_match_sha256` still matches: a revision would leave a fresh attestation stale,
+    write a retired row back as `active`, or drop a `conflicted` row's flag while its
+    peer keeps its side."""
+    attested = attests(head.verified_by, head.verified_sha256, row_content_sha256(head))
+    if head.pinned or attested or head.status != "active":
+        raise PreconditionFailedError("the memory is pinned, attested or not active")
+
+
 def _refuse_unsettled(conflict_result: Any, mark: datetime | None) -> None:
     """A pipeline's revision changes its own row alone. Refused before anything is
     written where a caller's would do more: a verdict other than `clear` marks the row
@@ -662,7 +676,8 @@ async def _update_post_write(
 async def _update_live_row(
     input: Any, existing: MemoryRow, ch: Any, *, op: str, pipeline: bool = False
 ) -> MemoryUpdateByIdOutput:
-    """A conditional update re-reads the head under the key's write lock."""
+    """A conditional update re-reads the head under the key's write lock, and a
+    pipeline's (always conditional) is refused there over a head it may not revise."""
     if not input.if_match_sha256:
         return await _write_revision(input, existing, ch, op=op, pipeline=pipeline)
     import server.memory.store as memory_repo
@@ -685,6 +700,8 @@ async def _update_live_row(
         )
         if head is None:
             return MemoryUpdateByIdOutput(updated=False)
+        if pipeline:
+            _refuse_stood_behind(head)
         return await _write_revision(input, head, ch, op=op, pipeline=pipeline)
 
 
