@@ -127,8 +127,7 @@ describe("Recall Lab and the Memories list", () => {
   it("shows one row for a memory the keyword read and a legacy ranked hit both hold", async () => {
     const held = { ...entry("older_azure"), user_id: "u", session_id: "s" };
     const page = { entries: [held], total: 1, today: 0, truncated: false };
-    // the keyword read, then the lookup that names the hit's writer
-    vi.mocked(listMemories).mockResolvedValueOnce(page).mockResolvedValueOnce(page);
+    vi.mocked(listMemories).mockResolvedValueOnce(page);
     // A legacy hit names its agent but not the user or session.
     vi.mocked(searchMemory).mockResolvedValueOnce({
       results: [{ ...hit("older_azure", 0.9), user_id: undefined, session_id: undefined }],
@@ -139,6 +138,34 @@ describe("Recall Lab and the Memories list", () => {
     await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
     await screen.findByText("keyword match", {}, { timeout: 3000 });
     await waitFor(() => expect(screen.getAllByText("older_azure")).toHaveLength(1));
+  });
+
+  it("keeps a legacy hit as a preview when several keyword rows share its key", async () => {
+    const rows = ["s1", "s2"].map((session_id) => ({ ...entry("older_azure"), user_id: "u", session_id }));
+    vi.mocked(listMemories).mockResolvedValueOnce({ entries: rows, total: 2, today: 0, truncated: false });
+    vi.mocked(searchMemory).mockResolvedValueOnce({
+      results: [{ ...hit("older_azure", 0.9), user_id: undefined, session_id: undefined }],
+      embedding_model: "m",
+    });
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
+    await waitFor(() => expect(screen.getAllByText("older_azure")).toHaveLength(3), { timeout: 3000 });
+    expect(vi.mocked(listMemories)).toHaveBeenCalledTimes(1); // no lookup for an ambiguous key
+  });
+
+  it("draws the rows while a writer lookup hangs", async () => {
+    vi.mocked(listMemories)
+      .mockResolvedValueOnce({ entries: [], total: 0, today: 0, truncated: false })
+      .mockReturnValueOnce(new Promise(() => {}));
+    vi.mocked(searchMemory).mockResolvedValueOnce({
+      results: [{ ...hit("solo_azure", 0.9), user_id: undefined, session_id: undefined }],
+      embedding_model: "m",
+    });
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
+    expect(await screen.findByText("solo_azure", {}, { timeout: 3000 })).toBeTruthy();
   });
 
   it("shows a high keyword match as sensitive, not as an empty row", async () => {

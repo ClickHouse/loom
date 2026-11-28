@@ -281,6 +281,9 @@ interface RecallRow {
   hit?: SearchHit;
 }
 
+// Writer lookups a search runs at once.
+const LOOKUPS_IN_FLIGHT = 4;
+
 function canInspect(row: RecallRow): boolean {
   return namesWriter(row.writer) && !row.key.startsWith("chunk:");
 }
@@ -514,16 +517,14 @@ export function RecallLab() {
         const keyword = new Map(
           (kw?.entries ?? []).map((e, i) => [recallRowId(identity.namespace, e, `keyword:${i}`), e]),
         );
-        // A legacy hit omits its writer: name it before keying, so a keyword row of the same
-        // memory is one row, not two.
-        const named = await Promise.all(
-          (r?.results ?? []).map(async (h) => {
-            const writer = namesWriter(h) ? undefined : await resolveSearchWriter(identity, h, ac.signal);
-            return writer ? { ...h, ...writer } : h;
-          }),
-        );
-        if (ac.signal.aborted) return;
-        const ranked = new Map(named.map((h, i) => [recallRowId(identity.namespace, h, `ranked:${i}`), h]));
+        // A legacy hit omits its writer. One keyword row of its key already holds it, so the
+        // hit is dropped; several rows share the key, so it stays a preview no one can open.
+        const held = (key: string) => [...keyword.values()].filter((e) => e.memory_key === key).length;
+        const ranked = new Map<string, SearchHit>();
+        (r?.results ?? []).forEach((h, i) => {
+          if (!namesWriter(h) && held(h.memory_key) === 1) return;
+          ranked.set(recallRowId(identity.namespace, h, `ranked:${i}`), h);
+        });
         const order = keywordThenRanked([...keyword.keys()], [...ranked.keys()]);
         setRowsQuery(q);
         setRows(
@@ -545,6 +546,24 @@ export function RecallLab() {
             };
           }),
         );
+        // A lone legacy hit asks which writer holds it, a few lookups at a time, after the rows
+        // are drawn; a hit that resolves to a row already shown is that row.
+        const lookups = [...ranked].filter(([id, h]) => id.startsWith("ranked:") && held(h.memory_key) === 0);
+        let next = 0;
+        const lookup = async () => {
+          for (let item = lookups[next++]; item && !ac.signal.aborted; item = lookups[next++]) {
+            const [id, h] = item;
+            const writer = await resolveSearchWriter(identity, h, ac.signal).catch(() => undefined);
+            if (!writer || ac.signal.aborted) continue;
+            const named = rowIdentity(identity.namespace, { ...h, ...writer });
+            setRows((cur) =>
+              cur?.some((x) => x.id === named)
+                ? cur.filter((x) => x.id !== id)
+                : cur?.map((x) => (x.id === id ? { ...x, id: named, writer: { ...x.writer, ...writer } } : x)),
+            );
+          }
+        };
+        void Promise.all(Array.from({ length: LOOKUPS_IN_FLIGHT }, lookup));
         // Keyword matches are real matches: the list hedges only when there are none.
         setAbstain(Boolean(r?.abstain) && keyword.size === 0);
         setModel(r?.embedding_model ?? "");
