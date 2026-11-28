@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from server.identity.domain.read_scope import ReadFilters
+from server.memory.api.models_crud import CodeLink
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app import search_pages
 from server.memory.app.search import guidance
@@ -88,6 +89,7 @@ async def test_parked_hit_refreshes_cached_code_state(
     hit = _hit()
     hit.code_state = "missing"
     hit.code_changed_since = "commit-a"  # the page-one state, since moved or unreadable
+    hit.code_moved = [CodeLink(code_namespace="c", path="old.py", state="moved")]
     await guidance.attach_search_guidance(_INPUT, [hit], snapshot_only=True)
     parked = search_pages.unparked(search_pages._parked(hit))
     assert parked is not None
@@ -95,6 +97,7 @@ async def test_parked_hit_refreshes_cached_code_state(
     assert parked.use_guidance is not None and parked.use_guidance.freshness.code == state
     assert parked.code_state == (state if state in ("changed", "fresh") else "")
     assert parked.code_changed_since == ""
+    assert parked.code_moved == []
 
 
 @pytest.mark.asyncio

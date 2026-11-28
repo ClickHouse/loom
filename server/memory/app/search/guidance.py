@@ -303,5 +303,6 @@ async def attach_search_guidance(
                 hit.code_state = worst([hit.use_guidance.freshness.code])
                 # the commit the first page cached may not be the one that state rests on now
                 hit.code_changed_since = ""
+                hit.code_moved = []
         kept.append(hit)
     return kept
