@@ -517,12 +517,12 @@ export function RecallLab() {
         const keyword = new Map(
           (kw?.entries ?? []).map((e, i) => [recallRowId(identity.namespace, e, `keyword:${i}`), e]),
         );
-        // A legacy hit omits its writer. One keyword row of its key already holds it, so the
-        // hit is dropped; several rows share the key, so it stays a preview no one can open.
+        // A legacy hit omits its writer, and another writer's row can share its key, so a hit
+        // is never dropped here: the lookup below names it, and it merges into the row that
+        // holds it. Several keyword rows share the key, so it stays a preview no one can open.
         const held = (key: string) => [...keyword.values()].filter((e) => e.memory_key === key).length;
         const ranked = new Map<string, SearchHit>();
         (r?.results ?? []).forEach((h, i) => {
-          if (!namesWriter(h) && held(h.memory_key) === 1) return;
           ranked.set(recallRowId(identity.namespace, h, `ranked:${i}`), h);
         });
         const order = keywordThenRanked([...keyword.keys()], [...ranked.keys()]);
@@ -548,7 +548,7 @@ export function RecallLab() {
         );
         // A lone legacy hit asks which writer holds it, a few lookups at a time, after the rows
         // are drawn; a hit that resolves to a row already shown is that row.
-        const lookups = [...ranked].filter(([id, h]) => id.startsWith("ranked:") && held(h.memory_key) === 0);
+        const lookups = [...ranked].filter(([id, h]) => id.startsWith("ranked:") && held(h.memory_key) <= 1);
         let next = 0;
         const lookup = async () => {
           for (let item = lookups[next++]; item && !ac.signal.aborted; item = lookups[next++]) {

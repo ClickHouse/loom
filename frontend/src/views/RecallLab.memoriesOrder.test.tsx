@@ -128,6 +128,7 @@ describe("Recall Lab and the Memories list", () => {
     const held = { ...entry("older_azure"), user_id: "u", session_id: "s" };
     const page = { entries: [held], total: 1, today: 0, truncated: false };
     vi.mocked(listMemories).mockResolvedValueOnce(page);
+    vi.mocked(listMemories).mockResolvedValueOnce(page); // the lookup finds the same row
     // A legacy hit names its agent but not the user or session.
     vi.mocked(searchMemory).mockResolvedValueOnce({
       results: [{ ...hit("older_azure", 0.9), user_id: undefined, session_id: undefined }],
@@ -138,6 +139,22 @@ describe("Recall Lab and the Memories list", () => {
     await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
     await screen.findByText("keyword match", {}, { timeout: 3000 });
     await waitFor(() => expect(screen.getAllByText("older_azure")).toHaveLength(1));
+  });
+
+  it("keeps a legacy hit that another writer's row of the same key holds", async () => {
+    const held = { ...entry("older_azure"), user_id: "u", session_id: "s" };
+    const other = { ...entry("older_azure"), user_id: "v", session_id: "t" };
+    vi.mocked(listMemories)
+      .mockResolvedValueOnce({ entries: [held], total: 1, today: 0, truncated: false })
+      .mockResolvedValueOnce({ entries: [other], total: 1, today: 0, truncated: false });
+    vi.mocked(searchMemory).mockResolvedValueOnce({
+      results: [{ ...hit("older_azure", 0.9), user_id: undefined, session_id: undefined }],
+      embedding_model: "m",
+    });
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
+    await waitFor(() => expect(screen.getAllByText("older_azure")).toHaveLength(2), { timeout: 3000 });
   });
 
   it("keeps a legacy hit as a preview when several keyword rows share its key", async () => {
