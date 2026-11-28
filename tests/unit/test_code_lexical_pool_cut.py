@@ -235,7 +235,7 @@ _CUT_ROWS = [
 
 class _Repo:
     """Answers the lexical leg with `rows` and records the penalties it was asked to
-    cut its pool on; the vector leg ranks the prose row the cut left out first."""
+    cut its pool on; the vector leg ranks the prose row the cut left out second."""
 
     def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
         self.rows = rows or [{"chunk_id": "a", "lex_score": 4.0, "path": "src/a.py", **_UNIT}]
@@ -250,8 +250,8 @@ class _Repo:
 
     async def vector_search_chunks(self, *a: Any, **k: Any) -> list[dict[str, Any]]:
         return [
-            {"chunk_id": "notes", "distance": 0.2, "path": "docs/notes.md", **_UNIT},
-            {"chunk_id": "deep", "distance": 0.3, "path": "src/b.py", **_UNIT},
+            {"chunk_id": "other", "distance": 0.2, "path": "src/c.py", **_UNIT},
+            {"chunk_id": "notes", "distance": 0.3, "path": "docs/notes.md", **_UNIT},
         ]
 
     async def symbols_fuzzy(self, *a: Any, **k: Any) -> list[Any]:
@@ -301,21 +301,25 @@ def test_a_leg_that_cut_nothing_returns_one_list_for_both() -> None:
 def test_calibration_reads_the_leg_s_own_order_and_the_ranking_reads_the_pool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The prose row is the leg's second row and the vector leg's first, so the legs
-    agree, as they would without the cut. It lost its pool slot, so it is ranked on its
-    vector vote alone, and the source row from rank 340 is ranked with both votes."""
+    """The prose row is the leg's second row and the vector leg's second, so the legs
+    agree and it leads the fusion calibration reads (top similarity 0.7, its own), as
+    without the cut. It lost its pool slot, so it is ranked on its vector vote alone;
+    fused from the pool, the vector leg's first row would lead (0.8) and no row would
+    be in both legs."""
     monkeypatch.setattr(settings, "code_search_pr_leg", "off")
     res = asyncio.run(
-        search(_Repo(_CUT_ROWS), "o", "n", query=_IMPLEMENTATION, embedder=_Embedder(), top_k=4)  # type: ignore[arg-type]
+        search(_Repo(_CUT_ROWS), "o", "n", query=_IMPLEMENTATION, embedder=_Embedder(), top_k=5)  # type: ignore[arg-type]
     )
     assert "legs_agree=True" in res.score_explanation
+    assert res.top_similarity == 0.7
     assert "(lexical=3, vector=2)" in res.score_explanation
     found = {u.unit_id: (u.via, u.lexical_rank, u.vector_rank) for u in res.units}
     assert found == {
         "test": ("lexical", 1, 0),
-        "notes": ("vector", 0, 1),
+        "other": ("vector", 0, 1),
+        "notes": ("vector", 0, 2),
         "src": ("lexical", 3, 0),
-        "deep": ("both", 340, 2),
+        "deep": ("lexical", 340, 0),
     }
 
 
