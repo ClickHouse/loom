@@ -183,6 +183,7 @@ def test_a_cue_in_another_sentence_does_not_withhold() -> None:
         "The loader was renamed in 2019. `read_rows` retries twice.\nSee #12 for the loader.",
         # a blank line and a list item end a sentence that has no full stop
         "The loader was renamed\n\n`read_rows` retries twice",
+        "The loader was renamed\r\n\r\n`read_rows` retries twice",
         "- the loader was renamed\n- `read_rows` retries twice\n3. see #12",
     ):
         assert _revised(text) == text.replace("read_rows", "fetch_rows")
@@ -368,6 +369,14 @@ def test_the_module_a_definition_left_withholds_where_no_edit_reaches_it() -> No
     assert _revised(text, links=[moved, jitter], defs=both) == (
         "`src.net.util.backoff` and `src.net.util.jitter` double."
     )
+    # a name written as code that the old module still defines holds as it is
+    text = "`io.util.backoff` doubles; `io.util.helper` and src::io::util::helper() do not."
+    stays = [*defs, _d(was, "src.io.util::helper")]
+    assert _revised(text, links=[moved], defs=stays) == text.replace(
+        "io.util.backoff", "net.util.backoff"
+    )
+    # the index defines no such name: the text may be about the place
+    assert _plan(text, links=[moved], defs=defs).reason == "old_name_remains"
 
 
 def test_a_renamed_file_edits_its_whole_path_once_the_old_one_is_gone() -> None:
@@ -412,6 +421,27 @@ def test_files_and_labels_that_name_the_old_path_withhold() -> None:
     )
     # no file of the memory names the file link's path any more
     assert _plan("`src/reader.py` holds it.", files=[], **kw).reason == "would_unlink"
+
+
+def test_a_text_that_names_nothing_old_holds_whatever_its_links_and_labels_say() -> None:
+    """A reason the links, the key, a tag or `files` give withholds an edit: a text with
+    no old name or path in it has none, and its memory is not listed."""
+    holds = Plan(reason="no_code_token")
+    text = "`Reader` wraps the socket."
+    other = _link("src/io/writer.py", "src.io.writer::Writer::flush")
+    for fields in ({"state": "changed"}, {"complete": 0}):
+        assert _plan(text, links=[RENAMED, other | fields]) == holds
+    assert _plan(text, memory_key="repo/lesson/read_rows-retry", tags=["read_rows"]) == holds
+    numbered = _link(PATH, NEW, was=(PATH, OLD + "#2"))
+    assert _plan(text, links=[numbered]) == holds
+    was = "src/io/reader.py"
+    kw: dict[str, Any] = {"links": [_link("src/io/read.py", "", was=(was, ""))], "defs": []}
+    assert _plan("The retry loop is hot.", files=[was], gone=(was,), **kw) == holds
+    # the old name where no edit reaches it is something old: the reason is given
+    assert _plan("read_rows retries.", links=[numbered]).reason == "overloaded"
+    assert _plan("read_rows retries.", links=[RENAMED, other | {"complete": 0}]).reason == (
+        "incomplete"
+    )
 
 
 def test_a_link_back_where_it_was_written_or_reanchored_gets_no_edit() -> None:

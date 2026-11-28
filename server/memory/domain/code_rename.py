@@ -56,6 +56,9 @@ REASONS = (
 )
 # the reason of a memory whose text holds as it is
 UNNAMED = REASONS[-1]
+# the reasons the links, the labels and `files` give whatever the text says: they
+# withhold only a text that names something old
+_UNWRITTEN = frozenset({"link_not_settled", "incomplete", "named_in_key_or_tags", "named_in_files"})
 
 # what makes a sentence a statement about a point in time: a commit, a version tag, a
 # year, a month, a pull request or issue. `May` is the month only capitalised after
@@ -77,9 +80,10 @@ _NAMING = re.compile(
     re.IGNORECASE,
 )
 # a sentence ends after `.`, `!` or `?` and a space (not after a one-letter abbreviation:
-# `e.g.`, `i.e.`), at a blank line and before a list item; a wrapped line goes on
+# `e.g.`, `i.e.`), at a blank line (`\r\n` ends a line too) and before a list item; a
+# wrapped line goes on
 _SENTENCE_END = re.compile(
-    r"(?<!\W[A-Za-z]\.)(?<=[.!?])\s+|\n[ \t]*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)])[ \t])"
+    r"(?<!\W[A-Za-z]\.)(?<=[.!?])\s+|\n[ \t\r]*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)])[ \t])"
 )
 _JOIN = re.compile(r"::|\.")
 # the ordinal the index gives the second and later definitions of one name in a scope
@@ -175,15 +179,15 @@ def plan(
             why |= _renamed(text, m, moves, spans, quoted, by_name, files, edits)
         if m.was_path != m.path:
             why |= _repathed(text, m, quoted, files, alive, edits)
-    why |= _old_modules(text, moves, list(edits), quoted)
+    why |= _old_modules(text, moves, list(edits), spans, quoted, by_name)
     if edits:
         why |= _about(text, memory, edits.values())
         why |= _unlinked(revised(text, list(edits.values())), links, by_name, files)
+    elif why <= _UNWRITTEN:
+        return Plan(reason=UNNAMED)
     for reason in REASONS:
         if reason in why:
             return Plan(reason=reason)
-    if not edits:
-        return Plan(reason=UNNAMED)
     return Plan(edits=tuple(sorted(edits.values())), sha256=served_content_sha256(text))
 
 
@@ -247,15 +251,17 @@ def _renamed(
 ) -> set[str]:
     """Add to `edits` the names in `text` that spell the old definition of `m` and not
     the new one, each as the same spelling of the new one; the reasons they withhold."""
-    if _plain(m.was_name) != m.was_name or _plain(m.name) != m.name:
-        return {"overloaded"}
-    why: set[str] = set()
-    old, new = bare_name(m.was_name), bare_name(m.name)
+    was, now = _plain(m.was_name), _plain(m.name)
+    old, new = bare_name(was), bare_name(now)
     mine = [
         s
         for s in spans
-        if names_symbol(s.name, m.was_name, m.was_path) and not names_symbol(s.name, m.name, m.path)
+        if names_symbol(s.name, was, m.was_path) and not names_symbol(s.name, now, m.path)
     ]
+    if (was, now) != (m.was_name, m.name):
+        # one of several under its name: withheld where the text writes the old one
+        return {"overloaded"} if mine or (old != new and _word(old).search(text)) else set()
+    why: set[str] = set()
     for s in mine:
         to = _respelled(s.name, m)
         if s.receiver and not any(path_matches(p, f) for f in files for p in (m.was_path, m.path)):
@@ -346,19 +352,30 @@ def _old_modules(
     text: str,
     moves: Sequence[_Move],
     edited: Sequence[tuple[int, int]],
+    spans: Sequence[Span],
     quoted: Sequence[tuple[int, int]],
+    by_name: Mapping[str, Sequence[Definition]],
 ) -> set[str]:
     """Why a module a definition of `moves` left withholds the memory: `text` writes it,
     over more than one segment, outside the `edited` spans (an import, a sentence about
     the place), so the revised text would name both places. One segment is as often a
-    word of the prose."""
+    word of the prose, and a name written as code that names a definition at the head
+    (another one still in that module) holds as it is."""
     why: set[str] = set()
+    held = [
+        (s.start, s.end)
+        for s in spans
+        if any(
+            names_symbol(s.name, _plain(d.qualified_name), d.path)
+            for d in by_name.get(bare_name(s.name), ())
+        )
+    ]
     for m in moves:
         left = _modules(m.was_path, m.was_name) - _modules(m.path, m.name) if m.name else set()
         for module in (x for x in left if "." in x):
             spelled = re.escape(module).replace(r"\.", r"(?:\.|::)")
             for o in re.finditer(rf"(?<!\w){spelled}(?!\w)", text):
-                if not _inside(edited, *o.span()):
+                if not _inside(edited, *o.span()) and not _inside(held, *o.span()):
                     literal = _inside(quoted, *o.span())
                     why.add("quoted_or_literal" if literal else "old_name_remains")
     return why
