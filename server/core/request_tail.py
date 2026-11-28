@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
+from functools import partial
 from typing import Any
 
 import anyio
@@ -16,6 +17,7 @@ from server.core.ch import class_timeout_s, current_query_tag, query_tag, statem
 log = logging.getLogger("loom.request_tail")
 # not a setting: one required publication attempt has a fixed cleanup safety ceiling.
 REQUIRED_STEP_TIMEOUT_S = 60.0
+_FENCED_BODY_CHUNK_BYTES = 512 * 1024
 
 
 class RequiredTailError(RuntimeError):
@@ -23,7 +25,10 @@ class RequiredTailError(RuntimeError):
         super().__init__("Required request work was not confirmed")
 
 
-_Publication = tuple[object, Context, Callable[[], Awaitable[Any]], Callable[[], bool]]
+PublicationFence = Callable[[Callable[[], Awaitable[None]]], Awaitable[None]]
+_Publication = tuple[
+    object, Context, Callable[[], Awaitable[Any]], Callable[[], bool], PublicationFence | None
+]
 _publication_group: ContextVar[dict[int, _Publication] | None] = ContextVar(
     "loom_publication_group", default=None
 )
@@ -140,7 +145,11 @@ def publication_group() -> Iterator[_PublicationGroup]:
 
 
 def retain_publication(
-    owner: object, check: Callable[[], Awaitable[Any]], fresh: Callable[[], bool]
+    owner: object,
+    check: Callable[[], Awaitable[Any]],
+    fresh: Callable[[], bool],
+    *,
+    fence: PublicationFence | None = None,
 ) -> bool:
     """Retain strict final-response evidence in its original authorization context."""
     tail = _tail.get()
@@ -151,7 +160,7 @@ def retain_publication(
     target = _publication_group.get()
     if target is None:
         target = tail.publications
-    target[id(owner)] = (owner, copy_context(), check, fresh)
+    target[id(owner)] = (owner, copy_context(), check, fresh, fence)
     return True
 
 
@@ -196,14 +205,12 @@ async def _publication_check(context: Context, check: Callable[[], Awaitable[Any
 
 async def _publication_barrier(tail: _Tail) -> None:
     """Renew retained inputs after accounting and after each awaited send boundary."""
-    if not tail.publications:
-        return
     checks = tuple(tail.publications.values())
     try:
-        for _owner, context, check, _fresh in checks:
+        for _owner, context, check, _fresh, _fence in checks:
             await _publication_check(context, check)
         # A later renewal can outlive an earlier proof's deadline.
-        if not all(context.run(fresh) for _owner, context, _check, fresh in checks):
+        if not all(context.run(fresh) for _owner, context, _check, fresh, _fence in checks):
             raise RequiredTailError()
     except Exception:  # noqa: BLE001 — publication failures expose only a constant refusal
         tail.required_failed = True
@@ -211,6 +218,64 @@ async def _publication_barrier(tail: _Tail) -> None:
     except BaseException:
         tail.required_failed = True
         raise
+
+
+async def _publish(tail: _Tail, deliver: Callable[[], Awaitable[None]]) -> None:
+    await _publication_barrier(tail)
+    checks = tuple(tail.publications.values())
+    if not any(fence is not None for _owner, _context, _check, _fresh, fence in checks):
+        await deliver()
+        return
+
+    async def checked_delivery() -> None:
+        if not all(context.run(fresh) for _owner, context, _check, fresh, _fence in checks):
+            raise RequiredTailError()
+        await deliver()
+
+    guarded: Callable[[], Awaitable[None]] = checked_delivery
+    for _owner, context, _check, _fresh, fence in reversed(checks):
+        if fence is not None:
+            guarded = _guarded_delivery(context, fence, guarded)
+    try:
+        await guarded()
+    except BaseException:
+        tail.required_failed = True
+        raise
+
+
+async def _publish_body(
+    tail: _Tail,
+    message: dict[str, Any],
+    send: Callable[[dict[str, Any]], Awaitable[None]],
+) -> None:
+    body = message["body"]
+    size = len(body)
+    if size <= _FENCED_BODY_CHUNK_BYTES or not any(
+        fence is not None for _owner, _context, _check, _fresh, fence in tail.publications.values()
+    ):
+        await _publish(tail, partial(send, message))
+        return
+
+    # Bound the bytes handed off by each lock acquisition. Renew access between chunks.
+    for offset in range(0, size, _FENCED_BODY_CHUNK_BYTES):
+        end = offset + _FENCED_BODY_CHUNK_BYTES
+        chunk = {
+            **message,
+            "body": body[offset:end],
+            "more_body": end < size or message.get("more_body", False),
+        }
+        await _publish(tail, partial(send, chunk))
+
+
+def _guarded_delivery(
+    context: Context,
+    fence: PublicationFence,
+    deliver: Callable[[], Awaitable[None]],
+) -> Callable[[], Awaitable[None]]:
+    async def publication() -> None:
+        await _publication_check(context, lambda: fence(deliver))
+
+    return publication
 
 
 async def _required_step(tail: _Tail, tag: str, step: Callable[[], Awaitable[Any]]) -> None:
@@ -410,12 +475,13 @@ class RequestTailMiddleware:
         async def _send(message: dict[str, Any]) -> None:
             if message.get("type") == "http.response.start":
                 await settle(tail)
-                await _publication_barrier(tail)
+                await _publish(tail, lambda: send(message))
             elif message.get("type") == "http.response.body" and message.get("body"):
                 # Empty completion frames publish no bytes; the client may already
                 # have consumed Content-Length and started its next request.
-                await _publication_barrier(tail)
-            await send(message)
+                await _publish_body(tail, message, send)
+            else:
+                await send(message)
 
         try:
             await self.app(scope, receive, _send)

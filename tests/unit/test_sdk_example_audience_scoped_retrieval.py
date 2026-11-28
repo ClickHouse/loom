@@ -47,6 +47,7 @@ class Server:
         self.keeps_collections = keeps_collections
         self.keeps_notes = keeps_notes
         self.lists_revoked = lists_revoked  # collection.list lags behind a revoke
+        self.finance_listings_to_skip = 0
         self.revoked: set[tuple[str, str]] = set()  # (collection, user)
         self.grants: dict[str, set[str]] = {}  # collection → users who read it
         self.docs: dict[tuple[str, str], str] = {}  # (collection, source_uri) → content
@@ -93,6 +94,12 @@ class Server:
                 for c, users in sorted(self.grants.items())
                 if user in users or (self.lists_revoked and (c, user) in self.revoked)
             ]
+            finance = next(
+                (row for row in rows if row["namespace"].startswith("col-example-finance-")), None
+            )
+            if self.finance_listings_to_skip and finance is not None:
+                self.finance_listings_to_skip -= 1
+                rows.remove(finance)
             return httpx.Response(200, json={"collections": rows, "next_cursor": None})
         if op == "collection.create":
             self.grants[ns] = {user}
@@ -146,10 +153,14 @@ class Server:
         return httpx.Response(200, json={})
 
 
+@pytest.mark.parametrize("finance_listings_to_skip", [0, 2])
 async def test_every_check_passes_and_the_run_removes_what_it_made(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    finance_listings_to_skip: int,
 ) -> None:
     server = Server()
+    server.finance_listings_to_skip = finance_listings_to_skip
     server.install(monkeypatch)
     example = load_example(monkeypatch)
     assert await example.main(sign=str) == 0
@@ -161,6 +172,21 @@ async def test_every_check_passes_and_the_run_removes_what_it_made(
     assert example.NOTE not in shared and example.FINANCE not in shared
     assert not server.docs and not server.grants, "the note and both collections are gone"
     assert len(server.deleted) == 3
+
+
+async def test_missing_fixture_grant_times_out_without_running_a_search(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    example = load_example(monkeypatch)
+    monkeypatch.setattr(example, "GRANT_WAIT_S", 0)
+    server = Server()
+    server.finance_listings_to_skip = 2
+    server.install(monkeypatch)
+    assert await example.main(sign=str) == 1
+    out = capsys.readouterr().out
+    assert "the shared collections did not become visible to the recipient" in out
+    assert not server.searches()
+    assert not server.docs and not server.grants
 
 
 async def test_a_shared_request_names_only_the_destinations_collection(

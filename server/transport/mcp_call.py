@@ -30,6 +30,7 @@ from server.core.errors import (
 )
 from server.core.errors import ValidationError as LoomValidationError
 from server.core.naming import named, present
+from server.core.operation_privacy import KNOWLEDGE_SOURCE_LIVE
 from server.identity.app.caller_home import home_namespace
 from server.observability import genai
 from server.observability.consumer import ASSISTANT_CONSUMER
@@ -51,7 +52,12 @@ from server.transport._common import (
     validation_note,
 )
 from server.transport._common import validation_errors as _validation_errors
-from server.transport.arg_check import IDENTITY_KEYS
+from server.transport.arg_check import (
+    IDENTITY_KEYS,
+    LIVE_ARGUMENT_NAME_ERROR,
+    live_argument_names_fit,
+    named_argument_error,
+)
 from server.transport.arg_feedback import feedback, refused_result, tool_error
 from server.transport.assistant_call import answer_run, assistant_call, set_assistant_call
 from server.transport.lean_results import lean_result
@@ -238,6 +244,20 @@ def _forbidden_result(
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
 
+async def _capture_level(operation: str, identity: dict[str, Any]) -> str:
+    from server.core.operation_privacy import retains_no_payload
+    from server.observability import capture_consent
+
+    if retains_no_payload(operation):
+        return "off"
+    try:
+        return await capture_consent.resolve(
+            str(identity.get("org") or ""), str(identity.get("namespace") or "")
+        )
+    except Exception:  # noqa: BLE001 — fail closed
+        return "off"
+
+
 async def _call_tool(
     req_id: Any,
     params: dict[str, Any],
@@ -343,7 +363,6 @@ async def _call_tool(
     # task-scoped, so entry N's provider spans would carry entry N-1's tenant.
     # Setting it here, once per entry before any LLM call, prevents both.
     try:
-        from server.observability import capture_consent as _consent
         from server.observability import otel as _otel_pre
 
         _ident = _span_identity(
@@ -351,12 +370,7 @@ async def _call_tool(
         )
         # Same per-namespace consent resolution as the HTTP path: once per
         # request, from a 60s cache, never inside the provider call.
-        try:
-            _ident["capture_level"] = await _consent.resolve(
-                str(_ident.get("org") or ""), str(_ident.get("namespace") or "")
-            )
-        except Exception:  # noqa: BLE001 — fail closed
-            _ident["capture_level"] = "off"
+        _ident["capture_level"] = await _capture_level(op.name, _ident)
         _otel_pre.set_loom_attributes(**_ident)
     except Exception:  # noqa: BLE001 — identity stamping must not fail a tool call
         # The identity could not be built: capture nothing, and name the op so its
@@ -791,8 +805,12 @@ def _validated_input(
     """Phase 4 of `_call_tool`: the misspelled-argument refusal, then
     Pydantic validation. Returns the input model, or the refusal response
     (a dict) when the call ends here."""
-    from server.transport.arg_check import named_argument_error
-
+    if op.name == KNOWLEDGE_SOURCE_LIVE and not live_argument_names_fit(op.input_model, arguments):
+        _emit_refused(op.name, {}, error_code="VALIDATION_FAILED", request_id=request_id)
+        return _ok(
+            req_id,
+            tool_error(LIVE_ARGUMENT_NAME_ERROR, {"code": "VALIDATION_FAILED"}),
+        )
     refused = named_argument_error(op, arguments)
     if refused is not None:
         _emit_refused(

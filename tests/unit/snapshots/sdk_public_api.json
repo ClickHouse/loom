@@ -983,6 +983,10 @@
               "body",
               "options"
             ],
+            "source_live": [
+              "body",
+              "options"
+            ],
             "source_parse_links": [
               "body",
               "options"

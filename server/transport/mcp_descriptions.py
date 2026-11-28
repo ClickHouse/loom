@@ -1087,6 +1087,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "(`namespaces`) as one list, each row naming its namespace. Use for inventory "
         "questions; for semantic recall use loom_search."
     ),
+    "knowledge.source.live": (
+        "Read one exact selected document from an approved source worker in a protected "
+        "session. This experimental operation returns fresh content without storing it. "
+        "Use stored document search for indexed copies."
+    ),
     "knowledge.get": (
         "WHAT: Fetch one whole document by `source_uri` (the latest version; "
         "`include_superseded=true` reads a soft-deleted one).\n"

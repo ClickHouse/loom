@@ -187,6 +187,8 @@ GENERIC_SQL_EXCLUSIONS = {
         ("run_keeper_delete", "ALTER TABLE", "{table}"): 1,
     },
     "server/erasure/store/reclaim.py": {("apply_deleted_mask", "ALTER TABLE", "{table}"): 1},
+    # Worker metadata erasure binds the scope and iterates a fixed list of source tables.
+    "server/erasure/store/steps_pg.py": {("_delete_worker_metadata", "DELETE FROM", "{table}"): 1},
     "server/erasure/store/steps_memory.py": {
         ("_scrub_link_cursors", "DELETE FROM", "{_CURSORS}"): 1
     },

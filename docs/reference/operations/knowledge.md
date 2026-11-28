@@ -707,6 +707,24 @@ The document sources registered on a namespace, with each one's sync state.
 | `enabled` | `bool` | Whether this deployment runs the sync worker (LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED); false: sources are stored and probed, but nothing pulls from them. |
 | `accepts_sources` | `bool` | False where add would refuse the namespace (PERSONAL_NAMESPACE, NAMESPACE_INACTIVE). |
 
+## `knowledge.source.live`
+
+Read one selected resource through the caller's current worker connection.
+
+`POST /v1/knowledge.source.live` · MCP `loom_knowledge_source_live` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | Organization that owns the collection. |
+| `namespace` | `str` | required | Collection that owns the source. |
+| `source` | `str` | required | Name of the registered source in the collection. |
+| `resource_id` | `str` | required | Exact selected resource identifier returned by source setup. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `status` | `Literal['ok', 'denied', 'reconnect', 'overloaded', 'timeout', 'unavailable', 'unsupported']` |  |
+| `document` | `KnowledgeSourceLiveDocument \| None` |  |
+
 ## `knowledge.source.parse_links`
 
 Read pasted links as a source's items, with no request to any store and nothing written: each link answers its kind and item, or why it is unreadable.

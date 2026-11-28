@@ -1032,6 +1032,11 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | `float` | `20.0` | live | Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | `bool` | `False` |  | The knowledge_source_sync worker: pulls each registered document source's changed files into its namespace's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions. |
 | `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` | `bool` | `False` |  | Require protected automatic session capture and persist deployment privacy state. Off does not lift protection while the deployment latch remains set. |
+| `LOOM_KNOWLEDGE_SOURCE_WORKER_ROUTES_FILE` | `str` | `''` |  | Path to the operator's source worker routes file. Empty disables the worker directory. |
+| `LOOM_KNOWLEDGE_SOURCE_WORKER_LIVE_TIMEOUT_S` | `float` | `8.0` |  | Seconds a live read may spend on authority checks and its worker request. |
+| `LOOM_KNOWLEDGE_SOURCE_WORKER_PUBLICATION_TIMEOUT_S` | `float` | `2.0` |  | Seconds reserved after a live read for accounting and delivery. |
+| `LOOM_KNOWLEDGE_SOURCE_WORKER_FRAME_TIMEOUT_S` | `float` | `1.0` |  | Seconds one response frame may spend acquiring authority locks and sending. The remaining publication deadline can shorten this bound. |
+| `LOOM_KNOWLEDGE_SOURCE_WORKER_SELECTION_PARALLELISM` | `int` | `2` |  | Concurrent worker access checks when proving a selection for setup. |
 | `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` | `int` | `3600` |  | Mirrored reads require a complete listing and group observation within this many seconds; missing or older evidence admits nobody. |
 | `LOOM_KNOWLEDGE_SOURCE_ACL_MAX_ENTRIES` | `int` | `10000` |  | Maximum team and member rows read for one project's complete permission list. A larger list refuses publication rather than granting from a partial page. |
 | `LOOM_KNOWLEDGE_SOURCE_PUSH_ENABLED` | `bool` | `False` |  | Enable optional source push setup, callbacks and Drive renewal; false keeps polling only. |

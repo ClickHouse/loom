@@ -95,6 +95,7 @@ _KNOWLEDGE_READS: frozenset[str] = frozenset(
         "knowledge.outline",
         "knowledge.reads",
         "knowledge.source.inspect",
+        "knowledge.source.live",
         "knowledge.source.list",
         "knowledge.source.parse_links",
     }

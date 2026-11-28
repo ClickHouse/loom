@@ -557,7 +557,7 @@ def include_in(config: dict[str, Any]) -> list[str]:
 
 def options_in(kind: str, config: dict[str, Any]) -> dict[str, Any]:
     """The options alone of a config, without the ids its items came from."""
-    if kind == "recording":
+    if kind in {"recording", "mcp"}:
         return config
     return {"include": include_in(config)} if kind == "gdrive" else {}
 

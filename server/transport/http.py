@@ -40,6 +40,7 @@ from server.core.errors import (
     unverified_class,
 )
 from server.core.naming import present
+from server.core.operation_privacy import KNOWLEDGE_SOURCE_LIVE
 from server.observability.consumer import (
     bind_current_consumer,
     explicit_consumer,
@@ -74,8 +75,12 @@ from server.transport._common import (
     validation_errors,
     validation_note,
 )
+from server.transport.arg_check import (
+    LIVE_ARGUMENT_NAME_ERROR,
+    live_argument_names_fit,
+    named_argument_error,
+)
 from server.transport.arg_check import header_value as arg_header_value
-from server.transport.arg_check import named_argument_error
 from server.transport.arg_check import response_body as arg_response_body
 from server.transport.post_rows import post_handler_rows
 
@@ -270,6 +275,12 @@ async def _read_body(
     raw_body: dict[str, Any] = parsed
 
     set_current_consumer(explicit_consumer(raw_body))
+    if op.name == KNOWLEDGE_SOURCE_LIVE and not live_argument_names_fit(op.input_model, raw_body):
+        _emit_event(op, request_id, {}, 0, success=False, error_code="VALIDATION_FAILED")
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_FAILED", "message": LIVE_ARGUMENT_NAME_ERROR},
+        )
     # A write's misspelled argument is refused by name, not dropped.
     refused = named_argument_error(op, raw_body)
     if refused is not None:
@@ -567,9 +578,14 @@ async def _start_telemetry(op: Operation, response: Response, call: _HttpCall) -
     # here, once, from a 60s cache — never inside the provider call, which
     # would put a ClickHouse round trip on every generation.
     try:
+        from server.core.operation_privacy import retains_no_payload
         from server.observability import capture_consent as _consent
 
-        _capture_level = await _consent.resolve(identity["org"], identity["namespace"])
+        _capture_level = (
+            "off"
+            if retains_no_payload(op.name)
+            else await _consent.resolve(identity["org"], identity["namespace"])
+        )
     except Exception:  # noqa: BLE001 — fail closed, not open
         _capture_level = "off"
 

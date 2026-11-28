@@ -4337,6 +4337,21 @@ fn knowledge_source_sync_now() {
     );
 }
 #[test]
+fn knowledge_source_live() {
+    let value: clickhouse_loom::KnowledgeSourceLiveInput = serde_json::from_str("{\"org\":\"sample\",\"namespace\":\"sample\",\"source\":\"sample\",\"resource_id\":\"sample\"}").unwrap();
+    let encoded = serde_json::to_value(value).unwrap();
+    assert!(encoded.is_object());
+    let value: clickhouse_loom::KnowledgeSourceLiveOutput =
+        serde_json::from_str("{\"status\":\"ok\"}").unwrap();
+    let encoded = serde_json::to_value(value).unwrap();
+    assert!(encoded.is_object());
+    assert_eq!(
+        encoded["document"],
+        serde_json::from_str::<serde_json::Value>("null").unwrap(),
+        "knowledge.source.live:document"
+    );
+}
+#[test]
 fn connection_list() {
     let value: clickhouse_loom::ConnectionListInput =
         serde_json::from_str("{\"org\":\"sample\"}").unwrap();

@@ -384,8 +384,31 @@ async def _erase_knowledge_once(
             org,
             arg,
         )
+        worker_metadata = await _delete_worker_metadata(conn, where, org, arg)
         await _mark_step(conn, org)
-    return len(heads) + len(leases) + int(jobs) + int(catalog), [*left, *earlier]
+    count = len(heads) + len(leases) + int(jobs) + int(catalog) + worker_metadata
+    return count, [*left, *earlier]
+
+
+_PG_WORKER_METADATA = (
+    "loom.mcp_worker_enrollment_challenges",
+    "loom.mcp_worker_accounts",
+    "loom.mcp_worker_approvals",
+    "loom.mcp_worker_source_readers",
+)
+
+
+async def _delete_worker_metadata(conn: Any, where: str, org: str, arg: Any) -> int:
+    removed = 0
+    for table in _PG_WORKER_METADATA:
+        count = await conn.fetchval(
+            f"WITH gone AS (DELETE FROM {table} WHERE {where} RETURNING 1)"
+            " SELECT count(*) FROM gone",
+            org,
+            arg,
+        )
+        removed += int(count)
+    return removed
 
 
 async def documents_in_clickhouse(
@@ -493,6 +516,14 @@ async def _lock_user_knowledge(conn: Any, org: str, user_id: str) -> None:
                 "UNION SELECT namespace FROM loom.knowledge_deliveries "
                 "WHERE org = $1 AND user_id = $2 "
                 "UNION SELECT namespace FROM loom.knowledge_datasets "
+                "WHERE org = $1 AND user_id = $2 "
+                "UNION SELECT namespace FROM loom.mcp_worker_enrollment_challenges "
+                "WHERE org = $1 AND user_id = $2 "
+                "UNION SELECT namespace FROM loom.mcp_worker_accounts "
+                "WHERE org = $1 AND user_id = $2 "
+                "UNION SELECT namespace FROM loom.mcp_worker_approvals "
+                "WHERE org = $1 AND user_id = $2 "
+                "UNION SELECT namespace FROM loom.mcp_worker_source_readers "
                 "WHERE org = $1 AND user_id = $2",
                 org,
                 user_id,
@@ -566,6 +597,10 @@ PG_CENSUS: dict[str, str] = {
     "pg:loom.knowledge_heads": "pg_knowledge.delete",
     "pg:loom.knowledge_deliveries": "pg_knowledge.delete",
     "pg:loom.knowledge_jobs": "pg_knowledge.delete",
+    "pg:loom.mcp_worker_enrollment_challenges": "pg_knowledge.delete",
+    "pg:loom.mcp_worker_accounts": "pg_knowledge.delete",
+    "pg:loom.mcp_worker_approvals": "pg_knowledge.delete",
+    "pg:loom.mcp_worker_source_readers": "pg_knowledge.delete",
     "pg:loom.knowledge_datasets": "pg_knowledge.delete",
 }
 # The Postgres tables that hold none, with the reason.
@@ -620,6 +655,7 @@ PG_IN_USE_TABLES = (
     "loom.knowledge_heads",
     "loom.knowledge_deliveries",
     "loom.knowledge_jobs",
+    *_PG_WORKER_METADATA,
     "loom.knowledge_datasets",
 )
 

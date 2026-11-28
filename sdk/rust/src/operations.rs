@@ -2129,6 +2129,24 @@ impl crate::Client {
         self.call("knowledge.source.sync_now", &request, options)
             .await
     }
+    /// Call `knowledge.source.live`.
+    pub async fn knowledge_source_live(
+        &self,
+        request: crate::KnowledgeSourceLiveInput,
+    ) -> Result<crate::KnowledgeSourceLiveOutput, crate::Error> {
+        self.knowledge_source_live_with_options(request, crate::CallOptions::default())
+            .await
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+    /// Call `knowledge.source.live` with per-request options and metadata.
+    pub async fn knowledge_source_live_with_options(
+        &self,
+        request: crate::KnowledgeSourceLiveInput,
+        options: crate::CallOptions,
+    ) -> Result<crate::CallResult<crate::KnowledgeSourceLiveOutput>, crate::CallFailure> {
+        self.call("knowledge.source.live", &request, options).await
+    }
     /// Call `connection.list`.
     pub async fn connection_list(
         &self,

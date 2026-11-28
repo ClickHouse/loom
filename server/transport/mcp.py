@@ -82,6 +82,7 @@ from server.transport.mcp_identity import (
     _resolve_client_name,
     new_session_id,
 )
+from server.transport.mcp_op import invalid_live_request_id
 from server.transport.mcp_op import route as route_loom_op
 from server.transport.mcp_primer import (
     _emit_initialize_event,
@@ -414,8 +415,7 @@ def attach(app: FastAPI) -> None:
                 e,
             )
             auth = None
-        gated = _first_method_requiring_auth(payload, mode) if auth is None else None
-        if gated is not None:
+        if auth is None and (gated := _first_method_requiring_auth(payload, mode)) is not None:
             return _reject_unauthenticated(
                 request,
                 response,
@@ -427,6 +427,12 @@ def attach(app: FastAPI) -> None:
             nonlocal session_id
             if not isinstance(req, dict):
                 return await _handle_request(req)  # Invalid Request, per entry
+            if invalid_live_request_id(req):
+                return _err(
+                    _TRANSPORT_ERROR_ID,
+                    INVALID_REQUEST,
+                    "Live read request ID is invalid or too large",
+                )
             method = req.get("method", "")
             # Capture the client's self-reported name from the initialize
             # handshake and cache it against this session so later

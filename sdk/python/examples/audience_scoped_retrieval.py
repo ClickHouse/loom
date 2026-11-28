@@ -40,6 +40,7 @@ TOP_K = 10
 # `knowledge.search` takes `namespace` and at most 100 `namespaces`; a wider scope is
 # searched in batches of this size.
 SEARCH_COLLECTIONS = 101
+GRANT_WAIT_S = 10
 REVOKE_WAIT_S = 10
 
 # Everything the agent may ask of Loom, and every argument each tool takes. The person,
@@ -238,11 +239,31 @@ def signer(org: str) -> Callable[[str], str]:
 
     def sign(person: str) -> str:
         now = int(time.time())
-        claims = {"iss": issuer, "aud": audience, "sub": f"user:{person}", "org": org}
+        claims: dict[str, str | int] = {
+            "iss": issuer,
+            "aud": audience,
+            "sub": f"user:{person}",
+            "org": org,
+        }
         claims |= {"iat": now, "exp": now + 120, "jti": uuid.uuid4().hex}
         return jwt.encode(claims, key, algorithm="RS256", headers={"kid": kid})
 
     return sign
+
+
+async def _wait_for_fixture_grants(host: Host, person: str, collections: set[str]) -> bool:
+    # The serving replica may still have the previous grants when setup returns.
+    wait = asyncio.timeout(GRANT_WAIT_S)
+    try:
+        async with wait:
+            while True:
+                if collections.issubset(await host.scope(person, f"dm:{person}")):
+                    return True
+                await asyncio.sleep(0.5)
+    except TimeoutError:
+        if wait.expired():
+            return False
+        raise
 
 
 async def main(sign: Callable[[str], str] | None = None) -> int:
@@ -271,7 +292,10 @@ async def main(sign: Callable[[str], str] | None = None) -> int:
                 await loom.knowledge.add(f"# Renewal\n\n{text}\n", source_uri=SOURCE_URI)
         async with host.as_person(person) as loom:
             await loom.knowledge.add(f"# Renewal\n\n{NOTE}\n", source_uri=SOURCE_URI)
-        failures = await ask_in_private_then_in_shared(host, person, lead, support)
+        if await _wait_for_fixture_grants(host, person, {support, finance}):
+            failures = await ask_in_private_then_in_shared(host, person, lead, support)
+        else:
+            failures.append("the shared collections did not become visible to the recipient")
     finally:
         # Delete the note and both collections, even when a step failed. Each delete is
         # tried on its own, so one that fails does not leave the others behind.

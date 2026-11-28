@@ -524,6 +524,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "knowledge.source.live": ("sdk_method",),
     "knowledge.source.parse_links": ("sdk_method",),
     "knowledge.source.push_configure": (
         "sdk_method",

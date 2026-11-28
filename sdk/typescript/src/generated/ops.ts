@@ -4580,6 +4580,33 @@ export interface KnowledgeSourceListOutput {
   accepts_sources?: boolean;
 }
 
+export interface KnowledgeSourceLiveInput {
+  /** Organization that owns the collection. */
+  org: string;
+  /** Collection that owns the source. */
+  namespace: string;
+  /** Name of the registered source in the collection. */
+  source: string;
+  /** Exact selected resource identifier returned by source setup. */
+  resource_id: string;
+}
+
+export interface KnowledgeSourceLiveDocument {
+  source_id: string;
+  resource_id: string;
+  uri: string;
+  source_link: string | null;
+  fetched_at: number;
+  title: string;
+  text: string;
+  mime_type: string;
+}
+
+export interface KnowledgeSourceLiveOutput {
+  status: "ok" | "denied" | "reconnect" | "overloaded" | "timeout" | "unavailable" | "unsupported";
+  document?: KnowledgeSourceLiveDocument | null;
+}
+
 export interface KnowledgeSourceParseLinksInput {
   /** The org. */
   org: string;
@@ -10831,6 +10858,7 @@ export type OpName =
   | "knowledge.source.check"
   | "knowledge.source.inspect"
   | "knowledge.source.list"
+  | "knowledge.source.live"
   | "knowledge.source.parse_links"
   | "knowledge.source.push_configure"
   | "knowledge.source.push_confirm"
@@ -11212,6 +11240,7 @@ export interface OpMap {
   "knowledge.source.check": { input: KnowledgeSourceCheckInput; output: KnowledgeSourceCheckOutput };
   "knowledge.source.inspect": { input: KnowledgeSourceInspectInput; output: KnowledgeSourceInspectOutput };
   "knowledge.source.list": { input: KnowledgeSourceListInput; output: KnowledgeSourceListOutput };
+  "knowledge.source.live": { input: KnowledgeSourceLiveInput; output: KnowledgeSourceLiveOutput };
   "knowledge.source.parse_links": { input: KnowledgeSourceParseLinksInput; output: KnowledgeSourceParseLinksOutput };
   "knowledge.source.push_configure": { input: KnowledgeSourcePushConfigureInput; output: PushStatusOutput };
   "knowledge.source.push_confirm": { input: KnowledgeSourcePushConfirmInput; output: PushStatusOutput };
@@ -11593,6 +11622,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
   { name: "knowledge.source.inspect", group: "knowledge", method: "sourceInspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "knowledge.source.list", group: "knowledge", method: "sourceList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
+  { name: "knowledge.source.live", group: "knowledge", method: "sourceLive", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 8000, audit: false, readOnly: true },
   { name: "knowledge.source.parse_links", group: "knowledge", method: "sourceParseLinks", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
   { name: "knowledge.source.push_configure", group: "knowledge", method: "sourcePushConfigure", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.source.push_confirm", group: "knowledge", method: "sourcePushConfirm", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 1000, audit: true, readOnly: false },
@@ -11818,4 +11848,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 378;
+export const GENERATED_OP_COUNT = 379;

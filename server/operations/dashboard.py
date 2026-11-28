@@ -250,6 +250,9 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "the assistant agent's SQL tool; no dashboard page calls it until the Assistant "
             "page's chat"
         ),
+        "knowledge.source.live": (
+            "Requires a protected live result view; the dashboard reads stored copies"
+        ),
         "knowledge.source.update": (
             "agents and `loom knowledge source update` change a source's items; the source "
             "dialog registers a source with knowledge.source.add"

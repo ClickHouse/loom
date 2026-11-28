@@ -150,6 +150,19 @@ def _dispatch_event(event: AgentEvent) -> bool:
     return True
 
 
+def _event_payload(
+    operation: str,
+    raw_args: dict[str, Any] | None,
+    result: Any,
+    error: BaseException | str | None,
+) -> tuple[dict[str, Any] | None, Any, BaseException | str | None]:
+    from server.core.operation_privacy import retains_no_payload
+
+    if retains_no_payload(operation):
+        return None, None, None
+    return raw_args, result, error
+
+
 def emit_agent_event(
     *,
     op_name: str,
@@ -206,18 +219,21 @@ def emit_agent_event(
         response_tokens_of,
     )
 
+    raw_args, result, error = _event_payload(op_name, raw_args, result, error)
     acc = cost_accumulator.current()
-    args: dict[str, str] = {}
     run_id = run_id_of(raw_args)
-    if raw_args:
-        # A request addressed at a restricted namespace
-        # leaves no text in the ledger — identifiers and the digest stay.
-        args = project_args(
+    # A request addressed at a restricted namespace
+    # leaves no text in the ledger — identifiers and the digest stay.
+    args = (
+        project_args(
             redact_args(
                 raw_args, str(identity.get("org") or ""), str(identity.get("namespace") or "")
             )
             or {}
         )
+        if raw_args
+        else {}
+    )
     if acc is not None and acc.cost_estimated:
         args.update(out_cost_estimated="true", out_model_usage_status="unknown")
     # A row with no request arguments of its own still names what it

@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
 from server.core.naming import named
+from server.core.operation_privacy import KNOWLEDGE_SOURCE_LIVE
 
 # Higher = narrower. The effective scope is the narrowest of the request and
 # the token's ceiling. The keys are the token claim's values
@@ -512,7 +513,7 @@ NARROW_REFUSED_PREFIXES: tuple[str, ...] = ("knowledge.gaps.", "knowledge.query_
 
 def honours_read_scope(op_name: str) -> bool:
     """Whether `op_name` may be served to a token bounded below the namespace."""
-    if op_name.startswith(NARROW_REFUSED_PREFIXES):
+    if op_name == KNOWLEDGE_SOURCE_LIVE or op_name.startswith(NARROW_REFUSED_PREFIXES):
         return False
     if op_name in SCOPED_OPS or op_name in NARROW_SAFE_OPS:
         return True

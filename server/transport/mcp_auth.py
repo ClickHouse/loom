@@ -30,6 +30,7 @@ from server.transport.mcp_config import (
     _err,
     _ok,
 )
+from server.transport.mcp_op import invalid_live_request_id
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -286,9 +287,11 @@ def _echo_request_id(payload: Any) -> str | int:
     """
     reqs = payload if isinstance(payload, list) else [payload]
     for req in reqs:
-        rid = req.get("id") if isinstance(req, dict) else None
+        if not isinstance(req, dict):
+            continue
+        rid = req.get("id")
         if isinstance(rid, (str, int)) and not isinstance(rid, bool):
-            return rid
+            return _TRANSPORT_ERROR_ID if invalid_live_request_id(req) else rid
     return _TRANSPORT_ERROR_ID
 
 

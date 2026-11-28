@@ -3054,6 +3054,23 @@ settings:
   # Off does not lift protection while the deployment latch remains set. [restart]
   # knowledge_mirrored_sources_enabled: false
 
+  # Path to the operator's source worker routes file. Empty disables the worker
+  # directory. [restart]
+  # knowledge_source_worker_routes_file: ""
+
+  # Seconds a live read may spend on authority checks and its worker request. [restart]
+  # knowledge_source_worker_live_timeout_s: 8.0
+
+  # Seconds reserved after a live read for accounting and delivery. [restart]
+  # knowledge_source_worker_publication_timeout_s: 2.0
+
+  # Seconds one response frame may spend acquiring authority locks and sending. The
+  # remaining publication deadline can shorten this bound. [restart]
+  # knowledge_source_worker_frame_timeout_s: 1.0
+
+  # Concurrent worker access checks when proving a selection for setup. [restart]
+  # knowledge_source_worker_selection_parallelism: 2
+
   # Mirrored reads require a complete listing and group observation within this many
   # seconds; missing or older evidence admits nobody. [restart]
   # knowledge_source_acl_stale_seconds: 3600

@@ -33,7 +33,9 @@ from server.core import retirement
 from server.core.ch import get_client, probe_reader_user
 from server.core.errors import classified
 from server.core.logging_config import configure_logging
+from server.core.operation_privacy import KNOWLEDGE_SOURCE_LIVE
 from server.insights.app.provider_barrier import participant_lifespan
+from server.knowledge.app.mcp_worker_runtime import source_worker_runtime
 from server.memory.app import embedder_calibration
 from server.observability import get_emitter
 from server.operations.capabilities import operation_rows
@@ -354,7 +356,10 @@ async def _with_repo_umask(target: FastAPI) -> AsyncIterator[None]:
     The previous umask comes back once the lifespan ends, after the inline workers stop
     or a failed start."""
     with repo_umask():
-        async with lifespan(target):
+        async with (
+            source_worker_runtime(settings.knowledge_source_worker_routes_file),
+            lifespan(target),
+        ):
             yield
 
 
@@ -481,6 +486,8 @@ async def _response_headers(request: Request, call_next: Any) -> Response:
         from server.storage.frontend_assets import cache_control_for
 
         response.headers["Cache-Control"] = cache_control_for(path)
+    if path == f"/v1/{KNOWLEDGE_SOURCE_LIVE}" or path == "/mcp" or path.startswith("/mcp/"):
+        response.headers["Cache-Control"] = "no-store"
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
