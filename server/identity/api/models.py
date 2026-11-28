@@ -199,7 +199,7 @@ class NamespaceRegisterInput(BaseModel):
     # and serves it again when the code returns), `flag` (only the links are marked) or
     # `revise` (as retire_removed, and a changed claim is re-checked against the new code;
     # one that no longer holds gets a suggested correction, from the code's next edit on).
-    # Loom never writes the memory. None keeps the stored policy.
+    # No policy writes the memory. None keeps the stored policy.
     code_change_policy: CodeChangePolicy | None = None
 
 

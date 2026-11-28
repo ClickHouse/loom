@@ -362,18 +362,19 @@ test("resolvers: the option ranks after the env var and before the files, the na
   }
 });
 
-test("the manifest declares the options and the MCP url takes the server and toolset ones", () => {
+test("the manifest declares the options and the MCP url takes the server and mode ones", () => {
   const m = JSON.parse(fs.readFileSync(new URL("../.claude-plugin/plugin.json", import.meta.url), "utf8"));
   assert.equal(m.userConfig.server_url.default, "${LOOM_BASE_URL:-http://localhost:7777}");
   assert.equal(m.userConfig.token.sensitive, true);
   assert.equal(m.userConfig.token.required, undefined);
-  // The listing is a setting; `coding` unless the user asks for a union
-  assert.equal(m.userConfig.toolset.default, "coding");
-  assert.match(m.userConfig.toolset.description, /coding\+tracker/);
+  // The listing is the coding roster; the mode picks the planes it carries
+  assert.equal(m.userConfig.mode.default, "both");
+  for (const mode of ["both", "memory", "code"]) assert.ok(m.userConfig.mode.description.includes(`\`${mode}\``), mode);
+  assert.equal(m.userConfig.toolset, undefined);
   const mcp = JSON.parse(fs.readFileSync(new URL("../.mcp.json", import.meta.url), "utf8"));
   assert.equal(
     mcp.mcpServers.loom.url,
-    "${user_config.server_url}/mcp?toolset=${user_config.toolset}&schema_profile=plugin#${CLAUDE_PROJECT_DIR}",
+    "${user_config.server_url}/mcp?toolset=coding&schema_profile=plugin&mode=${user_config.mode}#${CLAUDE_PROJECT_DIR}",
   );
   assert.match(mcp.mcpServers.loom.headersHelper, /loom-mcp-headers\.mjs/);
 });

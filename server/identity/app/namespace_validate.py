@@ -326,8 +326,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
 
 # What every `code_unlinked_*` check reads (`code_unlinked.unlinked`).
 _UNLINKED_READ = (
-    f"Only the {code_unlinked.SCANNED} served memories last written are read (all under "
-    "`keys` when given), and only in an org that indexes a repository. A raw tool "
+    f"Only the {code_unlinked.SCANNED} served memories last written are read (of those "
+    "under `keys` when given), and only in an org that indexes a repository. A raw tool "
     "observation is never linked and is not read; a word of the prose counts as a name "
     "only beside `files`."
 )
@@ -409,14 +409,16 @@ _CONTRACT: dict[str, RuleContract] = {
         1,
         exceptions=(
             f"Only the {code_unlinked.SCANNED} memories whose `moved` link was last checked "
-            "are read (all under `keys` when given), only in repositories the caller may "
+            "are read (of those under `keys` when given), only in repositories the caller may "
             "read, and no high-sensitivity memory. A link whose code also changed is "
             "`code_links_stale`'s."
         ),
         uncertainty=(
             "An edit is offered on the spelling and the index alone: whether the sentence "
-            "still holds once the name is swapped is for whoever applies it to read. The "
-            "words that mark a sentence as being about the name are English."
+            "still holds once the name is swapped is for whoever applies it to read, and "
+            "the link worker applies it unread to a memory of the repository's code "
+            "namespace that nobody holds. The words that mark a sentence as being about "
+            "the name are English."
         ),
     ),
     "code_unlinked_no_repository": RuleContract(
@@ -446,7 +448,9 @@ _CONTRACT: dict[str, RuleContract] = {
         exceptions=_UNLINKED_READ,
         uncertainty=(
             "While the link pass backfills earlier writes, a memory it has not reached is "
-            "counted here even when nothing of it will resolve."
+            "counted here even when nothing of it will resolve. A write queued after the "
+            "pass's position with an earlier write time (an insert in flight, a writer "
+            "clock behind ClickHouse's) is counted under its cause until the next pass."
         ),
     ),
 }
@@ -509,10 +513,13 @@ _CODE_RENAME_EDITS = (
     "carries either `edits` (replace `old` with `new` at `start`..`end` of the text, "
     "counted in Unicode code points; apply none unless that slice reads `old`) "
     "with the `content_sha256` they are of, or the `reason` no edit is offered; `totals` "
-    "counts the memories by `edits` and by reason. Nothing is written: to apply, read "
-    "the edited sentence, then memory.update the key with the revised text and "
-    "`if_match_sha256` set to the sample's `content_sha256`. Only repositories you may "
-    "read are counted.",
+    "counts the memories by `edits` and by reason. The link worker applies the edits "
+    "itself to a memory held in its repository's code namespace that nobody pinned, "
+    "locked or verified, where the repository is indexed on one branch and the revised "
+    "text is close to no other memory's, so a sample with `edits` is one it leaves or "
+    "has not reached. The report writes nothing: to apply, read the edited sentence, "
+    "then memory.update the key with the revised text and `if_match_sha256` set to the "
+    "sample's `content_sha256`. Only repositories you may read are counted.",
 )
 
 

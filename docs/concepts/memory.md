@@ -465,54 +465,92 @@ A memory's detail in the dashboard lists these links with their state
 ([clip](../assets/screenshots/clip-memory-linked-code.webm)).
 
 A link follows its definition through file moves, renames (with an edit, when the new
-name is related to the old), and its class's rename within the file. A definition
-renamed as it moves to another file, class or namespace is looked for among the
-definitions the changed files did not have before: the only one with its tokens under
-another name reads `moved`; failing that, the only one of its own name with a close text
-reads `changed`, unless a definition of that name that stayed in the changed files is
-close as well. A member reads `changed` there unless its class came with it unchanged. A
-definition under 30 tokens is told by neither its text nor its own name, which any class
-may define: it is followed there only under a name of the same words (`_read_rows` or
-`read_rows_v2` for `read_rows`) and with its scope, from module level to module level
-or, once no member of its class is left in its file, into the class that is that one
-renamed or keeps its members. Two definitions that may be it,
-or one that another removed definition may have become, leave the link `unresolved`. A
-range that changed more than 32 files under the entry's `path_prefixes` is not searched
-this way, and a warning in the server log names it; nor is a range whose diff cannot be
-read. Over such a range a live link is read as if nothing was renamed. An `unresolved`
-link is looked for from the commit its code was last read at, so its range grows with
-every commit. While that range is searched, the link is followed once one definition
-that may be it is left. Over a range that is not searched it stays `unresolved`, and no
-later commit narrows that range. The `memory_code_links` worker's pass outcome counts in
-`wide_ranges` the ranges its own pass followed, not those a `code.refresh` call followed
-first. A
-namesake that was already there never inherits a link, and a `missing` link comes back
-only when its own name does. A definition moved to another file under its own name with
-an edit is followed there when its text is close to the one the link last read. A new
-definition left where it was stops that search only when it may be the old one under a
-new name: an export list or an unrelated function added beside it does not. The search
-for a definition renamed as it moved is not made past a new definition left there,
-unless that one is another definition renamed alone. A name gone from its file is
-looked for in the files changed
-since its last check as the mirror holds them, beside the index, so a definition moved by
-a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
-followed when the link is rechecked. When `memory_code_links_mirror_naming_files` or more
-of those files name it, or more than `memory_code_links_mirror_changed_files` changed
-under the entry's prefixes, or the diff cannot be read, or the paths are more than git
-takes in one command or searches in its time, the mirror adds nothing and the index
-decides. When git cannot run the search, or a definition it finds cannot be
-fingerprinted, a live link the index's namesakes do not settle is `unresolved`. Files the
-ingest would not index (outside the entry's `path_prefixes`, refused by its denylist,
-over the byte cap, binary) add no definition; a generated file, which the ingest declares
-without searching its text, does. A file the parser fails on keeps its links as they were
-until it parses. When the fingerprint rules change, every link is re-hashed from the
-commits its hashes were taken at. When its old text is gone from git, a link that matched
-it takes the text the next check finds and a changed one stays `changed`; one whose old
-text no longer parses keeps its last state, and the worker reports it.
+name is related to the old), and its class's rename within the file. A definition renamed
+as it moves to another file, class or namespace is looked for among the definitions the
+changed files did not have before, by three rules in turn:
 
-Loom never writes the memory, so after a rename its text still says the old name. The
-reads that serve its links (listed below, `namespace.validate` apart) name where the
-code is now. A link that is `fresh`, `moved` or `changed` at another path or symbol than
+1. The only one with its tokens under another name reads `moved`. It is looked for before
+   a definition of its own name with an edit in another file, and whatever the search of
+   its own file left unsure.
+2. The only one of its own name with a close text reads `changed`, unless a definition of
+   that name that stayed in the changed files is close as well.
+3. The only one whose text is nearly its own under any name, a tenth of its tokens
+   differing at most (a parameter, a callee renamed with it), reads `changed`, when no
+   other removed definition is as near to that one and no definition that stayed is as
+   near to it.
+
+Rules 2 and 3 apply only when the search of its own file left no new definition there
+that may be it. A member reads `changed` there unless its class came with it unchanged.
+Two definitions that may be it, or one that another removed definition may have become,
+leave the link `unresolved`. A definition under a name its file already had is another
+definition: a copy that was already there never inherits a link, nor does one whose text
+is only close to the lost one's. The exception is a name that held another text and now
+holds the tokens of a removed definition of 30 tokens or more: the commit put that
+definition under a name the file already had (a class moved onto the name another class
+gave up, a helper inlined into its only caller), and rule 1 follows it there.
+
+A definition under 30 tokens is mostly its signature. It is told by its tokens only with
+its name or its scope, and by its text under another name only token for token: its
+tokens under a condition it did not have before read `changed`.
+
+- From module level it goes, into any scope, under a name of the same words (`_read_rows`
+  or `read_rows_v2` for `read_rows`), and to the module level of another file under a name
+  that holds those words with more before or after them, or one those words hold
+  (`bulk_read_rows` or `read_rows2` for `read_rows`, and `read_rows` for either). A name of
+  one word is held by any name about the same thing (`Error` by `ReadError`), so it counts
+  only with a number after it (`D2` for `D`).
+- A member, whose name any class may define, goes only with its class, under a name
+  related to its own. That class is the one renamed alone or with nearly its text, or the
+  one keeping its members' names, once no member of it is left in its file: at least half
+  of them, or two when one more of its members, of 30 tokens or more, came with its
+  tokens. Under its own name the member is one of those two, so that one larger member is
+  then all that tells the class. Or it is the class that two more of its members, of 30
+  tokens or more each, left for with their tokens under their names.
+
+A range that changed more than 32 files under the entry's `path_prefixes` is not parsed
+whole: the definition is looked for in the files that hold, at either end of the range,
+one of its three longest lines without its name, by a search of the mirror. Only those
+files and the link's own are parsed, so a removed or kept definition in a file that holds
+none of those lines contests nothing. That search is not made for a definition with no
+such line of 12 characters or more, when those files are more than 32 with the link's
+own, when more than `memory_code_links_mirror_changed_files` changed (a warning in the
+server log names the range), or when git cannot run or finish it, which is then not tried
+again for the other links of that range in the pass; nor is a range searched whose diff
+cannot be read. Over a range not searched a live link is read as if nothing was renamed.
+An `unresolved` link is looked for from the commit its code was last read at, so its
+range grows with every commit. While that range is within 32 files, the link is followed
+once one definition that may be it is left. A wider range is read only where its lines
+are, which cannot show that the definitions that left it `unresolved` are gone: the link
+is followed when that read finds the one definition that is it, and stays `unresolved`
+otherwise, as over a range that is not searched.
+
+The `memory_code_links` worker's pass outcome counts in `wide_ranges` the ranges past 32
+files its own pass followed, not those a `code.refresh` call followed first. A `missing`
+link comes back only when its own name does. A definition moved to another file under its
+own name with an edit is followed there when its text is close to the one the link last
+read. A new definition left where it was stops that search only when it may be the old
+one under a new name: an export list or an unrelated function added beside it does not. A
+name gone from its file is looked for in the files changed since its last check as the
+mirror holds them, beside the index, so a definition moved by a commit the index has not
+taken in whole (past `code_ingest_max_files_per_commit`) is followed when the link is
+rechecked. When `memory_code_links_mirror_naming_files` or more of those files name it,
+or more than `memory_code_links_mirror_changed_files` changed under the entry's prefixes,
+or the diff cannot be read, or the paths are more than git takes in one command or
+searches in its time, the mirror adds nothing and the index decides. When git cannot run
+the search, or a definition it finds cannot be fingerprinted, a live link the index's
+namesakes do not settle is `unresolved`. Files the ingest would not index (outside the
+entry's `path_prefixes`, refused by its denylist, over the byte cap, binary) add no
+definition; a generated file, which the ingest declares without searching its text, does.
+A file the parser fails on keeps its links as they were until it parses. When the
+fingerprint rules change, every link is re-hashed from the commits its hashes were taken
+at. When its old text is gone from git, a link that matched it takes the text the next
+check finds and a changed one stays `changed`; one whose old text no longer parses keeps
+its last state, and the worker reports it.
+
+After a rename a memory's text still says the old name until it is revised, by the
+link pass where the swap is certain ([below](#a-memorys-text-after-a-rename)) or by a
+person. Until then the reads that serve its links (listed below, `namespace.validate`
+apart) name where the code is now. A link that is `fresh`, `moved` or `changed` at another path or symbol than
 the memory was written against is served with both: the current `path`, `symbol`,
 `start_line` and `end_line` (trunk's, at the link's last check), and `was_path` and
 `was_symbol`, the oldest of the identities the link keeps (its last 16; a claim the
@@ -604,10 +642,11 @@ The links are read where the code is:
   commit that put its code in a changed, unresolved or missing state) when one is known, and
   `supersedes_key` when it replaces an older row, and `code_moved` (its links to code in the
   file that is now at another path or symbol than it was written against) when there are
-  any; a row another row read for the answer supersedes is not served. `lessons_left_out` counts the rows the cap, a cut or that rule left
-  out. A decision or constraint is served whole or left out. The read runs after the answer,
-  never enters the search memo, and is skipped for `include_lessons: false`, with
-  `code_result_lessons` off, or for a token narrowed to its own user or session.
+  any; a row another row read for the answer supersedes is not served. `lessons_left_out`
+  counts the rows the cap, a cut or that rule left out. A decision or constraint is served
+  whole or left out. The read runs after the answer, never enters the search memo, and is
+  skipped for `include_lessons: false`, with `code_result_lessons` off, or for a token
+  narrowed to its own user or session.
 - `code.grep` in matches mode focuses inline lessons on the definitions its
   matches name in trunk files. When selecting files to read, grep prefers
   files with a current lesson linked to a matched definition at the returned
@@ -682,21 +721,73 @@ counts the served memories that name code (a backticked or qualified name, a cal
 | `code_unlinked_name_unresolved`  | lists no `files`, and each name is defined nowhere on trunk or more than once.                                                                                                                                             |
 | `code_unlinked_pending`          | waits for its link; each sample says what it `waits_for`: `link_pass` (the worker has not read this write), `index` (no index yet, or a file that does not parse) or `trunk` (a qualified name trunk does not define yet). |
 
-The counts are of the 2,000 served memories last written (all under `keys` when given),
-and only in an org that indexes a repository; a raw tool observation, which is never
-linked, is not counted. How far each repository's links trail its
+The counts are of the 2,000 served memories last written (of those under `keys` when
+given), and only in an org that indexes a repository; a raw tool observation, which is
+never linked, is not counted. How far each repository's links trail its
 index is a gauge, and a health warning when it lasts
 ([monitoring](../operations/monitoring.md#what-to-alert-on)).
 
+### A memory's text after a rename
+
 A `moved` link is at its code, and the memory's text may still name the old definition or
-path. `namespace.validate` lists each memory whose text does under the `info` finding
-`code_rename_edits`, with either the `edits` its text allows (replace `old` with `new`
-from `start` to `end`, counted in Unicode code points of the text, where the text reads
-`old`) and the `content_sha256` they are of, or the one `reason` no edit is offered. The finding's `totals` count the memories by `edits` and by reason. Loom
-writes nothing: to apply an edit, read the sentence it changes, then call `memory.update`
-on the key with the revised text and `if_match_sha256` set to the listed hash. That is a
-revision by the caller, with its conflict check, and it is refused when the memory changed
-after the report read it. The link pass then links the revised memory where the code is.
+path. The link pass that follows the rename plans the edits that bring the text up to it
+and applies them itself when all of these hold:
+
+- the plan offers edits: none of the reasons in the table below applies;
+- the memory is held in the repository's code namespace, as a team rule or decision
+  is. A memory of any other namespace is linked through its `repo:` tag, which its
+  writer set and which grants nothing: its readers may hold no role on the repository,
+  so the new name or path is not written into it;
+- no person holds the memory (pinned, locked or verified), and no service account
+  attested the text as it is, which a revision would leave stale;
+- the memory is `active` and not labelled `high`. One flagged `conflicted` keeps its
+  text: a revision would drop the flag on its side while the other memory keeps its own;
+- the repository is indexed on one branch. Another indexed branch may still define the
+  old name, and a memory linked again from its revised text is no longer served there;
+- the org's model calls are not switched off. The revision embeds the new text, so the
+  pass revises nothing in such an org and takes its memories up once the calls are back
+  on.
+
+The revision is one `memory.update_by_id` write on the hash of the text the edits were
+planned for, so a memory rewritten in the meantime is left alone. The write reads the
+memory again under its key's lock, and one pinned, verified, attested or no longer
+`active` since the pass read it keeps its text. It runs that write's
+blacklist and conflict checks, embeds the new text and closes the facts the old value
+stated, as any revision does. Nobody asked for it, so it changes that memory alone. It is
+not written where a caller's revision would do more: the conflict check finds the revised
+text a duplicate, a restatement, a refinement or a contradiction of another memory, or
+the conflict resolver would judge it against one. It also retires no other row of the
+same key. Such a memory keeps its text and is listed with its `edits`.
+
+The new version stays its writer's row (`actor` is kept) and leaves an audit row by
+`process:code_rename` and a `memory.revised` event; `memory.history` keeps the text it
+replaced. Its `source_class` is never raised. A row its writer asserted is `derived` from
+then on, since the text is no longer what they stated, so search no longer prefers it in
+a near-tie (`memory_search_asserted_boost_scale`). Every other class is kept: an
+unattested `external` row stays out of `memory.ask` synthesis. The next pass
+links the revised memory where the code is, and it reads `fresh`. The `memory_code_links`
+pass outcome counts the memories revised as `renamed`. A link followed with an edit to
+its code reads `changed` and its memory's text is never revised: whether the claim still
+holds is the `revise` policy's question. A recheck made inside a `code.refresh` call
+revises nothing and leaves the memory to the worker's next pass.
+
+Every other memory keeps its text. `namespace.validate` lists each memory whose text
+still names an old definition or path under the `info` finding `code_rename_edits`,
+with either the `edits` its text allows (replace `old` with `new` from `start` to `end`,
+counted in Unicode code points of the text, where the text reads `old`) and the
+`content_sha256` they are of, or the one `reason` no edit is offered. The finding's
+`totals` count the memories by `edits` and by reason. A memory listed with `edits` is one
+the link pass left (held outside the repository's code namespace, held by a person,
+attested, flagged `conflicted`, in a repository indexed on more than one branch, or
+close to another memory once revised) or has not reached yet. The
+pass decides once, when its link follows the rename: a memory it left then is not
+revised later, and neither is one whose link already read `moved` under a build that
+revises no text ([rule 67](../architecture/rolling-upgrades.md#the-rules)). Those stay
+listed until a principal applies the edit. The report writes nothing: to apply an edit,
+read the sentence it changes, then call `memory.update` on the key with the revised text and
+`if_match_sha256` set to the listed hash. That is a revision by the caller, with its
+conflict check, and it is refused when the memory changed after the report read it. The
+link pass then links the revised memory where the code is.
 
 An edit is offered only for a name written as code (a whole backticked identifier, an
 `A::b`, or a call written `a.b(` or `name()`) and for a whole repository path, in the
@@ -729,9 +820,9 @@ says. A sentence ends after `.`, `!` or `?` and a space (not after a one-letter 
 such as `e.g.`), at a blank line and before a list item; a line break alone does not end
 one. The words that mark a sentence as
 being about the name are English, and `call` or `calls` is not one: it is read as calling
-the code. The finding reads the 2,000 memories whose `moved` link was last checked (all
-under `keys` when given), in the repositories the caller may read, and no high-sensitivity
-memory; a link whose code also changed is listed under `code_links_stale`. Neither the
+the code. The finding reads the 2,000 memories whose `moved` link was last checked (of
+those under `keys` when given), in the repositories the caller may read, and no
+high-sensitivity memory; a link whose code also changed is listed under `code_links_stale`. Neither the
 memory's key, tags, `files`, entities and concepts nor a line number written in its text
 is edited.
 

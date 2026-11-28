@@ -15,6 +15,11 @@
 // Captures land via Loom's `observe.record` wire op (episodic plane,
 // zero-token heuristic typing). Crystallization triggers `observe.crystallize`,
 // which runs Loom's deferred extraction/embedding/conflict path server-side.
+//
+// Two planes: the observations, the crystallize and the recalled-key stash
+// are memory; the outcome of a code lookup (`code.outcome`: the file the
+// agent opened next, a grep it fell back to) is code. Each runs where the
+// install's mode has its plane.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -26,6 +31,7 @@ import {
   extractFiles,
   inferActionType,
   normalizeToolName,
+  planeEnabled,
   postFireAndForget,
   readStdinJson,
   redactHead,
@@ -359,13 +365,20 @@ async function main() {
 
   const scope = resolveScope(payload.cwd);
   const opts = { token, serverUrl };
+  const afterTool = resolvedEvent === "PostToolUse" || resolvedEvent === "PostToolUseFailure";
 
-  if (resolvedEvent === "PostToolUse" || resolvedEvent === "PostToolUseFailure") {
+  if (afterTool && planeEnabled("code")) {
     try {
       handleCodeSignals(payload, scope, opts);
     } catch {
       /* outcome telemetry must never block capture */
     }
+  }
+  if (!planeEnabled("memory")) {
+    scheduleExit(0);
+    return;
+  }
+  if (afterTool) {
     try {
       // Remember what a Loom memory tool served, for the
       // run hook's run.complete(recalled_keys) at SessionEnd.

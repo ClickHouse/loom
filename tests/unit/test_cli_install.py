@@ -226,17 +226,19 @@ def test_plugin_mcp_json_mounts_the_coding_toolset() -> None:
     # The URL is the install-time option, whose default keeps
     # the LOOM_BASE_URL-then-localhost behaviour (Claude Code expands the env form
     # inside a substituted default — verified on 2.1.273)
-    # The toolset is the plugin's `toolset` setting (default `coding`)
+    # The toolset is the coding roster
     # The profile is the plugin's own listing and startup instructions
+    # The mode is the plugin's `mode` setting (default `both`): the planes that listing carries
     # The fragment hands the header helper the project directory (never sent)
     assert loom["url"] == (
-        "${user_config.server_url}/mcp?toolset=${user_config.toolset}"
-        "&schema_profile=plugin#${CLAUDE_PROJECT_DIR}"
+        "${user_config.server_url}/mcp?toolset=coding"
+        "&schema_profile=plugin&mode=${user_config.mode}#${CLAUDE_PROJECT_DIR}"
     )
     manifest = json.loads(
         (root / "integrations/claude-code-plugin/.claude-plugin/plugin.json").read_text()
     )
-    assert manifest["userConfig"]["toolset"]["default"] == "coding"
+    assert manifest["userConfig"]["mode"]["default"] == "both"
+    assert "toolset" not in manifest["userConfig"]
     assert "headers" not in loom
     assert "bin/loom-mcp-headers.mjs" in loom["headersHelper"]
     assert (root / "integrations/claude-code-plugin/bin/loom-mcp-headers.mjs").is_file()

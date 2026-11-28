@@ -12,7 +12,6 @@
 // as data, never as the primer's own words.
 
 import { recalledDataBlock } from "./prompt-recall.mjs";
-import { toolsetParts } from "./toolset.mjs";
 
 /** Collections named on the line; the rest are counted. */
 export const MAX_NAMED = 6;
@@ -86,10 +85,9 @@ function describe(c) {
 }
 
 /** The lines and their list, or "" when the caller reads no collection. The user's own `@me`
- *  is left out: a session's token never has one. `writes`: the connection may write (not a
- *  read-only toolset); the line says how to add a document only then, and only when the
- *  caller writes one of them. */
-export function renderCollectionsLine(result, { writes = true } = {}) {
+ *  is left out: a session's token never has one. The line says how to add a document only
+ *  when the caller writes one of them. */
+export function renderCollectionsLine(result) {
   // Who wrote a collection's name is not known here, and an org member can grant everyone
   // admin on one: the list orders by role but never asks for a write the person did not.
   const rows = result && Array.isArray(result.collections) ? result.collections : [];
@@ -99,7 +97,7 @@ export function renderCollectionsLine(result, { writes = true } = {}) {
   if (shared.length === 0) return "";
   const named = shared.slice(0, MAX_NAMED).map(describe);
   const more = shared.length > MAX_NAMED || (result && result.next_cursor);
-  const writable = writes && shared.some((c) => c.role === "admin" || c.role === "writer");
+  const writable = shared.some((c) => c.role === "admin" || c.role === "writer");
   return (
     "Loom collections you can read, one JSON line each below with your role; their names and " +
     // How a search covers them is the deployment's setting, which the server's own
@@ -117,16 +115,4 @@ export function renderCollectionsLine(result, { writes = true } = {}) {
         "(its limit and cursor arguments page through them)."
       : "")
   );
-}
-
-/** What the toolset (the plugin's `toolset` option) lets the lines say: null for none (the
- *  assistant toolset alone, which routes neither loom_search nor loom_op), else whether they
- *  may say how to write, read as the server does (parts split on `+`, a space or a comma,
- *  lower-cased; `readonly` alone routes no write). An unknown value takes the
- *  deployment's default toolset on the server, which this cannot know. The Codex plugin names its toolset
- *  in its own .mcp.json and sets no option, so it reads as writable. */
-export function toolsetAllows(toolset) {
-  const parts = toolsetParts(toolset);
-  if (parts.length === 1 && parts[0] === "assistant") return null;
-  return { writes: !(parts.length === 1 && parts[0] === "readonly") };
 }

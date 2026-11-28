@@ -92,6 +92,7 @@ from server.transport.mcp_primer import (
     _resources_descriptor,
 )
 from server.transport.mcp_refusals import classify_tool_errors
+from server.transport.mcp_schemas import plugin_profile
 from server.transport.mcp_tools import (
     _tools_descriptor,
     assistant_connection,
@@ -120,11 +121,13 @@ def answer_run_of(request: Any, toolset: str | None, auth: Any) -> str:
 
 
 def _listing_params(request: Any) -> dict[str, str | None]:
-    """The per-request `tools/list` selectors on the MCP URL:
-    `?schema_profile=` and `?toolset=`."""
+    """The per-request `tools/list` selectors on the MCP URL: `?schema_profile=` and
+    `?toolset=`, and `?mode=`, which names the one plane a plugin connection lists
+    (`plugin_profile`)."""
+    query = request.query_params
     return {
-        "schema_profile": request.query_params.get("schema_profile"),
-        "toolset": request.query_params.get("toolset"),
+        "schema_profile": plugin_profile(query.get("schema_profile"), query.get("mode")),
+        "toolset": query.get("toolset"),
     }
 
 
@@ -257,7 +260,8 @@ async def _list_result(
     of a `coding` connection whose URL asks for the compact profile also follow
     the request's repository header, so only the client keeps those, bound or
     not. Bound, it lists the code tools alone, and no prompt and no resource:
-    both offer memory routing, through tools that listing leaves out."""
+    both offer memory routing, through tools that listing leaves out. So does a
+    plugin connection in code mode, whose lists follow its URL alone."""
     scope = "private" if lists_follow_code_scope(toolset, schema_profile) else "public"
     if method == "tools/list":
         listed: dict[str, Any] = {

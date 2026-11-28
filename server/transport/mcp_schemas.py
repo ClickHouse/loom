@@ -406,10 +406,33 @@ def compact_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
 #            instructions of one paragraph.
 #            Only a URL names it (`?schema_profile=plugin`); a server that does
 #            not know the value answers with its default profile.
+#            A plugin installed for one plane adds `?mode=memory` or `?mode=code`
+#            (`plugin_profile`): a toolset with a `coding` part then lists that
+#            plane alone, and its paragraph says that plane's sentence.
 
 SCHEMA_PROFILES = ("standard", "full", "compact")
 DEFAULT_SCHEMA_PROFILE = "standard"
 PLUGIN_SCHEMA_PROFILE = "plugin"
+# The plugin profile of a connection that lists one plane, by the URL's `?mode=`.
+PLUGIN_PLANE_PROFILES = {"memory": "plugin-memory", "code": "plugin-code"}
+PLUGIN_SCHEMA_PROFILES = (PLUGIN_SCHEMA_PROFILE, *PLUGIN_PLANE_PROFILES.values())
+
+
+def plugin_profile(requested: str | None, mode: str | None) -> str | None:
+    """The URL's `?schema_profile=` with a plugin connection's `?mode=` folded in, so
+    every reader of the profile sees one value: `memory` and `code` name the profile
+    that lists that plane alone. Any other mode (`both`, a typo, none) and any other
+    profile leave the value as the URL gave it."""
+    if str(requested or "").lower() != PLUGIN_SCHEMA_PROFILE:
+        return requested
+    return PLUGIN_PLANE_PROFILES.get(str(mode or "").lower(), requested)
+
+
+def plugin_plane(schema_profile: str | None) -> str:
+    """The plane a plugin connection's URL asks to list alone: `memory`, `code`, or ''
+    for both, and for every other profile."""
+    profile = str(schema_profile or "").lower()
+    return next((p for p, name in PLUGIN_PLANE_PROFILES.items() if name == profile), "")
 
 
 def resolve_schema_profile(requested: str | None, configured: str | None) -> str:
@@ -417,12 +440,12 @@ def resolve_schema_profile(requested: str | None, configured: str | None) -> str
     if default not in SCHEMA_PROFILES:
         default = DEFAULT_SCHEMA_PROFILE
     profile = str(requested or default).lower()
-    return profile if profile in (*SCHEMA_PROFILES, PLUGIN_SCHEMA_PROFILE) else default
+    return profile if profile in (*SCHEMA_PROFILES, *PLUGIN_SCHEMA_PROFILES) else default
 
 
 def compact_shapes(profile: str) -> bool:
     """Whether a resolved profile sends the compact descriptor shapes."""
-    return profile in ("compact", PLUGIN_SCHEMA_PROFILE)
+    return profile in ("compact", *PLUGIN_SCHEMA_PROFILES)
 
 
 def standard_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:

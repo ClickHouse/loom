@@ -41,6 +41,7 @@ import path from "node:path";
 import {
   gitToplevel,
   pathUnder,
+  planeEnabled,
   postBounded,
   readStdinJson,
   realPath,
@@ -68,7 +69,7 @@ import { readCache } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 
 const EVENT = process.argv[2] || "";
-const ENABLED = envSwitch("LOOM_FILE_CONTEXT", true);
+const ENABLED = planeEnabled("memory") && envSwitch("LOOM_FILE_CONTEXT", true);
 const TOKENS = Number(process.env.LOOM_FILE_CONTEXT_TOKENS || 300);
 const TTL_MS = Number(process.env.LOOM_FILE_CONTEXT_TTL_MIN || 30) * 60 * 1000;
 // A read's result is held for its lookups, never longer than this: stdin, git

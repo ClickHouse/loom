@@ -91,6 +91,36 @@ export function envNumber(name, fallback, { min = -Infinity, max = Infinity, env
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 }
 
+// --- mode and planes ----------------------------------------------------------
+// What a hook sends belongs to one of three planes. `memory` is everything the
+// session's memory is made of or read from: tool observations, the
+// conversation, briefs, the working-memory note, the session hand-off the
+// server extracts facts from, recall and a file's memories. `code` is the
+// code index: the shunt, prompt pointers, the blast radius, the test gate and
+// their outcome reports. `ledger` is the session's own record, the run and
+// its usage counters. The install's mode picks the planes: `both` runs all
+// three, `memory` and `code` run that plane and the ledger.
+export const MODES = ["both", "memory", "code"];
+export const PLANES = ["memory", "code", "ledger"];
+
+/** The install's mode: the `mode` option, which also picks the listing of
+ *  Claude Code's MCP entry, else LOOM_MODE (the wirings with no install
+ *  option: Codex, a hand-wired client). Anything else is `both`. */
+export function pluginMode(env = process.env) {
+  const v = String(env.CLAUDE_PLUGIN_OPTION_MODE || env.LOOM_MODE || "")
+    .trim()
+    .toLowerCase();
+  return MODES.includes(v) ? v : "both";
+}
+
+/** Whether the install's mode runs `plane`. Every hook script names its
+ *  plane in a call to this (tests/plugin-modes.test.mjs holds each to it). */
+export function planeEnabled(plane, env = process.env) {
+  if (!PLANES.includes(plane)) throw new Error(`unknown plane ${plane}`);
+  const mode = pluginMode(env);
+  return plane === "ledger" || mode === "both" || mode === plane;
+}
+
 // --- auth + scoping ----------------------------------------------------------
 
 // File-based config for a hosted/remote Loom: ~/.loom/config.json may hold

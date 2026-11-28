@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -621,6 +622,65 @@ def test_a_plugin_connection_lists_every_tool_in_the_compact_shapes():
     listed = set(compact["loom_code_grep"]["inputSchema"]["properties"])
     assert set(grep) == listed - {"namespaces", "path_prefix", "langs"}
     assert "namespace" in grep and "path_globs" in grep
+
+
+def test_a_plugin_connection_in_one_mode_lists_that_plane_alone():
+    """A plugin installed for one plane adds `?mode=memory` or `?mode=code` to its URL.
+    Memory mode lists the plugin's listing without its code tools, code mode its code
+    tools alone, bound to a repository or not, each tool exactly as the full listing
+    describes it. Any other mode, and a mode on another profile, changes nothing."""
+    from server.transport.mcp import _listing_params
+    from server.transport.mcp_schemas import plugin_profile
+
+    def selectors(**query: str) -> dict:
+        return _listing_params(SimpleNamespace(query_params=query))
+
+    both = {t["name"]: t for t in _listing("coding", False, "plugin")}
+    code_names = {name for name in both if TOOL_TO_OP.get(name, "").startswith("code.")}
+    assert len(both) == 23 and len(code_names) == 13
+    listed = {}
+    for mode in ("memory", "code"):
+        profile = selectors(toolset="coding", schema_profile="plugin", mode=mode)["schema_profile"]
+        unbound = _listing("coding", False, profile)
+        scope = set_code_scope("acme/code-repo")
+        try:
+            assert _listing("coding", False, profile) == unbound, mode
+            assert not mt.lists_follow_code_scope("coding", profile), "a shared cache may keep it"
+        finally:
+            reset_code_scope(scope)
+        listed[mode] = {t["name"]: t for t in unbound}
+        for name, tool in listed[mode].items():
+            assert tool == both[name], name
+    assert set(listed["code"]) == code_names
+    assert set(listed["memory"]) == set(both) - code_names
+    assert {"loom_search", "loom_op", "loom_memory_set"} <= set(listed["memory"])
+    upfront = {
+        mode: {n for n, t in tools.items() if t.get("_meta", {}).get("anthropic/alwaysLoad")}
+        for mode, tools in listed.items()
+    }
+    assert upfront == {"memory": set(), "code": {"loom_code_edit_context", "loom_code_grep"}}
+    # the counts the plugin's README and its integration page state are the builder's
+    from server.core.paths import REPO_ROOT
+
+    counts = {"both": len(both), "memory": len(listed["memory"]), "code": len(listed["code"])}
+    for page in (
+        "integrations/claude-code-plugin/README.md",
+        "docs/features/integrations/claude-code.md",
+    ):
+        text = (REPO_ROOT / page).read_text()
+        for mode, count in counts.items():
+            row = re.search(rf"^\| `{mode}`[^\n]*\| (\d+) tools:", text, re.MULTILINE)
+            assert row and int(row.group(1)) == count, f"{page}: {mode}"
+    # each is strictly smaller than the listing of both planes
+    assert _tok(list(listed["memory"].values())) < _tok(list(both.values()))
+    assert _tok(list(listed["code"].values())) < _tok(list(both.values()))
+    for mode in ("both", "cod", "", "MEMORY "):
+        assert plugin_profile("plugin", mode) == "plugin", mode
+    assert plugin_profile("Plugin", "Code") == "plugin-code"
+    for profile in ("compact", "standard", ""):
+        assert selectors(schema_profile=profile, mode="code")["schema_profile"] == profile
+    # a toolset with no `coding` part keeps its whole listing, as it keeps its own rules
+    assert _listing("core", False, "plugin-memory") == _listing("core", False, "plugin")
 
 
 def test_tracker_toolset_lists_the_tracker_record_bisect_pr_check_and_impact_within_its_own_budget():

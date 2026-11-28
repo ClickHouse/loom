@@ -2,7 +2,7 @@ import "./temp-home.mjs";
 import { noIds } from "./recalled-block.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MAX_NAMED, READ, listBody, renderCollectionsLine, toolsetAllows } from "../lib/collections-line.mjs";
+import { MAX_NAMED, READ, listBody, renderCollectionsLine } from "../lib/collections-line.mjs";
 
 const col = (namespace, over = {}) => ({
   namespace,
@@ -85,11 +85,10 @@ test("never cuts a name, and leaves off one the server would not make", () => {
   assert.deepEqual(listed, [{ collection: long, role: "viewer" }]);
 });
 
-test("says how to write only where the caller and the connection can", () => {
+test("says how to write only where the caller can", () => {
   assert.ok(!renderCollectionsLine({ collections: [col("col-a")] }).includes("knowledge.add"));
   const writer = [col("col-a", { role: "writer" })];
   assert.ok(renderCollectionsLine({ collections: writer }).includes("knowledge.add"));
-  assert.ok(!renderCollectionsLine({ collections: writer }, { writes: false }).includes("knowledge.add"));
 });
 
 test("a description cannot leave its entry, the block or its line", () => {
@@ -181,19 +180,6 @@ test("keeps emoji whole and zero-width non-joiners between letters", () => {
     "\u{1F469}\u{1F3FD}‍\u{1F4BB} \u{1F3F3}️‍\u{1F308}",
   );
   assert.equal(shown("می‌خواهم"), "می‌خواهم");
-});
-
-test("the toolset decides: none on assistant alone, no writes on readonly, as the server reads it", () => {
-  assert.equal(toolsetAllows("assistant"), null);
-  assert.equal(toolsetAllows(" Assistant "), null);
-  assert.equal(toolsetAllows("assistant+assistant"), null);
-  assert.deepEqual(toolsetAllows("core,assistant"), { writes: true });
-  assert.deepEqual(toolsetAllows("ReadOnly"), { writes: false });
-  for (const v of ["readonly,", "readonly+readonly", " readonly "])
-    assert.deepEqual(toolsetAllows(v), { writes: false }, v);
-  assert.deepEqual(toolsetAllows("core+readonly"), { writes: true });
-  assert.deepEqual(toolsetAllows("core,coding"), { writes: true });
-  assert.deepEqual(toolsetAllows(undefined), { writes: true });
 });
 
 test("a joiner after a letter goes, whatever selector stood between them", () => {

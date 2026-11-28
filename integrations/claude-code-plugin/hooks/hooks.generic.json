@@ -13,7 +13,11 @@
     "toolInput/input and tool_result/output (see HOOKS.md).",
     "",
     "Replace ${LOOM_PLUGIN_DIR} with this directory's absolute path. Auth and",
-    "scoping are environment-driven (see HOOKS.md / README)."
+    "scoping are environment-driven (see HOOKS.md / README).",
+    "",
+    "LOOM_MODE=memory or LOOM_MODE=code runs one plane's scripts: a script whose",
+    "plane is off exits with no request, so the wiring below stays as it is",
+    "(HOOKS.md, Modes)."
   ],
   "events": {
     "on_tool_success": {

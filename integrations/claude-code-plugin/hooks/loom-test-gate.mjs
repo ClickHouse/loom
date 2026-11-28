@@ -42,6 +42,7 @@ import {
   git,
   gitToplevel,
   normalizeToolName,
+  planeEnabled,
   postBounded,
   readStdinJson,
   DIFF_ARGS,
@@ -75,7 +76,7 @@ import {
   writtenSince,
 } from "../lib/test-gate.mjs";
 
-const MODE = gateMode();
+const MODE = planeEnabled("code") ? gateMode() : "off";
 const DEPTH = gateDepth();
 const AFTER_TOOL = process.argv[2] === "PostToolUse";
 

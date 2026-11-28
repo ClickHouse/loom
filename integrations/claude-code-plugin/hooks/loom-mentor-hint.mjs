@@ -11,11 +11,13 @@
 //
 //   LOOM_MENTOR_HINTS=off   disable
 
-import { envSwitch, readStdinJson, runHookMain, scheduleExit } from "../lib/loom-client.mjs";
+import { envSwitch, planeEnabled, readStdinJson, runHookMain, scheduleExit } from "../lib/loom-client.mjs";
 import { decideShow, extractHint, hintPayload, isLoomTool, renderHint } from "../lib/mentor-hint.mjs";
 import { readJsonFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
-const ENABLED = envSwitch("LOOM_MENTOR_HINTS", true);
+// A hint names the plane the session is not using: in a one-plane mode that
+// is the plane the install left out, so hints are for a session with both.
+const ENABLED = planeEnabled("memory") && planeEnabled("code") && envSwitch("LOOM_MENTOR_HINTS", true);
 
 async function main() {
   if (!ENABLED) {

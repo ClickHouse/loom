@@ -337,6 +337,18 @@ test("Codex rollout tool calls scope the gate to paths named by this session", (
     { type: "response_item", payload: { type: "message", content: "src/b.py" } },
   ];
   assert.deepEqual(sessionScope(DIRTY, rows, { root: ROOT }), ["src/a.py", "tests/test_a.py"]);
+  // The shell tool under each name `normalizeToolName` folds onto Bash for a function call; another tool that
+  // names a path is no change.
+  const named = (name) => [
+    {
+      type: "response_item",
+      payload: { type: "function_call", name, arguments: '{"command":["bash","-lc","sed -i s/x/y/ src/b.py"]}' },
+    },
+  ];
+  for (const name of ["exec", "exec_command", "shell", "shell_command", "container.exec"]) {
+    assert.deepEqual(sessionScope(DIRTY, named(name), { root: ROOT }), ["src/b.py"], name);
+  }
+  assert.deepEqual(sessionScope(DIRTY, named("read_file"), { root: ROOT }), []);
 });
 
 test("sidechain edits and non-assistant rows are not the session's change", () => {
@@ -925,12 +937,29 @@ test("any test run that finished since the change counts, whatever it ran and ho
     "make unit-tests",
     "cargo nextest run",
     "tests/clickhouse-test 01234_x",
+    "make testacc",
+    "make testall",
+    "npm run testci",
+    "./gradlew integrationTest",
+    "gradle connectedAndroidTest",
+    // A run after an install, in its own simple command.
+    "npm ci && npm test",
+    "pip install -e . && pytest",
+    "yarn add -D jest; yarn jest",
+    "for i in 1 2 3; do pytest tests; done",
+    "npx --no-install jest",
+    "docker run --rm app pytest",
+    "pip install -e . \\\n  && pytest",
+    // A line continuation joins the run to its tool.
+    "make \\\n  test",
   ]) {
     assert.equal(testedSince(bash(command, FAILED), since), true, command);
     assert.equal(testedSince(call("PowerShell", { command }), since), true, command);
   }
-  // A command that reads or writes a test, or installs a runner, runs none;
-  // neither does a build tool whose argument holds `test` inside a word.
+  // A command that reads or writes a test, or installs, removes or updates a
+  // package, runs none; neither does a build tool whose argument holds `test`
+  // inside a word or at the start of a path's or a package's name, one that
+  // builds the tests, or one told to leave them out.
   for (const command of [
     HEREDOC,
     "sed -n 1,40p tests/test_a.py",
@@ -943,6 +972,45 @@ test("any test run that finished since the change counts, whatever it ran and ho
     "node scripts/attest.js",
     "npm install @testing-library/react",
     "go get github.com/stretchr/testify",
+    "npm install @playwright/test",
+    "npm install -D node-test",
+    "npm install --save-dev jest",
+    "yarn add -D jest",
+    "pnpm add -D vitest",
+    "pip install -U pytest",
+    "pip install 'pytest>=8'",
+    "uv add --dev pytest",
+    "npm i -D @types/jest",
+    "npm uninstall jest",
+    "npm rm jest",
+    "yarn remove jest",
+    "pnpm remove vitest",
+    "npm update jest",
+    "yarn upgrade jest",
+    "poetry update pytest",
+    "pip download pytest",
+    "composer require --dev phpunit/phpunit",
+    "pip install \\\n  pytest",
+    "npm install --save-dev \\\n  jest \\\n  vitest",
+    "go vet ./internal/testutil/...",
+    "go build ./cmd/testserver",
+    "go generate ./testdata/...",
+    "bazel build //testing/...",
+    "bazel build //pkg:testlib",
+    "node scripts/testbed.js",
+    "cargo build -p testcontainers",
+    "gradle build -x test",
+    "./gradlew build -x integrationTest",
+    "./gradlew compileTestJava",
+    "./gradlew :app:compileDebugUnitTestKotlin",
+    "./gradlew processTestResources",
+    "gradle build -PskipTests",
+    "gradle assemble -DskipTests",
+    "mvn package -Dmaven.test.skip=true",
+    // A build tool's target of a verb's name hides the run after it.
+    "make install test",
+    "make ci test",
+    "mvn clean install test",
   ]) {
     assert.equal(testedSince(bash(command, ""), since), false, command);
   }
@@ -994,24 +1062,49 @@ test("the last code change is the most recently written code file that can be re
     for (const [file, at] of [
       ["a.py", 1e12],
       ["b.py", 1e12 + 5000],
-      ["CMakeLists.txt", 1e12 + 6000],
-      ["dev-requirements.txt", 1e12 + 7000],
+      ["constraints.txt", 1e12 + 6000],
+      ["requirements/dev.txt", 1e12 + 6000],
+      ["tests/fixtures/expected.txt", 1e12 + 6000],
+      ["testdata/golden.txt", 1e12 + 6000],
+      ["docs/requirements.txt", 1e12 + 6000],
+      ["docs/releases/5.2.txt", 1e12 + 9000],
+      ["CHANGES.txt", 1e12 + 9000],
+      ["README.txt", 1e12 + 9000],
       ["README.md", 1e12 + 9000],
-      ["notes.txt", 1e12 + 9000],
+      ["notes.markdown", 1e12 + 9000],
       ["guide.rst", 1e12 + 9000],
+      ["manual.asciidoc", 1e12 + 9000],
       ["CHANGELOG", 1e12 + 9000],
     ]) {
+      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
       fs.writeFileSync(path.join(dir, file), "x\n");
       fs.utimesSync(path.join(dir, file), new Date(at), new Date(at));
     }
     assert.equal(lastCodeChange(dir, ["b.py", "a.py", "deleted.py"]), 1e12 + 5000);
-    // Documentation and prose are left out, by extension or by a changelog's name.
-    assert.equal(
-      lastCodeChange(dir, ["a.py", "b.py", "README.md", "notes.txt", "guide.rst", "CHANGELOG"]),
-      1e12 + 5000,
-    );
-    assert.equal(lastCodeChange(dir, ["a.py", "CMakeLists.txt"]), 1e12 + 6000);
-    assert.equal(lastCodeChange(dir, ["a.py", "dev-requirements.txt"]), 1e12 + 7000);
+    // Documentation and prose are left out: by extension, by a changelog's name, and a .txt file by a note's
+    // name or under a docs directory.
+    for (const file of [
+      "README.md",
+      "notes.markdown",
+      "guide.rst",
+      "manual.asciidoc",
+      "CHANGELOG",
+      "docs/releases/5.2.txt",
+      "CHANGES.txt",
+      "README.txt",
+    ]) {
+      assert.equal(lastCodeChange(dir, ["a.py", "b.py", file]), 1e12 + 5000, file);
+    }
+    // Any other .txt file is code: a requirements file, also under docs, a test fixture.
+    for (const file of [
+      "constraints.txt",
+      "requirements/dev.txt",
+      "tests/fixtures/expected.txt",
+      "testdata/golden.txt",
+      "docs/requirements.txt",
+    ]) {
+      assert.equal(lastCodeChange(dir, ["a.py", file]), 1e12 + 6000, file);
+    }
     assert.equal(lastCodeChange(dir, ["README.md", "deleted.py"]), 0);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1104,6 +1197,17 @@ test("the hook holds the stop of a session that ran no test since its last code 
     assert.equal(await stop("d-ruled-out", no, ""), "");
     assert.match(await stop("never-ran", [change]), /"decision":"block".*pytest tests\/test_a\.py/);
     assert.equal(await stop("never-ran", [change]), "");
+    // A Codex rollout that changed the file through its shell tool is held in either mode, under each name of
+    // that tool; a call of another tool that names the file is no change.
+    const rollout = (name) => [
+      {
+        type: "response_item",
+        payload: { type: "function_call", name, arguments: '{"command":"sed -i s/1/2/ src/a.py"}' },
+      },
+    ];
+    assert.match(await stop("codex-block", rollout("shell_command")), /"decision":"block"/);
+    assert.match(await stop("codex-default", rollout("shell_command"), ""), /"decision":"block"/);
+    assert.equal(await stop("codex-other-tool", rollout("read_file")), "");
     // An untracked file whose name git would quote or a trim would cut does not hide the tree's age.
     const odd = process.platform === "win32" ? " naïve.txt" : ' na"ï\tve.txt';
     fs.writeFileSync(path.join(dir, odd), "x\n");
