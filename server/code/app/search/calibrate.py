@@ -23,7 +23,8 @@ def _calibrate(
 
     `fused` and the lexical rows read here are the leg's own first rows
     (`st.lexical_head`), not the pool it cut on the path penalties: the
-    penalties are priors, and no prior decides abstention."""
+    penalties are priors, and no prior decides abstention. They order the
+    leg's rows of one score, which have no order of their own."""
     result, constrained, fuzzy_hit = st.result, st.constrained, st.fuzzy_hit
     lexical_rows, vector_rows = st.lexical_head, st.vector_rows
     card_gate, card_stats, concept_stats = st.card_gate, st.card_stats, st.concept_stats

@@ -619,12 +619,18 @@ with the largest `penalty / (60 + rank)` instead:
 - **A test or prose row leaves the pool only when 200 rows count for more.** The leg's
   first-ranked test row votes `0.35 / 61`, as much as a source row at rank 114, and
   stays.
+- **Rows with one score rank by their penalty, the undemoted first.** The score is a
+  sum of idfs over the query words a chunk holds, so the rows of a one-word or
+  two-word query tie by the thousand, and ClickHouse returns equal rows in no fixed
+  order. Without the second key the order the table holds them in would decide which
+  of them are ranked first, and with them the pool.
 - **The scan reads a bounded depth.** No row past rank `260 / f - 60` can be in the
   pool, where `f` is the smallest factor a path can get: 2,912 rows for the default
   penalties together, 980 for the prose penalty alone, at most 10,000.
 - **Calibration does not read the cut.** The statement also returns the leg's own
   first 200 rows, and leg agreement, the top similarity and abstention are computed on
-  those, as without the penalties.
+  those, as without the penalties. A penalty reaches them only as the order of rows
+  with one score.
 
 The vector leg and the concept leg are not cut.
 

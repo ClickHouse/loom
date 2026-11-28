@@ -128,3 +128,41 @@ async def test_a_first_ranked_test_row_outlasts_source_rows_that_match_less() ->
         (rank, True) for rank in range(1, 121)
     ]
     assert found[0]["path"] == "tests/test_merge.py"
+
+
+def _rows(prefix: str, n: int) -> str:
+    """`n` chunks under `prefix`, each holding the lexemes `merge tree`."""
+    return (
+        "INSERT INTO loom.code_chunks (org, namespace, embedding_model, path, chunk_id, "
+        f"content, lexemes, embedding) SELECT 'o', 'n', 'm', concat('{prefix}', "
+        "toString(number), '.py'), generateUUIDv4(), '', 'merge tree', "
+        f"arrayResize([0.1], 3072, 0.1) FROM numbers({n})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rows_of_one_score_rank_source_first_wherever_the_table_holds_them() -> None:
+    """600 rows match both terms and tie: 300 source rows between 150 benchmark rows the
+    table holds before them and 150 test rows it holds after. ClickHouse returns equal
+    rows in no fixed order, and the rank decides the pool, so the rank reads the factor
+    next: the source rows take ranks 1 to 300, and a pool of 100 is source rows only."""
+    repo = _repo(_rows("benchmarks/b", 150), _rows("src/m", 300), _rows("tests/t", 150))
+    found = await repo.lexical_search_chunks(
+        "o", "n", "m", ["merge", "tree"], [1.0, 1.0], pool=100, noise_penalty=0.35
+    )
+    assert [(r["lex_rank"], bool(r["in_pool"])) for r in found] == [
+        (rank, True) for rank in range(1, 101)
+    ]
+    assert all(r["path"].startswith("src/") for r in found)
+
+
+@pytest.mark.asyncio
+async def test_rows_of_one_score_fill_the_pool_with_demoted_rows_after_the_source() -> None:
+    """With 40 source rows in the tie, they take ranks 1 to 40 and the benchmark and
+    test rows the rest of a pool of 100."""
+    repo = _repo(_rows("benchmarks/b", 150), _rows("src/m", 40), _rows("tests/t", 150))
+    found = await repo.lexical_search_chunks(
+        "o", "n", "m", ["merge", "tree"], [1.0, 1.0], pool=100, noise_penalty=0.35
+    )
+    assert [r["lex_rank"] for r in found] == list(range(1, 101))
+    assert [r["path"].startswith("src/") for r in found] == [True] * 40 + [False] * 60
