@@ -2505,7 +2505,7 @@ class KnowledgeSettings(BaseModel):
     knowledge_source_sync_enabled: bool = False
     # Off refuses knowledge.source.add and knowledge.source.rotate (SELF_SERVICE_OFF), so no
     # member's credential reaches the pods; the other source operations still answer.
-    knowledge_source_self_service_enabled: bool = True
+    knowledge_source_self_service_enabled: Annotated[bool, LIVE] = True
     # Require protected automatic session capture and persist deployment privacy state.
     # Off does not lift protection while the deployment latch remains set.
     knowledge_mirrored_sources_enabled: bool = False

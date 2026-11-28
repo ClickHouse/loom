@@ -3052,7 +3052,7 @@ settings:
 
   # Off refuses knowledge.source.add and knowledge.source.rotate (SELF_SERVICE_OFF), so
   # no member's credential reaches the pods; the other source operations still answer.
-  # [restart]
+  # [live]
   # knowledge_source_self_service_enabled: true
 
   # Require protected automatic session capture and persist deployment privacy state.
