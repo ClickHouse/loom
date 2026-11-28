@@ -356,7 +356,7 @@ def _convert(tmp_path: Path, *, changed=None, source: bool = True, full: bool = 
         patch.object(
             scip_to_delta,
             "_ctor_overloads",
-            lambda records, pb: {
+            lambda data, pb, skips: {
                 "DB::Widget": [
                     "(scip:49f6e7a06ebc5aa8)",
                     "(scip:d4f767463ce0a6b3)",
@@ -473,6 +473,9 @@ class _ApplyRepo:
 
     async def set_state(self, org, ns, key, value, detail=""):
         self.state.append((key, value, detail))
+
+    async def scip_stale_marks(self, org: str, ns: str) -> set[str]:
+        return set()
 
 
 @pytest.mark.asyncio

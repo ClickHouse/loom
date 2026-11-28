@@ -386,11 +386,11 @@ def _ts_def_kind(symbol: str, occ, lines: list[str] | None) -> str:
     return ""
 
 
-def _ts_prepass(data: bytes, scip_pb2, ctx: _TsContext) -> None:
+def _ts_prepass(data: bytes, scip_pb2, ctx: _TsContext, skips: _Skips) -> None:
     """Every definition's kind, index-wide, so a reference to a term in
     another document knows whether its target is a function (a `calls`
     edge) or a type (`uses_type`) — one streaming pass before the emit."""
-    for doc in _stream_documents(data, scip_pb2):
+    for doc in _stream_documents(data, scip_pb2, skips=skips):
         if doc.relative_path.startswith("node_modules/") or "/node_modules/" in doc.relative_path:
             continue
         lines = ctx.src.lines(doc.relative_path)
@@ -428,7 +428,7 @@ _GO_SCIP_KINDS: dict[str, str] = {
 }
 
 
-def _go_prepass(data: bytes, scip_pb2, ctx: _GoContext) -> None:
+def _go_prepass(data: bytes, scip_pb2, ctx: _GoContext, skips: _Skips) -> None:
     """Every definition's kind from the indexer's own
     SymbolInformation.kind, index-wide, before any symbol is parsed. Without
     it the descriptor loop leaves a struct field (`Stats#MaxIdleConns.`) and an
@@ -443,7 +443,7 @@ def _go_prepass(data: bytes, scip_pb2, ctx: _GoContext) -> None:
         }
     except (AttributeError, KeyError):
         return
-    for doc in _stream_documents(data, scip_pb2):
+    for doc in _stream_documents(data, scip_pb2, skips=skips):
         for si in doc.symbols:
             if not si.symbol.startswith(GO_SCHEME + " ") or si.symbol in ctx.def_kinds:
                 continue
@@ -452,12 +452,12 @@ def _go_prepass(data: bytes, scip_pb2, ctx: _GoContext) -> None:
                 ctx.def_kinds[si.symbol] = mapped
 
 
-def _go_definition_modules(data: bytes, scip_pb2) -> set[str]:
+def _go_definition_modules(data: bytes, scip_pb2, skips: _Skips) -> set[str]:
     """The module paths the index DEFINES symbols for: what
     a checkout's go.mod files would say, read from the definitions when no
     checkout is at hand — one streaming pass."""
     out: set[str] = set()
-    for doc in _stream_documents(data, scip_pb2):
+    for doc in _stream_documents(data, scip_pb2, skips=skips):
         for occ in doc.occurrences:
             if occ.symbol_roles & 0x1 and occ.symbol.startswith(GO_SCHEME + " gomod "):
                 parts = occ.symbol.split(" ", 4)
@@ -567,12 +567,12 @@ def _line_of(rng) -> int:
 _INHERIT_KINDS = frozenset({"class", "struct", "interface", "type", "enum"})  # incl. struct
 
 
-def _implementation_targets(data: bytes, scip_pb2) -> dict[str, set[str]]:
+def _implementation_targets(data: bytes, scip_pb2, skips: _Skips) -> dict[str, set[str]]:
     """symbol -> the symbols it `is_implementation`-relates to, over the whole
     index (one streaming pass): what `_direct_targets` needs to tell a
     declared base from an ancestor the emitter listed transitively."""
     out: dict[str, set[str]] = {}
-    for doc in _stream_documents(data, scip_pb2):
+    for doc in _stream_documents(data, scip_pb2, skips=skips):
         for si in doc.symbols:
             targets = {
                 rel.symbol
@@ -712,7 +712,7 @@ def _is_ctor_qname(qname: str) -> bool:
     return len(parts) >= 2 and bool(parts[-1]) and parts[-1] == parts[-2]
 
 
-def _ctor_overloads(records, scip_pb2) -> dict[str, list[str]]:
+def _ctor_overloads(data, scip_pb2, skips: _Skips) -> dict[str, list[str]]:
     """class qualified name -> sorted constructor signature hints, from every
     occurrence of a constructor symbol in the index (declarations in a class
     body are reference-role occurrences, so a class whose header is included
@@ -720,11 +720,7 @@ def _ctor_overloads(records, scip_pb2) -> dict[str, list[str]]:
     this delta). The hash IS scip-clang's overload identity, so each entry is
     one symbol_id on the server."""
     out: dict[str, set[str]] = {}
-    for field, payload in records:
-        if field != 2:
-            continue
-        doc = scip_pb2.Document()
-        doc.ParseFromString(payload)
+    for doc in _stream_documents(data, scip_pb2, skips=skips):
         for occ in doc.occurrences:
             parsed = _parse_symbol(occ.symbol)
             if parsed is None or parsed[1] != "function" or not _is_ctor_qname(parsed[0]):
@@ -822,6 +818,8 @@ def _top_level_records(data: bytes):
         field, wire = tag >> 3, tag & 7
         if wire == 2:  # length-delimited
             length, pos = varint(pos)
+            if pos + length > end:
+                raise ValueError(f"record at {pos} runs {pos + length - end} bytes past the end")
             payload = data[pos : pos + length]
             pos += length
             yield field, payload
@@ -837,42 +835,81 @@ def _top_level_records(data: bytes):
 
 def _document_path(payload) -> str:
     """A serialized Document's relative_path (field 1), read without parsing
-    its occurrences."""
-    for field, value in _top_level_records(payload):
-        if field == 1:
-            return bytes(value).decode("utf-8", "replace")
+    its occurrences; "" when it cannot be read."""
+    try:
+        for field, value in _top_level_records(payload):
+            if field == 1:
+                return bytes(value).decode("utf-8", "replace")
+    except (IndexError, ValueError):
+        pass
     return ""
 
 
-def _stream_documents(data, scip_pb2, *, paths: set[str] | None = None, ordered: bool = False):
+class _Skips:
+    """The documents one run skipped: one python-protobuf refuses (a string field that
+    is not UTF-8, say) or one that fails to convert. Each is named once on stderr, the
+    delta lists the named ones (`skipped_files`: the server keeps their rows and marks
+    them stale) and counts all of them. With `stop` the failure fails the run instead."""
+
+    def __init__(self, stop: bool = False) -> None:
+        self.stop = stop
+        self.labels: set[str] = set()
+        self.paths: set[str] = set()
+
+    def add(self, path: str, err: Exception, index: int = -1) -> None:
+        if self.stop:
+            raise err
+        # a document whose path cannot be read is told apart by its place in the index
+        label = path or f"<document {index}>"
+        if label in self.labels:
+            return  # several passes read the index; the warning is printed once
+        self.labels.add(label)
+        if path:
+            self.paths.add(path)
+        print(f"{SKIPPED_WARNING} {label!r}: {err!r}", file=sys.stderr)
+
+
+# The line the converter writes to stderr for each skipped document; the server logs it.
+SKIPPED_WARNING = "scip_to_delta: warning: skipped document"
+
+
+def _stream_documents(
+    data, scip_pb2, *, skips: _Skips, paths: set[str] | None = None, ordered: bool = False
+):
     """Yield scip.Document messages by streaming the Index's top-level
     records (field 2 = documents) instead of parsing one giant message —
     a full ClickHouse index is ~1GB, which trips python-protobuf's
     whole-message limits ("Wire format was corrupt"). `paths` parses only
     the documents with those relative paths; `ordered` yields them sorted by
     path (index order among equal paths), so the delta does not depend on
-    the order a parallel indexer wrote its documents in."""
-    records = (payload for field, payload in _top_level_records(data) if field == 2)
+    the order a parallel indexer wrote its documents in. A document that does
+    not parse is skipped (`skips`); an index whose records cannot be read to the
+    end raises."""
+    records = enumerate(payload for field, payload in _top_level_records(data) if field == 2)
     if paths is not None or ordered:
-        keyed = [(_document_path(payload), payload) for payload in records]
+        keyed = [(_document_path(payload), i, payload) for i, payload in records]
         if paths is not None:
-            keyed = [kp for kp in keyed if kp[0] in paths]
+            keyed = [k for k in keyed if k[0] in paths]
         if ordered:
-            keyed.sort(key=lambda kp: kp[0])
-        records = (payload for _path, payload in keyed)
-    for payload in records:
+            keyed.sort(key=lambda k: k[0])
+        records = ((i, payload) for _path, i, payload in keyed)
+    for i, payload in records:
         doc = scip_pb2.Document()
-        doc.ParseFromString(payload)
+        try:
+            doc.ParseFromString(payload)
+        except Exception as e:  # noqa: BLE001 — any failure of one document skips it
+            skips.add(_document_path(payload), e, i)
+            continue
         yield doc
 
 
 _TS_TYPE_KINDS = frozenset({"class", "interface", "type", "enum"})
 
 
-def _index_scheme(data: bytes, scip_pb2) -> str:
+def _index_scheme(data: bytes, scip_pb2, skips: _Skips) -> str:
     """The scheme of the first non-local symbol in the index (`cxx` for
     scip-clang, `scip-python`, `scip-typescript`, `scip-go`)."""
-    for doc in _stream_documents(data, scip_pb2):
+    for doc in _stream_documents(data, scip_pb2, skips=skips):
         for si in doc.symbols:
             if not si.symbol.startswith("local "):
                 return si.symbol.split(" ", 1)[0]
@@ -959,7 +996,12 @@ class _Run:
 
 
 def _prepare(
-    data, scip_pb2, source_root: str | None, exclude_generated: bool, path_prefix: str
+    data,
+    scip_pb2,
+    source_root: str | None,
+    exclude_generated: bool,
+    path_prefix: str,
+    skips: _Skips,
 ) -> _Run:
     """The index-wide passes before the emit: the source root, the scheme's
     context (Go package scopes, TypeScript workspace map and definition
@@ -970,7 +1012,7 @@ def _prepare(
         src = _SourceLines(Path(source_root) if source_root else None)
     global _TS, _GO
     _TS = None
-    scheme = _index_scheme(data, scip_pb2)
+    scheme = _index_scheme(data, scip_pb2, skips)
     is_ts = scheme == TS_SCHEME
     # Go symbols take the fast tier's package scope
     _GO = (
@@ -979,20 +1021,20 @@ def _prepare(
         else None
     )
     if _GO is not None and not _GO.modules:
-        _GO.modules = _go_definition_modules(data, scip_pb2)
+        _GO.modules = _go_definition_modules(data, scip_pb2, skips)
     if _GO is not None:
-        _go_prepass(data, scip_pb2, _GO)
+        _go_prepass(data, scip_pb2, _GO, skips)
     if is_ts:
         # The workspace map and the definition kinds before
         # any symbol is parsed (a term's kind is its definition's shape)
         _TS = _TsContext(ts_package_dirs(src.root if src.available else None), src)
-        _ts_prepass(data, scip_pb2, _TS)
+        _ts_prepass(data, scip_pb2, _TS, skips)
     ctors: dict[str, list[str]] = {}
     # constructor calls through factories are a C++ form (`std::make_shared<T>`)
     is_cxx = scheme == CXX_SCHEME
     if src.available and is_cxx:
-        ctors = _ctor_overloads(_top_level_records(data), scip_pb2)
-    ancestors = _implementation_targets(data, scip_pb2)
+        ctors = _ctor_overloads(data, scip_pb2, skips)
+    ancestors = _implementation_targets(data, scip_pb2, skips)
     return _Run(
         src, is_ts, is_cxx, ctors, ancestors, exclude_generated, is_python=scheme == "scip-python"
     )
@@ -1204,8 +1246,9 @@ def _convert_document(doc, run: _Run) -> dict | None:
 class DeltaStream:
     """A delta produced one file at a time: `head` (version, commit, base),
     `files` (a one-shot iterator, sorted by path), then `tail()` — the
-    deleted paths, the stats and the features, complete once `files` is
-    exhausted."""
+    deleted paths, the skipped ones, the stats and the features, complete once
+    `files` is exhausted. A document that fails to parse or convert is skipped
+    (`_Skips`), or fails the run with `stop_on_failed_document`."""
 
     def __init__(
         self,
@@ -1219,10 +1262,14 @@ class DeltaStream:
         full: bool = False,
         exclude_generated: bool = False,
         path_prefix: str = "",
+        stop_on_failed_document: bool = False,
     ) -> None:
         scip_pb2 = _ensure_scip_pb2()
         data = _read_index(index_path)
-        self._run = _prepare(data, scip_pb2, source_root, exclude_generated, path_prefix)
+        self._skips = _Skips(stop_on_failed_document)
+        self._run = _prepare(
+            data, scip_pb2, source_root, exclude_generated, path_prefix, self._skips
+        )
         self._deleted = sorted(set(deleted))
         self._prefix = path_prefix
         # A FULL index converted with its source claims the feature: the
@@ -1239,10 +1286,16 @@ class DeltaStream:
         self.files = self._files(data, scip_pb2, changed)
 
     def _files(self, data, scip_pb2, changed: set[str] | None):
-        for doc in _stream_documents(data, scip_pb2, paths=changed, ordered=True):
+        for doc in _stream_documents(
+            data, scip_pb2, skips=self._skips, paths=changed, ordered=True
+        ):
             if changed is not None and doc.relative_path not in changed:
                 continue
-            entry = _convert_document(doc, self._run)
+            try:
+                entry = _convert_document(doc, self._run)
+            except Exception as e:  # noqa: BLE001 — any failure of one document skips it
+                self._skips.add(doc.relative_path, e)
+                continue
             if entry is None:
                 continue
             if self._prefix:
@@ -1252,9 +1305,14 @@ class DeltaStream:
     def tail(self) -> dict:
         out: dict = {
             "deleted_files": self._deleted,
+            # repository-relative, as the emitted paths are
+            "skipped_files": sorted(
+                f"{self._prefix}/{p}" if self._prefix else p for p in self._skips.paths
+            ),
             "stats": {
                 "factory_ctor_edges": self._run.factory_edges,
                 "skipped_generated": self._run.skipped_generated,
+                "skipped_failed": len(self._skips.labels),
             },
         }
         if self._claims_ctor_calls:
@@ -1273,6 +1331,7 @@ def convert(
     full: bool = False,
     exclude_generated: bool = False,
     path_prefix: str = "",
+    stop_on_failed_document: bool = False,
 ) -> dict:
     """The whole delta as one dict (the command line streams it instead).
     `changed`: the relative paths to emit (None = every document).
@@ -1293,6 +1352,7 @@ def convert(
         full=full,
         exclude_generated=exclude_generated,
         path_prefix=path_prefix,
+        stop_on_failed_document=stop_on_failed_document,
     )
     files = list(stream.files)
     return {**stream.head, "files": files, **stream.tail()}
@@ -1403,6 +1463,7 @@ def _summary(counts: dict) -> str:
         f"delta: {counts['files']} files, {counts['symbols']} symbols, {counts['edges']} edges "
         f"({counts['factory_ctor_edges']} constructor calls through factories; "
         f"{counts['skipped_generated']} generated files dropped; "
+        f"{counts['skipped_failed']} failed documents skipped; "
         f"features {counts['features']})"
     )
 
@@ -1441,6 +1502,12 @@ def main() -> int:
         "the delta's paths are repository-relative like the parser tier's",
     )
     ap.add_argument(
+        "--stop-on-failed-document",
+        action="store_true",
+        help="fail the run on a document that cannot be parsed or converted, instead "
+        "of skipping it with a warning",
+    )
+    ap.add_argument(
         "--source-root",
         default=None,
         help="checkout to read source lines from for factory constructor calls; "
@@ -1475,6 +1542,7 @@ def main() -> int:
         full=args.full,
         exclude_generated=bool(args.exclude_generated),
         path_prefix=prefix,
+        stop_on_failed_document=bool(args.stop_on_failed_document),
     )
 
     if args.dry_run:

@@ -486,5 +486,6 @@ def _stale_note(stale_paths: set[str]) -> str:
         return ""
     return (
         f"compiler-tier edges from {len(stale_paths)} file(s) changed since that tier "
-        f"last ran ({', '.join(sorted(stale_paths)[:3])}): their lines may be stale"
+        f"last ran or skipped by it ({', '.join(sorted(stale_paths)[:3])}): their lines "
+        "may be stale"
     )

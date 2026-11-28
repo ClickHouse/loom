@@ -98,6 +98,9 @@ class _RoundRepo:
     async def set_state(self, org, ns, key, value, detail=""):
         self.state[key] = value
 
+    async def scip_stale_marks(self, org: str, ns: str) -> set[str]:
+        return set()
+
 
 def test_a_delta_is_applied_in_rounds_with_one_read_and_one_insert_per_table() -> None:
     repo = _RoundRepo()
@@ -138,6 +141,9 @@ class _PerFileRepo:
 
     async def set_state(self, *a: Any, **k: Any) -> None:
         return None
+
+    async def scip_stale_marks(self, org: str, ns: str) -> set[str]:
+        return set()
 
 
 def test_a_repository_without_round_reads_keeps_the_per_file_path() -> None:

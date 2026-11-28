@@ -102,10 +102,11 @@ run_module() {
     echo "skip $dir: scip-go failed: $(tail -1 "$work/scip-go.log")" >&2
     return 0
   fi
+  # the converter's summary line and its last line (where the delta went)
   if [[ -n "${DELTA_OUT_DIR:-}" ]]; then
-    DELTA_OUT="$DELTA_OUT_DIR/${prefix//\//__}.json" convert_delta "${args[@]}" | tail -1
+    DELTA_OUT="$DELTA_OUT_DIR/${prefix//\//__}.json" convert_delta "${args[@]}" | sed -n '/^delta: /p;$p'
   else
-    convert_delta "${args[@]}" | tail -1
+    convert_delta "${args[@]}" | sed -n '/^delta: /p;$p'
   fi
   echo "done $dir"
 }

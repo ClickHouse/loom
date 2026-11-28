@@ -501,7 +501,7 @@ def _convert(tmp_path: Path) -> dict:
         patch.object(
             scip_to_delta,
             "_ctor_overloads",
-            lambda records, pb: {
+            lambda data, pb, skips: {
                 "DB::Widget": [
                     "(scip:49f6e7a06ebc5aa8)",
                     "(scip:d4f767463ce0a6b3)",

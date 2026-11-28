@@ -87,8 +87,12 @@ window_files() {
 # convert_delta <scip_to_delta.py args...>: with DELTA_OUT set, write the
 # JSON delta there (the in-server workers' mode); otherwise upload it to
 # LOOM_BASE_URL with the writer token LOOM_API_KEY, addressed to ORG / NS
-# when they are set.
+# when they are set. A document that fails to parse or convert is skipped with
+# a warning on stderr; SCIP_STOP_ON_FAILED_DOCUMENT=1 fails the run on it instead.
 convert_delta() {
+  if [[ "${SCIP_STOP_ON_FAILED_DOCUMENT:-0}" == "1" ]]; then
+    set -- "$@" --stop-on-failed-document
+  fi
   if [[ -n "${DELTA_OUT:-}" ]]; then
     "$PYTHON" "$HARNESS_DIR/scip_to_delta.py" "$@" --dry-run "$DELTA_OUT"
     return

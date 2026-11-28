@@ -260,3 +260,51 @@ async def test_dependency_failure_does_not_run_indexer_or_advance_watermark(monk
     harness.assert_not_awaited()
     # the only write is the failure's health record, never the watermark
     assert [c.args[2] for c in repo.set_state.await_args_list] == ["tier_health:typescript"]
+
+
+@pytest.mark.asyncio
+async def test_a_full_run_keeps_a_skipped_documents_rows_and_marks_the_file_stale(
+    monkeypatch, tmp_path: Path, checkout: Path
+):
+    """The converter skipped web/bad.ts: the full run retires web/gone.ts, which the new
+    index no longer has, keeps web/bad.ts's rows and marks the file stale at the run's
+    commit; the watermark moves."""
+    (checkout / "node_modules").mkdir(parents=True)
+    bare = tmp_path / "repo.git"
+    bare.mkdir()
+    monkeypatch.setattr(w.settings, "code_scip_checkout_dir", str(checkout))
+    monkeypatch.setattr(w.settings, "code_git_dir", str(bare))
+
+    async def fake_git(cwd, *args, **kw):
+        return None
+
+    async def fake_harness(co, base, head, delta_path, projects=(), **_):
+        delta_path.write_text(
+            json.dumps(
+                {
+                    "delta_version": 1,
+                    "commit": head,
+                    "files": [{"path": "web/a.ts", "symbols": [], "edges": []}],
+                    "skipped_files": ["web/bad.ts"],
+                }
+            )
+        )
+
+    applied: list[tuple[str, bool]] = []
+
+    async def fake_apply_files(repo, org, ns, commit, files, stats):
+        applied.extend((f.path, f.deleted) for f in files)
+
+    monkeypatch.setattr(w, "git", fake_git)
+    monkeypatch.setattr(w, "_run_harness", fake_harness)
+    monkeypatch.setattr("server.code.app.index.scip_delta._apply_files", fake_apply_files)
+    repo = _repo("b" * 40, "")
+    repo.live_scip_paths.return_value = {"web/a.ts", "web/bad.ts", "web/gone.ts"}
+    repo.scip_stale_marks.return_value = set()
+    p1, p2 = _patched(repo, [_Cfg()])
+    with p1, p2:
+        res = await w.run_pass()
+    assert res.deltas_applied == 1 and not res.errors, res.errors
+    assert applied == [("web/a.ts", False), ("web/gone.ts", True)]
+    repo.set_state.assert_any_await("org", "code-ts", "scip_stale:web/bad.ts", "b" * 40)
+    repo.set_state.assert_awaited_with("org", "code-ts", "scip_commit_ts", "b" * 40)

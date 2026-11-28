@@ -9,6 +9,7 @@ from typing import Any
 
 from clickhouse_connect.driver.binding import format_bind_value
 
+from server.code.domain.index.state import SCIP_STALE_PREFIX
 from server.code.domain.index.test_gate import TEST_PATH_PATTERN
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched, _hex, like_contains
@@ -538,10 +539,12 @@ class SymbolsMixin(CodeRepoBase):
         """Paths a compiler-tier edge may not be read from as current: the fast tier
         wrote the file's row after the compiler tier last ran (the `.py` watermark,
         `scip_commit_py`, for a Python file when there is one, `scip_commit`
-        otherwise), deleted the file, or holds no row for it. The fast tier writes a
-        file row when the file's bytes change, so a row newer than the watermark is
-        content the compiler tier has not seen; a deleted or unknown file is a tree
-        the compiler tier's rows no longer describe."""
+        otherwise), deleted the file, or holds no row for it, or the compiler tier's
+        last delta for it skipped its document (`SCIP_STALE_PREFIX`). The fast tier
+        writes a file row when the file's bytes change, so a row newer than the
+        watermark is content the compiler tier has not seen; a deleted or unknown file
+        is a tree the compiler tier's rows no longer describe; a skipped document left
+        the rows of its earlier state."""
         if not paths:
             return set()
         asked = list(dict.fromkeys(paths))[:200]
@@ -559,11 +562,31 @@ class SymbolsMixin(CodeRepoBase):
             WHERE org = {org:String} AND namespace = {ns:String}
               AND path IN {paths:Array(String)} AND tombstoned_at IS NULL
               AND created_at <= if(endsWith(path, '.py') AND t_py > toDateTime(0), t_py, t_scip)
+              AND path NOT IN (
+                  SELECT substring(state_key, length({mark:String}) + 1)
+                  FROM loom.code_index_state FINAL
+                  WHERE org = {org:String} AND namespace = {ns:String}
+                    AND startsWith(state_key, {mark:String}) AND state_value != ''
+              )
             """,
-            {"org": org, "ns": ns, "paths": asked},
+            {"org": org, "ns": ns, "paths": asked, "mark": SCIP_STALE_PREFIX},
         )
         # the query names the FRESH paths; every other asked path is stale
         return set(asked) - {str(r["path"]) for r in rows}
+
+    async def scip_stale_marks(self, org: str, ns: str) -> set[str]:
+        """The paths marked stale because a compiler-tier delta skipped their document
+        (`SCIP_STALE_PREFIX`); a cleared mark holds an empty value."""
+        rows = await self._ch.query_all(
+            """
+            SELECT substring(state_key, length({mark:String}) + 1) AS path
+            FROM loom.code_index_state FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND startsWith(state_key, {mark:String}) AND state_value != ''
+            """,
+            {"org": org, "ns": ns, "mark": SCIP_STALE_PREFIX},
+        )
+        return {str(r["path"]) for r in rows}
 
     async def live_scip_paths(self, org: str, ns: str) -> set[str]:
         """Every path holding a live compiler-tier symbol row:

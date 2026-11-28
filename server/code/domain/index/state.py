@@ -24,6 +24,11 @@ IndexState = dict[str, StateEntry]
 
 # The state key of an entry's bootstrap stage, whose detail is JSON.
 STAGE_KEY = "bootstrap_stage"
+# A compiler-tier file whose last delta skipped its document (it failed to parse or
+# convert) keeps the rows of an earlier state: `SCIP_STALE_PREFIX + path` holds the
+# commit of that delta until a later delta applies or deletes the file, and
+# `scip_stale_paths` reads the file as stale meanwhile.
+SCIP_STALE_PREFIX = "scip_stale:"
 # A failed clone's reasons, as the mirror job writes them into the bootstrap stage's
 # `{"reason": ...}` detail; `code.repos` and `code.index_status` show only these, and
 # `CLONE_FAILED` for a reason in no shape the job writes.

@@ -1300,6 +1300,10 @@ class CodeSettings(BaseModel):
     # Most `{`, `[` and `,` bytes one apply round of a compiler-tier delta parses: its
     # memory bound; one value over it fails the pass (code-index-operations.md).
     code_scip_delta_round_max_nodes: Annotated[int, LIVE] = Field(default=3_000_000, ge=1)
+    # True fails the entry's compiler-tier pass on a document that fails to parse or
+    # convert (a string that is not UTF-8, say). False: the document is skipped and
+    # logged, and its file keeps its compiler rows, marked stale.
+    code_scip_stop_on_failed_document: bool = False
     # C++ full re-index: seeds an entry the delta has no watermark for, and
     # re-indexes each entry every `code_scip_full_every_hours` (heals deltas
     # that hit the TU cap). One entry per pass, under its entry lock.

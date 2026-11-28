@@ -24,7 +24,8 @@ in fact exact. Both are knowable from what the handler already holds:
                                          its callers are external to the graph
                  scip_stale_files        a compiler-tier edge served from a file
                                          the fast tier rewrote after the compiler
-                                         tier's last run: its line and caller come
+                                         tier's last run, or whose document that
+                                         run skipped: its line and caller come
                                          from content that tier never saw
                  truncated               the walk stopped short of the graph (a node
                                          cap, a hop read cut at its row limit, a
@@ -50,8 +51,9 @@ CAUSE_EXTERNAL = "external_calls"
 # other line and the graph would not know. Cleared once the tier that answers for the
 # seed carries them.
 CAUSE_CTOR = "ctor_edges_absent"
-# A served scip edge whose file changed after the compiler tier last ran: the row
-# survives from an older tree (its call may have moved or gone), so it is no proof.
+# A served scip edge whose file changed after the compiler tier last ran, or whose
+# document that run skipped: the row survives from an older tree (its call may have
+# moved or gone), so it is no proof.
 CAUSE_STALE = "scip_stale_files"
 # The walk stopped before the graph did: whatever else holds, the rows are part of it.
 CAUSE_TRUNCATED = "truncated"
