@@ -25,7 +25,8 @@ import {
 } from "../lib/plugin-options.mjs";
 import { serverVersionMessage } from "../lib/server-version.mjs";
 
-const FLUSH_RE = /^loom-flush-\d{13}-\d+\.json$/;
+// A flusher job, or a hook payload handed to hooks/loom-record.mjs (lib/flush-job.mjs).
+const JOB_RE = /^loom-(?:flush|record-[A-Za-z]+)-\d{13}-\d+\.json$/;
 const WRITER_ROLES = new Set(["writer", "admin", "jwt", "org_admin", "platform_admin"]);
 /** What the `source` line calls a `tokenLookup` kind. */
 function tokenSourceName(kind) {
@@ -37,7 +38,7 @@ function tokenSourceName(kind) {
 function staleFlushCount(directory, now) {
   try {
     return readdirSync(directory).filter((name) => {
-      if (!FLUSH_RE.test(name)) return false;
+      if (!JOB_RE.test(name)) return false;
       try {
         return now - statSync(join(directory, name)).mtimeMs > 600_000;
       } catch {

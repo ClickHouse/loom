@@ -2,12 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+// A flusher job, or a payload handed to the recording launcher.
+const JOB_RE = /^loom-(?:flush|record-[A-Za-z]+)-\d+-\d+\.json$/;
+
 export async function removeSandbox(box, { timeoutMs = 45000 } = {}) {
   const deadline = performance.now() + timeoutMs;
-  // The flusher removes its job only after its last cursor/recording write.
-  while (fs.readdirSync(box.tmp).some((name) => /^loom-flush-\d+-\d+\.json$/.test(name))) {
+  // The flusher removes its job only after its last cursor/recording write,
+  // and the launcher's copy only when its scripts have returned.
+  while (fs.readdirSync(box.tmp).some((name) => JOB_RE.test(name))) {
     if (performance.now() >= deadline) {
-      const jobs = fs.readdirSync(box.tmp).filter((name) => /^loom-flush-\d+-\d+\.json$/.test(name));
+      const jobs = fs.readdirSync(box.tmp).filter((name) => JOB_RE.test(name));
       const pending = jobs.slice(0, 8).map((name) => ({
         name,
         bytes: fs.statSync(path.join(box.tmp, name), { throwIfNoEntry: false })?.size ?? null,

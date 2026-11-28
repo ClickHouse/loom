@@ -169,7 +169,7 @@ own line:
 | Reads and writes go to another server | `LOOM_BASE_URL` disagrees with `~/.loom/config.json`                                                |
 | 401 on every call                     | The token expired or was rotated                                                                    |
 | 403 on every write                    | The token is a `viewer` on the namespace the bot writes to                                          |
-| Captures never appear                 | A background flusher never delivered them: stranded `loom-flush-*.json` files in the temp directory |
+| Captures never appear                 | Nothing sent them: stranded `loom-flush-*.json` or `loom-record-*.json` files in the temp directory |
 
 ## Related
 
