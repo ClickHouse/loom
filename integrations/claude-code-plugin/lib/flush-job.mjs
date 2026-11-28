@@ -11,6 +11,9 @@
 //   { posts, cursorPath, advanceTo, rollbackTo }
 //       the sender already moved the cursor; a failed post restores rollbackTo
 //
+// hooks/loom-record.mjs hands a whole hook payload to a detached copy of
+// itself the same way (spawnDetached).
+//
 // Job files are named loom-flush-<ms>-<pid>.json; the client status check
 // counts the ones older than ten minutes as stranded.
 
@@ -29,25 +32,26 @@ export function flushJobPath(tmp = os.tmpdir(), now = Date.now(), pid = process.
 }
 
 /**
- * Write `job` and spawn the flusher on it with request bound `timeoutMs`.
- * True when the flusher was started; false (job file removed) otherwise.
+ * Write `text` to a new job file and start `node <argv> <job file>` detached:
+ * in its own session with no inherited stdio, so it outlives the hook and
+ * the host. True when it was started; false (job file removed) otherwise.
  */
-export function dispatchFlush(job, { timeoutMs = 15000, spawnImpl = spawn, tmp } = {}) {
+export function spawnDetached(argv, text, { env = process.env, spawnImpl = spawn, tmp } = {}) {
   const jobPath = flushJobPath(tmp);
   try {
     // The job carries session text: owner-only, like the other tmp state.
-    writePrivateFile(jobPath, JSON.stringify(job));
+    writePrivateFile(jobPath, text);
   } catch {
     return false;
   }
   try {
-    const child = spawnImpl(process.execPath, [FLUSHER, jobPath], {
+    const child = spawnImpl(process.execPath, [...argv, jobPath], {
       detached: true,
       stdio: "ignore",
       // A detached child on Windows gets its own console unless hidden: no
       // window flashes per Stop.
       windowsHide: true,
-      env: { ...process.env, LOOM_HOOK_TIMEOUT_MS: String(timeoutMs) },
+      env,
     });
     // A spawn failure arrives as an 'error' event; unheard, it would crash the hook.
     child.on("error", () => {});
@@ -61,6 +65,13 @@ export function dispatchFlush(job, { timeoutMs = 15000, spawnImpl = spawn, tmp }
     }
     return false;
   }
+}
+
+/** Hand `job` to the flusher, whose requests are bounded by `timeoutMs`
+ *  (spawnDetached's result). */
+export function dispatchFlush(job, { timeoutMs = 15000, spawnImpl = spawn, tmp } = {}) {
+  const env = { ...process.env, LOOM_HOOK_TIMEOUT_MS: String(timeoutMs) };
+  return spawnDetached([FLUSHER], JSON.stringify(job), { env, spawnImpl, tmp });
 }
 
 /**

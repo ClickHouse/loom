@@ -5,7 +5,8 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { dispatchFlush, flushJobPath, runFlushJob } from "../lib/flush-job.mjs";
+import { assertMode } from "./host-env.mjs";
+import { dispatchFlush, flushJobPath, runFlushJob, spawnDetached } from "../lib/flush-job.mjs";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "loom-flushjob-"));
 
@@ -35,6 +36,31 @@ test("dispatchFlush writes the job and spawns the flusher detached with the requ
   assert.equal(calls[0].opts.env.LOOM_HOOK_TIMEOUT_MS, "1234");
   const job = JSON.parse(fs.readFileSync(calls[0].args[1], "utf8"));
   assert.deepEqual(job, { posts: [{ op: "x", body: {} }] });
+});
+
+test("spawnDetached writes a private job file and names it last, to a process with no inherited stdio", () => {
+  const dir = tmp();
+  const calls = [];
+  const spawnImpl = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    const child = new EventEmitter();
+    child.unref = () => {};
+    return child;
+  };
+  assert.equal(
+    spawnDetached(["/x/hook.mjs", "Stop", "-"], "payload text", { env: { A: "1" }, spawnImpl, tmp: dir }),
+    true,
+  );
+  const [{ cmd, args, opts }] = calls;
+  assert.equal(cmd, process.execPath);
+  assert.deepEqual(args.slice(0, 3), ["/x/hook.mjs", "Stop", "-"]);
+  assert.equal(path.dirname(args[3]), dir);
+  assert.equal(fs.readFileSync(args[3], "utf8"), "payload text");
+  assertMode(args[3], 0o600);
+  assert.deepEqual(
+    { detached: opts.detached, stdio: opts.stdio, env: opts.env },
+    { detached: true, stdio: "ignore", env: { A: "1" } },
+  );
 });
 
 test("a spawn that throws leaves no job behind; a later spawn error does not crash the hook", () => {

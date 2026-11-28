@@ -5,18 +5,42 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { RECORDERS } from "../hooks/loom-record.mjs";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const manifest = JSON.parse(fs.readFileSync(path.join(here, "..", "hooks", "hooks.json"), "utf8"));
 
-test("every SessionEnd hook declares a timeout: Claude Code gives the event 1.5 s shared by default", () => {
-  // Five hooks post one row each at exit (the fifth, loom-session-brief,
-  // hands its post to the detached flusher and exits); on the default budget
-  // the last one is killed and reported as "Hook cancelled" after its row
-  // already landed. A per-hook `timeout` raises the
-  // event budget to match (docs: hooks-guide, limitations), up to 60 s.
-  const groups = manifest.hooks.SessionEnd;
-  const hooks = groups.flatMap((g) => g.hooks);
-  assert.equal(hooks.length, 5);
+/** The script names hooks.json wires under `event`. */
+function wired(event) {
+  return manifest.hooks[event].flatMap((g) => g.hooks).map((h) => h.args[0].match(/hooks\/(loom-[a-z-]+)\.mjs$/)[1]);
+}
+
+test("a recording script runs through the launcher, never beside it", () => {
+  // The launcher hands the event's payload to one detached process that runs
+  // these scripts; one wired directly as well would record twice and hold
+  // the host for its request.
+  for (const [event, scripts] of Object.entries(RECORDERS)) {
+    const names = wired(event);
+    assert.equal(names.filter((n) => n === "loom-record").length, 1, `${event}: the launcher is wired once`);
+    assert.deepEqual(
+      names.filter((n) => scripts.includes(n)),
+      [],
+      `${event}: wired beside the launcher`,
+    );
+  }
+});
+
+test("the Stop gates are wired directly: the host reads what they print", () => {
+  assert.deepEqual(wired("Stop"), ["loom-record", "loom-test-gate", "loom-validate-gate", "loom-namespace-health"]);
+});
+
+test("the SessionEnd hook declares a timeout: Claude Code gives the event 1.5 s by default", () => {
+  // The launcher only writes a job file and starts a process, but a cold
+  // node start on a loaded machine can pass the default budget, and a hook
+  // killed there hands nothing off. A `timeout` raises the event budget to
+  // match (docs: hooks-guide, limitations), up to 60 s.
+  const hooks = manifest.hooks.SessionEnd.flatMap((g) => g.hooks);
+  assert.equal(hooks.length, 1);
   for (const h of hooks) {
     assert.ok(Number.isInteger(h.timeout) && h.timeout >= 5 && h.timeout <= 60, `${h.args[0]}: timeout=${h.timeout}`);
   }

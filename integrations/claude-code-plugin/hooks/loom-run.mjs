@@ -113,10 +113,11 @@ async function main() {
     const transcript = payload.transcript_path || "";
     const finalText =
       (transcript ? lastAssistantText(parseLines(readTail(transcript))) : "") || lastAssistant(readJournal(sessionId));
-    // Awaited, then a hard exit: SessionEnd hooks share Claude Code's
-    // 1.5 s budget by default (hooks.json raises it with `timeout`), and a
-    // process that lingers past its own request is reported as "Hook
-    // cancelled" even after the row landed.
+    // Awaited, then an exit at once: a host gives its SessionEnd hooks a
+    // short shared budget (Codex one second), and a process that lingers
+    // past its own request is reported as cancelled even after the row
+    // landed. loom-record runs this script beside others in one detached
+    // process, where scheduleExit leaves the exit to it.
     const recalled = readRecalledStash(sessionId);
     const body = completeBody(scope, payload, finalText, process.env, recalled);
     // No longer begun, so a resumed session's next prompt opens a new run. The
@@ -126,12 +127,12 @@ async function main() {
     if (deadline !== undefined) {
       // Body and state preparation spend the same budget as both requests.
       const remaining = deadline - Date.now();
-      if (remaining <= 0) process.exit(0);
+      if (remaining <= 0) return scheduleExit(0, 0);
       completeOpts = { ...opts, timeoutMs: Math.min(opts.timeoutMs, remaining) };
     }
     await postBounded("run.complete", body, completeOpts);
     // The stash is removed by loom-session-memory, the last SessionEnd hook.
-    process.exit(0);
+    return scheduleExit(0, 0);
   }
   scheduleExit(0);
 }

@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 // than that, and a shorter grace would kill a fire-and-forget post before it
 // left a slow link.
 import { DEFAULT_BOUND_MS, boundMs, rttCachePath } from "./hook-bounds.mjs";
+import { readStdinText } from "./hook-stdin.mjs";
 import { readJsonFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
 
 let _rttCache;
@@ -1012,12 +1013,52 @@ export function diffHeaders(diff, max) {
   return out.join("\n");
 }
 
+// --- several hooks in one process --------------------------------------------
+// hooks/loom-record.mjs runs an event's recording scripts in one detached
+// process. While `shared` is set, a script's runHookMain keeps its main for
+// runHooksTogether to start, readStdinJson answers the payload that was
+// handed off, and scheduleExit does nothing: the process ends when every
+// main has returned, not when the first one is done.
+let shared = null;
+
+/**
+ * Import the hook scripts at `urls` and run their mains in this process, in
+ * that order, each on the payload text `raw` as if the host had started it.
+ * Resolves when all of them have returned; nothing they throw escapes.
+ */
+export async function runHooksTogether(raw, urls) {
+  // Past any one hook's own bound: a settle of at most five seconds, then two requests.
+  scheduleExit(0, 2 * requestTimeoutMs() + 10000);
+  shared = { raw, mains: [] };
+  for (const url of urls) {
+    try {
+      await import(url);
+    } catch {
+      /* a script that does not load records nothing; the others still run */
+    }
+  }
+  const run = async (main) => {
+    try {
+      await main();
+    } catch {
+      /* swallowed, as runHookMain does: this process has no host to tell */
+    }
+  };
+  await Promise.all(shared.mains.map(run));
+  shared = null;
+  scheduleExit(0); // the grace each hook gives its last fire-and-forget post
+}
+
 /**
  * Run a hook's `main`. Whatever it throws, the hook exits 0: a hook never
  * fails the host session. With LOOM_HOOK_DEBUG=on the error's first line,
  * redacted, goes to stderr, which is how a broken hook shows itself.
  */
 export function runHookMain(main) {
+  if (shared) {
+    shared.mains.push(main);
+    return;
+  }
   Promise.resolve()
     .then(main)
     .catch((e) => {
@@ -1035,6 +1076,7 @@ export function runHookMain(main) {
  * but if fetch hangs past the grace window, this guarantees termination.
  */
 export function scheduleExit(code = 0, ms = exitGraceMs()) {
+  if (shared) return;
   setTimeout(() => process.exit(code), ms).unref();
 }
 
@@ -1083,39 +1125,14 @@ export function normalizePayload(raw) {
 
 /** Read the host's hook payload (JSON on stdin), normalized. Resolves to a
  *  plain object: {} on EOF, on malformed JSON, on any non-object value and
- *  on a payload over MAX_STDIN_CHARS;
- *  gives up waiting after a second, so a host that never closes stdin
- *  cannot hold a hook open. */
-const MAX_STDIN_CHARS = 32 * 1024 * 1024;
-
+ *  on a payload over the stdin cap (lib/hook-stdin.mjs, which also bounds
+ *  the wait for a host that never closes stdin). */
 export function readStdinJson() {
-  return new Promise((resolve) => {
-    let raw = "";
-    let settled = false;
-    const done = () => {
-      if (settled) return;
-      settled = true;
-      try {
-        resolve(normalizePayload(raw.trim() ? JSON.parse(raw) : {}));
-      } catch {
-        resolve({});
-      }
-    };
+  return (shared ? Promise.resolve(shared.raw) : readStdinText()).then((raw) => {
     try {
-      process.stdin.setEncoding("utf8");
-      process.stdin.on("data", (c) => {
-        raw += c;
-        if (raw.length > MAX_STDIN_CHARS) {
-          raw = ""; // an oversized payload is dropped, not parsed
-          done();
-          process.stdin.destroy();
-        }
-      });
-      process.stdin.on("end", done);
-      process.stdin.on("error", done);
+      return normalizePayload(raw.trim() ? JSON.parse(raw) : {});
     } catch {
-      resolve({});
+      return {};
     }
-    setTimeout(done, 1000).unref();
   });
 }
