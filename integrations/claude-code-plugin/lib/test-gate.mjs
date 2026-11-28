@@ -7,25 +7,22 @@
 // the index links no test to when it has no test to name; once per file per
 // session (`adviceFiles`, `adviceLines`).
 //
-// At Stop it holds a session that ran no test since its last code change.
-// When the agent is about to stop with uncommitted changes in a
-// loom-indexed repo, it asks
-// `code.test_gate` what the change obliges: the tests that reach
-// it (evidence-ordered, with a run command when derivable) and the touched
-// functions no test reaches. If either list is non-empty and this exact
-// change has not been gated yet this session, block the stop ONCE with a
-// reason that names them: the tests are named before "done", not discovered
-// in review. The second stop on the
-// same change passes: the agent has seen the obligation and either ran the
-// tests or chose not to, and a gate that nags is a gate that gets disabled.
-// A block costs the session one more model request, so by default any test
-// run since the last write to a changed code file lets the stop pass before
-// anything is asked (`testedSince`, `lastCodeChange`): which tests it ran
-// and how they went is the agent's to
-// judge, and a hook that reads shell text to decide it blocks sessions that
-// ran them. With LOOM_TEST_GATE=block nothing is named at edit time and the
-// stop passes only when the transcript shows the named tests ran on the tree
-// as it stands (`runAnswered`).
+// At Stop the default does nothing: the line informs, and whether the tests
+// ran and how they went is the agent's to judge. A rule that decides it from
+// shell text holds sessions that ran them and passes sessions that did not.
+//
+// With LOOM_TEST_GATE=block nothing is named at edit time and the stop is
+// held. When the agent is about to stop with uncommitted changes in a
+// loom-indexed repo, the gate asks `code.test_gate` what the change obliges:
+// the tests that reach it (evidence-ordered, with a run command when
+// derivable) and the touched functions no test reaches. If either list is
+// non-empty and this exact change has not been gated yet this session, it
+// blocks the stop ONCE with a reason that names them: the tests are named
+// before "done", not discovered in review. The second stop on the same
+// change passes: the agent has seen the obligation and either ran the tests
+// or chose not to, and a gate that nags is a gate that gets disabled. The
+// first stop passes only when the transcript shows the named tests ran on
+// the tree as it stands (`runAnswered`).
 //
 // The change is the session's, not the tree's: `sessionScope` keeps only
 // the dirty paths the transcript shows this session edited or named in a
@@ -56,9 +53,9 @@ import { parseLines, readRange } from "./transcript.mjs";
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "str_replace_editor", "apply_patch"]);
 
 /** What the gate does, from LOOM_TEST_GATE: "advise" names an edited file's
- *  tests on the tool call that edited it and holds the stop of a session that
- *  ran no test since its last code change (unset, or any on-word); "block" names
- *  nothing and holds the stop until the named tests ran; "off" does neither. */
+ *  tests on the tool call that edited it and holds no stop (unset, or any
+ *  on-word); "block" names nothing and holds the stop until the named tests
+ *  ran; "off" does neither. */
 export function gateMode(env = process.env) {
   if (
     String(env.LOOM_TEST_GATE ?? "")
@@ -628,125 +625,9 @@ function runsHere(command, run) {
   return at >= 0 && /^(?:[\s;|&)]|$)/.test(command.slice(at + run.length)) && ranHere(command.slice(0, at));
 }
 
-// A shell command that starts a test runner, wrapped or piped in any way: a
-// program `code.test_gate` names a run with or a common other one; a build
-// tool with an argument in which `test` or `tests` follows no letter and no
-// lower-case letter follows it (`make test-unit`, `npm run test`, `node
-// --test`, `gradle :app:test`, `gradlew testDebugUnitTest`); a tool that runs
-// a target or a script by its name, with a name that starts with `test`
-// (`make testall`, `npm run testci`); or Gradle with a task that ends in
-// `Test` after a lower-case letter (`gradlew integrationTest`). `import
-// pytest`, `pytest.raises`, `make latest`, `go vet ./internal/testutil/...`,
-// `cargo build -p testcontainers` and `gradlew compileTestJava` are not
-// runs. A command that only mentions a runner counts: what is read is
-// whether the session ran a test at all.
-//
-// After one of these verbs earlier in the simple command the name is a
-// package: `pip install -U pytest`, `npm i -D @types/jest`, `yarn remove
-// jest`, `go get github.com/stretchr/testify`. A flag is no verb: `npx
-// --no-install jest` and `docker run --rm app pytest` run. A build tool's
-// target of a verb's name hides the run after it: `make install test` is
-// read as none.
-const FETCHED = String.raw`\s(?:(?:un)?install|add|i|ci|get|remove|rm|update|upgrade|download|require)\s[^\n;|&]*`;
-// What a build tool is told to leave out is no run, for every tool of the
-// list: the word after `-x`, where Gradle takes a task to exclude (`gradle
-// build -x test`), and `test.skip`, Maven's property (`mvn package
-// -Dmaven.test.skip=true`).
-const LEFT_OUT = String.raw`\s-x\s+\S*`;
-const RUNNER = new RegExp(
-  String.raw`(?<![\w.-])(?:(?<!import\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|nextest|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])(?<!${FETCHED})` +
-    String.raw`|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*(?<![A-Za-z])tests?(?![a-z]|\.skip)(?<!${FETCHED}|${LEFT_OUT})` +
-    String.raw`|(?:make|npm|pnpm|yarn|bun|rake)\s[^\n;|&]*(?<=\s)test[a-z](?<!${FETCHED})` +
-    String.raw`|gradlew?\s[^\n;|&]*[a-z]Test(?![A-Za-z])(?<!${LEFT_OUT}))`,
-);
-
-/** True when `command` starts a test runner (`RUNNER`), read as the shell
- *  reads it: a backslash at a line's end joins the next line to it. */
-const startsRunner = (command) => RUNNER.test(command.replace(/\\\n/g, ""));
-
 /** True for the name of a Codex rollout's shell tool, under any of the names
  *  `normalizeToolName` folds onto Bash. */
 const rolloutShell = (name) => name === "exec" || normalizeToolName(name) === "Bash";
-
-/** The command text of a Codex rollout's shell call: its `arguments` JSON
- *  holds a string or an argv (`["go","test"]`), whose words no space joins. */
-function rolloutCommand(call) {
-  let input = call.input ?? call.arguments;
-  if (typeof input === "string") {
-    try {
-      input = JSON.parse(input);
-    } catch {
-      return input;
-    }
-  }
-  return commandText(input) || (typeof input === "string" ? input : "");
-}
-
-/**
- * True when the transcript holds a shell command that starts a test runner
- * (`RUNNER`) and finished at or after `since` (epoch ms), or has no dated
- * result: Claude Code rows and Codex rollout calls, sidechains skipped. Its
- * output is not read, so a run that failed or was piped into `grep` counts.
- * So does one between `git stash` and `git stash pop` in the same command; a
- * pop in a later command rewrites the changed files after the run.
- */
-export function testedSince(objs, since) {
-  const done = new Map();
-  const runs = [];
-  for (const o of objs || []) {
-    const at = Date.parse((o && o.timestamp) || "");
-    if (o?.type === "response_item") {
-      const call = o.payload || {};
-      if (/_output$/.test(call.type)) done.set(call.call_id, at);
-      else if (rolloutShell(call.name) && startsRunner(rolloutCommand(call))) {
-        runs.push(call.call_id);
-      }
-      continue;
-    }
-    const content = o && !o.isSidechain && o.message && o.message.content;
-    for (const b of Array.isArray(content) ? content : []) {
-      if (o.type === "user" && b?.type === "tool_result") done.set(b.tool_use_id, at);
-      else if (
-        o.type === "assistant" &&
-        b?.type === "tool_use" &&
-        ["Bash", "PowerShell"].includes(normalizeToolName(b.name)) &&
-        startsRunner(commandText(b.input))
-      ) {
-        runs.push(b.id);
-      }
-    }
-  }
-  return runs.some((id) => !(done.get(id) < since));
-}
-
-// Documentation and prose by name: a test run answers no change to one. A
-// `.txt` file is code (a requirements file, a build list, a test fixture)
-// unless its name or a `docs` directory above it says prose: `CHANGES.txt`,
-// `docs/releases/5.2.txt`. A requirements or a constraints file under `docs`
-// stays code.
-const PROSE = /\.(?:md|mdx|markdown|rst|adoc|asciidoc)$/i;
-const CHANGELOG = /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|NEWS)$/;
-const PROSE_TXT =
-  /(?:^|\/)(?:changelog|changes|history|news|readme|license|notice|authors|docs?\/(?!.*(?:requirements|constraints)).*)\.txt$/i;
-const isProse = (file) => CHANGELOG.test(file) || PROSE.test(file) || PROSE_TXT.test(file);
-
-/** The newest modification time, in epoch ms, among the code files of
- *  `files` under `root`: a test run that finished since then saw each of
- *  them as it stands. A documentation or prose file (`isProse`) is left out,
- *  so an edit to one after the run holds no stop, and so is a file that
- *  cannot be read (a deleted one). 0 when none is left. */
-export function lastCodeChange(root, files) {
-  let last = 0;
-  for (const file of files) {
-    if (isProse(file)) continue;
-    try {
-      last = Math.max(last, fs.statSync(path.join(root, file)).mtimeMs);
-    } catch {
-      // A deleted file has no time of its own.
-    }
-  }
-  return last;
-}
 
 // pytest's last line, whose order is fixed: failed, passed, skipped,
 // deselected, xfailed, xpassed, warnings, errors. A whole line starts at

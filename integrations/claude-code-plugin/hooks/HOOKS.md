@@ -110,7 +110,7 @@ receives on stdout.
 | Stop, detached                                                 | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
 | Stop, detached                                                 | loom-conversation     | transcript, last_assistant_message | none                     | conversation.append via the flusher                                                                                                                                                                                   | `LOOM_CAPTURE_CONVERSATIONS=false` |
 | Stop, detached                                                 | loom-usage            | transcript                         | none                     | cost.record_turns                                                                                                                                                                                                     | `LOOM_USAGE=off`                   |
-| Stop                                                           | loom-test-gate        | transcript, cwd                    | JSON block once          | code.test_gate, when the transcript shows no test run since the last code change (`testedSince`); with LOOM_TEST_GATE=block, unless the named tests ran                                                               | `LOOM_TEST_GATE=off`               |
+| Stop                                                           | loom-test-gate        | transcript, cwd                    | JSON block once          | none by default: the script exits before it reads its input; with LOOM_TEST_GATE=block, code.test_gate, and the block unless the named tests ran                                                                      | unset, or `LOOM_TEST_GATE=off`     |
 | Stop                                                           | loom-validate-gate    | transcript                         | JSON block once          | namespace.validate                                                                                                                                                                                                    | `LOOM_VALIDATE_GATE=off`           |
 | Stop                                                           | loom-namespace-health | cwd, session_id                    | JSON block once          | none: tells the stored verdict once (namespace.audit is asked here by a wiring with no detached process, on the first Stop, and when the prompt's ask is overdue)                                                     | `LOOM_NAMESPACE_HEALTH=off`        |
 | Stop, detached                                                 | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set when the note changed                                                                                                                                                                              | `LOOM_WORKING_MEMORY=off`          |
@@ -390,8 +390,8 @@ record: the run and its usage counters.
   prompt. A wiring that starts the script at Stop only (Codex, a hand-wired
   client) asks on the first Stop and waits for the answer. Later stops make
   no call.
-- **loom-test-gate.** Names the tests of a changed file, and holds the
-  stop of a session that ran no test since its last code change. By default it names
+- **loom-test-gate.** Names the tests of a changed file, and holds no
+  stop unless LOOM_TEST_GATE=block is set. By default it names
   them when the file changes: after a Bash or
   PowerShell command (and, through loom-blast-radius, after an edit tool)
   it takes the dirty paths the call named or targeted that were written
@@ -409,28 +409,20 @@ record: the run and its usage counters.
   (`runsHere`). The line costs no model request. A call that names no
   unasked dirty file costs one git call and no request; in a checkout the
   shared cache says is not indexed, no git call either.
-  At Stop, with uncommitted changes this session made in a loom-indexed
-  repo (dirty paths the transcript shows an edit tool targeted or a shell
-  command named, written since the session's first row; a tree left dirty
-  before the session gates nothing; in a Codex rollout the calls read are
-  `apply_patch` and the shell tool under each name `rolloutShell` takes,
-  in either mode), it sends the change's paths, hunk
+  At Stop the default does nothing: the script exits before it reads its
+  input, and no stop is held.
+  With LOOM_TEST_GATE=block nothing is printed at edit time. At Stop, with
+  uncommitted changes this session made in a loom-indexed repo (dirty paths
+  the transcript shows an edit tool targeted or a shell command named,
+  written since the session's first row; a tree left dirty before the
+  session gates nothing; in a Codex rollout the calls read are `apply_patch`
+  and the shell tool under each name `rolloutShell` takes; with no
+  transcript, the whole dirty tree), it sends the change's paths, hunk
   ranges and function names only (`diffHeaders`) to code.test_gate for its
   obligations and blocks the stop once per distinct change with a reason
-  naming them. By default a stop passes, and asks the server nothing, when
-  the transcript holds a shell command that starts a test runner and
-  finished no earlier than the newest write among the changed code files,
-  documentation and prose left out by name
-  (`testedSince`, `lastCodeChange`): the command's text is read for a
-  runner's name only, not for which tests ran or how they went, so a run
-  that failed, was piped or ran between `git stash` and `git stash pop`
-  in the same command passes, in a Claude Code transcript or a Codex
-  rollout; a pop in a later command rewrites the changed files, and that
-  stop is held. With no transcript the default holds no stop.
-  With LOOM_TEST_GATE=block nothing is printed at edit time, and a Claude
-  Code stop passes only when its transcript already answers the ask to run
-  the named tests (`runAnswered` in lib/test-gate.mjs); a Codex rollout
-  answers nothing there.
+  naming them. A Claude Code stop passes only when its transcript already
+  answers the ask to run the named tests (`runAnswered` in
+  lib/test-gate.mjs); a Codex rollout answers nothing there.
   LOOM_TEST_GATE=off disables both; LOOM_TEST_GATE_DEPTH sets hops (1-3).
 - **loom-usage.** Reads the transcript's last MiB, dedupes assistant turns
   by message id (sidechains skipped) and posts their raw usage counters to
