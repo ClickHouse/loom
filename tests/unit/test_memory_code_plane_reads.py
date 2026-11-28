@@ -444,6 +444,23 @@ async def test_a_host_still_cloning_the_mirror_serves_the_lesson_as_trunk_has_it
 
 
 @pytest.mark.asyncio
+async def test_a_fallback_to_trunks_state_gives_no_positive_guidance(monkeypatch) -> None:
+
+    branch = [("src/a.py", "src.a::Reader::read", "h1")]
+
+    for kw in ({"parse_s": settings.memory_code_plane_parse_timeout_s * 2}, {"has_mirror": False}):
+        (lesson,) = await _lessons(
+            monkeypatch, [_link("m1")], [_excerpt("m1", "k1")], branch, ns="code-a-26-8", **kw
+        )
+
+        assert lesson["code_state"] == "fresh"  # trunk's check, still shown
+
+        assert lesson["use_guidance"]["freshness"]["code"] == "unknown"
+
+        assert lesson["use_guidance"]["next_step"] != "follow_if_applicable"
+
+
+@pytest.mark.asyncio
 async def test_a_lesson_is_the_symbols_own_not_a_namesakes(monkeypatch) -> None:
     links = [_link("m1", qn="src.a::Writer::read"), _link("m2"), _link("m3")]
     defs = [("src/a.py", "src.a::Reader::read", "h1"), ("src/a.py", "src.a::Writer::read", "h1")]

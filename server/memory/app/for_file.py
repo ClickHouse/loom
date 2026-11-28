@@ -758,9 +758,14 @@ async def current_file_rows(org: str, rows: list[dict[str, Any]]) -> list[dict[s
 
 
 async def guided_file_rows(
-    org: str, rows: list[dict[str, Any]], *, local_code_changes: set[str] | None = None
+    org: str,
+    rows: list[dict[str, Any]],
+    *,
+    local_code_changes: set[str] | None = None,
+    unchecked: frozenset[str] = frozenset(),
 ) -> None:
-    """Project guidance from visible memory revisions, independently of their path links."""
+    """Project guidance from visible memory revisions, independently of their path links.
+    A row in `unchecked` was served from trunk's state, so no code state vouches for it."""
     code_states, source_states = await asyncio.gather(
         guidance_code_states(org, rows), guidance_source_states(org, rows)
     )
@@ -771,6 +776,8 @@ async def guided_file_rows(
             and state not in code_change.DEMOTED
         ):
             state = "changed"
+        if unchecked and str(row["memory_id"]) in unchecked and state not in code_change.DEMOTED:
+            state = "unknown"
         row["use_guidance"] = guidance_for_row(
             row,
             code_state=state,

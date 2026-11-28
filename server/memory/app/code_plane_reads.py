@@ -109,11 +109,13 @@ async def lessons_for_symbol(
     links = await current_links(org, candidates)
     if not links:
         return []
+    trunk_only: frozenset[str] = frozenset()
     here = await _definitions_at(org, code_namespace, head, paths, qualified_name)
     if here is None:
         if fresh_at_commit:
             return []
         matched = _as_trunk_has_it(links, qualified_name)
+        trunk_only = frozenset(a["memory_id"] for a, _, _ in matched)
     else:
         matched = _matched(
             links, here, on_trunk=code_namespace == trunk, require_fingerprint=bool(fresh_at_commit)
@@ -161,7 +163,10 @@ async def lessons_for_symbol(
         out[row["mid"]] = (rank, row, lesson)
     ranked = sorted(out.values(), key=lambda x: x[0])[:limit]
     await guided_file_rows(
-        org, [row for _, row, _ in ranked], local_code_changes=local_code_changes
+        org,
+        [row for _, row, _ in ranked],
+        local_code_changes=local_code_changes,
+        unchecked=trunk_only,  # the branch's files were not read: trunk's check is not theirs
     )
     return fit_symbol_lessons(
         [lesson | {"use_guidance": row["use_guidance"].model_dump()} for _, row, lesson in ranked]
