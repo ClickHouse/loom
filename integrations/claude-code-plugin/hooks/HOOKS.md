@@ -205,11 +205,13 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   file's declarations (lines, qualified name, header) from one code.outline
   call, and a one-file grep for a symbol with its definition from one
   code.symbol call, once per symbol per session. A denial needs that answer
-  in full: an outline its budget cut short, no single definition, or no reply
-  within 2.5 s lets the call run (pass reason index_unanswered). A Bash
-  command of several parts (`;`, `&&`, `||`, a newline or a pipe) is never
-  denied, since a denial withholds every part; its reads and greps are
-  counted as passes (compound_command) and cost no lookup.
+  in full: an outline its 4,000-token budget cut short, no single definition,
+  or no reply within 2.5 s lets the call run (pass reason index_unanswered),
+  and a whole file the index did not outline is asked about once per session.
+  A Bash command of several parts (`;`, `&&`, `||`, a newline or a pipe) is
+  never denied, since a denial withholds every part; its reads and greps are
+  counted as passes, under compound_command where the same call alone would
+  have asked the index, and cost no lookup.
   Fail-open; targeted reads (offset/limit, single file) and modified files
   pass. With LOOM_SHUNT_READ_CAP=<lines> (default 0 = off) a ranged Read
   whose span is longer than the cap on an indexed, unmodified file is denied

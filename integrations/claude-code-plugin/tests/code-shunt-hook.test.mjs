@@ -162,12 +162,14 @@ test("a checkout far behind the index is still shunted, with the file's declarat
       r.deny,
       /^loom-code-shunt: src\/a\.cpp is 900 lines and is in loom's code index \(as of 0123456789ab\)\. Its declarations \(lines, qualified name, header\):\n1-1 f0 int f0\(\)\n451-451 f450 int f450\(\)\n900-900 f899 int f899\(\)\nRead the lines you need/,
     );
-    assert.match(r.log, /\thit\tRead\t/);
+    // The file's tokens, less the refusal's own text.
+    const kept = Math.floor(BIG.length / 4) - Math.floor(r.deny.length / 4);
+    assert.match(r.log, new RegExp(`\\thit\\tRead\\t${kept}\\t`));
     assert.deepEqual(seen[0].body, {
       org: "o",
       namespace: "code-x",
       path: "src/a.cpp",
-      token_budget: 1500,
+      token_budget: 4000,
       include_lessons: false,
       consumer: "claude-code-shunt",
     });
@@ -187,6 +189,19 @@ test("a whole-file read the index cannot outline in full runs", async () => {
   const down = await runHook(readOf(dir, "src/a.cpp"), { tmp: seed(dir) });
   assert.equal(down.deny, null, "an unreachable server");
   assert.match(down.log, /\tpass\tRead\t\d+\t\tindex_unanswered\t/);
+  // The index is asked about the file once per session.
+  await withServer(cut, async (url, seen) => {
+    const tmp = seed(dir);
+    for (let read = 0; read < 2; read++) {
+      const r = await runHook(readOf(dir, "src/a.cpp"), { tmp, url });
+      assert.equal(r.deny, null);
+      assert.match(r.log, /\tindex_unanswered\tsrc\/a\.cpp\t\d+\t\d+\n$/);
+    }
+    assert.deepEqual(lookups(seen), ["/v1/code.outline"]);
+    const other = await runHook({ ...readOf(dir, "src/a.cpp"), session_id: "another" }, { tmp, url });
+    assert.equal(other.deny, null);
+    assert.deepEqual(lookups(seen), ["/v1/code.outline", "/v1/code.outline"], "another session asks for itself");
+  });
 });
 
 test("local_first stands the shunt down entirely, even when HEAD is the indexed commit", async () => {
@@ -338,7 +353,8 @@ test("a Bash command of several parts is never refused: its reads are counted, t
       ["make test || cat src/a.cpp", /\tpass\tBash:cat\t\d+\t\tcompound_command\t/],
       ["cd src && sed -n '1,500p' a.cpp", /\tpass\tBash:sed\t\d+\t\tcompound_command\tsrc\/a\.cpp\t1\t500/],
       ["cd src && sed -n '1,40p' a.cpp; echo ---", /\tpass\tBash:sed\t\d+\t\ttargeted_span\tsrc\/a\.cpp\t1\t40/],
-      ["git status; grep -n renameTempPartAndAdd src/a.h", /\tpass\tBash:grep\t\d+\t\tsingle_file_grep\tsrc\/a\.h\t/],
+      ["git status; grep -n renameTempPartAndAdd src/a.h", /\tpass\tBash:grep\t\d+\t\tcompound_command\tsrc\/a\.h\t/],
+      ["git status; grep -n TODO src/a.h", /\tpass\tBash:grep\t\d+\t\tsingle_file_grep\tsrc\/a\.h\t/],
       ['cd src; gh issue list --search "merge hangs"', null],
     ]) {
       const p = await runHook(bashOf(dir, command), { tmp: seed(dir), url, env });
@@ -376,7 +392,7 @@ test("a ranged read, a grep for a local variable and a grep for test names in on
     const lines = r.log.trim().split("\n");
     assert.equal(lines.length, 3);
     assert.match(lines[0], /\tpass\tBash:sed\t\d+\t\ttargeted_span\tsrc\/app\/blueprints\.py\t188\t198/);
-    assert.match(lines[1], /\tpass\tBash:grep\t\d+\t\tsingle_file_grep\tsrc\/app\/blueprints\.py\t/);
+    assert.match(lines[1], /\tpass\tBash:grep\t\d+\t\tcompound_command\tsrc\/app\/blueprints\.py\t/);
     assert.match(lines[2], /\tpass\tBash:grep\t\d+\t\tsingle_file_grep\ttests\/test_blueprints\.py\t/);
     assert.deepEqual(lookups(seen), []);
     // Alone, the grep asks the index once: it holds no definition of a local variable, so the grep runs.

@@ -25,17 +25,22 @@ import { recalledDataBlock } from "./prompt-recall.mjs";
 export const DEFAULT_MAX_LINES = 800;
 
 // Read-window cap. A RANGED read (offset/limit given) of an indexed,
-// unmodified file whose span is longer than this many lines is redirected to
-// the enclosing unit; 0 = off, the default until a bench sets one. The cap
-// has a per-session, per-file budget so a model that insists is never denied
-// the same file forever.
+// unmodified file whose span is longer than this many lines is refused with
+// the declarations in its lines; 0 = off, the default until a bench sets one.
+// The cap has a per-session, per-file budget so a model that insists is never
+// denied the same file forever.
 export const DEFAULT_READ_CAP = 0;
 export const READ_CAP_DENIALS_PER_FILE = 2;
 
 // The token budget of the code.outline call behind a read refusal: the
 // refusal carries every declaration of the lines asked for, so a file whose
-// outline does not fit is read, not refused.
-export const DEFAULT_OUTLINE_BUDGET = 1500;
+// outline does not fit is read, not refused. The budget bounds the refusal's
+// length. Measured on 301 files over 800 lines of a large C++ repository, an
+// outline costs a median 2.2 budgeted tokens per file line and its lines in
+// the refusal 1.9 characters per budgeted token: 4000 holds the outline of
+// 62% of those files in at most 8,400 characters, under the 10,000 the host
+// shows whole of a hook's other strings.
+export const DEFAULT_OUTLINE_BUDGET = 4000;
 
 const BINARY_EXT = new Set([
   ".png",

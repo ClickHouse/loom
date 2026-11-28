@@ -1138,7 +1138,12 @@ test("a gh issue search is the tracker_search shape, escapes included; a chain i
     frames: [],
     repo: "clickhouse/example-private",
   });
-  for (const chain of [`git remote get-url origin && gh auth status && ${search}`, `cd /repo; ${search}`]) {
+  for (const chain of [
+    `git remote get-url origin && gh auth status && ${search}`,
+    `cd /repo; ${search}`,
+    `${search} & sleep 1`,
+    "gh search issues crash & gh pr list",
+  ]) {
     assert.equal(ghIssueSearchInCommand(chain), null, "a refusal would withhold the other parts");
   }
   assert.deepEqual(

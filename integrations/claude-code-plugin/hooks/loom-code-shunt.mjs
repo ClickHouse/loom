@@ -20,7 +20,8 @@
 //
 // Side effects, all in $TMPDIR: the shared repository cache
 // (lib/repo-scope.mjs); per-session denial budgets for the read-window cap,
-// symbol greps and tracker searches (sessionStatePath "shunt-cap"); the
+// symbol greps and tracker searches, and the whole files the index did not
+// outline (sessionStatePath "shunt-cap"); the
 // user's decision log (tmpStatePath "shunt-log") and its unflushed copy, one
 // batch per reporting scope and session (repo.pending, named by batchKind in
 // lib/shunt-ledger.mjs), all through lib/tmp-state.mjs's private-file helpers,
@@ -97,7 +98,9 @@ const SHUNT_BASH = envSwitch("LOOM_SHUNT_BASH", true);
 // indexed checkout is answered by the tracker record first. `LOOM_TRACKER_SHUNT=off`.
 const SHUNT_TRACKER = envSwitch("LOOM_TRACKER_SHUNT", true);
 const TRACKER_SEARCH_TIMEOUT_MS = Math.max(500, Number(process.env.LOOM_TRACKER_SHUNT_TIMEOUT_MS || 3000) || 3000);
-// One symbol or outline answer: the price of a denial, never of a pass.
+// One symbol or outline answer, asked only for a call the local rules would
+// refuse. A call it does not answer runs having waited for it: once per symbol
+// or whole file per session, at each over-cap read.
 const LOOKUP_TIMEOUT_MS = 2500;
 const LOG_ON = envSwitch("LOOM_SHUNT_LOG", true);
 const REPORT_ON = envSwitch("LOOM_SHUNT_REPORT", true);
@@ -163,8 +166,9 @@ function deny(reason) {
   );
 }
 
-/** Per-session denial counts, {key: n}, for three budgets: over-cap reads (the
- *  file's path), symbol greps (`sym:`) and answered tracker searches (`qa:`).
+/** Per-session counts, {key: n}: three denial budgets, over-cap reads (the
+ *  file's path), symbol greps (`sym:`) and answered tracker searches (`qa:`),
+ *  and the whole files the index did not outline (`miss:`), asked about once.
  *  {} when the file is missing or refused. A denial is given only when its
  *  spend was written: when the file cannot be kept (tmp not writable, or a file
  *  planted there) the call passes as if its budget were spent, so a planted
@@ -322,6 +326,17 @@ async function indexedDeclarations(repo, rel, span) {
   return declarationsInSpan(outline, span);
 }
 
+/** The declarations a refusal of this read would list, [] when the index does
+ *  not hold them all. A whole file (`missKey` set) it did not outline is asked
+ *  about once per session: the miss is kept in the counts file under that key. */
+async function readDeclarations(repo, rel, span, sessionId, missKey) {
+  const counts = missKey ? readCapCounts(sessionId) : {};
+  if (missKey && capBudgetSpent(counts, missKey, 1)) return [];
+  const declarations = await indexedDeclarations(repo, rel, span);
+  if (missKey && !declarations.length) writeCapCounts(sessionId, spendCapBudget(counts, missKey));
+  return declarations;
+}
+
 /** Read-shaped decision (Read tool or `cat`): classify, price, span. A
  *  ranged read consults the session's cap budget first; a cap denial spends
  *  one of the file's denials. A denial carries the declarations of the lines
@@ -345,24 +360,25 @@ async function settleRead(repo, { tool, rel, abs, offset, limit, sessionId, ctxB
   let verdict = classifyRead(readCtx, MAX_LINES);
   if (verdict.deny && compound) verdict = COMPOUND_COMMAND;
   else if (verdict.deny) {
-    const declarations = await indexedDeclarations(repo, rel, ranged ? span : { start: 1, end: lineCount });
+    const asked = ranged ? span : { start: 1, end: lineCount };
+    const declarations = await readDeclarations(repo, rel, asked, sessionId, ranged ? "" : `miss:${rel}`);
     verdict = declarations.length ? classifyRead({ ...readCtx, declarations }, MAX_LINES) : INDEX_UNANSWERED;
   }
   if (verdict.capped && !writeCapCounts(sessionId, spendCapBudget(capCounts, rel)))
     verdict = { deny: null, reason: BUDGET_UNRECORDED };
   if (verdict.deny && denyRewrite) verdict.deny = denyRewrite(verdict.deny);
-  // A whole-file hit kept the whole file out; a cap hit kept the SPAN out
-  // (what the ranged read would have let in); a pass let its span in.
-  const tokens =
-    verdict.deny && !verdict.capped
-      ? estimateTokensSaved(bytes)
-      : estimateTokensRead({ bytes, lineCount, offset, limit });
+  // What the read lets into the context: the whole file, or the span of a
+  // ranged read. A hit kept that out, less the refusal's own text.
+  const read = estimateTokensRead({ bytes, lineCount, offset, limit });
+  const tokens = verdict.deny ? Math.max(0, read - estimateTokensSaved(verdict.deny.length)) : read;
   settle(repo, { tool, verdict, tokens, path: rel, span });
 }
 
 /** classifyGrep with the symbol rule's once-per-symbol budget:
- *  the budget shares the read-cap counts file under a `sym:` key. */
-function classifySymbolGrep(ctx, sessionId) {
+ *  the budget shares the read-cap counts file under a `sym:` key. Inside a
+ *  `compound` command the grep that would be a symbol lookup passes as one,
+ *  and spends nothing. */
+function classifySymbolGrep(ctx, sessionId, compound = false) {
   const symbol = ctx.isFile ? symbolInPattern(ctx.pattern) : "";
   if (!symbol) return classifyGrep(ctx);
   const key = `sym:${symbol}`;
@@ -372,6 +388,7 @@ function classifySymbolGrep(ctx, sessionId) {
     symbol,
     symbolBudgetSpent: capBudgetSpent(counts, key, SYMBOL_GREP_DENIALS_PER_SYMBOL),
   });
+  if (verdict.symbol && compound) return COMPOUND_COMMAND;
   if (verdict.symbol && !writeCapCounts(sessionId, spendCapBudget(counts, key)))
     return { deny: null, reason: BUDGET_UNRECORDED };
   return verdict;
@@ -604,9 +621,10 @@ async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase, compound })
     pattern: bulk.pattern,
     modified: isFile && rel != null ? gitStatusClass(root, rel) : "",
   };
-  const verdict = compound
-    ? classifyGrep(ctx)
-    : await answerSymbolDeny(classifySymbolGrep(ctx, sessionId), repo, ctx, { cwd, files: bulk.files || [bulk.dir] });
+  const verdict = await answerSymbolDeny(classifySymbolGrep(ctx, sessionId, compound), repo, ctx, {
+    cwd,
+    files: bulk.files || [bulk.dir],
+  });
   settle(repo, { tool: "Bash:grep", verdict, tokens: 0, path: rel || "" });
 }
 

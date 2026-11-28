@@ -168,14 +168,14 @@ export function ghRepoSlug(value) {
 }
 
 /** The issue-search shape of a command that is one `gh` call, or null. A
- *  command of several parts is not judged (isCompoundCommand), and a redirect
- *  or an expansion disqualifies it (its output is not a question); quotes are
- *  honoured. */
+ *  command of several parts is not judged (isCompoundCommand, or a `&` that
+ *  starts a second command), and a redirect or an expansion disqualifies it
+ *  (its output is not a question); quotes are honoured. */
 export function ghIssueSearchInCommand(command) {
   const s = String(command || "").trim();
   if (!s || isCompoundCommand(s)) return null;
   const bare = s.replace(/"(?:\\.|[^"\\])*"|'[^']*'/g, "");
-  if (/[>`$]/.test(bare)) return null;
+  if (/[&>`$]/.test(bare)) return null;
   return ghIssueSearchShape(shTokens(s.replace(/;\s*$/, "")));
 }
 
