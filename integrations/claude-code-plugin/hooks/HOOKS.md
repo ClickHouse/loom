@@ -255,7 +255,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   or a shell command named, written since the session's first row; a tree
   left dirty before the session gates nothing), sends the change's paths, hunk ranges and function names only
   (`diffHeaders`) to code.test_gate for its obligations and blocks the stop
-  once per distinct change with a reason naming them. A Claude Code stop
+  once per distinct change with a reason naming the tests or, with none to
+  run, the untested functions (`renderGate`). A Claude Code stop
   whose transcript already answers the ask to run tests is not blocked
   (`runAnswered` in lib/test-gate.mjs); a Codex rollout answers nothing.
   LOOM_TEST_GATE=off disables; LOOM_TEST_GATE_DEPTH sets hops (1-3).

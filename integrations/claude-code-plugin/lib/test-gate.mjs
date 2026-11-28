@@ -10,7 +10,9 @@
 // same change passes: the agent has seen the obligation and either ran the
 // tests or chose not to, and a gate that nags is a gate that gets disabled.
 // A stop whose transcript already answers the ask is not blocked at all
-// (`runAnswered`): a block costs the session one more model request.
+// (`runAnswered`): a block costs the session one more model request. A
+// reason that names tests the checkout has names no untested function: the
+// graph is a floor, and a test it names may reach the function unseen.
 //
 // The change is the session's, not the tree's: `sessionScope` keeps only
 // the dirty paths the transcript shows this session edited or named in a
@@ -49,7 +51,8 @@ function short(qname) {
 /**
  * Render the obligation text, or "" when there is nothing to say.
  * Runnable commands first (deduped), then tests with no derivable command,
- * then the untested functions. Bounded: maxRuns commands, maxNames names.
+ * then the untested functions, which are named only when the gate names no
+ * test or one the checkout lacks. Bounded: maxRuns commands, maxNames names.
  */
 export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists } = {}) {
   if (!gate || !gate.obligations) return "";
@@ -84,7 +87,10 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
     const more = missing.length - shown.length;
     parts.push(`indexed tests not present in this checkout: ${shown.join(", ")}${more > 0 ? ` (+${more})` : ""}`);
   }
-  if (untested.length) {
+  // "No test reaches" is what the index cannot see. Beside tests to run it
+  // reads as a fact about them, and a test that builds an object reaches a
+  // constructor the graph holds no edge to.
+  if (untested.length && (missing.length || !(runs.length || unknown.length))) {
     const names = [...new Set(untested.map((u) => short(u.qualified_name)))].filter(Boolean);
     const shown = names.slice(0, maxNames);
     const more = (gate.untested_total || names.length) - shown.length;
@@ -366,11 +372,15 @@ const ELSEWHERE = /\b(?:ssh|docker|podman|kubectl)\s/;
  *  started in this checkout. */
 const ranHere = (head) => !ELSEWHERE.test(head) && LAUNCHER.test(head.split(/[;&|(\n]/).pop());
 // pytest's last line, whose order is fixed: failed, passed, skipped,
-// deselected, xfailed, xpassed, warnings, errors. A clean line starts at
-// "passed" and names nothing deselected, so a -k subset is not one. --lf
-// leaves tests out at collection and prints the line of a full run.
+// deselected, xfailed, xpassed, warnings, errors. A whole line starts at
+// "failed" or "passed" and names nothing deselected, so a -k subset is not
+// one, and neither is a collection that stopped at an error. --lf leaves
+// tests out at collection and prints the line of a full run.
 const SUMMARY = /\b\d+ (?:passed|failed|errors?)\b.* in [\d.]+s\b/;
-const CLEAN = /^=*\s*\d+ passed(?:, \d+ (?:skipped|xfailed|xpassed|warnings?))* in [\d.]+s(?: \([\d:]+\))?\s*=*$/;
+const WHOLE =
+  /^=*\s*\d+ (?:failed|passed)(?:, \d+ (?:passed|skipped|xfailed|xpassed|warnings?|errors?))* in [\d.]+s(?: \([\d:]+\))?\s*=*$/;
+// pytest flags that end a run at a failure, before the files after it.
+const STOPS = /(?:^|\s)(?:-[A-Za-z]*x|--exitfirst|--maxfail)/;
 // The directory a command moves to before it runs something, and any move.
 const CD = /(?:^|[;&|(\n])\s*cd\s+([^\s;&|)]+)/g;
 const MOVE = /\b(?:cd|pushd|popd)\s/g;
@@ -401,33 +411,37 @@ const onlyRuns = (tail) =>
     .split(/[;&|()\n]/)
     .every((part) => !/[<>`]/.test(part) && (OUTPUT.test(part) || part.match(PYTEST)));
 
-/** True when the output holds a clean pytest summary for each of `runs`
- *  invocations and no other summary: `| tail -5; echo exit=$?` hides the
- *  exit status, the summary line survives it. */
-function allPassed(output, runs) {
+/** True when the output holds a whole pytest summary for each of `runs`
+ *  and no other summary: `| tail -5; echo exit=$?` hides the exit status,
+ *  the summary line survives it. Failures count: the session has read
+ *  them. A line that counts one is not whole when a run has a flag that
+ *  stops at a failure; such a flag set in a config file is not seen. */
+function allRan(output, runs) {
   const lines = String(output || "")
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.length < 300 && SUMMARY.test(l));
-  return lines.length >= runs && lines.every((l) => CLEAN.test(l));
+  const stops = runs.some((run) => STOPS.test(run[1]));
+  return lines.length >= runs.length && lines.every((l) => WHOLE.test(l) && !(stops && /\d (?:failed|error)/.test(l)));
 }
 
 /**
- * The repo-relative files and directories pytest ran clean on the tree as
- * it stands, read in transcript order (Claude Code rows; sidechains
+ * The repo-relative files and directories pytest ran to its summary on the
+ * tree as it stands, read in transcript order (Claude Code rows; sidechains
  * skipped). A run counts when its Bash command finished no earlier than
  * `since`, the newest time of an uncommitted or untracked file, so an edit
  * by a subagent or a script the transcript never shows forgets it. An edit
  * tool or any other shell command after it forgets every earlier run: it
  * may have deleted a file or put one back as HEAD has it, which leaves no
  * newer time. A command may change files and then test them
- * (`cat >> tests/test_a.py <<EOF … EOF; pytest tests`), but not after its
- * first pytest (`onlyRuns`), and one that holds anything before that pytest
- * but its launcher forgets every earlier run. A run's paths are read from
- * the directory it ran in: the row's own cwd, moved by at most one `cd`
- * before the first run.
+ * (`cat >> tests/test_a.py <<EOF … EOF; pytest tests`): its runs count from
+ * the first one that only runs and output follow (`onlyRuns`), so in
+ * `git stash; pytest tests; git stash pop; pytest tests` the second does.
+ * A command that holds anything before that run but its launcher forgets
+ * every earlier run. A run's paths are read from the directory it ran in:
+ * the row's own cwd, moved by at most one `cd` before the first run.
  */
-function cleanRuns(objs, { root, cwd, since } = {}) {
+function wholeRuns(objs, { root, cwd, since } = {}) {
   const rows = (objs || []).filter((o) => o && !o.isSidechain && Array.isArray(o.message && o.message.content));
   const results = new Map();
   for (const o of rows) {
@@ -438,65 +452,68 @@ function cleanRuns(objs, { root, cwd, since } = {}) {
       }
     }
   }
-  let clean = [];
+  let whole = [];
   for (const o of rows) {
     if (o.type !== "assistant") continue;
     for (const b of o.message.content) {
       if (!b || b.type !== "tool_use") continue;
       const name = normalizeToolName(b.name);
-      if (EDIT_TOOLS.has(name)) clean = [];
+      if (EDIT_TOOLS.has(name)) whole = [];
       if (name !== "Bash" && name !== "PowerShell") continue;
       const command = commandText(b.input);
       // Bash only: this reader follows no PowerShell move (`Set-Location`).
       const runs = name === "Bash" ? [...command.matchAll(PYTEST)] : [];
       if (!runs.length) {
-        clean = [];
+        whole = [];
         continue;
       }
-      const before = command.slice(0, runs[0].index);
-      const cd = [...before.matchAll(CD)];
+      const cd = [...command.slice(0, runs[0].index).matchAll(CD)];
+      // The runs that tested the tree the command left: the first one that
+      // only runs and output follow, and the ones after it.
+      const from = runs.findIndex((run) => onlyRuns(command.slice(run.index)));
+      const before = from < 0 ? "" : command.slice(0, runs[from].index);
       const result = results.get(b.id) || {};
-      // --ignore, --deselect, --lf and --sw leave out tests a clean summary
-      // does not count; a quoted argument may be a flag's value in several
+      // --ignore, --deselect, --lf and --sw leave out tests a summary does
+      // not count; a quoted argument may be a flag's value in several
       // words; a move the reader cannot follow (a second `cd`, one between
       // two runs, one in a subshell that closed before the run, `pushd`)
       // leaves the paths unknown.
       const ran =
-        allPassed(result.output, runs.length) &&
+        from >= 0 &&
+        allRan(result.output, runs) &&
         result.at >= since &&
         runs.every((run) => !/["']/.test(run[1]) && ranHere(command.slice(0, run.index))) &&
         cd.length < 2 &&
         (command.match(MOVE) || []).length === cd.length &&
         cd.every((m) => !closesParen(before.slice(m.index + m[0].length))) &&
-        !/--(?:ignore|deselect|lf|last-failed|sw|stepwise)\b/.test(command) &&
-        onlyRuns(command.slice(runs[0].index));
+        !/--(?:ignore|deselect|lf|last-failed|sw|stepwise)\b/.test(command);
       if (!ran) {
-        clean = [];
+        whole = [];
         continue;
       }
-      // What the command did before its first pytest may have changed the
-      // tree the earlier runs tested, with no newer file time to show it.
-      if (!LAUNCHER.test(before)) clean = [];
+      // What the command did before that run may have changed the tree the
+      // earlier runs tested, with no newer file time to show it.
+      if (!LAUNCHER.test(before)) whole = [];
       const dir = o.cwd || cwd;
       const base = cd.length ? path.resolve(dir || root || "", unquoted(cd[0][1])) : dir;
-      for (const run of runs) {
+      for (const run of runs.slice(from)) {
         let value = false;
         for (const word of run[1].split(/\s+/)) {
           const flag = word.startsWith("-");
           const rel = flag || value ? "" : relativeToRoot(root, word, base);
-          if (rel) clean.push(rel);
+          if (rel) whole.push(rel);
           value = flag && !word.includes("=") && !BARE.test(word);
         }
       }
     }
   }
-  return clean;
+  return whole;
 }
 
 /**
  * True when the gate's ask is to run tests this checkout has and the
  * transcript already answers it: the person's latest prompt ends by saying
- * not to run tests, or `cleanRuns` holds every named test (its file, or a
+ * not to run tests, or `wholeRuns` holds every named test (its file, or a
  * directory above it); `lastModified()` is the tree's newest file time in
  * epoch ms. The stop then names no untested function either. A gate that
  * names a test missing from the checkout, or only untested functions, still
@@ -509,8 +526,8 @@ export function runAnswered(gate, objs, { root, cwd, testExists, lastModified } 
   if (!paths.length || !paths.every((p) => p && testExists(p))) return false;
   if (declinesTests(objs)) return true;
   if (!tests.every((t) => isPytest(t.run))) return false;
-  const clean = cleanRuns(objs, { root, cwd, since: lastModified() });
-  return paths.every((p) => clean.some((c) => p === c || p.startsWith(`${c}/`)));
+  const whole = wholeRuns(objs, { root, cwd, since: lastModified() });
+  return paths.every((p) => whole.some((c) => p === c || p.startsWith(`${c}/`)));
 }
 
 /** The newest modification time, in epoch ms, of `files` under `root`.

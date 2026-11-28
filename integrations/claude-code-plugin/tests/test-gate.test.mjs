@@ -46,13 +46,34 @@ test("blocks once per signature, then lets the stop through", () => {
   assert.equal(other.block, true);
 });
 
-test("render dedupes commands, lists unknown-runner tests and untested names", () => {
+test("render dedupes commands and lists unknown-runner tests", () => {
   const text = renderGate(GATE);
   assert.match(text, /^Loom test gate \(graph is a floor\): run: pytest tests\/unit\/test_a\.py · /);
   assert.equal((text.match(/pytest tests\/unit\/test_a\.py/g) || []).length, 1);
-  assert.match(text, /also reached \(no known runner\): src\/x\/tests\/gtest_parts\.cpp/);
-  assert.match(text, /no test reaches: MergeTreeData::renameTempPartAndAdd, Foo::bar\./);
+  assert.match(text, /also reached \(no known runner\): src\/x\/tests\/gtest_parts\.cpp\. /);
   assert.match(text, /\. Run the tests before finishing, or say why not\.$/);
+});
+
+test("untested functions are named only when the gate names no test, or one the checkout lacks", () => {
+  // As a recorded session was told, of a file whose every test builds a Widget.
+  const recorded = {
+    obligations: true,
+    counts_floor: true,
+    tests: [{ test_path: "tests/test_widgets.py", why: "changed_test", run: "pytest tests/test_widgets.py" }],
+    untested: [{ qualified_name: "src.pkg.widgets::Widget::__init__", path: "src/pkg/widgets.py" }],
+    untested_total: 1,
+  };
+  assert.equal(
+    renderGate(recorded, { python: "python3", testExists: () => true }),
+    "Loom test gate (graph is a floor): run: python3 -m pytest tests/test_widgets.py. Run the tests before finishing, or say why not.",
+  );
+  assert.doesNotMatch(renderGate(GATE), /no test reaches/);
+  assert.doesNotMatch(renderGate(GATE, { testExists: () => true }), /no test reaches/);
+  assert.match(
+    renderGate({ ...GATE, tests: [] }),
+    /: no test reaches: MergeTreeData::renameTempPartAndAdd, Foo::bar\. Add a test that reaches it/,
+  );
+  assert.match(renderGate(recorded, { testExists: () => false }), /no test reaches: Widget::__init__\. /);
 });
 
 test("plain pytest runs fold into one command; a run with an option stays its own", () => {
@@ -609,9 +630,71 @@ test("a run before the tree's last change, an edit or another shell command answ
   assert.equal(answered([edit(), bash(SUITE, PASSED, { isSidechain: true })]), false);
 });
 
-test("a run that failed, ran a subset or ran another file answers nothing", () => {
-  assert.equal(answered([edit(), bash(SUITE, FAILED)]), false);
-  assert.equal(answered([edit(), bash(SUITE, PASSED), bash(SUITE, FAILED)]), false);
+// As recorded sessions wrote them, in a checkout whose suite fails 8 tests with or without the change.
+const LAST_FAILED = "FAILED tests/test_io.py::test_reads_every_row - Deprec...\n";
+const BASE = `${LAST_FAILED}8 failed, 466 passed, 10 skipped in 1.01s`;
+const CHANGED = `${LAST_FAILED}8 failed, 467 passed, 10 skipped in 0.81s`;
+const STOPPED =
+  "FAILED tests/test_basic.py::test_reads_one_row - AssertionError: ...\n" +
+  "!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n" +
+  "1 failed, 38 passed in 0.37s";
+
+test("a run that printed its failures answers the gate, unless it stopped at the first one", () => {
+  assert.equal(answered([edit(), bash(SUITE, FAILED)]), true);
+  assert.equal(answered([edit(), bash(SUITE, PASSED), bash(SUITE, FAILED)]), true);
+  assert.equal(answered([edit(), bash("python -m pytest tests -q 2>&1 | tail -3", CHANGED)]), true);
+  assert.equal(answered([edit(), bash("pytest tests -q", "400 passed, 5 errors in 1.60s")]), true);
+  assert.equal(answered([edit(), bash("pytest tests -q", "3 failed in 0.10s")]), true);
+  // The run never reached the files after the failure.
+  for (const flag of ["-x", "-qx", "--exitfirst", "--maxfail=1", "--maxfail 2"]) {
+    const stops = `python -m pytest tests -q ${flag} 2>&1 | tail -3`;
+    assert.equal(answered([edit(), bash(stops, STOPPED)]), false, flag);
+    assert.equal(answered([edit(), bash(stops, "38 passed, 1 error in 0.37s")]), false, flag);
+    assert.equal(answered([edit(), bash(stops, PASSED)]), true, flag);
+  }
+  // A collection that stopped at an error ran no test.
+  for (const none of ["1 error in 0.12s", "2 skipped, 1 error in 0.20s"]) {
+    assert.equal(answered([edit(), bash("pytest tests -q", none)]), false, none);
+  }
+});
+
+test("a command's runs count from the first one that only runs and output follow", () => {
+  const two = {
+    ...RUN_GATE,
+    tests: [...RUN_GATE.tests, { test_path: "tests/test_b.py", run: "pytest tests/test_b.py" }],
+  };
+  const onlyB = { ...RUN_GATE, tests: two.tests.slice(1) };
+  // Without the change, then with it: the last run tested the tree as it stands.
+  const both =
+    "git stash -q; python -m pytest tests -q 2>&1 | tail -2; git stash pop -q; python -m pytest tests -q 2>&1 | tail -2";
+  assert.equal(answered([edit(), bash(both, `${BASE}\n${CHANGED}`)]), true);
+  assert.equal(answered([edit(), bash(`cd /r; ${both}`, `${BASE}\n${CHANGED}`)]), true);
+  assert.equal(answered([edit(), bash(both, CHANGED)]), false);
+  // The run before the pop tested another tree, and the pop forgets every earlier run.
+  const split = "pytest tests/test_a.py -q; git stash pop -q; pytest tests/test_b.py -q";
+  const output = "3 passed in 0.10s\n2 passed in 0.10s";
+  assert.equal(answered([edit(), bash(split, output)]), false);
+  assert.equal(answered([edit(), bash(split, output)], onlyB), true);
+  assert.equal(
+    answered([edit(), bash("pytest tests/test_a.py -q", "3 passed in 0.10s"), bash(split, output)], two),
+    false,
+  );
+  // With the change, then without it: the first run printed no summary and the pop came after the last.
+  const backwards =
+    "python -m pytest tests -q 2>&1 | grep FAILED; git stash -q; python -m pytest tests -q 2>&1 | tail -1; git stash pop -q";
+  assert.equal(answered([edit(), bash(backwards, BASE)]), false);
+  assert.equal(answered([edit(), bash("python -m pytest tests -q 2>&1 | tail -3; git diff --stat", CHANGED)]), false);
+  // A move between two runs leaves the later run's paths unknown.
+  assert.equal(
+    answered([edit(), bash("pytest tests -q; git stash pop -q; cd sub; pytest tests -q", output)], {
+      ...RUN_GATE,
+      tests: [{ test_path: "sub/tests/test_a.py", run: "pytest sub/tests/test_a.py" }],
+    }),
+    false,
+  );
+});
+
+test("a run of a subset or of another file answers nothing", () => {
   assert.equal(answered([edit(), bash("pytest tests -q -k new", "1 passed, 4 deselected in 0.10s")]), false);
   assert.equal(answered([edit(), bash("pytest tests/test_a.py::test_new -q", "1 passed in 0.10s")]), false);
   assert.equal(answered([edit(), bash("pytest tests --ignore=tests/test_a.py -q", "9 passed in 0.10s")]), false);
