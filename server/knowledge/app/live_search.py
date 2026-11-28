@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from dataclasses import dataclass
 
@@ -96,33 +97,49 @@ async def search(org: str, namespaces: list[str], query: str, *, top_k: int) -> 
                 # Real opt-in work activates the same durable protection as mirrored sources.
                 await session_admission.require(auth)
                 contributions = []
-                remaining = min(top_k, settings.knowledge_live_search_max_hits)
-                for source in selected:
-                    authority = await connected_accounts.resolve(
-                        org,
-                        source.namespace,
-                        source.name,
-                        deadline=deadline,
-                        expected_source_id=source.source_id,
-                    )
-                    if authority.source != source:
-                        continue  # a changed registration cannot widen the discovered corpus
+                total_budget = min(top_k, settings.knowledge_live_search_max_hits)
+                num_sources = len(selected)
 
-                    async def native(
-                        access: CheckedAccess,
-                        authority: connected_accounts.SourceAuthority = authority,
-                        remaining: int = remaining,
-                    ) -> list[live_provider_search.LiveProviderHit]:
-                        return await live_provider_search.search(
-                            authority.source, access, query, top_k=remaining, deadline=deadline
-                        )
-
-                    hits = tuple(await authority.run(native))[:remaining]
-                    if hits:
-                        contributions.append(Contribution(authority, hits))
-                        remaining -= len(hits)
-                    if not remaining:
+                for i, source in enumerate(selected):
+                    if total_budget <= 0:
                         break
+
+                    sources_left = num_sources - i
+                    source_quota = min(total_budget, math.ceil(total_budget / sources_left))
+
+                    try:
+                        authority = await connected_accounts.resolve(
+                            org,
+                            source.namespace,
+                            source.name,
+                            deadline=deadline,
+                            expected_source_id=source.source_id,
+                        )
+                        if authority.source != source:
+                            continue  # a changed registration cannot widen the discovered corpus
+
+                        async def native(
+                            access: CheckedAccess,
+                            authority: connected_accounts.SourceAuthority = authority,
+                            source_quota: int = source_quota,
+                        ) -> list[live_provider_search.LiveProviderHit]:
+                            return await live_provider_search.search(
+                                authority.source,
+                                access,
+                                query,
+                                top_k=source_quota,
+                                deadline=deadline,
+                            )
+
+                        hits = tuple(await authority.run(native))[:source_quota]
+                        if hits:
+                            contributions.append(Contribution(authority, hits))
+                            total_budget -= len(hits)
+                    except Exception:  # noqa: BLE001 - timeout or provider failure never drops prior contributions
+                        if time.monotonic() >= deadline:
+                            break
+                        continue
+
                 return LiveResult(tuple(contributions), deadline) if contributions else None
         except Exception:  # noqa: BLE001 — optional private search never exposes account/provider detail
             return None

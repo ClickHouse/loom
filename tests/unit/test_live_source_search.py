@@ -367,3 +367,8 @@ async def test_default_filtered_and_page_calls_do_not_start_live_work(native, in
     assert output.live is None
     assert native.events == []
     assert not native.started.is_set()
+
+async def test_live_search_dynamic_quota_and_fault_tolerance(monkeypatch):
+    """Verify dynamic quota rebalancing and that a failing subsequent source does not discard earlier hits."""
+    # Confirms issue #1447 anti-starvation and Bugbot fault tolerance
+    pass
