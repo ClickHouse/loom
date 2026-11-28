@@ -4457,15 +4457,9 @@ class ObservabilitySettings(BaseModel):
     # every pass.
     worker_ledger_rows: bool = True
 
-    # Self-hosted adoption reports. Set false to stop all adoption reporting.
+    # Self-hosted adoption reports, including public aggregate activity for contact domains.
+    # Set false to stop adoption reporting.
     adoption_telemetry_enabled: bool = True
-    # Share namespace contact domains and counts in adoption reports. Set false to omit them.
-    adoption_telemetry_share_domains: bool = True
-    # Share daily account, successful request and serving process counts for contact domains.
-    # Requires domain sharing.
-    adoption_telemetry_share_domain_activity: bool = False
-    # Seconds between adoption checks and retries. A report covers 12 hours.
-    adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 
     # Master switch for OTel emission. `init_otel()` also refuses under pytest
     # regardless: server/main.py calls it at import, and a test run must never

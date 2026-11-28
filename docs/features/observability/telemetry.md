@@ -21,7 +21,8 @@ changed what, with tamper evidence.
 
 Loom enables self-hosted adoption telemetry by default. It measures deployment and
 feature usage to inform product development. The server aggregates activity locally
-and sends one event per completed 12-hour UTC window.
+and sends one event per completed 12-hour UTC window, with eligible contact domains
+and aggregate daily activity.
 
 ### Where telemetry is sent
 
@@ -37,8 +38,8 @@ Replicas sharing that authority report under one UUID. If the worker detail show
 server once with `LOOM_BOOT_MIGRATE=true` to record its authority. Windows start at midnight
 and noon UTC. The worker allows an hour for ledger rows to arrive before reporting.
 When it acquires the worker lease, it attempts delivery immediately if the latest
-completed window has no acknowledgement. It reports idle windows and retries a failed
-delivery while that window is still the most recent completed one.
+completed window has no acknowledgement. It checks for reports hourly, including idle windows,
+and retries failed deliveries while the window is still the most recent completed one.
 On an upgrade, a window already acknowledged under version 2 keeps its existing
 report. Daily measurements begin with the next version 3 report.
 
@@ -56,7 +57,7 @@ report. Daily measurements begin with the next version 3 report.
 | `daily_successful_requests`                                                                                            | Total eligible successful requests in the complete UTC day. Included in the second report of that day.                                                                                                                                   |
 | `active_accounts`                                                                                                      | Distinct authenticated users per organization with at least one eligible successful request in the complete UTC day. Included in the second report of that day.                                                                          |
 | `serving_processes`                                                                                                    | Distinct known server processes with at least one eligible successful request in the complete UTC day. Included in the second report of that day.                                                                                        |
-| `domain_activity`                                                                                                      | Daily active users, successful requests, and serving processes in standard namespaces grouped by shared contact domain. Included when deployments opt in to domain activity sharing.                                                     |
+| `domain_activity`                                                                                                      | Daily active users, successful requests, and serving processes in standard namespaces grouped by shared contact domain. Included in the second report of the UTC day.                                                                    |
 | `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                                                                  |
 | `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                                                                         |
 | `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                                                                 |
@@ -82,15 +83,9 @@ Set `LOOM_ADOPTION_TELEMETRY_ENABLED=false` on every server and worker replica.
 With a settings file, set `adoption_telemetry_enabled: false`. In the Helm chart, put
 that setting under `settingsFile`.
 
-Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false` on every server and worker replica
-to omit domains while sending aggregate usage. In a settings file, set
-`adoption_telemetry_share_domains: false`.
-
-Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY=true` on every server and worker
-replica to share daily usage counts for reported contact domains. In a settings file,
-set `adoption_telemetry_share_domain_activity: true`. Domain activity sharing is off by
-default and requires domain sharing. Only standard namespaces with a contact domain
-shared in the same report contribute to the public domain activity counts.
+This switch stops all future adoption reports. Before upgrading, set it to
+`false` if your deployment must continue withholding contact domains or their
+activity.
 
 ### Adoption dashboard
 
@@ -100,11 +95,11 @@ shows aggregate self-hosted usage and open-source distribution metrics. The
 self-hosted summary includes today's completed reporting windows. The directory
 shows contact domains from version 2 and 3 reports with attributed successful requests
 in the public directory's lookback period and orders names by those requests. The
-one-year view uses the 90-day directory. Domain activity sharing adds successful
-requests, active installations, active users, serving processes, the latest
-reported Loom version, and first retained and latest activity dates for each domain.
-Those details use reports from installations that opted in to sharing domain activity.
-Use the domain-sharing setting above to omit domains from your reports.
+one-year view uses the 90-day directory. Completed daily reports provide successful
+requests, active installations, active users, serving processes, the latest reported
+Loom version, and first retained and latest activity dates for each domain.
+Only standard namespaces with a contact domain in the same report contribute to
+those counts.
 `loom_adoption_windows` contains one report per
 `(installation_id, window_start)`. The daily rollup adds request counts and
 uses the peak half-day distinct count for each installation.

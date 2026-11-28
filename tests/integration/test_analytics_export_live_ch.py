@@ -309,7 +309,7 @@ async def test_adoption_report_contains_deployment_totals_and_contact_domains(ch
         end + timedelta(days=2),
         end + timedelta(days=2, hours=12),
         installation_id,
-        restricted=None,
+        restricted=set(),
         ch=ch,
     )
     assert idle["requests"] == 0
@@ -384,47 +384,31 @@ async def test_adoption_report_deduplicates_daily_activity(ch: CHClient) -> None
         ],
     )
     installation_id = uuid.uuid4()
-    first = await window_report(
-        start, noon, installation_id, restricted=restricted, share_domain_activity=True, ch=ch
-    )
+    first = await window_report(start, noon, installation_id, restricted=restricted, ch=ch)
     assert first["schema_version"] == 2
     assert "daily_successful_requests" not in first
     assert "active_accounts" not in first
     assert "serving_processes" not in first
     assert "domain_activity" not in first
 
-    default = await window_report(noon, midnight, installation_id, restricted=restricted, ch=ch)
-    assert default["schema_version"] == 3
-    assert default["daily_successful_requests"] == 7
-    assert default["active_accounts"] == 5
-    assert default["serving_processes"] == 3
-    assert default["domain_activity"] == []
-    assert {"domain": company, "user_count": 1, "successful_requests": 5} in default["user_domains"]
-
-    opted_in = await window_report(
-        noon, midnight, installation_id, restricted=restricted, share_domain_activity=True, ch=ch
-    )
+    daily = await window_report(noon, midnight, installation_id, restricted=restricted, ch=ch)
+    assert daily["schema_version"] == 3
+    assert daily["daily_successful_requests"] == 7
+    assert daily["active_accounts"] == 5
+    assert daily["serving_processes"] == 3
+    assert {"domain": company, "user_count": 1, "successful_requests": 5} in daily["user_domains"]
     assert {
         "domain": company,
         "active_accounts": 3,
         "successful_requests": 5,
         "serving_processes": 2,
-    } in opted_in["domain_activity"]
-
-    counts_only = await window_report(
-        noon, midnight, installation_id, restricted=None, share_domain_activity=True, ch=ch
-    )
-    assert counts_only["active_accounts"] == 5
-    assert counts_only["serving_processes"] == 3
-    assert counts_only["user_domains"] == []
-    assert counts_only["domain_activity"] == []
+    } in daily["domain_activity"]
 
     unstamped = await window_report(
         noon + timedelta(days=1),
         midnight + timedelta(days=1),
         installation_id,
         restricted=restricted,
-        share_domain_activity=True,
         ch=ch,
     )
     assert unstamped["active_accounts"] == 1
@@ -462,9 +446,7 @@ async def test_adoption_report_includes_all_domains_active_before_noon(ch: CHCli
     assert len(first["user_domains"]) == 30
     assert "gmail.com" not in {row["domain"] for row in first["user_domains"]}
 
-    last = await window_report(
-        noon, midnight, installation_id, restricted=set(), share_domain_activity=True, ch=ch
-    )
+    last = await window_report(noon, midnight, installation_id, restricted=set(), ch=ch)
     assert last["successful_requests"] == 0
     assert last["daily_successful_requests"] == len(domain_names)
     assert {row["domain"] for row in last["user_domains"]} == domain_names
