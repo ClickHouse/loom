@@ -277,7 +277,10 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
         # The clone runs as a repository job: the empty target its one writable path.
         done = await run_job(
             ["git", "clone", "-c", "gc.auto=0", "-c", "maintenance.auto=false"]
-            + ["--bare", "--quiet", *upload_pack_args(cfg.git_remote), cfg.git_remote, tmp],
+            # `--no-local`: a clone from a local path copies its loose objects as they
+            # are, and a checkout shares only the mirror's packs.
+            + ["--bare", "--quiet", "--no-local", *upload_pack_args(cfg.git_remote)]
+            + [cfg.git_remote, tmp],
             env=auth_env(cfg.github_token, cfg.git_remote),
             timeout_s=settings.code_bootstrap_clone_timeout_s,
             writable=[Path(tmp)],

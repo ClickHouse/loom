@@ -375,8 +375,9 @@ initializes a missing or empty working tree directory as a Git repository and fe
 each commit into it from the entry's mirror, so a new leader starts from nothing.
 With `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS` on (off by default; turn it on once no
 older build serves, [upgrades](upgrades.md) step 8), the checkout's packs are hard links
-of the mirror's (each marked by a `.keep` file; an operator's own `.keep` stays;
-the mirror's fetches always write a pack, never loose objects), so a tier costs its working tree rather than a second copy of the repository; a
+of the mirror's (each marked by a `.keep` file; an operator's own `.keep` stays),
+so a tier costs its working tree rather than a second copy of the repository; the
+mirror's clone and fetches always write packs, never loose objects. A
 checkout that already holds its own copy, from an earlier version or an operator,
 drops it in the checkout gc of the tier's next pass with a new commit (for C/C++, the
 full-index worker's), which keeps the shared packs. That gc runs only with room for
@@ -1006,7 +1007,10 @@ Each serving process runs `git gc --no-prune` on its host's mirrors every
 copy plus `LOOM_CODE_MIRROR_GC_MARGIN_GB`, 5 GB by default; without it the gc waits
 another interval and logs a warning), and sweeps `LOOM_CODE_REPOS_ROOT` of the mirrors,
 `checkout-*` trees and mirror lock files no active entry names, so a removed repository leaves
-every host, not only the one `code.repo.remove` reached. The
+every host, not only the one `code.repo.remove` reached. Between those gcs, a mirror
+or checkout with more than 50 packs a gc may rewrite (git's `gc.autoPackLimit`) gets
+`git repack -d -l --geometric=2`, which merges the small packs its fetches write and
+leaves the large one. The
 `loom.host.disk.free_bytes` / `loom.host.disk.total_bytes` gauges are the disk alarm's input.
 
 ## Measured coverage

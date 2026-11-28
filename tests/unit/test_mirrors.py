@@ -702,3 +702,33 @@ async def test_fix_blame_says_why_there_is_no_mirror_instead_of_a_git_error(
     monkeypatch.setattr(blame, "repo_siblings", lambda org, ns: (cfg, [cfg]))
     _out, summary = await bisect_fix._fix_blame_stage(_Repo(), "o", "code-r", [], 5)  # type: ignore[arg-type]
     assert summary["skipped"].startswith("no_git_mirror: o/code-r: clone failed")
+
+
+def test_more_packs_than_the_limit_are_merged_before_the_gc_is_due(monkeypatch, tmp_path) -> None:
+    """Every mirror fetch writes a pack; past git's `gc.autoPackLimit` they are merged
+    on the next round, not a week later."""
+    import subprocess
+
+    def g(repo, *args: str) -> str:
+        argv = ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args]
+        return subprocess.run(argv, cwd=repo, check=True, capture_output=True, text=True).stdout
+
+    source, git_dir = tmp_path / "source", tmp_path / "r.git"
+    source.mkdir()
+    g(source, "init", "-q")
+    g(source, "commit", "-q", "--allow-empty", "-m", "0")
+    g(tmp_path, "clone", "-q", "--bare", "--no-local", "-c", "gc.auto=0", "source", "r.git")
+    for i in range(55):
+        (source / f"f{i}").write_text(f"{i}\n")
+        g(source, "add", ".")
+        g(source, "commit", "-q", "-m", str(i))
+        g(git_dir, "-c", "fetch.unpackLimit=1", "fetch", "-q", str(source), "+HEAD:refs/heads/x")
+    (git_dir / mirrors._GC_MARK).touch()  # the weekly gc ran a moment ago
+    monkeypatch.setattr(settings, "code_mirror_gc_interval_h", 168.0)
+    packs = git_dir / "objects" / "pack"
+    assert len(list(packs.glob("*.pack"))) == 56
+
+    asyncio.run(mirrors.gc_if_due(str(git_dir)))
+
+    assert len(list(packs.glob("*.pack"))) <= 2
+    g(git_dir, "rev-list", "--objects", "--quiet", "refs/heads/x")
