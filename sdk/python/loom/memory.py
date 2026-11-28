@@ -405,6 +405,10 @@ class MemorySearchHit:
     # The commit that put `code_state` at `changed`, `unresolved` or `missing`; ''
     # for any other state, and when no commit is known.
     code_changed_since: str = field(default="", kw_only=True)
+    # The hit's links whose code is now at another path or symbol than the memory
+    # was written against: each names where it is (`path`, `symbol`, `start_line`,
+    # `end_line`) and what the text still calls it (`was_path`, `was_symbol`).
+    code_moved: list[dict[str, Any]] = field(default_factory=list, kw_only=True)
     # Final blended rank score: the value the served order follows,
     # mode-dependent (about 0.03 under rrf), not a similarity. The terms that
     # moved the row are itemised in `score_components`. After a reranker that
@@ -626,6 +630,7 @@ def _parse_search_hit(r: dict[str, Any]) -> MemorySearchHit:
         namespace=str(r.get("namespace") or ""),
         code_state=str(r.get("code_state") or ""),
         code_changed_since=str(r.get("code_changed_since") or ""),
+        code_moved=list(r.get("code_moved") or []),
         rank_score=float(r.get("rank_score") or 0.0),
         below_threshold=bool(r.get("below_threshold") or False),
         governed=bool(r.get("governed") or False),

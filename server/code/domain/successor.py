@@ -5,7 +5,9 @@ A rename with an edit cannot always be told from a removal plus an unrelated add
 a successor is named only on corroborated evidence: one new definition in the same scope
 (or the scope's own successor) close to the old text, and in its place among the
 definitions that stayed. When new definitions there may be it but none certainly is, the
-answer is uncertain, never a removal.
+answer is uncertain, never a removal. When no declaration of them has a text close to it,
+under any name, it is not among them (`unmatched`): it may still have moved to another
+file.
 """
 
 from __future__ import annotations
@@ -47,6 +49,8 @@ class Successor:
     exact: bool = False
     # new definitions in its scope may be it; none certainly is
     uncertain: bool = False
+    # uncertain, and no declaration of those definitions has a text close to it
+    unmatched: bool = False
     # carried by its renamed class: what surrounds it changed, so it reads changed
     carried: bool = False
 
@@ -121,7 +125,7 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
     ):
         if len(pool) == 1 or _in_place(was, close[0], before, now):
             return Successor(close[0], carried=target != scope)
-    if pool or scope_unsure:
+    if close or unknown or scope_unsure:
         return Successor(None, uncertain=True)
     # a rival's rename alone, that is still close (or too long to tell) to this one too:
     # it may be either
@@ -130,7 +134,9 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
         for d in in_scope
         if d.shape.exact in taken
     )
-    return Successor(None, uncertain=contested)
+    # new definitions there and no text of theirs close to it: it is not among them
+    unmatched = bool(pool) and not contested and _none_close(was, in_scope, before, now)
+    return Successor(None, uncertain=bool(pool) or contested, unmatched=unmatched)
 
 
 def _renamed_alone(scope: str, target: str, before: Side, now: Side) -> bool:
@@ -176,6 +182,16 @@ def close_to(was: Definition, d: Definition, before: Side, now: Side) -> bool | 
 def _maybe_close(was: Definition, d: Definition, before: Side, now: Side) -> bool:
     """`d` is close to `was`, or too long to tell."""
     return close_to(was, d, before, now) is not False
+
+
+def _none_close(was: Definition, new: list[Definition], before: Side, now: Side) -> bool:
+    """No declaration of the names in `new` has a text close to `was`'s or too long to
+    compare. By the text alone: an unrelated name withholds a successor (`_related`), it
+    does not rule one out. Every declaration: a name's first may be a stub."""
+    names = {_unnumbered(d) for d in new}
+    old = before.text(was)
+    scores = (_similar(old, was, now.text(d), d) for d in now.defs if _unnumbered(d) in names)
+    return all(score is not None and score < _CLOSE for score in scores)
 
 
 def _related(was: Definition, d: Definition, before: Side) -> bool:

@@ -160,6 +160,11 @@ pub struct SearchHit {
     /// other state, and when no commit is known.
     #[serde(default)]
     pub code_changed_since: String,
+    /// The hit's links whose code is now at another path or symbol than the memory was
+    /// written against, each with where it is and what the text still calls it
+    /// (`was_path`, `was_symbol`); empty for nearly every hit.
+    #[serde(default)]
+    pub code_moved: Vec<crate::wire_models::CodeLink>,
     #[serde(default)]
     pub body_truncated: bool,
     #[serde(default)]

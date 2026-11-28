@@ -3,15 +3,27 @@ the question kinds the setting names; off at 1.0; never for other kinds."""
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import patch
 
 from server.code.app.search.priors import (
     _CATALOGUE_FILE_RE,
     _apply_fusion_signals,
     _catalogue_penalty,
+    pool_penalties,
 )
 from server.code.domain.units import CodeUnit
 from server.settings import settings
+
+
+def _signals(
+    ranked: list[CodeUnit], query: str, *, prose: bool = False, **kw: Any
+) -> list[CodeUnit]:
+    """The ranking's call: the path factors are the query's own (`pool_penalties`),
+    with the prose penalty only when `prose` (a search not constrained to paths)."""
+    return _apply_fusion_signals(
+        ranked, query, path_penalties=pool_penalties(query, prose_eligible=prose), **kw
+    )
 
 
 def _u(path: str, score: float) -> CodeUnit:
@@ -29,9 +41,9 @@ def test_catalogue_regex_names_the_catalogues_only() -> None:
 def test_penalty_reorders_only_when_set() -> None:
     ranked = [_u("src/Core/Settings.cpp", 1.0), _u("src/Common/MemoryTracker.cpp", 0.9)]
     with patch.object(settings, "code_fusion_signals", True):
-        same = _apply_fusion_signals(list(ranked), "where is the memory limit enforced")
+        same = _signals(list(ranked), "where is the memory limit enforced")
         assert [u.path for u in same][0] == "src/Core/Settings.cpp"
-        demoted = _apply_fusion_signals(
+        demoted = _signals(
             list(ranked),
             "where is the memory limit enforced",
             catalogue_penalty=0.35,

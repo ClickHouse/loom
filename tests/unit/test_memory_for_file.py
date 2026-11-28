@@ -834,6 +834,124 @@ def test_a_note_names_the_commit_its_code_changed_at() -> None:
     )
 
 
+_MOVED = {
+    "code_namespace": "code-a",
+    "path": "src/a.cpp",
+    "symbol": "DB::Reader::loadRows",
+    "start_line": 12,
+    "end_line": 40,
+    "state": "moved",
+    "was_path": "src/a.cpp",
+    "was_symbol": "DB::Reader::fetchRows",
+}
+_MOVED_NOW = "`DB::Reader::fetchRows` is now `DB::Reader::loadRows` at src/a.cpp:12-40"
+
+
+def test_a_line_whose_code_moved_names_where_it_is_now() -> None:
+    moved = _row("rules/moved", json.dumps("Keep 32."), code_state="moved", code_moved=[_MOVED])
+    edited = _row(
+        "rules/edited",
+        json.dumps("Keep 48."),
+        code_state="changed",
+        code_changed_since="ab" * 20,
+        code_moved=[_MOVED | {"state": "changed"}],
+    )
+    plain = _row("rules/plain", json.dumps("Keep 64."), code_state="moved", code_moved=[])
+    assert _lines([moved, edited, plain])[1:] == [
+        f"- rules/moved (code moved: {_MOVED_NOW}): Keep 32.",
+        "- rules/edited (its code changed since it was written, commit abababababab: check "
+        f"before relying on it; {_MOVED_NOW}): Keep 48.",
+        "- rules/plain: Keep 64.",
+    ]
+
+
+def test_a_moved_note_counts_against_the_token_budget() -> None:
+    hits = [
+        _row(f"rules/r{i}", json.dumps("Keep 32."), code_state="moved", code_moved=[_MOVED])
+        for i in range(8)
+    ]
+    text, tokens, truncated = mff.render_block("src/a.cpp", hits, 100, home="me", now=_NOW)
+    assert truncated and tokens <= 100 and "more; memory.for_file" in text
+
+
+def _moved_row(**over: Any) -> dict[str, Any]:
+    """A link row of memory `id-rules/moved` written against `fetchRows`, now `loadRows`."""
+    from server.memory.store.code_links import LINK_COLS
+
+    was = {"path": "src/a.cpp", "name": "DB::Reader::fetchRows"}
+    row = {
+        "org": "o",
+        "namespace": "code-a",
+        "memory_id": "id-rules/moved",
+        "memory_key": "rules/moved",
+        "agent": "claude-code",
+        "code_namespace": "code-a",
+        "path": "src/a.cpp",
+        "qualified_name": "DB::Reader::loadRows",
+        "start_line": 12,
+        "end_line": 40,
+        "state": "moved",
+        "anchored_path": was["path"],
+        "anchored_name": was["name"],
+        "former": [was],
+    }
+    return LINK_COLS | row | over
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["current", "rewritten", "unreadable"])
+async def test_the_block_and_the_hit_name_moved_code_only_from_current_readable_links(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    from server.memory.app import code_link_reads as app_reads
+    from server.memory.store import code_links as store_links
+    from tests.unit.ch_fake import RecordingCH
+
+    row = _row("rules/moved", json.dumps("Keep 32."), matched_files=[])
+    RecordingCH().on("FROM loom.memory FINAL", [row]).install(
+        monkeypatch, "server.memory.app.for_file"
+    )
+    head = {
+        "mid": "id-rules/moved",
+        "namespace": "code-a",
+        "user_id": "-",
+        "tags": [],
+        "files": [],
+        # the memory was rewritten after the link was made from its earlier text
+        "sha": "s2" if case == "rewritten" else "s1",
+    }
+    link = _moved_row(inputs_hash=app_reads.inputs_hash("s1", [], "code-a", "-"))
+
+    async def for_paths(*a: Any, **k: Any) -> list[dict[str, Any]]:
+        return [link]
+
+    async def heads(org: str, memories: list[Any]) -> list[dict[str, Any]]:
+        return [head]
+
+    async def readable(org: str, nss: set[str]) -> set[str]:
+        return set() if case == "unreadable" else set(nss)
+
+    monkeypatch.setattr(store_links, "for_paths", for_paths)
+    monkeypatch.setattr(store_links, "heads_by_identity", heads)
+    monkeypatch.setattr(app_reads, "readable_namespaces", readable)
+    monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda org, ns: "code-a")
+    request = MemoryForFileInput(
+        org="o", namespace="code-a", path="src/a.cpp", extra_namespaces=["code-a"]
+    )
+    out = await mff.handle_memory_for_file(request)
+    (hit,) = out.hits
+    if case == "current":
+        assert [m.model_dump(exclude_defaults=True) for m in hit.code_moved] == [_MOVED]
+        assert f"- rules/moved (code moved: {_MOVED_NOW}): Keep 32." in out.rendered
+        rows, _ = await mff.listing_rows(request)
+        # the names a code answer matches against its symbols come from the same rows
+        assert rows[0]["code_symbols"] == ["DB::Reader::loadRows"]
+        assert rows[0]["code_moved"][0]["was_symbol"] == "DB::Reader::fetchRows"
+    else:
+        assert (hit.code_state, hit.code_moved) == ("", [])
+        assert "code moved" not in out.rendered
+
+
 def test_the_commit_is_the_first_link_in_the_worst_state_by_path_and_name() -> None:
     links = [
         {"state": "changed", "changed_since": "c2", "path": "b.py", "qualified_name": "f"},

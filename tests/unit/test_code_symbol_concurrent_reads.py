@@ -344,3 +344,36 @@ def test_a_member_whose_lessons_went_unread_keeps_the_others_and_flags_it():
     # the member that was read still serves its lesson; the other may have had some
     assert [lesson["linked_symbols"] for lesson in out["lessons"]] == [["A::x"]]
     assert out["lessons_unread"] is True
+
+
+def test_a_memory_linked_to_two_relocated_members_names_where_each_is_now():
+    from server.code.api.models_symbol import CodeSymbolInput
+    from server.code.app import enrich as code_enrich
+    from server.code.app.symbol import symbol as h
+
+    def now(leaf: str) -> dict[str, Any]:
+        return {
+            "path": "b.py",
+            "symbol": f"b::C::{leaf}",
+            "state": "moved",
+            "was_path": "a.py",
+            "was_symbol": f"a::C::{leaf}",
+        }
+
+    async def lessons_for_symbol(org, ns, *, symbol_name, paths, extra_namespaces):
+        leaf = symbol_name.rsplit("::", 1)[-1]
+        moved = {"code_state": "moved", "code_moved": [now(leaf)]}
+        # `h` is where the memory names it
+        return [LESSON[0] | moved] if leaf != "h" else [dict(LESSON[0])]
+
+    head = [
+        {"qualified_name": f"b::C::{leaf}", "path": "b.py", "symbol_id": leaf}
+        for leaf in ("f", "g", "h")
+    ]
+    plain = CodeSymbolInput(name="C", include_history=False, include_examples=False)
+    with patch.object(code_enrich, "lessons_for_symbol", new=lessons_for_symbol):
+        out = asyncio.run(h._enrichment(None, "o", "n", plain, head, matched_members=True))
+    relocated, unmoved = out["lessons"]
+    assert relocated["linked_symbols"] == ["b::C::f", "b::C::g"]
+    assert relocated["code_moved"] == [now("f"), now("g")]
+    assert (unmoved["linked_symbols"], "code_moved" in unmoved) == (["b::C::h"], False)
