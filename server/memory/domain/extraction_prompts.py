@@ -1978,26 +1978,55 @@ entry is not stored as a memory; do not also emit the rule as a normal fact.
 """
 
 
-# Appended to the extraction base prompt of a coding plugin's session
-# capture. The rules above are written for conversations: their code rule asks
-# for the concrete diff and a `File.cpp:123` location. Under them alone a coding
-# session yields its own edits, which exist only in a working tree, and one
-# line-numbered location per lookup, which the code index answers. A later
-# session reuses what the code is, across definitions.
+# The whole extraction prompt of a coding plugin's session capture. The prompt
+# above is written for conversations: its code rule asks for the concrete diff
+# and a `File.cpp:123` location, and under it a coding session yields its own
+# edits, which exist only in a working tree, and one line-numbered location per
+# lookup, which the code index answers. A later session reuses what the code
+# is, across definitions. Most captures hold nothing to keep, so the prompt is
+# the cost of the call: it carries no conversation rule or example, and its
+# schema only the fields a coding fact uses (the parser defaults the rest).
 CODING_SESSION_ANCHOR = "CODING SESSION — REUSABLE CODEBASE KNOWLEDGE ONLY"
-_CODING_SESSION_PROMPT_BLOCK = f"""\
+_CODING_SESSION_SYSTEM_PROMPT = f"""\
+Role: evidence-bound memory extractor. The messages are one AI coding
+session in a repository. Later sessions in the same repository search
+this memory so that they do not have to read the same code again. Extract
+the durable facts the messages hold and return strict JSON. Expect few
+facts: most sessions hold zero to five.
+
+RECORD WHAT IS ASSERTED. Write each statement as the messages state it,
+even when it contradicts what you believe is true: never correct a value,
+and never label a statement a claim, an error or a belief. Copy names,
+paths, commands, versions and numbers verbatim.
+
+==============================================================
+WHAT THE USER STATES
+==============================================================
+
+Extract what a [user] turn states that holds beyond this session, one
+fact per statement:
+  • a standing rule or convention for the repository or for how work is
+    done in it ("changelog entries only for user-visible changes");
+  • a preference (see the Preference rule under "tags");
+  • a decision: what was chosen, what was rejected, and why;
+  • a fact about the user, their team, their setup, environment,
+    deployment, constraints or plans;
+  • a named reviewer's or maintainer's standing expectations, tied to
+    that person's handle.
+The subject is "User" for a fact about the user, the repository or
+project for a rule about it, and the person's name for a fact about
+someone else. Resolve a relative date ("last week") against
+`observation_date`. What the user asks for or requires for this task
+alone (the request, its scope, how to submit it, what to run or not to
+run) is not a fact, however it is phrased: DO NOT EXTRACT below applies
+to every turn.
+
 ==============================================================
 {CODING_SESSION_ANCHOR}
 ==============================================================
 
-The messages are one AI coding session in a repository. Later sessions in
-the same repository search this memory so that they do not have to read
-the same code again. What the USER states about themselves, their setup,
-their standing rules, preferences and decisions is extracted as above.
-For everything about the code and the work, the rules in this section
-REPLACE "Code / engineering facts", "Assistant-stated facts",
-"Enumerations and lists" and any rule above that captures an assistant
-answer whole. Expect few facts: most sessions hold zero to five.
+Everything about the code and the work is extracted under this section
+alone.
 
 EXTRACT, each as ONE claim that is true of the code and stands alone:
   • how a behaviour is reached: the path from an entry point to the
@@ -2044,8 +2073,60 @@ an empty tuple and added `test_empty_header`."
   `parse_header` in http/parse.py without a None check, so a None from
   `parse_header` crashes request construction."
 
+==============================================================
+EXISTING MEMORIES
+==============================================================
+
+`existing_memories`, when shown, lists facts already remembered. Do not
+extract a fact one of them already states. A fact that updates or refines
+one of them is emitted with that memory's index in `linked_keys`; a fact
+that contradicts one is emitted as stated.
+
+==============================================================
+OUTPUT SCHEMA
+==============================================================
+
+Return exactly one JSON object with one key, "facts", a list of objects:
+
+  "key": short_snake_case naming the SUBJECT and the ATTRIBUTE, never the
+    value (`user_merge_strategy`). A new value for an attribute already
+    keyed reuses its key, never `_new` or `_2`.
+  "value": the fact as one complete sentence that stands alone.
+  "tags": 0-4 lowercase tags. Preference rule: a user preference carries
+    BOTH "preference" and "preference:ATTRIBUTE", ATTRIBUTE being the
+    singular lowercase noun it is about (underscore-joined).
+  "entities": 0-6 lowercase named things: definitions, files, tools, people.
+  "topics": 0-3 lowercase concept phrases of 2-5 words, the idea the fact
+    is about and not one of its entities; [] when there is none.
+  "linked_keys": indices from existing_memories this fact updates or
+    refines (default []).
+  "source_message_indices": REQUIRED on every fact. 1-3 zero-based indices
+    from current_messages ([0:user], [1:assistant], ...) that directly
+    support the fact, never prior_turns.
+  "temporal_anchor": ISO date (YYYY-MM-DD) the fact is about when the
+    messages date it; null for a fact about the code, a rule or a
+    preference.
+  "relations": REQUIRED when the fact has 2+ entities: triples
+    {{"s": subject, "v": verb, "o": object}}, lowercase, the verb 1-3
+    words underscore-joined.
+  "about": "other" when the fact is about a person other than the user;
+    omit otherwise.
+  "forget": true ONLY when the user asks to forget or to stop using
+    something: `key` names the attribute, `value` what to forget,
+    `linked_keys` every existing memory that holds it. Do not also emit
+    the forgotten information.
+
+The example's fact in this schema:
+{{"facts": [{{"key":"request_init_parse_header_none",
+"value":"`Request.__init__` in http/request.py indexes the result of `parse_header` in http/parse.py without a None check, so a None from `parse_header` crashes request construction.",
+"tags":["code","pitfall"],
+"entities":["request.__init__","parse_header","http/request.py","http/parse.py"],
+"relations":[{{"s":"request.__init__","v":"indexes_result_of","o":"parse_header"}}],
+"source_message_indices":[0]}}]}}
+
 {{"facts": []}} is the right answer for a session that established nothing
 reusable about the code and in which the user stated nothing durable.
+No markdown. No commentary. Only the JSON object.
 """
 
 _JUDGE_SYSTEM_PROMPT = """You judge extracted memorable facts against
