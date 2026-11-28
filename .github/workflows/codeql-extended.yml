@@ -1,0 +1,38 @@
+name: CodeQL extended security
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/codeql-extended.yml
+      - .github/workflows/codeql-extended-scan.yml
+  schedule:
+    - cron: "37 4 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scan_pr:
+    name: Scan the pull request
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/codeql-extended-scan.yml
+    with:
+      publish: false
+
+  publish:
+    name: Publish default-branch findings
+    if: github.repository == 'ClickHouse/loom' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      security-events: write # Upload default-branch SARIF to GitHub Security.
+    uses: ./.github/workflows/codeql-extended-scan.yml
+    with:
+      publish: true
