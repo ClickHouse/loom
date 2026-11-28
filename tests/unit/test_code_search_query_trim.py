@@ -377,9 +377,12 @@ def test_the_directories_of_a_file_path_are_not_counted() -> None:
     assert said["formsets"] == 3 and said["options"] == 2 and said["py"] == 7
     # a word outside the paths is counted as before
     assert said["admin"] == 2 and said["file"] == said["line"] == 7
-    # relative with an extension, after a drive, under a home or the working directory
+    # relative with an extension, at the end of a sentence, after a drive, under a home
+    # or the working directory
     for path in (
         "db/models/query.py:12",
+        "db/models/query.py.",
+        "db/models/query.py...",
         r"C:\db\models\query.py",
         "~/db/models/query",
         "./db/models/query",
@@ -393,6 +396,9 @@ def test_the_directories_of_a_file_path_are_not_counted() -> None:
     assert qt.term_counts("/opt/in/a.py /opt/in/b.py")["in"] == 0
     # words set side by side, a fraction and a date are not a path
     said = qt.term_counts("the request/response cycle, request/response again, 1/8 on 2024/01/02")
+    assert said["request"] == said["response"] == 2
+    # nor are they at the end of a sentence
+    said = qt.term_counts("It sends a request/response. It logs a request/response.")
     assert said["request"] == said["response"] == 2
     # the stated limit: a route written like a path is read as one
     said = qt.term_counts("/admin/login/ redirects to /admin/login/")

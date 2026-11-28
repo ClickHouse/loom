@@ -243,8 +243,9 @@ def written_as_code(text: str, start: int, end: int) -> bool:
 def is_file_path(directories: str, name: str) -> bool:
     """Whether names joined by `/` or `\\` are a file path and not words set side by side
     (`request/response`, `and/or`, `1/8`): it starts at a root (`/usr/lib`, `./manage.py`,
-    `~/src`, `\\Users` after a drive) or ends in a file name with an extension."""
-    return directories[0] in "/\\~." or bool(_EXTENSION_RE.search(name))
+    `~/src`, `\\Users` after a drive) or ends in a file name with an extension. A full
+    stop after the name ends the sentence, not the name (`in db/models/query.py.`)."""
+    return directories[0] in "/\\~." or bool(_EXTENSION_RE.search(name.rstrip(".")))
 
 
 def term_counts(text: str) -> dict[str, int]:
