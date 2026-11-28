@@ -121,7 +121,7 @@ async def test_first_run_is_full_and_the_delta_is_applied(monkeypatch, tmp_path:
     monkeypatch.setattr(w, "_run_harness", fake_harness)
     applied: list[str] = []
 
-    async def fake_apply(repo, org, ns, delta):
+    async def fake_apply(repo, org, ns, delta, **_):
         applied.append(delta.commit)
         from server.code.app.index.scip_delta import ScipApplyStats
 
@@ -189,7 +189,7 @@ async def test_a_refused_delta_holds_the_tier_until_the_cap_is_raised(monkeypatc
         files = [{"path": "pkg/a.py", "symbols": [], "edges": []}]
         delta_path.write_text(json.dumps({"delta_version": 1, "commit": head, "files": files}))
 
-    async def fake_apply(repo, org, ns, delta):
+    async def fake_apply(repo, org, ns, delta, **_):
         from server.code.app.index.scip_delta import ScipApplyStats
 
         return ScipApplyStats(files=1)
@@ -244,7 +244,7 @@ def _held_tier(monkeypatch, tmp_path: Path, state: dict[str, str]) -> tuple[Asyn
         files = [{"path": f"pkg/m{i}.py", "symbols": [], "edges": []} for i in range(n)]
         delta_path.write_text(json.dumps({"delta_version": 1, "commit": head, "files": files}))
 
-    async def fake_apply(repo, org, ns, delta):
+    async def fake_apply(repo, org, ns, delta, **_):
         from server.code.app.index.scip_delta import ScipApplyStats
 
         return ScipApplyStats(files=0)

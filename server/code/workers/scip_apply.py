@@ -47,6 +47,15 @@ def watermark_key_for(producer: str) -> str:
     return "scip_commit"
 
 
+def tier_for(producer: str) -> str:
+    """The compiler tier an upload's producer applies for: the one whose watermark it
+    moves (`watermark_key_for`)."""
+    from server.code.domain.index.compiler_tiers import TIERS
+
+    key = watermark_key_for(producer)
+    return next(t.producer for t in TIERS if t.watermark_key == key)
+
+
 async def run_pass() -> CodeScipApplyResult:
     result = CodeScipApplyResult()
     with record_pass("code_scip_apply") as rec:
@@ -91,7 +100,9 @@ async def _run(result: CodeScipApplyResult) -> None:
                 raise ValidationError(f"the batch is not a SCIP delta (at {where})") from e
             if delta.delta_version != 1:
                 raise ValidationError(f"unsupported delta_version {delta.delta_version}")
-            stats = await apply_delta(repo, org, ns, delta)
+            stats = await apply_delta(
+                repo, org, ns, delta, tier=tier_for(str(batch.get("producer") or ""))
+            )
             await repo.upsert_scip_batch(
                 org,
                 ns,

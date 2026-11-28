@@ -57,7 +57,7 @@ def _patch(monkeypatch, repo, *, apply=None) -> None:
         classmethod(lambda cls, payload: SimpleNamespace(delta_version=1)),
     )
 
-    async def fake_apply(repo_, org, ns, delta):
+    async def fake_apply(repo_, org, ns, delta, **_):
         return SimpleNamespace(files=3, symbols_new=2, edges_new=1)
 
     monkeypatch.setattr(sd, "apply_delta", apply or fake_apply)
@@ -80,7 +80,7 @@ async def test_a_failed_failure_mark_does_not_stop_the_next_batch(monkeypatch):
     repo = _Repo([_batch("ns-a", "bad"), _batch("ns-b", "good")])
     repo.fail_mark = {"bad"}
 
-    async def apply(repo_, org, ns, delta):
+    async def apply(repo_, org, ns, delta, **_):
         if ns == "ns-a":
             raise ValueError("corrupt delta")
         return SimpleNamespace(files=1, symbols_new=0, edges_new=0)

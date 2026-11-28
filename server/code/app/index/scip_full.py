@@ -189,7 +189,7 @@ async def _index_and_apply(
             await asyncio.to_thread(_keep, delta_path, keep_delta)
         delta = await asyncio.to_thread(open_delta, delta_path)
         # applied while the file is there: the rounds are read from it
-        stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
+        stats = await apply_delta(repo, cfg.org, cfg.namespace, delta, tier="clang")
     check_held()
     await mark_done(repo, cfg.org, cfg.namespace, target)
     return stats, out

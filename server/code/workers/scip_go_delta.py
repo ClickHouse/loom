@@ -265,7 +265,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         paths = await asyncio.to_thread(_deltas, out_dir, len(expected))
         for path in paths:
             delta = await open_tier_delta(repo, cfg, WATERMARK, scip_commit, target, path, shape)
-            stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
+            stats = await apply_delta(repo, cfg.org, cfg.namespace, delta, tier=PRODUCER)
             del delta  # free this module's paths before the next one is read
             result.modules_indexed += 1
             logger.info(

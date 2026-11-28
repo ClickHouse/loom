@@ -146,7 +146,7 @@ async def test_first_run_is_full_and_the_delta_is_applied(
     monkeypatch.setattr(w, "_run_harness", fake_harness)
     applied: list[str] = []
 
-    async def fake_apply(repo, org, ns, delta):
+    async def fake_apply(repo, org, ns, delta, **_):
         applied.append(delta.commit)
         from server.code.app.index.scip_delta import ScipApplyStats
 
@@ -267,8 +267,8 @@ async def test_a_full_run_keeps_a_skipped_documents_rows_and_marks_the_file_stal
     monkeypatch, tmp_path: Path, checkout: Path
 ):
     """The converter skipped web/bad.ts: the full run retires web/gone.ts, which the new
-    index no longer has, keeps web/bad.ts's rows and puts the file in the TypeScript
-    tier's stale row; the watermark moves."""
+    index no longer has, keeps web/bad.ts's rows and marks the file stale under the
+    TypeScript tier; the watermark moves."""
     (checkout / "node_modules").mkdir(parents=True)
     bare = tmp_path / "repo.git"
     bare.mkdir()
@@ -300,13 +300,13 @@ async def test_a_full_run_keeps_a_skipped_documents_rows_and_marks_the_file_stal
     monkeypatch.setattr("server.code.app.index.scip_delta._apply_files", fake_apply_files)
     repo = _repo("b" * 40, "")
     repo.live_scip_paths.return_value = {"web/a.ts", "web/bad.ts", "web/gone.ts"}
-    repo.scip_stale_marks.return_value = {}
+    repo.scip_stale_marks.return_value = set()
     p1, p2 = _patched(repo, [_Cfg()])
     with p1, p2:
         res = await w.run_pass()
     assert res.deltas_applied == 1 and not res.errors, res.errors
     assert applied == [("web/a.ts", False), ("web/gone.ts", True)]
     repo.set_states.assert_awaited_once_with(
-        "org", "code-ts", {"scip_stale:typescript": '["web/bad.ts"]'}
+        "org", "code-ts", {"scip_stale:typescript:web/bad.ts": "b" * 40}
     )
     repo.set_state.assert_awaited_with("org", "code-ts", "scip_commit_ts", "b" * 40)

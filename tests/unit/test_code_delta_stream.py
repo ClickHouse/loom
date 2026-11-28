@@ -172,9 +172,6 @@ class _Repo:
     async def set_state(self, org: str, ns: str, key: str, value: str, **_: Any) -> None:
         self.state[key] = value
 
-    async def scip_stale_marks(self, org: str, ns: str) -> dict[str, set[str]]:
-        return {}
-
 
 @pytest.mark.asyncio
 async def test_the_apply_takes_the_file_a_round_at_a_time(

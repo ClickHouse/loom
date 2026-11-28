@@ -567,9 +567,6 @@ class _IndexRepo:
     async def set_state(self, org, ns, key, value, detail="") -> None:
         self.states.append(key)
 
-    async def scip_stale_marks(self, org: str, ns: str) -> dict[str, set[str]]:
-        return {}
-
 
 def _delta() -> Any:
     from server.code.app.index.scip_delta import ScipDelta

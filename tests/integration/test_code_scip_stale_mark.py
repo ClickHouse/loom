@@ -1,6 +1,6 @@
 """A file whose compiler-tier document a delta skipped reads as stale, although the
 tier's watermark moved past the file's last change, until a later delta applies it. The
-tier's stale row stays out of the namespace's state reads."""
+marks stay out of the whole-namespace state reads."""
 
 from __future__ import annotations
 
@@ -30,14 +30,22 @@ async def test_a_skipped_document_is_stale_until_a_delta_applies_it(ch_client: A
     await repo.set_state(org, ns, "scip_commit", "a" * 40)  # the tier ran after the change
     assert await repo.scip_stale_paths(org, ns, paths) == set()
 
-    await apply_delta(repo, org, ns, ScipDelta(commit="b" * 40, skipped_files=["src/bad.cpp"]))
+    skip = ScipDelta(commit="b" * 40, skipped_files=["src/bad.cpp"])
+    await apply_delta(repo, org, ns, skip, tier="clang")
     await repo.set_state(org, ns, "scip_commit", "b" * 40)
     assert await repo.scip_stale_paths(org, ns, paths) == {"src/bad.cpp"}
-    assert await repo.scip_stale_marks(org, ns) == {"scip_stale:clang": {"src/bad.cpp"}}
-    assert "scip_stale:clang" not in await repo.all_state(org, ns)
+    assert await repo.scip_stale_marks(org, ns, "clang") == {"src/bad.cpp"}
+    assert await repo.scip_stale_marks(org, ns, "python") == set()
+    assert not any(k.startswith("scip_stale:") for k in await repo.all_state(org, ns))
+    many = await repo.all_state_many([(org, ns)])
+    assert not any(k.startswith("scip_stale:") for k in many[(org, ns)])
 
     await apply_delta(
-        repo, org, ns, ScipDelta(commit="c" * 40, files=[ScipFile(path="src/bad.cpp")])
+        repo,
+        org,
+        ns,
+        ScipDelta(commit="c" * 40, files=[ScipFile(path="src/bad.cpp")]),
+        tier="clang",
     )
     assert await repo.scip_stale_paths(org, ns, paths) == set()
-    assert await repo.scip_stale_marks(org, ns) == {"scip_stale:clang": set()}
+    assert await repo.scip_stale_marks(org, ns, "clang") == set()

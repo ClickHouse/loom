@@ -474,9 +474,6 @@ class _ApplyRepo:
     async def set_state(self, org, ns, key, value, detail=""):
         self.state.append((key, value, detail))
 
-    async def scip_stale_marks(self, org: str, ns: str) -> dict[str, set[str]]:
-        return {}
-
 
 @pytest.mark.asyncio
 async def test_apply_carries_confidence_and_records_the_feature() -> None:
