@@ -20,7 +20,7 @@ from server.core import leases
 from server.core.errors import PreconditionFailedError
 from server.core.leases import LeaseBusy, LeaseLost
 from server.core.repo_base import _CHClient, _default_client
-from server.observability import degradations
+from server.observability import degradations, provider_health
 
 
 def lock_name(
@@ -109,6 +109,7 @@ class KeyWriteLocks:
             ) from e
         if lease is None:
             raise _busy()
+        provider_health.record_success("memory_key_lock")
         return lease
 
     @asynccontextmanager
