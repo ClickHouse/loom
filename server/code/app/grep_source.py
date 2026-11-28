@@ -11,6 +11,14 @@ from server.code.api.models_read import CodeReadRange
 from server.code.app.read import fill_verified_ranges
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.deadline import Budget
+from server.code.domain.definition_header import (
+    DEFINITION_HEADER_SCAN_LINES,
+    DOCSTRING_MAX_LINES,
+    PYTHON_SUFFIXES,
+    DefinitionHeader,
+    python_definition_header,
+    shown_header_lines,
+)
 from server.code.domain.symbol_body import complete_source_span, retained_source_lines
 from server.code.store.index import CodeRepo
 
@@ -20,6 +28,11 @@ logger = logging.getLogger(__name__)
 ContextSource = dict[str, dict[str, str | None]]
 CompleteContexts = frozenset[tuple[str, int]]
 GREP_MATCH_TEXT_CHARS = 300
+# Signature and docstring lines one page adds beyond its match windows: four
+# definitions at the docstring cap, about eight of typical size.
+GREP_HEADER_PAGE_LINES = 48
+# A shorter run of docstring lines is shown: its mark and the window it splits cost more.
+_DOCSTRING_CUT_MIN_LINES = 3
 
 
 def match_revisions(
@@ -131,6 +144,162 @@ def _wanted_lines(
     return wanted
 
 
+def _python_definitions(matches: list[dict[str, Any]]) -> dict[tuple[str, int], tuple[int, int]]:
+    """Each Python definition holding a hit, in match order, keyed by (path, first line).
+
+    The value is the last line read for its header and its first hit's offset from the
+    first line.
+    """
+    spans: dict[tuple[str, int], tuple[int, int]] = {}
+    for hit in matches:
+        path, start, end = str(hit["path"]), hit.get("scope_start_line"), hit.get("scope_end_line")
+        if (
+            hit.get("scope")
+            and path.endswith(PYTHON_SUFFIXES)
+            and isinstance(start, int)
+            and isinstance(end, int)
+            and 0 < start <= int(hit["line"]) <= end
+        ):
+            key, offset = (path, start), int(hit["line"]) - start
+            last = min(end, start + DEFINITION_HEADER_SCAN_LINES - 1)
+            spans[key] = last, min(offset, spans.get(key, (last, offset))[1])
+    return spans
+
+
+def _header_lines(source: ContextSource, path: str, start: int, last: int) -> list[str]:
+    """A definition's verified lines from its first, up to one that is not held."""
+    retained = source.get(path, {})
+    lines: list[str] = []
+    for line in range(start, last + 1):
+        text = retained.get(str(line))
+        if text is None:
+            break
+        lines.append(text)
+    return lines
+
+
+def _indent(text: str) -> int:
+    return len(text) - len(text.lstrip())
+
+
+def _hit_header(lines: list[str], hit: int, scan: int) -> DefinitionHeader | None:
+    """The header a hit sits under, when a definition's first lines show that it does.
+
+    `hit` is the hit's offset in the definition and `scan` the lines a whole read holds.
+    Definitions that share a name, as a property's getter and setter do, can share one
+    span: the lines must run to the hit and stay indented under the first one.
+    """
+    header = python_definition_header(lines)
+    if header is None or len(lines) < min(hit, scan):
+        return None
+    body = (
+        text
+        for text in lines[header.end : hit]
+        if text.strip() and not text.lstrip().startswith("#")
+    )
+    return header if all(_indent(text) > _indent(lines[0]) for text in body) else None
+
+
+def _header_layout(
+    header: DefinitionHeader, start: int, read: int, shown: set[int]
+) -> tuple[set[int], list[dict[str, int]]]:
+    """The lines a header adds to a page showing `shown`, and the docstring runs left out.
+
+    `read` counts the lines read from `start`. A run whose end was not read has no
+    `end_line`.
+    """
+    head, tail = shown_header_lines(header)
+    added = {start + offset for offset in (*head, *tail)} - shown
+    if not header.closed and header.end == header.signature:
+        return added, []  # the lines stop at the signature: no docstring is known
+    cuts: list[dict[str, int]] = []
+    line, stop = start + head.stop, start + (tail.start if header.closed else read)
+    while line < stop:
+        if line in shown:
+            line += 1
+            continue
+        first = line
+        while line < stop and line not in shown:
+            line += 1
+        if line - first < _DOCSTRING_CUT_MIN_LINES and (header.closed or line < stop):
+            added.update(range(first, line))
+        else:
+            cuts.append({"start_line": first, "end_line": line - 1})
+    if not header.closed:
+        # The docstring's end was not read: the last run has no known end.
+        if cuts and cuts[-1]["end_line"] == stop - 1:
+            del cuts[-1]["end_line"]
+        else:
+            cuts.append({"start_line": stop})
+    return added, cuts
+
+
+def _unread_headers(
+    source: ContextSource, matches: list[dict[str, Any]], wanted: dict[str, set[int]]
+) -> dict[str, set[int]]:
+    """Lines to read, beyond `wanted`, for the headers this page can still show.
+
+    Definitions are taken in match order against the page's line budget: a header the
+    source holds costs the lines it adds, and one to be read a docstring at the cap.
+    """
+    budget = GREP_HEADER_PAGE_LINES
+    unread: dict[str, set[int]] = {}
+    for (path, start), (last, hit) in _python_definitions(matches).items():
+        lines = _header_lines(source, path, start, last)
+        scan = last - start + 1
+        header = _hit_header(lines, hit, scan)
+        shown = wanted.get(path, set())
+        if header is not None and (header.closed or len(lines) == scan):
+            cost = len(_header_layout(header, start, len(lines), shown)[0])
+            if cost <= budget:
+                budget -= cost
+        elif len(lines) < scan and budget > 0:
+            budget -= DOCSTRING_MAX_LINES
+            unread.setdefault(path, set()).update(set(range(start, last + 1)) - shown)
+    return unread
+
+
+def _show_headers(
+    source: ContextSource, matches: list[dict[str, Any]], wanted: dict[str, set[int]]
+) -> dict[tuple[str, int], dict[str, int]]:
+    """Add each definition's signature and docstring to the page within its line budget.
+
+    A header whose lines the source does not hold is not shown. Returns the docstring
+    lines left out, keyed by the path and line shown before them.
+    """
+    cuts: dict[tuple[str, int], dict[str, int]] = {}
+    budget = GREP_HEADER_PAGE_LINES
+    for (path, start), (last, hit) in _python_definitions(matches).items():
+        lines = _header_lines(source, path, start, last)
+        header = _hit_header(lines, hit, last - start + 1)
+        if header is None:
+            continue
+        shown = wanted.setdefault(path, set())
+        added, left_out = _header_layout(header, start, len(lines), shown)
+        if len(added) > budget:
+            continue
+        budget -= len(added)
+        shown |= added
+        for cut in left_out:
+            cuts[path, cut["start_line"] - 1] = cut
+    return cuts
+
+
+def match_window_source(
+    source: ContextSource,
+    matches: list[dict[str, Any]],
+    radius: int,
+    *,
+    complete_contexts: CompleteContexts = frozenset(),
+) -> ContextSource:
+    """The lines of `source` inside the match windows of `matches`."""
+    wanted = _wanted_lines(matches, radius, complete_contexts=complete_contexts)
+    return {
+        path: {key: text for key, text in lines.items() if int(key) in wanted.get(path, ())}
+        for path, lines in source.items()
+    }
+
+
 def collect_contexts(
     chunks: list[dict[str, Any]],
     matches: list[dict[str, Any]],
@@ -139,9 +308,15 @@ def collect_contexts(
     *,
     match_commits: dict[tuple[str, int], str],
     complete_contexts: CompleteContexts = frozenset(),
+    header_hits: list[dict[str, Any]] | None = None,
 ) -> ContextSource:
-    """Keep context at each path's verified match revision, with omissions marked."""
+    """Keep context at each path's verified match revision, with omissions marked.
+
+    `header_hits` names the served hits whose definitions also keep their first lines.
+    """
     wanted = _wanted_lines(matches, radius, complete_contexts=complete_contexts)
+    for (path, start), (last, _) in _python_definitions(header_hits or []).items():
+        wanted.setdefault(path, set()).update(range(start, last + 1))
     revisions = match_revisions(matches, match_commits)
     by_path: ContextSource = {
         path: {str(line): None for line in lines}
@@ -183,11 +358,17 @@ def page_contexts(
     radius: int,
     *,
     complete_contexts: CompleteContexts = frozenset(),
+    headers: bool = False,
 ) -> dict[str, Any]:
-    """Render only this page's windows from retained lines that agree."""
+    """Render only this page's windows from retained lines that agree.
+
+    With `headers`, a window also covers the signature and docstring of each Python
+    definition a hit sits in, and names the docstring lines it leaves out.
+    """
     wanted = _wanted_lines(matches, radius, complete_contexts=complete_contexts, source=source)
+    cuts = _show_headers(source, matches, wanted) if headers else {}
     partial = False
-    contexts = []
+    contexts: list[dict[str, Any]] = []
     for path, lines in wanted.items():
         retained = source.get(path, {})
         window: list[str] = []
@@ -216,6 +397,9 @@ def page_contexts(
             contexts.append(
                 {"path": path, "start_line": start, "end_line": previous, "text": "".join(window)}
             )
+    for context in contexts:
+        if cut := cuts.get((context["path"], context["end_line"])):
+            context["docstring_elided"] = cut
     return {"contexts": contexts, "contexts_partial": partial}
 
 
@@ -267,6 +451,7 @@ async def recover_page_context(
     *,
     max_source_bytes: int,
     complete_contexts: CompleteContexts = frozenset(),
+    headers: bool = False,
     budget: Budget | None = None,
 ) -> None:
     """Fill gaps around served hits only at revisions agreed by the full pool."""
@@ -278,6 +463,15 @@ async def recover_page_context(
         include_incomplete_preferred=True,
     )
     missing = _missing_context_ranges(source, wanted)
+    if headers:
+        # Header lines are read after the match windows, from the bytes those leave. A
+        # caller's deadline pays for match windows: it reads no file for a header alone.
+        window_paths = {result.path for result in missing}
+        missing += [
+            result
+            for result in _missing_context_ranges(source, _unread_headers(source, matches, wanted))
+            if budget is None or result.path in window_paths
+        ]
     if not missing:
         return
     readable = [result for result in missing if result.path in revisions]

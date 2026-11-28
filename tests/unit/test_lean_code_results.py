@@ -15,6 +15,12 @@ from server.settings import settings
 from server.transport import mcp_tools
 from server.transport.code_lean import lean_code
 
+_READ = "For the full source, call loom_code_read"
+_READ_CUT = (
+    "The excerpts leave out signature or docstring lines of the definitions they sit in. "
+    "Read a definition in full before editing it: call loom_code_read"
+)
+
 
 def test_symbol_drops_only_descriptions_repeated_in_the_returned_body() -> None:
     body = 'def f():\n    """Compute the total."""\n    return 1\n'
@@ -492,7 +498,7 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
     }
     suggestion = result.pop("next")
     label, _, params = suggestion.partition(" with ")
-    assert label == "For the full source, call loom_code_read"
+    assert label == _READ_CUT  # no excerpt shows src/support.py
     assert json.loads(params) == {
         "ranges": ["src/a.py:5-16", "src/support.py:5-16"],
         **options,
@@ -500,7 +506,7 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
     with_read = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
     assert "edit_context_next" not in with_read
     label, _, params = with_read.pop("next").partition(" with ")
-    assert label == "For the full source, call loom_code_read"
+    assert label == _READ_CUT
     arguments_from_hint = json.loads(params)
     assert arguments_from_hint == {
         "ranges": [
@@ -565,8 +571,42 @@ def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lo
         )
         assert "edit_context_next" not in result
         label, _, params = result["next"].partition(" with ")
-        assert label == "For the full source, call loom_code_read"
+        # the one excerpt shows the first line of src/a.py and of no other module
+        assert label == (_READ if len(matches) == 1 else _READ_CUT)
         assert json.loads(params) == {"ranges": [f"{hit['path']}:1-12" for hit in matches]}
+
+
+def test_grep_next_step_says_when_excerpts_omit_a_definitions_contract() -> None:
+    hit = {
+        "path": "src/flask/blueprints.py",
+        "line": 236,
+        "scope": "src.flask.blueprints::Blueprint::record_once",
+        "scope_start_line": 228,
+        "scope_end_line": 239,
+    }
+    arguments = {"include_body": False, "context_lines": 3}
+
+    def lead(contexts: list[dict[str, object]]) -> str:
+        windows = [{"path": hit["path"], "text": "source\n", **window} for window in contexts]
+        payload = {"matches": [hit], "contexts": windows}
+        result = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
+        label, _, params = result["next"].partition(" with ")
+        assert json.loads(params) == {"ranges": ["src/flask/blueprints.py:228-239"]}
+        return label
+
+    # centred on the hit: the signature and the once-only docstring are not shown
+    assert lead([{"start_line": 233, "end_line": 239}]) == _READ_CUT
+    # the header is in the excerpt
+    assert lead([{"start_line": 228, "end_line": 233}, {"start_line": 235, "end_line": 239}]) == (
+        _READ
+    )
+    # the header is there, with docstring lines left out
+    cut = {"start_line": 228, "end_line": 230, "docstring_elided": {"start_line": 231}}
+    assert lead([cut, {"start_line": 235, "end_line": 239}]) == _READ_CUT
+    # an omission in another definition says nothing about this one
+    other = {"start_line": 100, "end_line": 110, "docstring_elided": {"start_line": 111}}
+    assert lead([other, {"start_line": 228, "end_line": 233}]) == _READ
+    assert _READ_CUT.count(" with") == 0, "the arguments follow the first ' with '"
 
 
 def test_grep_offers_scoped_reads_for_related_only_evidence() -> None:

@@ -44,11 +44,6 @@ def calibrate_retrieval(
     # `abstain`. 0.35 is the memory plane's cut-off; the code plane passes
     # its own setting.
     confidence_abstain_below: float = 0.35,
-    # The confidences from which the risk reads "medium" and "low". These are
-    # the memory plane's; the code plane passes its own, because code
-    # embeddings score lower cosines for an equally right hit.
-    medium_risk_from: float = 0.55,
-    low_risk_from: float = 0.75,
 ) -> RetrievalCalibration:
     """Return calibrated confidence and risk label for a search result set."""
 
@@ -92,9 +87,9 @@ def calibrate_retrieval(
     confidence = max(0.0, min(score, 1.0))
     if top_similarity < abstain_threshold or confidence < confidence_abstain_below:
         risk = "abstain"
-    elif confidence < medium_risk_from:
+    elif confidence < 0.55:
         risk = "high"
-    elif confidence < low_risk_from:
+    elif confidence < 0.75:
         risk = "medium"
     else:
         risk = "low"

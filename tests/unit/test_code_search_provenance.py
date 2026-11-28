@@ -249,6 +249,195 @@ def test_a_requested_lexical_only_run_does_not_abstain_on_the_similarity_stand_i
     # at noise_floor + 0.1 and the old threshold rule applies
     degraded = _search(_Repo(fuzzy=True), None, abstain_threshold=0.45, noise_floor=0.22)
     assert degraded.abstain and degraded.abstain_code == "below_threshold"
+    assert degraded.retrieval_risk == "abstain"
+
+
+# ---- the confidence: the vector leg's best cosine on the calibrated scale ------
+
+
+class _CosineRepo(_Repo):
+    """The vector leg returns `rows` as (chunk, cosine), best first; the lexical pool
+    stays [a, b]."""
+
+    def __init__(self, *rows: tuple[str, float], fuzzy: bool = False) -> None:
+        super().__init__(fuzzy=fuzzy)
+        self.rows = rows
+
+    async def vector_search_chunks(self, *a, **k):
+        self.calls.append("vector")
+        return [_vec(cid, 1.0 - cosine) for cid, cosine in self.rows]
+
+
+def _agreeing(cosine: float, **kw: Any) -> _CosineRepo:
+    # the vector leg's best row is the lexical leg's first: the legs agree
+    return _CosineRepo(("a", cosine), ("c", 0.1), **kw)
+
+
+def _calibrated(cosine: float) -> tuple[float, str, str]:
+    # the scale under test: abstain threshold 0.30, confident cosine 0.62, ramp from 0.46
+    res = _search(_agreeing(cosine), _Embedder())
+    return res.retrieval_confidence, res.retrieval_risk, res.abstain_code
+
+
+def test_confidence_is_the_vector_legs_best_cosine_on_the_calibrated_scale() -> None:
+    assert _calibrated(0.9) == (1.0, "low", "")
+    assert _calibrated(0.62) == (1.0, "low", "")
+    assert _calibrated(0.54) == (0.5, "medium", "")
+    # under the middle of the range the confidence is 0 and the band high. The scale
+    # never abstains: only the cosine under the abstain threshold does here
+    assert _calibrated(0.42) == (0.0, "high", "")
+    assert _calibrated(0.2) == (0.0, "abstain", "below_threshold")
+    res = _search(_agreeing(0.54), _Embedder())
+    assert res.calibration_explanation == (
+        "best_cosine=0.54, abstain_threshold=0.30, confident_similarity=0.62"
+    )
+
+
+def test_the_scale_is_the_callers_calibration() -> None:
+    # an embedder that scores unrelated text 0.7: the cosine that read 1.0 above is noise
+    res = _search(_agreeing(0.72), _Embedder(), abstain_threshold=0.64, confident_similarity=0.8)
+    assert (res.retrieval_confidence, res.retrieval_risk, res.abstain) == (0.0, "high", False)
+
+
+def test_the_confidence_reads_the_vector_legs_best_row_whatever_the_fusion_puts_first() -> None:
+    # `c` is the vector leg's best row (0.9); `a` is in both legs, leads the fusion and
+    # is the row abstention and `top_similarity` read (0.8)
+    res = _search(_Repo(), _Embedder(), abstain_threshold=0.5, confident_similarity=0.9)
+    assert res.top_similarity == 0.8
+    assert res.retrieval_confidence == 1.0
+    assert res.calibration_explanation.startswith("best_cosine=0.90,")
+
+
+def test_no_other_route_moves_the_confidence() -> None:
+    # the lexical leg returning the same unit, a fuzzy-symbol hit and a single-leg run
+    # change `route_agreement`, never the confidence
+    hybrid = _search(_agreeing(0.54), _Embedder())
+    fuzzy = _search(_agreeing(0.54, fuzzy=True), _Embedder())
+    vector = _search(_agreeing(0.54), _Embedder(), legs="vector")
+    assert (hybrid.route_agreement, fuzzy.route_agreement, vector.route_agreement) == (
+        0.667,
+        1.0,
+        0.5,
+    )
+    assert hybrid.retrieval_confidence == fuzzy.retrieval_confidence == 0.5
+    assert vector.retrieval_confidence == 0.5
+
+
+def test_abstention_is_decided_on_the_fused_list_not_on_the_confidence() -> None:
+    # an embedder with a narrow scale: abstain threshold 0.30, confident cosine 0.38.
+    # Both runs have a best cosine of 0.40, so both read confidence 1.0
+    scale = dict(abstain_threshold=0.30, confident_similarity=0.38)
+    # the legs share no row and the two best vector rows tie: the route-aware score of
+    # the fused list is under the cut-off, as it was before the confidence changed
+    weak = _search(_CosineRepo(("c", 0.40), ("d", 0.40)), _Embedder(), **scale)
+    assert weak.abstain and weak.abstain_code == "low_calibrated_confidence"
+    assert (weak.retrieval_confidence, weak.retrieval_risk) == (1.0, "abstain")
+    assert "top_similarity=0.40, margin=0.00, route_agreement=0.33" in weak.abstain_reason
+    # the legs agree on the best row: the same cosine is not an abstain
+    agreed = _search(_agreeing(0.40), _Embedder(), **scale)
+    assert not agreed.abstain
+    assert (agreed.retrieval_confidence, agreed.retrieval_risk) == (1.0, "low")
+    # the confidence at 0 does not abstain a result the fused list stands behind
+    served = _search(_agreeing(0.40), _Embedder())
+    assert not served.abstain
+    assert (served.retrieval_confidence, served.retrieval_risk) == (0.0, "high")
+
+
+def test_a_run_without_a_cosine_reads_medium() -> None:
+    # a vector leg the request skipped, a deployment with no embedder, or a leg that ran
+    # and returned no row: no cosine to place on the scale, so the result reads the
+    # middle of it and never low risk
+    class _NoVectorRows(_Repo):
+        async def vector_search_chunks(self, *a, **k):
+            return []
+
+    skipped = _search(_Repo(fuzzy=True), _Embedder(), legs="lexical")
+    no_embedder = _search(_Repo(fuzzy=True), None)
+    empty_leg = _search(_NoVectorRows(fuzzy=True), _Embedder())
+    for res in (skipped, no_embedder, empty_leg):
+        assert not res.abstain and res.abstain_code == ""
+        assert (res.retrieval_confidence, res.retrieval_risk) == (0.5, "medium")
+        assert res.top_similarity == 0.0, "the stand-in is not reported as a cosine"
+        assert res.calibration_explanation == "no vector row, best cosine unknown"
+
+
+@pytest.mark.parametrize("confident", [0.5, 0.46])
+def test_a_scale_with_no_range_never_reads_low(confident: float) -> None:
+    # the confident cosine at the abstain threshold, then under it (a calibration whose
+    # question-to-answer cosines fall into its distractor range): every served cosine
+    # is at or over both, so it reads the middle of the scale, not 1.0 and low risk
+    for cosine in (0.55, 0.9):
+        res = _search(
+            _agreeing(cosine), _Embedder(), abstain_threshold=0.5, confident_similarity=confident
+        )
+        assert not res.abstain
+        assert (res.retrieval_confidence, res.retrieval_risk) == (0.5, "medium")
+        assert res.calibration_explanation == (
+            f"best_cosine={cosine:.2f}, abstain_threshold=0.50, "
+            f"confident_similarity={confident:.2f}, "
+            "no scale: confident_similarity is not above abstain_threshold"
+        )
+
+
+def test_the_derived_calibration_can_leave_no_range() -> None:
+    from server.memory.app.embedder_calibration import derive_thresholds
+
+    # question-to-answer cosines (0.50) just over the distractors' (0.48): the abstain
+    # threshold is derived 0.07 over the distractors, the confident cosine is not
+    derived = derive_thresholds([0.8] * 20, [0.50] * 20, [0.48] * 20, embedder_model="m")
+    assert derived.rerank_skip_above < derived.abstain_threshold
+    res = _search(
+        _agreeing(0.9),
+        _Embedder(),
+        abstain_threshold=derived.abstain_threshold,
+        noise_floor=derived.noise_floor,
+        confident_similarity=derived.rerank_skip_above,
+    )
+    assert not res.abstain
+    assert (res.retrieval_confidence, res.retrieval_risk) == (0.5, "medium")
+
+
+def test_the_namespace_calibration_sets_the_scale(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app import embedder_calibration as ec
+
+    async def namespace_calibration(org: str, ns: str) -> Any:
+        return SimpleNamespace(abstain_threshold=0.64, noise_floor=0.59, rerank_skip_above=0.80)
+
+    async def no_calibration(org: str, ns: str) -> None:
+        return None
+
+    monkeypatch.setattr(ec, "resolve_calibration", namespace_calibration)
+    threshold, noise, confident = asyncio.run(cc.resolve_code_thresholds("o", "n"))
+    assert (threshold, noise, confident) == (0.64, 0.59, 0.80)
+    # the calibration's confident-hit cosine is the top of the scale: 0.76 is halfway up it
+    res = _search(
+        _agreeing(0.76),
+        _Embedder(),
+        abstain_threshold=threshold,
+        noise_floor=noise,
+        confident_similarity=confident,
+    )
+    assert (res.retrieval_confidence, res.retrieval_risk) == (0.5, "medium")
+
+    # no namespace or embedder calibration: the scalar settings, on which 0.76 is the top
+    monkeypatch.setattr(ec, "resolve_calibration", no_calibration)
+    monkeypatch.setattr(ec, "_calibration", None)
+    scalars = asyncio.run(cc.resolve_code_thresholds("o", "n"))
+    assert scalars == (
+        settings.memory_search_abstain_threshold,
+        settings.memory_search_min_similarity,
+        settings.llm_rerank_skip_above,
+    )
+    res = _search(
+        _agreeing(0.76),
+        _Embedder(),
+        abstain_threshold=scalars[0],
+        noise_floor=scalars[1],
+        confident_similarity=scalars[2],
+    )
+    assert (res.retrieval_confidence, res.retrieval_risk) == (1.0, "low")
 
 
 # ---- track_path --------------------------------------------------------------
@@ -336,23 +525,6 @@ def test_track_path_lexical_only_reports_no_vector_side() -> None:
     assert repo.track_args["qvec"] is None
     assert res.tracked["verdict"] == "no lexeme match"
     assert res.tracked["best"]["distance"] is None
-
-
-def test_track_verdict_names_a_row_the_leg_cut_on_its_path_penalty() -> None:
-    lexical = [_lex("a", 40.0) | {"lex_rank": 2}, _lex("b", 10.0) | {"lex_rank": 9}]
-    out = track_verdict(
-        "tests/test_z.py",
-        [_chunk("z1", 55.0, None)],
-        lexical,
-        [],
-        served_ids=["a"],
-        pool=2,
-        vector_ran=False,
-        lexical_ran=True,
-    )
-    assert out["verdict"] == (
-        "beyond pool: lexical 55.00 over floor 10.00, cut on its path penalty"
-    )
 
 
 def test_track_verdict_beyond_full_pools_reports_floor_and_ceiling() -> None:

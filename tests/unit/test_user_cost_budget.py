@@ -339,7 +339,9 @@ async def test_code_synthesis_checks_its_ledger_user_before_building_a_client(
     monkeypatch.setattr(code_ask, "refuse_synthesis", lambda *args: None)
     monkeypatch.setattr(code_ask, "resolve_code_identity", lambda org, ns: (org, ns))
     monkeypatch.setattr(code_ask, "CodeRepo", lambda: object())
-    monkeypatch.setattr(code_ask, "resolve_code_thresholds", AsyncMock(return_value=(0.5, 0.1)))
+    monkeypatch.setattr(
+        code_ask, "resolve_code_thresholds", AsyncMock(return_value=(0.5, 0.1, 0.62))
+    )
     monkeypatch.setattr(code_ask, "index_as_of", AsyncMock(return_value={}))
     monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: object())
     monkeypatch.setattr("server.llm.client.get_llm_client", client)
@@ -379,7 +381,9 @@ async def test_code_query_expansion_checks_its_named_users_cap(
     monkeypatch.setattr(handler, "require_code_intel", lambda: None)
     monkeypatch.setattr(handler, "resolve_code_identity", lambda org, ns: (org, ns))
     monkeypatch.setattr(handler, "CodeRepo", lambda: object())
-    monkeypatch.setattr(handler, "resolve_code_thresholds", AsyncMock(return_value=(0.5, 0.1)))
+    monkeypatch.setattr(
+        handler, "resolve_code_thresholds", AsyncMock(return_value=(0.5, 0.1, 0.62))
+    )
     monkeypatch.setattr(handler, "_not_covered_output", lambda *args: None)
     monkeypatch.setattr(handler, "_search_embedder", lambda inp: (None, "fake"))
     monkeypatch.setattr(handler, "_user_recent_dirs", AsyncMock(return_value=[]))

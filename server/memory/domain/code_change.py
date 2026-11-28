@@ -1,7 +1,7 @@
 """What a namespace's code-linked memories go through when their code changes.
 
 A memory about code describes something Loom indexes, so once that code is gone,
-serving it as current is wrong. Loom never writes the memory; the namespace owner picks
+serving it as current is wrong. No policy writes the memory; the namespace owner picks
 what reads do:
 
   retire_removed (default)  search leaves out a memory whose linked code is all gone;
@@ -18,14 +18,26 @@ Under every policy, a memory that a search still serves ranks lower than its mat
 A memory a person pinned, locked or verified is only flagged.
 
 A link that sits at another name or path than the memory was written against is named
-on the reads that serve its links (`relocation`, `note`): the text still says the old
-name.
+on the reads that serve its links (`relocation`, `note`) while the text still says the
+old name. Under every policy the link pass brings that text up to a rename or move a
+link followed with its code unchanged, where the swap is certain and the memory is held
+in the repository's code namespace (`server.memory.app.code_renames.revise`); every
+other text stays as written.
+
+A read says of every memory that names code which state it is in, the indexed commit
+its link was anchored at and a day (`lead`), which a pin, a lock or a label does not
+move: `first_written`, the memory's first write, on a read of its row (`memory.for_file`,
+a lesson, the startup recall), and `written`, the write of the text served, on a search
+hit. One that names a file and shows no link is `unlinked`, a label a read gives and no
+store holds: the read has no comparison with code to show for it. A reply that serves a
+memory with a state says once what was compared (`compared`): the repository as Loom
+indexed it, never the caller's checkout.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any, Literal, get_args
 
@@ -38,6 +50,11 @@ CodeState = Literal["fresh", "moved", "changed", "unresolved", "missing"]
 STATE_RANK: dict[str, int] = {s: i for i, s in enumerate(get_args(CodeState))}
 # the states of a link that is at a definition or file: its path, name and lines are current
 LOCATED: tuple[str, ...] = ("fresh", "moved", "changed")
+# what a read shows for a memory that names a file and shows no link: no link state
+UNLINKED: Literal["unlinked"] = "unlinked"
+# what a reply says once of the memories it serves: of an unlinked one, and of a linked one
+NOT_COMPARED = "Loom shows no code comparison for memories marked unlinked"
+INDEXED = "code_state and rev describe the repository as indexed, not your checkout"
 
 CodeChangePolicy = Literal["retire_removed", "flag", "revise"]
 POLICIES: tuple[CodeChangePolicy, ...] = get_args(CodeChangePolicy)
@@ -143,15 +160,79 @@ def label(state: str, commit: str = "") -> str:
     return f"{state}@{commit[:12]}" if commit else state
 
 
+def written_on(written: str = "", first_written: str = "") -> str:
+    """` written=<day>` for the day the text a read serves was written (a search hit's),
+    ` first_written=<day>` for the day of a memory's first write (a read of its row,
+    which a later write of the text does not move); '' when the read knows neither."""
+    if written:
+        return f" written={written[:10]}"
+    return f" first_written={first_written[:10]}" if first_written else ""
+
+
+def lead(state: str, rev: str = "", written: str = "", *, first_written: str = "") -> str:
+    """` (code_state=<state> rev=<commit> written=<day>)` ahead of a line's `note` for a
+    memory that names code: its state, the indexed commit its worst link was anchored at
+    (`anchored_commit`) when it holds one, and the day the read knows (`written_on`):
+    never an `updated_at`, which an unpin, a lock or a restore stamps. '' for a memory
+    that names no code."""
+    if not state:
+        return ""
+    at = f" rev={rev[:12]}" if rev else ""
+    return f" (code_state={state}{at}{written_on(written, first_written)})"
+
+
+def _read(hit: Any, name: str) -> Any:
+    return hit.get(name) if isinstance(hit, Mapping) else getattr(hit, name, None)
+
+
+def hit_note(hit: Any) -> str:
+    """`lead` and `note` for a search hit (the model or its dump); the day is its search
+    document's (`created_at`), printed as `written`: the first write of a memory whose
+    text was not written again or restored, the last of those writes otherwise."""
+    state, written = str(_read(hit, "code_state") or ""), str(_read(hit, "created_at") or "")
+    return lead(state, str(_read(hit, "code_rev") or ""), written) + note(
+        state, str(_read(hit, "code_changed_since") or ""), _read(hit, "code_moved") or []
+    )
+
+
+def compared(states: Iterable[str]) -> str:
+    """What a reply says once of the memories it serves, from their states: that it shows
+    no comparison with code for an `unlinked` one (`NOT_COMPARED`), and that a link's
+    state and commit are of the repository as Loom indexed it, which no read compares
+    with the caller's checkout (`INDEXED`). '' when no memory it serves names code."""
+    seen = set(states)
+    said = [NOT_COMPARED] if UNLINKED in seen else []
+    if not seen.isdisjoint(STATE_RANK):
+        said.append(INDEXED)
+    return "; ".join(said) + "." if said else ""
+
+
+def _worst_link(links: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """Of a memory's links in its worst state, the first by path and name."""
+    state = worst([str(a.get("state") or "") for a in links])
+    at = [a for a in links if state and a.get("state") == state]
+    return min(
+        at,
+        key=lambda a: (str(a.get("path") or ""), str(a.get("qualified_name") or "")),
+        default=None,
+    )
+
+
 def worst_commit(links: Sequence[Mapping[str, Any]]) -> str:
     """The commit that put a memory in its worst state, when that state is one a read
     notes: of its links in that state, the first by path and name."""
-    state = worst([str(a.get("state") or "") for a in links])
-    if state not in DEMOTED:
+    first = _worst_link(links)
+    if first is None or first.get("state") not in DEMOTED:
         return ""
-    at = [a for a in links if a.get("state") == state]
-    first = min(at, key=lambda a: (str(a.get("path") or ""), str(a.get("qualified_name") or "")))
     return str(first.get("changed_since") or "")
+
+
+def anchored_commit(links: Sequence[Mapping[str, Any]]) -> str:
+    """The commit a memory's worst link was anchored at: the repository's indexed head
+    when the link was made or last re-anchored; of its links in that state, the first
+    by path and name. '' for a memory with no served link."""
+    first = _worst_link(links)
+    return str(first.get("anchored_commit") or "") if first else ""
 
 
 # rows placed by something other than their score, which a move leaves where they are

@@ -7,7 +7,9 @@
 // {ts, indexed:true, org, namespace, repo, branch, prefixes, asOf, fetchedAt}.
 // A definite answer is trusted CACHE_TTL_MS; an unresolved one (the server
 // did not answer) UNRESOLVED_TTL_MS, then the next caller retries.
+import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { git, postBounded, resolveCodeRepo, resolveToken, shuntCachePath } from "./loom-client.mjs";
 import { repoSlug } from "./code-shunt.mjs";
 import { readPrivateFile, writeJsonFile } from "./tmp-state.mjs";
@@ -113,6 +115,22 @@ export function readCache(root, now = Date.now(), tmp = os.tmpdir()) {
     return cacheIsFresh(c, now, CACHE_TTL_MS) ? c : null;
   } catch {
     return null;
+  }
+}
+
+/** True when the shared cache holds a fresh, definite answer that the
+ *  checkout around `cwd` is not indexed. For a hook that runs after every
+ *  shell command: the root is the nearest directory above `cwd` with a `.git`
+ *  entry, found without starting git. Where git would name another root, or
+ *  nothing has looked the checkout up yet, there is no entry and the answer
+ *  is false. */
+export function cachedUnindexed(cwd, { now = Date.now(), tmp = os.tmpdir() } = {}) {
+  for (let dir = path.resolve(String(cwd || ".")); ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, ".git"))) {
+      const entry = readCache(dir, now, tmp);
+      return Boolean(entry && !entry.indexed && !entry.unresolved);
+    }
+    if (dir === path.dirname(dir)) return false;
   }
 }
 

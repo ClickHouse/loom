@@ -1,7 +1,6 @@
 """SQL fragments and read helpers the code-plane readers share: batched
 point reads, the search-scope and branch predicates, the test-path filter
-and its Python twin, the path-penalty factor, LIKE escaping, FixedString hash
-decoding.
+and its Python twin, LIKE escaping, FixedString hash decoding.
 """
 
 from __future__ import annotations
@@ -10,7 +9,6 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from server.code.domain.index import path_class
 from server.code.domain.search_scope import SearchScope
 from server.core.ch_params import chunks
 
@@ -97,25 +95,6 @@ def skip_tests_sql(col: str) -> str:
         f" AND NOT (startsWith({col}, 'tests/') OR {col} LIKE '%/tests/%'"
         f" OR {col} LIKE '%/test/%' OR {col} LIKE '%\\\\_test.%'"
         f" OR {col} LIKE '%.test.%' OR {col} LIKE '%.spec.%')"
-    )
-
-
-def path_penalty_sql(col: str, noise: float, prose: float) -> tuple[str, dict[str, Any]]:
-    """The factor code.search's ranking multiplies a row by for its path, and its
-    parameters: `noise` on a test, example or benchmark path, `prose` on a documentation
-    file, 1 on source. The patterns are `path_class`'s, so SQL and Python agree on
-    which file is which."""
-    return (
-        f"(if(match({col}, {{noise_path:String}}), {{noise_penalty:Float64}}, 1)"
-        f" * if(match({col}, {{prose_path:String}})"
-        f" AND NOT match({col}, {{prose_exempt:String}}), {{prose_penalty:Float64}}, 1))",
-        {
-            "noise_path": path_class.NOISE_PATH_PATTERN,
-            "noise_penalty": noise,
-            "prose_path": path_class.PROSE_PATH_PATTERN,
-            "prose_exempt": path_class.PROSE_EXEMPT_PATTERN,
-            "prose_penalty": prose,
-        },
     )
 
 

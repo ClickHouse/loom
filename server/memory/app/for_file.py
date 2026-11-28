@@ -29,6 +29,7 @@ from server.memory.domain.decision_schema import (
     is_decision,
     is_whole_row,
 )
+from server.memory.domain.files import names_file
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import row_verification
 from server.memory.store.sql import FILE_LISTING_VISIBLE
@@ -71,6 +72,7 @@ SELECT
     memory_key, memory_type,
     if({{full_values:UInt8}}, value, substring(value, 1, {_READ_BYTES})) AS value,
     tags, confidence, pinned, CAST(status AS String) AS status_text, agent, updated_at, actor,
+    created_at,
     memory_id, conflict_with, source_resource_id,
     verified_by, verified_sha256, content_sha256,
     if({{include_source_links:UInt8}}, files, []) AS source_files,
@@ -192,7 +194,10 @@ def _body(hit: dict[str, Any], *, decision: bool, whole: bool = True) -> str:
 def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     """`(pinned)` for a pinned row, `(source changed)` for a decision tagged
     `source-changed`, `(outcome: failed)` for a decision whose recorded outcome failed,
-    and a note when its linked code changed or went, or is now at another name or path.
+    and, for a row with a code state, that state with the commit its link was anchored
+    at and the day the row was first written (`first_written` of `code_change.lead`; a
+    pin, a lock or a write of the text moves `updated_at`, never that day), then a note
+    when its linked code changed or went, or is now at another name or path.
     An extracted decision nobody pinned is the normal case and carries no pin mark."""
     tags = hit.get("tags") or []
     out = " (pinned)" if hit.get("pinned") else ""
@@ -201,6 +206,9 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     if decision and FAILURE_TAG in tags:
         out += " (outcome: failed)"
     state, commit = str(hit.get("code_state") or ""), str(hit.get("code_changed_since") or "")
+    first = hit.get("created_at")
+    day = first.isoformat() if isinstance(first, datetime) else ""
+    out += code_change.lead(state, str(hit.get("code_rev") or ""), first_written=day)
     return out + code_change.note(state, commit, hit.get("code_moved") or [])
 
 
@@ -296,18 +304,30 @@ def listing_line(hit: dict[str, Any]) -> str:
     return _row_line(hit, naive_utc_now(), str(hit.get("namespace") or ""), whole=False)
 
 
+def _compared_chars(states: set[str]) -> int:
+    """The characters what was compared takes in a block whose rows are in `states`
+    (`code_change.compared`), its newline included; 0 when none of them names code."""
+    said = code_change.compared(states)
+    return len(said) + 1 if said else 0
+
+
 def _ceiling_hides(hits: list[dict[str, Any]], rows: list[str], whole_chars: int) -> bool:
     """Whether a decision or constraint left out at the ceiling supersedes older rows, with
-    every other row kept: then the block has a "… more" line for those."""
+    every other row kept: then the block has a "… more" line for those. Each one is
+    charged as `render_block` charges it: its line and what the sentence on what was
+    compared grows by after the rows printed above it."""
     used = 0
+    said: set[str] = set()  # the code states of the rows printed so far
     for h, row in zip(hits, rows, strict=True):
-        if not _is_whole(h):
-            continue
-        if h.get("value_truncated") or used + len(row) + 1 > whole_chars:
-            if h.get("supersedes_ids"):
-                return True
-            continue
-        used += len(row) + 1
+        state = str(h.get("code_state") or "")
+        if _is_whole(h):
+            cost = len(row) + 1 + _compared_chars(said | {state}) - _compared_chars(said)
+            if h.get("value_truncated") or used + cost > whole_chars:
+                if h.get("supersedes_ids"):
+                    return True
+                continue
+            used += cost
+        said.add(state)
     return False
 
 
@@ -330,10 +350,12 @@ def render_block(
     removal footer always print, and the "… more" line whenever a row is counted on it, so
     a budget smaller than those can be exceeded. `home` is the caller's namespace; a row
     from any other is a team row (rule or decision), rendered with its author and age, and
-    the block ends with how to remove one."""
+    the block ends with how to remove one. When a printed row names code, what was
+    compared (`code_change.compared`) follows the header; the row that first needs it, or
+    needs more of it, pays for it from its own budget or ceiling."""
     if not hits:
         return "", 0, False
-    now = now or naive_utc_now()
+    now, printed = now or naive_utc_now(), [] if shown is None else shown
     budget_chars = token_budget * CHARS_PER_TOKEN
     whole_chars = settings.memory_for_file_whole_tokens * CHARS_PER_TOKEN
     n = len(hits)
@@ -343,23 +365,29 @@ def render_block(
     used = len(lines[0]) + (len(footer) + 1 if footer else 0)
     rows = [_row_line(h, now, home) for h in hits]
     budgeted = [not _is_whole(h) for h in hits]
-    # No "… more" line can appear when every budgeted row fits and no decision or constraint
-    # left out at the ceiling takes older rows with it, so then nothing is reserved for one.
-    fits = used + sum(len(r) + 1 for r, b in zip(rows, budgeted, strict=True) if b) <= budget_chars
-    fits = fits and not _ceiling_hides(hits, rows, whole_chars)
-    left_out = 0
-    whole_used = 0
+    states = [str(h.get("code_state") or "") for h in hits]
+    # No "… more" line can appear when every budgeted row fits, with the sentence they need,
+    # and no decision or constraint left out at the ceiling takes older rows with it, so
+    # then nothing is reserved for one.
+    all_budgeted = _compared_chars({s for s, b in zip(states, budgeted, strict=True) if b})
+    all_budgeted += sum(len(r) + 1 for r, b in zip(rows, budgeted, strict=True) if b)
+    fits = used + all_budgeted <= budget_chars and not _ceiling_hides(hits, rows, whole_chars)
+    left_out = whole_used = 0
     whole_left: list[dict[str, Any]] = []
     hidden: set[str] = set()  # memory_ids of rows whose superseder was left out
+    said: set[str] = set()  # the code states of the rows printed
     for i, (h, row) in enumerate(zip(hits, rows, strict=True)):
+        # What the sentence grows by when this row prints: nothing once a row before it
+        # has paid for the same words.
+        cost = len(row) + 1 + _compared_chars(said | {states[i]}) - _compared_chars(said)
         if budgeted[i]:
             # Keep room for a "… more" line counting every row that may still be left out.
             most = left_out + n - i - 1
             tail = 0 if fits else len(_more_line(path, most)) + 1
-            keep = used + len(row) + 1 + tail <= budget_chars
+            keep = used + cost + tail <= budget_chars
         else:
             # A value cut at the read is far longer than the ceiling: it cannot print whole.
-            keep = not h.get("value_truncated") and whole_used + len(row) + 1 <= whole_chars
+            keep = not h.get("value_truncated") and whole_used + cost <= whole_chars
         if str(h.get("memory_id")) in hidden:
             # An older row goes with its superseder, counted on the "… more" line and never
             # named as one to read.
@@ -375,19 +403,17 @@ def render_block(
             hidden.update(h.get("supersedes_ids") or [])
             continue
         lines.append(row)
-        if shown is not None:
-            shown.append(h)
+        printed.append(h)  # `shown` when given: the rows the block prints
+        said.add(states[i])
         if budgeted[i]:
-            used += len(row) + 1
+            used += cost
         else:
-            whole_used += len(row) + 1
-    if left_out:
-        lines.append(_more_line(path, left_out))
-    if whole_left:
-        lines.append(_whole_left_out_line(whole_left, home))
-    if footer:
-        lines.append(footer)
-    text = "\n".join(lines)
+            whole_used += cost
+    if compared := code_change.compared(said):
+        lines.insert(1, compared)
+    more = [_more_line(path, left_out)] if left_out else []
+    named = [_whole_left_out_line(whole_left, home)] if whole_left else []
+    text = "\n".join([*lines, *more, *named, *([footer] if footer else [])])
     truncated = bool(left_out or whole_left)
     return text, (len(text) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN, truncated
 
@@ -536,6 +562,7 @@ async def _rows_for(
                 "namespace": namespace,
                 "code_state": code_change.worst([a["state"] for a in links]),
                 "code_changed_since": code_change.worst_commit(links),
+                "code_rev": code_change.anchored_commit(links),
                 "links": links,
                 "source_links": source_links,
             }
@@ -755,14 +782,27 @@ def _located_names(links: list[LinkRow]) -> list[str]:
 
 def _with_ids(hit: _MemoryForFileHit, row: dict[str, Any]) -> dict[str, Any]:
     """The hit with the row fields a reader needs that are not on the wire: `memory_id` and
-    `supersedes_ids` (to leave a superseded row out with its superseder) and
+    `supersedes_ids` (to leave a superseded row out with its superseder),
     `code_changed_since` (the commit that put its worst link in a changed, unresolved or
-    missing state)."""
+    missing state), `code_rev` (the commit that link was anchored at) and `created_at`
+    (when the row was first written)."""
     return hit.model_dump() | {
         "memory_id": str(row.get("memory_id") or ""),
         "supersedes_ids": row.get("supersedes_ids") or [],
         "code_changed_since": row.get("code_changed_since", ""),
+        "code_rev": row.get("code_rev", ""),
+        "created_at": row.get("created_at"),
     }
+
+
+def _as_printed(row: dict[str, Any]) -> dict[str, Any]:
+    """The row as the block prints it: `unlinked` when it shows no link to code in the
+    file and its text names a file by its path (`files.names_file`), so the read
+    has no comparison to show for what it says of that code. A rule that names the file
+    only in `files` prints as it is."""
+    if row.get("code_state") or not names_file(value_text(row)):
+        return row
+    return row | {"code_state": code_change.UNLINKED}
 
 
 async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutput:
@@ -775,7 +815,7 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
     for r in rows:
         hit = _hit(r, input)
         hits.append(hit)
-        to_render.append(_with_ids(hit, r))
+        to_render.append(_as_printed(_with_ids(hit, r)))
 
     shown: list[dict[str, Any]] = []
     rendered, tokens, truncated = render_block(

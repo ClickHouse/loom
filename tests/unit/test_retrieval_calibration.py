@@ -26,18 +26,3 @@ def test_calibration_rewards_route_agreement_and_margin() -> None:
     assert result.confidence > 0.75
     assert result.risk == "low"
     assert result.route_agreement == 1.0
-
-
-def test_the_caller_sets_the_risk_bands() -> None:
-    args = dict(top_similarity=0.55, second_similarity=0.5, result_count=5, extra_routes_possible=1)
-    memory = calibrate_retrieval(**args)
-    code = calibrate_retrieval(**args, medium_risk_from=0.40, low_risk_from=0.55)
-    assert memory.confidence == code.confidence
-    assert memory.risk == "high"
-    assert code.risk == "medium"
-
-
-def test_the_code_plane_labels_a_typical_right_hit_medium_not_high() -> None:
-    from server.settings import settings
-
-    assert settings.code_search_medium_risk_from <= 0.40 < settings.code_search_low_risk_from

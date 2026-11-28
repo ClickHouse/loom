@@ -1633,10 +1633,9 @@ class CodeSettings(BaseModel):
     # --- search ranking, legs and caches (code.search) ------------------------
     # Fire-and-forget code_search_trace/code_search_outcome telemetry.
     code_trace_log_enabled: bool = True
-    # Rank priors in code.search (the test-path and prose penalties, query↔path
+    # Post-fusion rank priors in code.search (path-noise penalty, query↔path
     # stem affinity, file coherence), applied after RRF and before the outcome
-    # boost. The lexical leg also picks its candidates on the two path penalties,
-    # before RRF. Kill switch for both.
+    # boost. Kill switch.
     code_fusion_signals: bool = True
     # Long-question trim: past this many lexemes the question is treated as an
     # issue body (template headings stripped, the rarest 32 tokens gate, the
@@ -1738,11 +1737,9 @@ class CodeSettings(BaseModel):
     # Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the
     # question kinds `code_search_catalogue_kinds` names; 1.0 = off.
     code_search_catalogue_penalty: float = 1.0
-    # Multiplier for prose files (documentation, release notes, changelogs) unless
-    # the query asks for documentation or the search is constrained to paths. The
-    # ranking multiplies the fused score by it, and the lexical leg picks its
-    # candidates on each row's vote times it, before RRF. A smaller value makes
-    # the lexical leg read deeper. 1.0 = off.
+    # Fusion multiplier for prose files (documentation, release notes, changelogs)
+    # unless the query asks for documentation or the search is constrained to paths;
+    # 1.0 = off.
     code_search_prose_penalty: float = 0.25
     # Chunk-kind ranking prior when the request names none: structural boosts the
     # kind named by the question; flat/default apply fixed tables; off disables it.
@@ -1760,18 +1757,21 @@ class CodeSettings(BaseModel):
     # A prose question whose nearest file card's cosine is below this
     # abstains `off_domain`; independent of the card leg. 0 = off.
     code_search_abstain_card_below: float = 0.0
-    # Calibrated confidence below which a result is flagged
-    # `low_calibrated_confidence` (still returned). The deployment sets 0.30.
+    # The abstain score below which a code.search result is flagged
+    # `low_calibrated_confidence` (still returned). The score is not
+    # `retrieval_confidence`: it blends the top cosine, its margin over the second
+    # hit, route agreement and the pool size. The deployment sets 0.30.
     code_search_abstain_confidence_below: float = 0.35
-    # The calibrated confidence from which a code.search result reads
-    # `retrieval_risk` "medium"; below it the result reads "high".
-    # Code embeddings score a right hit lower than memory text does: on the
-    # conceptual question set every right top 3 scored 0.40–0.63, so the
-    # memory plane's 0.55 / 0.75 labelled three in four right answers "high".
-    code_search_medium_risk_from: float = 0.40
-    # The calibrated confidence from which a code.search result reads `retrieval_risk`
-    # "low" (see code_search_medium_risk_from).
-    code_search_low_risk_from: float = 0.55
+    # The `retrieval_confidence` from which a code.search result reads
+    # `retrieval_risk` "medium"; below it the result reads "high". In the measurement
+    # behind the default about half of the prompts sent to another repository's index
+    # scored under it.
+    code_search_medium_risk_from: float = 0.35
+    # The `retrieval_confidence` from which a code.search result reads `retrieval_risk`
+    # "low": the best cosine is close to that of a confident hit. A prompt about other
+    # code usually scores lower, but about one in five sent to another repository's
+    # index still read low. The coding-agent plugins send their prompt pointers from it.
+    code_search_low_risk_from: float = 0.70
     # The question kinds the hypothetical answer votes on.
     code_search_hyde_kinds: str = "responsibility"
     # Cap on the hypothetical-answer (HyDE) leg's candidate list, as a multiple of the
@@ -3255,8 +3255,9 @@ class MemorySettings(BaseModel):
     # answer to be used; from this many on, the code index alone decides.
     memory_code_links_mirror_naming_files: int = Field(default=200, ge=1)
     # Files under the entry's prefixes a lost link's commit range may change for the
-    # mirror to be searched (at most 20,000: each is an argument to git); past it, the
-    # code index alone decides.
+    # mirror to be searched, for its name and, in a range of more than 32 files, for
+    # its lines (at most 20,000: each is an argument to git); past it, the code index
+    # alone decides.
     memory_code_links_mirror_changed_files: int = Field(default=5000, ge=1, le=20000)
 
     # ---- memory chunks ----
@@ -5339,7 +5340,9 @@ class ProviderSettings(ModelSettings):
 
     # Skip the rerank when the vector top hit's cosine is ≥ this (strong
     # matches rank reliably; the rerank costs ~500 ms). Fallback when the
-    # adaptive gate has no probe.
+    # adaptive gate has no probe. Also the fallback for the cosine at which
+    # code.search's `retrieval_confidence` reads 1.0, so raising it lowers that
+    # confidence and its risk band where no calibration exists.
     llm_rerank_skip_above: float = 0.62
 
     # Recovery worker: retries failed embeds and reconciles orphan

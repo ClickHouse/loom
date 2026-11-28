@@ -1152,7 +1152,7 @@
         "code_fusion_signals": {
           "default": true,
           "type": "boolean",
-          "description": "Rank priors in code.search (the test-path and prose penalties, query↔path stem affinity, file coherence), applied after RRF and before the outcome boost. The lexical leg also picks its candidates on the two path penalties, before RRF. Kill switch for both."
+          "description": "Post-fusion rank priors in code.search (path-noise penalty, query↔path stem affinity, file coherence), applied after RRF and before the outcome boost. Kill switch."
         },
         "code_gh_items_backfill_days": {
           "default": 730,
@@ -1956,7 +1956,7 @@
         "code_search_abstain_confidence_below": {
           "default": 0.35,
           "type": "number",
-          "description": "Calibrated confidence below which a result is flagged `low_calibrated_confidence` (still returned). The deployment sets 0.30."
+          "description": "The abstain score below which a code.search result is flagged `low_calibrated_confidence` (still returned). The score is not `retrieval_confidence`: it blends the top cosine, its margin over the second hit, route agreement and the pool size. The deployment sets 0.30."
         },
         "code_search_bodies_default": {
           "default": "auto",
@@ -2138,14 +2138,14 @@
           "description": "Default `llm_legs`: `auto` runs the configured model-backed legs; `none` skips them."
         },
         "code_search_low_risk_from": {
-          "default": 0.55,
+          "default": 0.7,
           "type": "number",
-          "description": "The calibrated confidence from which a code.search result reads `retrieval_risk` \"low\" (see code_search_medium_risk_from)."
+          "description": "The `retrieval_confidence` from which a code.search result reads `retrieval_risk` \"low\": the best cosine is close to that of a confident hit. A prompt about other code usually scores lower, but about one in five sent to another repository's index still read low. The coding-agent plugins send their prompt pointers from it."
         },
         "code_search_medium_risk_from": {
-          "default": 0.4,
+          "default": 0.35,
           "type": "number",
-          "description": "The calibrated confidence from which a code.search result reads `retrieval_risk` \"medium\"; below it the result reads \"high\". Code embeddings score a right hit lower than memory text does: on the conceptual question set every right top 3 scored 0.40–0.63, so the memory plane's 0.55 / 0.75 labelled three in four right answers \"high\"."
+          "description": "The `retrieval_confidence` from which a code.search result reads `retrieval_risk` \"medium\"; below it the result reads \"high\". In the measurement behind the default about half of the prompts sent to another repository's index scored under it."
         },
         "code_search_memo_enabled": {
           "default": true,
@@ -2211,7 +2211,7 @@
         "code_search_prose_penalty": {
           "default": 0.25,
           "type": "number",
-          "description": "Multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths. The ranking multiplies the fused score by it, and the lexical leg picks its candidates on each row's vote times it, before RRF. A smaller value makes the lexical leg read deeper. 1.0 = off."
+          "description": "Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off."
         },
         "code_search_query_max_tokens": {
           "default": 48,
@@ -3795,7 +3795,7 @@
         "llm_rerank_skip_above": {
           "default": 0.62,
           "type": "number",
-          "description": "Skip the rerank when the vector top hit's cosine is ≥ this (strong matches rank reliably; the rerank costs ~500 ms). Fallback when the adaptive gate has no probe."
+          "description": "Skip the rerank when the vector top hit's cosine is ≥ this (strong matches rank reliably; the rerank costs ~500 ms). Fallback when the adaptive gate has no probe. Also the fallback for the cosine at which code.search's `retrieval_confidence` reads 1.0, so raising it lowers that confidence and its risk band where no calibration exists."
         },
         "llm_response_cache_table": {
           "default": "loom.llm_response_cache",
@@ -4507,7 +4507,7 @@
           "maximum": 20000,
           "minimum": 1,
           "type": "integer",
-          "description": "Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched (at most 20,000: each is an argument to git); past it, the code index alone decides."
+          "description": "Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched, for its name and, in a range of more than 32 files, for its lines (at most 20,000: each is an argument to git); past it, the code index alone decides."
         },
         "memory_code_links_mirror_naming_files": {
           "default": 200,

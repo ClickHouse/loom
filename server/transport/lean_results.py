@@ -393,7 +393,8 @@ def lean_search_result(
     """`lean_result` for `loom_search`: the structured memory hits drop
     `similarity` (rank_score carries the order), `status` (always active on a
     served row), `source_class`, `version` (a write receipt, not a read),
-    `created_at` when the row carries a `valid_at` or `temporal_anchor`, and
+    `created_at` when the row carries a `valid_at` or `temporal_anchor` and no
+    `code_state` (the day a memory that names code was written), and
     `namespace` when it is the caller's home namespace; the memory section
     drops its zero counters. `explain=true` adds a `why` per hit to that shape
     when `why` is given."""
@@ -415,7 +416,7 @@ def lean_search_result(
             continue
         for k in SEARCH_HIT_DROP:
             h.pop(k, None)
-        if h.get("valid_at") or h.get("temporal_anchor"):
+        if (h.get("valid_at") or h.get("temporal_anchor")) and not h.get("code_state"):
             h.pop("created_at", None)
         if home_ns and str(h.get("namespace") or "") == home_ns:
             h.pop("namespace", None)
