@@ -1,0 +1,81 @@
+name: MCP source worker deployment smoke
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/mcp-source-worker-deployment.yml
+      - source_worker/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: External worker and mTLS proxy on Docker Compose
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      QUALIFICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.QUALIFICATION_SHA }}
+          persist-credentials: false
+          sparse-checkout: /source_worker/
+          sparse-checkout-cone-mode: false
+      - name: Qualify the exact checkout with synthetic credentials
+        run: python3 -IBu source_worker/qualification/compose_smoke.py
+
+  kubernetes:
+    name: Standalone worker chart lint and schema
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      QUALIFICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.QUALIFICATION_SHA }}
+          persist-credentials: false
+          sparse-checkout: /source_worker/
+          sparse-checkout-cone-mode: false
+      - name: Install the pinned render and schema tools
+        run: |
+          tools=$(mktemp -d)
+          cd "$tools"
+          curl -sSfL -o helm.tgz https://get.helm.sh/helm-v3.16.2-linux-amd64.tar.gz
+          echo '9318379b847e333460d33d291d4c088156299a26cd93d570a7f5d0c36e50b5bb  helm.tgz' | sha256sum -c -
+          tar -xzf helm.tgz
+          curl -sSfL -o kubeconform.tgz https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          echo '95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73  kubeconform.tgz' | sha256sum -c -
+          tar -xzf kubeconform.tgz kubeconform
+          echo "$tools/linux-amd64" >> "$GITHUB_PATH"
+          echo "$tools" >> "$GITHUB_PATH"
+      - name: Validate the exact checkout, default and enabled charts
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$QUALIFICATION_SHA"
+          chart=source_worker/chart
+          cmp source_worker/proxy.conf "$chart/files/proxy.conf"
+          helm lint --strict "$chart"
+          disabled=$(helm template source-worker "$chart")
+          test -z "$disabled"
+          values="$chart/examples/qualification-values.yaml"
+          helm lint --strict "$chart" -f "$values"
+          rendered=$(helm template source-worker "$chart" -f "$values")
+          printf '%s\n' "$rendered" | kubeconform -strict -summary -kubernetes-version 1.30.0
+          grep -Fq 'ipFamilies: [IPv4]' <<< "$rendered"
+          if helm template source-worker "$chart" -f "$values" \
+            --set-string 'network.dns.nameservers[0]=2001:db8::53'; then
+            echo 'IPv6-only nameserver was accepted' >&2
+            exit 1
+          fi
+          grep -Fq "socket.create_connection(('127.0.0.1', 8443)" <<< "$rendered"
+          for cidr in 999.0.2.44/32 192.0.2.44/24; do
+            if helm template source-worker "$chart" -f "$values" \
+              --set-string "network.httpsCidrs[0].cidr=$cidr"; then
+              echo 'Invalid IPv4 network was accepted' >&2
+              exit 1
+            fi
+          done

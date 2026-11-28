@@ -1,0 +1,55 @@
+name: MCP source worker qualification
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/mcp-source-worker.yml
+      - source_worker/**
+
+permissions:
+  contents: read
+
+jobs:
+  protocol:
+    name: Installed external worker (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          sparse-checkout: /source_worker/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+          enable-cache: false
+      - name: Build and install the worker wheel
+        run: |
+          uv build --wheel source_worker --out-dir "$RUNNER_TEMP/source-worker-wheel"
+          uv venv "$RUNNER_TEMP/source-worker"
+          uv pip install --python "$RUNNER_TEMP/source-worker/bin/python" \
+            "$RUNNER_TEMP/source-worker-wheel"/*.whl pytest pytest-asyncio
+      - name: Verify the installed worker with owned SDK servers
+        run: |
+          git rev-parse HEAD
+          "$RUNNER_TEMP/source-worker/bin/python" -m pytest -q source_worker/tests
+      - name: Verify the installed worker over owned TLS sockets
+        if: runner.environment == 'github-hosted'
+        timeout-minutes: 2
+        env:
+          QUALIFICATION_SHA: ${{ github.event.pull_request.head.sha }}
+          LOOM_SOURCE_WORKER_REAL_TLS: "1"
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$(git rev-parse HEAD)" = "$QUALIFICATION_SHA"
+          "$RUNNER_TEMP/source-worker/bin/python" -I -m pytest -q source_worker/qualification/test_real_tls.py

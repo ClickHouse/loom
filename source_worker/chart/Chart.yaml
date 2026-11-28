@@ -1,0 +1,6 @@
+apiVersion: v2
+name: loom-source-worker
+description: Private mTLS companion for Loom document source reads
+type: application
+version: 0.1.0
+kubeVersion: ">=1.30.0-0"
