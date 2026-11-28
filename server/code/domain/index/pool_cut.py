@@ -20,15 +20,18 @@ RRF_K = 60.0
 MAX_DEPTH = 10_000
 
 
-def cut_depth(pool: int, min_factor: float) -> int:
-    """How many rows of the leg's own order can hold a row of the cut pool, where
-    `min_factor` is the smallest factor a path can get.
+def cut_depth(pool: int, noise_penalty: float, prose_penalty: float) -> int:
+    """How many rows of the leg's own order can hold a row of the cut pool, for the two
+    path factors of the ranking.
 
-    A row at rank r votes at most 1 / (RRF_K + r), and each of the first `pool` rows
-    votes at least min_factor / (RRF_K + pool). Past rank
-    (RRF_K + pool) / min_factor - RRF_K a row loses to all of them, so it is not in the
-    pool. The depth stops at MAX_DEPTH: a factor under about 0.026 reads that deep and
-    no deeper."""
-    if min_factor <= 0.0:
+    A path gets 1, one of the factors or both: `lo` and `hi` are the smallest and the
+    largest of those. A row at rank r votes at most hi / (RRF_K + r), and each of the
+    first `pool` rows votes at least lo / (RRF_K + pool). Past rank
+    (RRF_K + pool) * hi / lo - RRF_K a row loses to all of them, so it is not in the
+    pool. The depth stops at MAX_DEPTH: with no factor over 1, a factor under about
+    0.026 reads that deep and no deeper."""
+    factors = (1.0, noise_penalty, prose_penalty, noise_penalty * prose_penalty)
+    lo, hi = min(factors), max(factors)
+    if lo <= 0.0:
         return MAX_DEPTH
-    return min(MAX_DEPTH, max(pool, math.ceil((RRF_K + pool) / min_factor - RRF_K)))
+    return min(MAX_DEPTH, max(pool, math.ceil((RRF_K + pool) * hi / lo - RRF_K)))

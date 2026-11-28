@@ -40,7 +40,7 @@ def _cut_on_votes(
             WHERE in_pool OR lex_rank <= {{pool:UInt32}}
             ORDER BY lex_rank
             """
-    depth = pool_cut.cut_depth(pool, noise_penalty * prose_penalty)
+    depth = pool_cut.cut_depth(pool, noise_penalty, prose_penalty)
     return sql, {**params, "rrf_k": pool_cut.RRF_K, "depth": depth}
 
 

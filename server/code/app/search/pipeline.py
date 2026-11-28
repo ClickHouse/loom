@@ -132,8 +132,8 @@ async def search(
         return result
 
     # Calibration reads the legs' own order, before any prior: the lexical leg's first
-    # rows, not the pool it cut on the path penalties
-    cut = st.lexical_head is not st.lexical_rows
+    # rows, which differ from its pool when it cut the pool on the path penalties
+    cut = st.lexical_head != st.lexical_rows
     legs_agree = _calibrate(
         st,
         _fuse(st, st.lexical_head)[0] if cut else fused,

@@ -128,18 +128,19 @@ def test_the_sql_factor_binds_the_python_patterns() -> None:
 
 
 @pytest.mark.parametrize(
-    "min_factor,depth",
+    "noise,prose,depth",
     [
-        (1.0, 200),  # no penalty: the pool itself
-        (0.35, 683),
-        (0.25, 980),
-        (0.35 * 0.25, 2912),  # a prose file under a test directory
-        (0.01, MAX_DEPTH),
-        (0.0, MAX_DEPTH),
+        (1.0, 1.0, 200),  # no penalty: the pool itself
+        (0.35, 1.0, 683),
+        (1.0, 0.25, 980),
+        (0.35, 0.25, 2912),  # a prose file under a test directory gets both
+        (1.0, 2.0, 460),  # a factor over 1 lifts rows from past the pool
+        (0.35, 0.01, MAX_DEPTH),
+        (0.35, 0.0, MAX_DEPTH),
     ],
 )
-def test_cut_depth(min_factor: float, depth: int) -> None:
-    assert cut_depth(200, min_factor) == depth
+def test_cut_depth(noise: float, prose: float, depth: int) -> None:
+    assert cut_depth(200, noise, prose) == depth
 
 
 def _vote_pool(factors: list[float], pool: int) -> list[int]:
@@ -153,14 +154,14 @@ def test_no_row_past_the_depth_is_in_the_pool(seed: int) -> None:
     """Any mix of source, test and prose rows in any order: the rows with the largest
     votes all rank within `cut_depth`, so the scan loses none of them."""
     rng = random.Random(seed)
-    noise, prose = rng.choice([(0.35, 0.25), (1.0, 0.25), (0.35, 1.0), (0.6, 0.9)])
+    noise, prose = rng.choice([(0.35, 0.25), (1.0, 0.25), (0.35, 1.0), (0.6, 0.9), (0.5, 1.5)])
     pool = rng.choice([5, 50, 200])
     source_share = rng.choice([0.0, 0.02, 0.15, 0.5, 1.0])
     factors = [
         1.0 if rng.random() < source_share else rng.choice([noise, prose, noise * prose])
         for _ in range(8000)
     ]
-    assert max(_vote_pool(factors, pool)) <= cut_depth(pool, noise * prose)
+    assert max(_vote_pool(factors, pool)) <= cut_depth(pool, noise, prose)
 
 
 def test_a_first_ranked_test_row_stays_and_the_last_test_rows_leave() -> None:
