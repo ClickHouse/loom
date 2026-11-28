@@ -344,15 +344,21 @@ def test_abstention_is_decided_on_the_fused_list_not_on_the_confidence() -> None
 
 
 def test_a_run_without_a_cosine_reads_medium() -> None:
-    # a vector leg the request skipped, or a deployment with no embedder: no cosine to
-    # place on the scale, so the result reads the middle of it and never low risk
+    # a vector leg the request skipped, a deployment with no embedder, or a leg that ran
+    # and returned no row: no cosine to place on the scale, so the result reads the
+    # middle of it and never low risk
+    class _NoVectorRows(_Repo):
+        async def vector_search_chunks(self, *a, **k):
+            return []
+
     skipped = _search(_Repo(fuzzy=True), _Embedder(), legs="lexical")
     no_embedder = _search(_Repo(fuzzy=True), None)
-    for res in (skipped, no_embedder):
+    empty_leg = _search(_NoVectorRows(fuzzy=True), _Embedder())
+    for res in (skipped, no_embedder, empty_leg):
         assert not res.abstain and res.abstain_code == ""
         assert (res.retrieval_confidence, res.retrieval_risk) == (0.5, "medium")
         assert res.top_similarity == 0.0, "the stand-in is not reported as a cosine"
-        assert res.calibration_explanation == "no vector leg, best cosine unknown"
+        assert res.calibration_explanation == "no vector row, best cosine unknown"
 
 
 def test_the_namespace_calibration_sets_the_scale(monkeypatch: pytest.MonkeyPatch) -> None:

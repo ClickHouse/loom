@@ -1767,7 +1767,8 @@ class CodeSettings(BaseModel):
     code_search_abstain_confidence_below: float = 0.35
     # The `retrieval_confidence` from which a code.search result reads
     # `retrieval_risk` "medium"; below it the result reads "high". In the measurement
-    # behind the default about nine in ten prompts about other code scored under it.
+    # behind the default about half of the prompts sent to another repository's index
+    # scored under it.
     code_search_medium_risk_from: float = 0.35
     # The `retrieval_confidence` from which a code.search result reads `retrieval_risk`
     # "low": the best cosine is close to that of a confident hit. A prompt about other

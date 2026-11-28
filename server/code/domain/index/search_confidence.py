@@ -18,8 +18,8 @@ from __future__ import annotations
 # The share of the range between the abstain threshold and the confident cosine below
 # which the confidence is 0.
 RAMP_FROM = 0.5
-# No cosine to read (no vector leg): the middle of the scale, a medium risk at the
-# default bands, never low.
+# No cosine to read (no vector leg, or one that returned no row): the middle of the
+# scale, a medium risk at the default bands, never low.
 NO_COSINE_CONFIDENCE = 0.5
 
 

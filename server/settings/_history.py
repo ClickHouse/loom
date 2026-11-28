@@ -159,9 +159,9 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         why=(
             "code.search's `retrieval_confidence` is computed on a new scale: the vector "
             "leg's best cosine read between the embedder's calibrated abstain threshold "
-            "and its cosine of a confident hit. On it about nine in ten measured prompts "
-            "about other code scored under 0.35. A deployment that set the variable for "
-            "the old scale should unset it."
+            "and its cosine of a confident hit. On it about half of the measured prompts "
+            "sent to another repository's index scored under 0.35. A deployment that set "
+            "the variable for the old scale should unset it."
         ),
     ),
     DefaultChange(

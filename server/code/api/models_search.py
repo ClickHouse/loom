@@ -258,9 +258,12 @@ class CodeSearchOutput(_LessonsOut):
     # high; abstain when the search abstains, which is decided apart from the confidence.
     retrieval_risk: Literal["low", "medium", "high", "abstain"] = "low"
     # Confidence 0-1 that the index holds an answer, not that the first result is the
-    # right one: the vector leg's best cosine on the embedder's calibrated scale. A
-    # question about other code usually scores lower, not always. 0.5 when no vector leg
-    # ran, 0.0 on an abstain with no results.
+    # right one: the vector leg's best cosine on the embedder's calibrated scale, or a
+    # fixed 0.95 on an exact symbol match and 0.5 on the history route. A question about
+    # other code usually scores lower, not always. 0.5 when the vector leg gave no row,
+    # 0.0 on an abstain with no results. The scale is the served embedder's: a second
+    # `vector_model` with no shortlist ranks on its own cosines, which are read on that
+    # scale all the same, as its abstention is.
     retrieval_confidence: float = 0.0
     # Share (0-1) of the retrieval routes that ran and agreed: the primary hit, lexical and
     # vector legs sharing a top-10 chunk, a fuzzy-symbol hit; 1.0 on an exact symbol hit.
@@ -378,7 +381,8 @@ class CodeAskOutput(BaseModel):
     abstain: bool = False
     # Why it abstained (no strong match, off-repository question, ...); "" otherwise.
     abstain_reason: str = ""
-    # The underlying code.search's calibrated confidence (0-1); 0.0 when it did not run.
+    # The underlying code.search's `retrieval_confidence` (0-1): whether the index holds
+    # an answer, not whether this one is right; 0.0 when the search did not run.
     retrieval_confidence: float = 0.0
     # Estimated tokens of the answer text (characters / 4); 0 when there is no answer.
     tokens_returned: int = 0

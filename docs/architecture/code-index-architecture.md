@@ -642,7 +642,11 @@ the rows (`code/domain/index/search_confidence.py`, `code/app/search/calibrate.p
   confident hit (`rerank_skip_above` in the namespace's calibration, else in the
   embedder's boot calibration, else `LOOM_LLM_RERANK_SKIP_ABOVE`), 1 at that cosine.
   An absolute cosine is not comparable across embedding models: one scores unrelated
-  text 0.2, another 0.7.
+  text 0.2, another 0.7. The boot calibration's probes are prose, so a namespace
+  `code.calibrate` has not seeded reads its code on a prose scale: where the model
+  scores a right code hit lower than a right prose answer, an answerable search reads
+  `medium` or `high`
+  ([seed each code namespace](../operations/code-index-operations.md#first-index)).
 - **What it separates.** A question the index can answer usually scores near 1, and
   one about another repository or another subject usually scores lower. It is a
   tendency, not a rule: measured on issue prompts with one embedding model, the median
@@ -652,7 +656,8 @@ the rows (`code/domain/index/search_confidence.py`, `code/app/search/calibrate.p
   holds the file to change and one that does not score alike. A high confidence is
   not evidence that the first result is the right one.
 - **No cosine.** A search with no vector leg (no embedder, a lexical-only request, a
-  failed leg) reads 0.5, which never bands `low`.
+  failed leg), or one whose vector leg returned no row, reads 0.5, which never bands
+  `low`.
 - **Not abstention.** Abstention is decided apart from the confidence, on the fused
   list: its top cosine under the abstain threshold (`below_threshold`), or a
   route-aware score (that cosine, its margin over the second hit, route agreement and

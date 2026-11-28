@@ -280,7 +280,10 @@ the text does not tell the model to stop searching. A search with no semantic le
 reads `medium` (confidence 0.5), so it sends no search pointers: a server with no
 embedding model, or a vector leg that failed or missed its deadline.
 `LOOM_PROMPT_PACK_MIN_CONF=0.5` sends them there too, and then also for every
-indexed-code prompt whose confidence is 0.5 or more. Supply a task inside `<issue>...</issue>` when a harness adds instructions;
+indexed-code prompt whose confidence is 0.5 or more. A code namespace an
+administrator has not calibrated can read answerable prompts `medium` or `high` and
+send none
+([`code.calibrate`](../../operations/code-index-operations.md#first-index)). Supply a task inside `<issue>...</issue>` when a harness adds instructions;
 the existing query helper extracts that block.
 
 Memory recall's default `first` mode makes one attempt on the first qualifying prompt,

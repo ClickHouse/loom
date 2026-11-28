@@ -79,9 +79,11 @@ def _calibrate(
             f"confident_similarity={confident_similarity:.2f}"
         )
     else:
-        # the request skipped the vector leg, no embedder is configured or the leg failed
+        # the request skipped the vector leg, no embedder is configured, the leg failed
+        # or it ran and returned no row (a scope or path filter that admits no embedded
+        # chunk, an embedding backlog)
         confidence = search_confidence.NO_COSINE_CONFIDENCE
-        explanation = "no vector leg, best cosine unknown"
+        explanation = "no vector row, best cosine unknown"
     result.retrieval_confidence = round(confidence, 3)
     result.calibration_explanation = explanation + (", constrained=true" if constrained else "")
     result.retrieval_risk = (

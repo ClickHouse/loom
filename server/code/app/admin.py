@@ -42,11 +42,12 @@ async def handle_code_reindex(input: CodeReindexInput) -> CodeReindexOutput:
 
 
 async def handle_code_calibrate(input: CodeCalibrateInput) -> CodeCalibrateOutput:
-    """Derive code-specific abstention thresholds and the confident-hit cosine
-    `retrieval_confidence` is read against from the authored probe corpus
-    (query/positive/hard-distractor triples over the indexed repo) and persist
-    them as this namespace's calibration. Cosine distributions for code differ
-    from prose — the namespace must not inherit prose-derived gates."""
+    """Derive this namespace's calibration from the authored probe corpus and
+    persist it: the code-specific abstention thresholds and the confident-hit
+    cosine at the top of the `retrieval_confidence` scale. The probes are
+    query/positive/hard-distractor triples over the indexed repo. Cosine
+    distributions for code differ from prose — the namespace must not inherit
+    prose-derived gates."""
     from server.memory.app.embedder_calibration import (
         calibrate_embedder,
         persist_namespace_calibration,
