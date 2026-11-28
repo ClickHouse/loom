@@ -12,6 +12,7 @@ import {
   gateMode,
   gatePayload,
   gateSignature,
+  printedTests,
   renderAdvice,
   renderGate,
   sessionScope,
@@ -50,8 +51,12 @@ test("the edit-time line names the commands of the tests the index links to the 
     text,
     "Loom tests for src/a.py: .venv/bin/python -m pytest tests/unit/test_a.py · no known runner: src/x/tests/gtest_parts.cpp",
   );
-  // No function is named: the graph is a floor, and the line asks for no reply.
+  // Beside tests to run no function is named: the graph is a floor, and the line asks for no reply.
   assert.doesNotMatch(text, /renameTempPartAndAdd|no test reaches|links no test/);
+  assert.equal(
+    renderAdvice("src/a.py", adviceTests("src/a.py", GATE), { python: ".venv/bin/python", untested: "Foo::bar" }),
+    text,
+  );
   assert.deepEqual(advicePayload(text), {
     hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: text },
   });
@@ -79,6 +84,14 @@ test("a changed test names its own command; a file no runner takes, a test the c
   assert.equal(advicePayload(""), null);
 });
 
+test("a file with no test to name gets the functions the index links no test to, as the index's view", () => {
+  assert.equal(
+    renderAdvice("src/a.py", [], { untested: "MergeTreeData::renameTempPartAndAdd, Foo::bar" }),
+    "Loom tests for src/a.py: the index links no test to MergeTreeData::renameTempPartAndAdd, Foo::bar",
+  );
+  assert.equal(renderAdvice("src/a.py", [], { untested: "" }), "");
+});
+
 test("the edit-time line folds pytest files into one command and counts the commands it leaves out", () => {
   const many = ["a", "b", "c", "d", "e", "f"].map((n) => ({
     test_path: `tests/test_${n}.py`,
@@ -88,6 +101,12 @@ test("the edit-time line folds pytest files into one command and counts the comm
   assert.equal(
     renderAdvice("src/a.py", many),
     "Loom tests for src/a.py: pytest tests/test_a.py tests/test_b.py tests/test_c.py tests/test_d.py (+2 more)",
+  );
+  // The two it leaves out were not shown, so they are not marked as named.
+  const unknown = ["g", "h", "i", "j", "k"].map((n) => ({ test_path: `spec/${n}.cpp`, run: "" }));
+  assert.deepEqual(
+    printedTests([...many, ...unknown]).map((t) => t.test_path),
+    [...many.slice(0, 4), ...unknown.slice(0, 4)].map((t) => t.test_path),
   );
 });
 
@@ -493,7 +512,7 @@ import http from "node:http";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { declinesTests, newestChange, runAnswered } from "../lib/test-gate.mjs";
-import { cachePathFor } from "../lib/repo-scope.mjs";
+import { cachedUnindexed, cachePathFor } from "../lib/repo-scope.mjs";
 import { hostEnv } from "./host-env.mjs";
 
 const said = (content, extra = {}) => ({ type: "user", message: { content }, ...extra });
@@ -983,10 +1002,35 @@ test("with LOOM_TEST_GATE=block the hook blocks a change whose tests never ran a
 
 // --- the default: the tests are named on the call that changed the file
 
+test("a checkout the cache says is not indexed is known without git; no other entry says so", () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-unindexed-")));
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-unindexed-tmp-")));
+  const below = path.join(dir, "src", "pkg");
+  fs.mkdirSync(below, { recursive: true });
+  fs.mkdirSync(path.join(dir, ".git"));
+  const cached = (entry) => {
+    fs.writeFileSync(cachePathFor(dir, tmp), JSON.stringify(entry));
+    return cachedUnindexed(below, { tmp });
+  };
+  try {
+    assert.equal(cachedUnindexed(below, { tmp }), false);
+    assert.equal(cached({ ts: Date.now(), indexed: false }), true);
+    assert.equal(cachedUnindexed(dir, { tmp }), true);
+    // The server did not answer, the answer is old, or the checkout is indexed.
+    assert.equal(cached({ ts: Date.now(), indexed: false, unresolved: true }), false);
+    assert.equal(cached({ ts: Date.now() - 3_600_000, indexed: false }), false);
+    assert.equal(cached({ ts: Date.now(), indexed: true, org: "o", namespace: "code-x" }), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("a changed file's tests ride the tool call that changed it, once, and the stop is never held", async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-advice-")));
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-advice-tmp-")));
-  for (const f of ["src/a.py", "src/b.py", "src/old.py", "tests/test_a.py", "tests/test_b.py", "tests/test_c.py"]) {
+  const sources = ["src/a.py", "src/b.py", "src/d.py", "src/f.py", "src/old.py"];
+  for (const f of [...sources, "tests/test_a.py", "tests/test_b.py", "tests/test_c.py", "tests/test_e.py"]) {
     fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true });
     fs.writeFileSync(path.join(dir, f), "def f():\n    return 1\n");
   }
@@ -1033,7 +1077,7 @@ test("a changed file's tests ride the tool call that changed it, once, and the s
               run: `pytest tests/test_${n}.py`,
             })),
           ],
-          untested: [{ qualified_name: "m::g" }],
+          untested: stem.length ? [{ qualified_name: "m::g" }] : [],
         },
         "/v1/code.impact": {
           touched_symbols: [{ qualified_name: "m::g" }],
@@ -1116,6 +1160,28 @@ test("a changed file's tests ride the tool call that changed it, once, and the s
       context(await shell("sed -i s/1/2/ tests/test_c.py")),
       /^Loom tests for tests\/test_c\.py: (?:\S+ -m )?pytest tests\/test_c\.py$/,
     );
+    // A file with no test in the checkout gets the functions the index links no test to, once.
+    write("src/d.py", "def g():\n    return 2\n");
+    assert.equal(
+      context(await shell("sed -i s/1/2/ src/d.py")),
+      "Loom tests for src/d.py: the index links no test to m::g",
+    );
+    assert.equal(await shell("sed -i s/2/3/ src/d.py"), null);
+    // After an edit tool that line names no test, so the radius keeps its own count.
+    write("src/f.py", "def g():\n    return 2\n");
+    const unlinked = await run("loom-blast-radius", "PostToolUse", {
+      tool_name: "Edit",
+      tool_input: { file_path: path.join(dir, "src/f.py") },
+    });
+    assert.match(
+      context(unlinked),
+      /tests reaching it: 1 \(test_b\.py\).* Loom tests for src\/f\.py: the index links no test to m::g$/,
+    );
+    // A test the command itself runs is not named on the result of that run, nor later.
+    write("tests/test_e.py", "def test_g():\n    assert True\n");
+    assert.equal(await shell("python -m pytest tests/test_e.py -q"), null);
+    assert.ok(asked.includes("/v1/code.test_gate tests/test_e.py"), asked.join(", "));
+    assert.equal(await shell("sed -i s/1/2/ tests/test_e.py"), null);
     // A comment-only change owes no test and stays unasked until it changes code.
     write("src/old.py", "# a note\n");
     execFileSync("git", ["checkout", "-q", "--", "src/old.py"], { cwd: dir });

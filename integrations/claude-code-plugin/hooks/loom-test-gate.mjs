@@ -4,8 +4,9 @@
 // PostToolUse, the default (LOOM_TEST_GATE unset): after a shell command
 // that changed files in a loom-indexed repo, ask `code.test_gate` about each
 // one and attach ONE line per file naming the command of the tests the
-// index links to it, or of the file itself when it is a test; once per file
-// and once per test per session. The line rides the tool result, so it
+// index links to it, or of the file itself when it is a test, or the changed
+// functions the index links no test to when there is no test to name; once
+// per file and once per test per session. The line rides the tool result, so it
 // costs no model request, and it arrives while the file is still being
 // edited. An edit tool's call gets the same line from loom-blast-radius, the
 // one hook wired for those tools. The stop is never held: whether the tests
@@ -43,12 +44,12 @@ import {
   resolveToken,
   scheduleExit,
 } from "../lib/loom-client.mjs";
-import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
+import { cachedUnindexed, resolveIndexedRepo } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 import { readAllLines } from "../lib/transcript.mjs";
 import {
   adviceFiles,
-  adviceLine,
+  adviceLines,
   advicePayload,
   checkoutPython,
   commentOnlyDiff,
@@ -74,11 +75,15 @@ const AFTER_TOOL = process.argv[2] === "PostToolUse";
 async function advise(payload, token) {
   const tool = normalizeToolName(payload.tool_name);
   if (tool !== "Bash" && tool !== "PowerShell") return;
-  const { root, files } = adviceFiles(payload, { cwd: payload.cwd || process.cwd() });
+  const cwd = payload.cwd || process.cwd();
+  // This runs after every shell command: a checkout already known to have no index costs no git call.
+  if (cachedUnindexed(cwd)) return;
+  const { root, files } = adviceFiles(payload, { cwd });
   if (!files.length) return;
   const repo = await resolveIndexedRepo(root, { consumer: "claude-code-testgate" });
   if (!repo.indexed) return;
-  const out = advicePayload(await adviceLine(payload, files, { root, repo, token, depth: DEPTH }));
+  const lines = await adviceLines(payload, files, { root, repo, token, depth: DEPTH });
+  const out = advicePayload(lines.map((l) => l.text).join("\n"));
   if (out) process.stdout.write(JSON.stringify(out) + "\n");
 }
 

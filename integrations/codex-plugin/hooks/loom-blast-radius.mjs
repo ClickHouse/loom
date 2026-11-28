@@ -11,8 +11,9 @@
 // The test gate's edit-time line rides the same context: the first edit of a
 // file this session also asks `code.test_gate` for the file's tests and names
 // their command (lib/test-gate.mjs), in place of the radius's own count of
-// tests. This hook is the only one wired for an edit tool, so an
-// edit gets one line. LOOM_TEST_GATE=block or off leaves the radius alone.
+// tests, or names the changed functions the index links no test to. This hook
+// is the only one wired for an edit tool, so an edit gets one line.
+// LOOM_TEST_GATE=block or off leaves the radius alone.
 //
 // Fail-open everywhere: no token, not an indexed repo, untracked file, empty
 // diff, server slow → nothing is printed. Each request is bounded (3 s) and
@@ -42,7 +43,7 @@ import { relativeForLookup, targetPath } from "../lib/file-context.mjs";
 import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 import { blastPayload, blastSignature, decideEmit, impactBody, renderBlast } from "../lib/blast-radius.mjs";
-import { adviceFiles, adviceLine, gateMode } from "../lib/test-gate.mjs";
+import { adviceFiles, adviceLines, gateMode } from "../lib/test-gate.mjs";
 
 const ENABLED = envSwitch("LOOM_BLAST_RADIUS", true);
 const ADVISE = gateMode() === "advise";
@@ -108,7 +109,7 @@ async function main() {
           serverUrl: resolveServerUrl(),
         })
       : null,
-    files.length ? adviceLine(payload, files, { root, repo, token }) : "",
+    files.length ? adviceLines(payload, files, { root, repo, token }) : [],
   ]);
 
   let blast = "";
@@ -119,10 +120,11 @@ async function main() {
       .filter(Boolean);
     const decision = decideEmit(readSessionState("blast", payload.session_id), rel, blastSignature(rel, impact));
     writeSessionState("blast", payload.session_id, decision.cache);
-    // The tests line names the command, so the radius does not count them too.
-    if (decision.emit) blast = renderBlast(rel, impact, { maxNames: MAX_NAMES, touchedPaths, tests: !advice });
+    // A tests line for this file names their command, so the radius does not count them too.
+    const named = advice.some((a) => a.rel === rel && a.tests);
+    if (decision.emit) blast = renderBlast(rel, impact, { maxNames: MAX_NAMES, touchedPaths, tests: !named });
   }
-  const text = [blast, advice].filter(Boolean).join(" ");
+  const text = [blast, advice.map((a) => a.text).join("\n")].filter(Boolean).join(" ");
   if (text) process.stdout.write(JSON.stringify(blastPayload(text)) + "\n");
   scheduleExit(0);
 }
