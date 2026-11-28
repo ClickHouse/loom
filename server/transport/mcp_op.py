@@ -31,9 +31,11 @@ import re
 from collections.abc import Set
 from typing import Any
 
+from server.core.operation_privacy import KNOWLEDGE_SOURCE_LIVE
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import hidden_from_mcp, resolve_toolset
+from server.transport.arg_check import bounded_json_string_size
 from server.transport.mcp_config import _ok
 from server.transport.mcp_ledger import emit_token_refusal
 
@@ -339,6 +341,32 @@ def _result(req_id: Any, body: dict[str, Any], *, error: bool = False) -> dict[s
             "structuredContent": body,
         },
     )
+
+
+# not a setting: this is the fixed request ID allowance in the live publication envelope.
+_MAX_LIVE_REQUEST_ID_BYTES = 4096
+
+
+def invalid_live_request_id(req: dict[str, Any]) -> bool:
+    """Check calls that need a bounded ID before routing or refusal."""
+    params = req.get("params")
+    if req.get("method") != "tools/call" or not isinstance(params, dict):
+        return False
+    name = params.get("name")
+    if name == LOOM_OP_TOOL_NAME:
+        args = params.get("arguments")
+        op = args.get("op") if isinstance(args, dict) else None
+        if not isinstance(op, str) or op.strip().replace("_", ".", 1) != KNOWLEDGE_SOURCE_LIVE:
+            return False
+    elif name != OPERATIONS_BY_NAME[KNOWLEDGE_SOURCE_LIVE].mcp_tool_name:
+        return False
+
+    request_id = req.get("id")
+    if isinstance(request_id, str):
+        return bounded_json_string_size(request_id, _MAX_LIVE_REQUEST_ID_BYTES) is None
+    if type(request_id) is int:
+        return request_id.bit_length() > 128
+    return request_id is not None
 
 
 def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, Any] | None]:

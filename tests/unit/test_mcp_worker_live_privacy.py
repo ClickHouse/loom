@@ -148,27 +148,26 @@ def test_direct_live_call_still_refuses_a_narrow_protected_context(monkeypatch) 
         protected._require_context("test-org", narrow)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("form", ["large", "escaped", "array"])
-async def test_live_mcp_refuses_an_unbounded_response_id(monkeypatch, form) -> None:
-    from server.knowledge.api.ops_worker_source import knowledge_source_live
-    from server.transport import mcp_call
-    from server.transport.mcp_config import INVALID_REQUEST
+@pytest.mark.parametrize(
+    "req_id, invalid",
+    [
+        ("x" * 4094, False),
+        ("文書📄", False),
+        ("x" * 4095, True),
+        ("\x01" * 1024, True),
+        ([1], True),
+    ],
+    ids=["near_limit", "unicode", "large", "escaped", "array"],
+)
+def test_live_mcp_bounds_response_id(req_id, invalid) -> None:
+    from server.transport.mcp_op import invalid_live_request_id
 
-    monkeypatch.setattr(
-        mcp_call, "_resolve_connection_tool", AsyncMock(return_value=knowledge_source_live)
+    assert (
+        invalid_live_request_id(
+            {"method": "tools/call", "id": req_id, "params": {"name": "loom_knowledge_source_live"}}
+        )
+        is invalid
     )
-    admission = AsyncMock(return_value={"admitted": False})
-    monkeypatch.setattr(mcp_call, "_session_content_refusal", admission)
-    request_id = {
-        "large": lambda: "x" * (20 * 1024 * 1024),
-        "escaped": lambda: "\x01" * 1024,
-        "array": lambda: [1],
-    }[form]()
-    response = await mcp_call._call_tool(request_id, {"name": "loom_knowledge_source_live"})
-    assert response.get("id", "missing") is None
-    assert response["error"]["code"] == INVALID_REQUEST
-    admission.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -194,23 +193,6 @@ async def test_live_refuses_unbounded_ignored_argument_names_in_both_transports(
     assert "argument names" in str(response)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("req_id", ["x" * 4094, "文書📄"], ids=["near_limit", "unicode"])
-async def test_live_mcp_accepts_a_bounded_string_id(monkeypatch, req_id) -> None:
-    from server.knowledge.api.ops_worker_source import knowledge_source_live
-    from server.transport import mcp_call
-
-    monkeypatch.setattr(
-        mcp_call, "_resolve_connection_tool", AsyncMock(return_value=knowledge_source_live)
-    )
-    result = {"jsonrpc": "2.0", "id": req_id, "result": {}}
-    admission = AsyncMock(return_value=result)
-    monkeypatch.setattr(mcp_call, "_session_content_refusal", admission)
-    response = await mcp_call._call_tool(req_id, {"name": "loom_knowledge_source_live"})
-    assert response == result
-    admission.assert_awaited_once()
-
-
 def _json_request(body: bytes):
     from starlette.requests import Request
 
@@ -218,27 +200,52 @@ def _json_request(body: bytes):
 
 
 @pytest.mark.asyncio
-async def test_live_mcp_refuses_an_escaped_lone_surrogate_id(monkeypatch) -> None:
-    from fastapi.responses import JSONResponse
+@pytest.mark.parametrize("tool", ["direct", "loom_op"])
+@pytest.mark.parametrize("entry", ["single", "batch", "version"])
+async def test_live_mcp_refuses_invalid_id_at_the_endpoint(monkeypatch, tool, entry) -> None:
+    import httpx
+    from fastapi import FastAPI
 
-    from server.knowledge.api.ops_worker_source import knowledge_source_live
-    from server.transport import mcp, mcp_call
-    from server.transport.mcp_config import INVALID_REQUEST
+    from server.transport import mcp
+    from server.transport.mcp_config import (
+        _TRANSPORT_ERROR_ID,
+        INVALID_REQUEST,
+        UNSUPPORTED_PROTOCOL_VERSION,
+    )
 
-    monkeypatch.setattr(
-        mcp_call, "_resolve_connection_tool", AsyncMock(return_value=knowledge_source_live)
+    request_id = 1 << 128
+    screen = AsyncMock(return_value={"jsonrpc": "2.0", "id": request_id, "result": {}})
+    monkeypatch.setattr(mcp, "_verify_bearer", AsyncMock(return_value=object()))
+    monkeypatch.setattr(mcp, "_screen_tool_call", screen)
+    arguments = {"namespace": "docs"}
+    params = (
+        {"name": "loom_knowledge_source_live", "arguments": arguments}
+        if tool == "direct"
+        else {
+            "name": "loom_op",
+            "arguments": {"op": "knowledge_source.live", "arguments": arguments},
+        }
     )
-    admission = AsyncMock(return_value={"id": "\ud800"})
-    monkeypatch.setattr(mcp_call, "_session_content_refusal", admission)
-    request = _json_request(
-        rb'{"jsonrpc":"2.0","id":"\ud800","method":"tools/call",'
-        rb'"params":{"name":"loom_knowledge_source_live"}}'
-    )
-    response = await mcp._handle_request(await request.json())
-    assert JSONResponse(response).status_code == 200
-    assert response["id"] is None
-    assert response["error"]["code"] == INVALID_REQUEST
-    admission.assert_not_awaited()
+    request = {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": params}
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    headers = {"MCP-Protocol-Version": "2099-01-01"} if entry == "version" else {}
+    app = FastAPI()
+    mcp.attach(app)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as client:
+        response = await client.post(
+            "http://test/mcp",
+            json=[request, ping] if entry == "batch" else request,
+            headers=headers,
+        )
+
+    body = response.json()
+    if entry == "batch":
+        body, sibling = body
+        assert sibling == {"jsonrpc": "2.0", "id": 1, "result": {}}
+    assert body["id"] == _TRANSPORT_ERROR_ID
+    expected = UNSUPPORTED_PROTOCOL_VERSION if entry == "version" else INVALID_REQUEST
+    assert body["error"]["code"] == expected
+    screen.assert_not_awaited()
 
 
 @pytest.mark.asyncio

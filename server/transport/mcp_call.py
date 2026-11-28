@@ -54,7 +54,6 @@ from server.transport._common import (
 from server.transport._common import validation_errors as _validation_errors
 from server.transport.arg_check import (
     LIVE_ARGUMENT_NAME_ERROR,
-    bounded_json_string_size,
     live_argument_names_fit,
     named_argument_error,
 )
@@ -64,7 +63,6 @@ from server.transport.lean_results import lean_result
 from server.transport.mcp_config import (
     _LOOM_ACTIVATE_TOOL_NAME,
     INVALID_PARAMS,
-    INVALID_REQUEST,
     _err,
     _ok,
 )
@@ -259,18 +257,6 @@ async def _capture_level(operation: str, identity: dict[str, Any]) -> str:
         return "off"
 
 
-# not a setting: this is the fixed request ID allowance in the live publication envelope.
-_MAX_LIVE_REQUEST_ID_BYTES = 4096
-
-
-def _live_request_id_fits(req_id: Any) -> bool:
-    if isinstance(req_id, str):
-        return bounded_json_string_size(req_id, _MAX_LIVE_REQUEST_ID_BYTES) is not None
-    if type(req_id) is int:
-        return req_id.bit_length() <= 128
-    return req_id is None
-
-
 async def _call_tool(
     req_id: Any,
     params: dict[str, Any],
@@ -302,8 +288,6 @@ async def _call_tool(
     if isinstance(tool, dict):
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
-    if op.name == KNOWLEDGE_SOURCE_LIVE and not _live_request_id_fits(req_id):
-        return _err(None, INVALID_REQUEST, "Live read request ID is invalid or too large")
 
     if (refused := await _session_content_refusal(req_id, op, auth)) is not None:
         return refused
