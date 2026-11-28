@@ -250,7 +250,9 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   on a persistent volume so a rollout does not re-clone every mirror on every pod.
 - `backfill` parses, chunks, extracts symbols and edges, and embeds each file. It is
   resumable: re-run it after an interruption. `--phase index` then `--phase embed` splits
-  the work, since the unembedded rows are the embed phase's queue. `--commit <sha>` pins
+  the work, since the unembedded rows are the embed phase's queue. The embed phase copies
+  vectors from `embed_reuse_from` as an inline embed does, and reports them as `reused`.
+  `--commit <sha>` pins
   the tree (and implies `--no-fetch`); `--concurrency N` parallelises files; `--limit N`
   indexes a sample.
 - One process parses and extracts at about one core. `--workers N` runs the index
@@ -1103,7 +1105,8 @@ line evidence. The import retains historical evidence until a complete run repla
 A namespace follows one branch, and a branch is indexed only when an entry names it. Add
 an entry with the same `repo` and a different `namespace` and `git_branch`; it shares the
 bare clone. Set `embed_reuse_from` to the main branch's namespace so identical chunks
-reuse embeddings. Then run `loom code init` and `loom code backfill` for the new
+reuse embeddings, whether they are embedded during the index or later by `--phase embed`
+and `code_embed_recovery`. Then run `loom code init` and `loom code backfill` for the new
 namespace, as for the first index.
 
 ## Repairs
