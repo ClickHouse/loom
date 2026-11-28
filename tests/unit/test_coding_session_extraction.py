@@ -22,6 +22,7 @@ from server.memory.domain.extraction_prompts import (
     _CODING_SESSION_SYSTEM_PROMPT,
     CODING_SESSION_ANCHOR,
 )
+from server.memory.domain.prompt_fence import FENCE_NOTE
 from server.settings import settings
 from tests.unit.llm_fake import ScriptedLLM
 
@@ -34,19 +35,27 @@ _MESSAGES = [
 @pytest.mark.parametrize("compact", [False, True])
 def test_a_coding_session_is_extracted_with_its_own_prompt_at_every_size(compact: bool) -> None:
     assert CODING_SESSION_ANCHOR not in _extraction_base_prompt(compact)
-    prompt = _extraction_system_prompt(
-        compact,
-        existing_memories=None,
-        namespace_categories=None,
-        custom_instructions="",
-        agent_learnings=True,
-        coding_session=True,
-    )
+
+    def system_prompt(existing: list[dict[str, str]] | None) -> str:
+        return _extraction_system_prompt(
+            compact,
+            existing_memories=existing,
+            namespace_categories=None,
+            custom_instructions="",
+            agent_learnings=True,
+            coding_session=True,
+        )
+
+    prompt = system_prompt(None)
     # No conversation rule or example and no examples preamble.
     assert prompt == _CODING_SESSION_SYSTEM_PROMPT
     assert "EXAMPLE 1" not in prompt
     # Most captures hold nothing to keep, so this prompt is what their call costs.
     assert len(prompt) < 9000
+    # Shown existing memories, which only a short capture is, it ends with the
+    # fence note: the one other system text a session capture is sent.
+    existing = [{"memory_key": "k0", "value": "User lives in Lyon."}]
+    assert system_prompt(existing) == prompt + "\n\n" + FENCE_NOTE
 
 
 def test_the_coding_session_prompt_ends_with_a_schema_the_parser_reads() -> None:
@@ -61,6 +70,29 @@ def test_the_coding_session_prompt_ends_with_a_schema_the_parser_reads() -> None
     # The schema is the last section, so a sweep's prompt takes it without the rules.
     slim = slim_sweep_system_prompt(prompt)
     assert "source_message_indices" in slim and "DO NOT EXTRACT" not in slim
+
+
+def test_the_session_schema_names_every_field_the_write_step_acts_on() -> None:
+    schema = _CODING_SESSION_SYSTEM_PROMPT.partition("OUTPUT SCHEMA")[2]
+    # A field the schema leaves out keeps the parser's default: no link to the
+    # memory a fact refines, no ownership tag, no retirement on a forget request,
+    # no end to a state the user bounded.
+    for name in (
+        "key",
+        "value",
+        "tags",
+        "entities",
+        "topics",
+        "linked_keys",
+        "source_message_indices",
+        "temporal_anchor",
+        "valid_to",
+        "foresight",
+        "relations",
+        "about",
+        "forget",
+    ):
+        assert f'\n  "{name}": ' in schema, name
 
 
 async def _calls_for_no_facts(

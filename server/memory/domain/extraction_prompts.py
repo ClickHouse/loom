@@ -1985,7 +1985,8 @@ entry is not stored as a memory; do not also emit the rule as a normal fact.
 # lookup, which the code index answers. A later session reuses what the code
 # is, across definitions. Most captures hold nothing to keep, so the prompt is
 # the cost of the call: it carries no conversation rule or example, and its
-# schema only the fields a coding fact uses (the parser defaults the rest).
+# schema only the fields a coding fact uses and the two that end a state the
+# user bounds (the parser defaults the rest).
 CODING_SESSION_ANCHOR = "CODING SESSION — REUSABLE CODEBASE KNOWLEDGE ONLY"
 _CODING_SESSION_SYSTEM_PROMPT = f"""\
 Role: evidence-bound memory extractor. The messages are one AI coding
@@ -2106,6 +2107,15 @@ Return exactly one JSON object with one key, "facts", a list of objects:
   "temporal_anchor": ISO date (YYYY-MM-DD) the fact is about when the
     messages date it; null for a fact about the code, a rule or a
     preference.
+  "valid_to": ISO date the fact stopped being true, when the messages
+    give a clear end ("the team used Jenkins until March 2026"); omit
+    while it still holds.
+  "foresight": ONLY for a temporary state or a plan whose end or length
+    the messages state ("staging is being rebuilt until Friday", "on
+    call for two weeks"): {{"until": ISO date it ends, or null,
+    "duration_days": the stated length in days, or null}}, at least one
+    of the two set. Never for a rule, a preference or a fact about the
+    code.
   "relations": REQUIRED when the fact has 2+ entities: triples
     {{"s": subject, "v": verb, "o": object}}, lowercase, the verb 1-3
     words underscore-joined.
