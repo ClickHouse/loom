@@ -109,7 +109,7 @@ without workers never accepts a revoked token.
    workers. A worker with a second flag (`+ LOOM_…` in the column) runs only
    when both are on: `code_backport_gaps` needs `LOOM_CODE_PR_HISTORY_ENABLED`,
    `code_coverage_notify` needs `LOOM_CODE_INTEL_ENABLED`.
-2. Change its cadence, if needed, with the **Cadence setting**.
+2. For a configurable worker, change its cadence with the **Cadence setting**.
 3. Restart that container, then confirm the worker's state (below).
 
 Turning on an LLM-backed worker (`profile_consolidation`, `reflection_distill`,
@@ -169,8 +169,8 @@ that keeps failing is in [Troubleshooting](../operations/troubleshooting.md).
 | **What it does**    | The first sentence of the worker module's docstring.                                                                                                                                                                                                                                   |
 | **Switched on by**  | The environment variable of the row's `enabled` field (plus `also_requires`), or "always on".                                                                                                                                                                                          |
 | **Default**         | That setting's value as it loads with a real LLM provider and nothing else set (a validator resolves some: the conflict resolver is off with the fake provider). A deployment's `.env` can differ; the stock stack is described in the [quickstart](../getting-started/quickstart.md). |
-| **Cadence setting** | The interval's environment variable, or `<module>.<attribute>` when the interval is a constant in the worker module.                                                                                                                                                                   |
-| **Default (s)**     | The interval's default in seconds (blank for a module constant).                                                                                                                                                                                                                       |
+| **Cadence setting** | The interval's environment variable, or `fixed` when the registry supplies a constant.                                                                                                                                                                                                 |
+| **Default (s)**     | The default or fixed interval in seconds.                                                                                                                                                                                                                                              |
 
 The generator (`scripts/codegen/docs_reference.py`, `render_workers`) reads
 `_WORKERS` and the settings defaults; `make lint` fails when this page is stale.
@@ -203,7 +203,7 @@ adding its row.
 
 | Worker | What it does | Switched on by | Default | Cadence setting | Default (s) |
 | --- | --- | --- | --- | --- | --- |
-| `adoption_telemetry` | Send a completed 12-hour adoption report to the event collector. | `LOOM_ADOPTION_TELEMETRY_ENABLED` | True | `LOOM_ADOPTION_TELEMETRY_INTERVAL_SECONDS` | 3600 |
+| `adoption_telemetry` | Send a completed 12-hour adoption report to the event collector. | `LOOM_ADOPTION_TELEMETRY_ENABLED` | True | fixed | 3600 |
 | `audit_verifier` | Audit tamper-detection worker. | `LOOM_AUDIT_VERIFIER_ENABLED` | True | `LOOM_AUDIT_VERIFIER_INTERVAL_SECONDS` | 3600 |
 | `code_backport_gaps` | Nightly set-wide backport report: for every merged trunk PR of the last `LOOM_CODE_BACKPORT_GAPS_DAYS` that the maintainers labelled for backport (`pr-must-backport*` on loom's ledger, QA's… | `LOOM_CODE_BACKPORT_GAPS_ENABLED` + `LOOM_CODE_PR_HISTORY_ENABLED` | True | `LOOM_CODE_BACKPORT_GAPS_INTERVAL_SECONDS` | 86400.0 |
 | `code_coverage_import` | Daily measured-coverage import (`server.code.app.index.coverage_import`). | `LOOM_CODE_COVERAGE_IMPORT_ENABLED` + `LOOM_CODE_INTEL_ENABLED` | False | `LOOM_CODE_COVERAGE_IMPORT_INTERVAL_SECONDS` | 86400.0 |

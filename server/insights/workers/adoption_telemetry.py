@@ -93,15 +93,11 @@ async def run_pass() -> None:
     if pass_context.resume_cursor() >= cursor:
         return
 
-    restricted = (
-        configured_restricted_pairs() if settings.adoption_telemetry_share_domains else None
-    )
     report = await window_report(
         start,
         end,
         installation_id,
-        restricted=restricted,
-        share_domain_activity=settings.adoption_telemetry_share_domain_activity,
+        restricted=configured_restricted_pairs(),
         ch=ch,
     )
     pass_context.check_stop()

@@ -83,7 +83,7 @@ length(contacts.domain) <= 253
 """
 
 # Attribute requests to the contact domain of their namespace.
-_DOMAINS_SQL = f"""
+DOMAINS_SQL = f"""
 SELECT contacts.domain, uniqExact(contacts.email) AS user_count,
        sum(activity.requests) AS successful_requests
 FROM ({_CONTACTS_SQL}) AS contacts
@@ -95,19 +95,8 @@ LEFT JOIN (
 ) AS activity USING (org, namespace)
 WHERE {_VALID_CONTACT_DOMAIN}
 GROUP BY contacts.domain
-"""
-
-DOMAINS_SQL = f"""
-{_DOMAINS_SQL}
 ORDER BY successful_requests DESC, user_count DESC, contacts.domain
 LIMIT 30
-SETTINGS optimize_move_to_prewhere_if_final = 0
-"""
-
-DAILY_DOMAINS_SQL = f"""
-{_DOMAINS_SQL}
-HAVING successful_requests > 0
-ORDER BY contacts.domain
 SETTINGS optimize_move_to_prewhere_if_final = 0
 """
 
@@ -143,8 +132,7 @@ async def window_report(
     end: datetime,
     installation_id: UUID,
     *,
-    restricted: set[tuple[str, str]] | None,
-    share_domain_activity: bool = False,
+    restricted: set[tuple[str, str]],
     ch: CHClient,
 ) -> dict[str, Any]:
     complete_day = end.hour == 0
@@ -156,33 +144,29 @@ async def window_report(
         "installation_id": str(installation_id),
         "loom_version": __version__,
     }
-    domains: list[dict[str, Any]] = []
+    domain_params = {**activity_params, "restricted": sorted(restricted)}
     domain_activity: list[dict[str, Any]] = []
     with sequential_reads():
-        if restricted is not None:
-            domain_params = {**activity_params, "restricted": sorted(restricted)}
-            if complete_day and share_domain_activity:
-                activity = await ch.query_all(DAILY_DOMAIN_ACTIVITY_SQL, domain_params)
-                domains = [
-                    {name: row[name] for name in ("domain", "user_count", "successful_requests")}
-                    for row in activity
-                ]
-                domain_activity = [
-                    {
-                        name: row[name]
-                        for name in (
-                            "domain",
-                            "active_accounts",
-                            "successful_requests",
-                            "serving_processes",
-                        )
-                    }
-                    for row in activity
-                ]
-            else:
-                domains = await ch.query_all(
-                    DAILY_DOMAINS_SQL if complete_day else DOMAINS_SQL, domain_params
-                )
+        if complete_day:
+            activity = await ch.query_all(DAILY_DOMAIN_ACTIVITY_SQL, domain_params)
+            domains = [
+                {name: row[name] for name in ("domain", "user_count", "successful_requests")}
+                for row in activity
+            ]
+            domain_activity = [
+                {
+                    name: row[name]
+                    for name in (
+                        "domain",
+                        "active_accounts",
+                        "successful_requests",
+                        "serving_processes",
+                    )
+                }
+                for row in activity
+            ]
+        else:
+            domains = await ch.query_all(DOMAINS_SQL, domain_params)
         # Read totals last so late ledger rows can only increase the total.
         report = await ch.query_one(ADOPTION_SQL, params)
     if report is None:

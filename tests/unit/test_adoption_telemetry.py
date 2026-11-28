@@ -13,9 +13,11 @@ from server.workers.registry import enabled_workers
 from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, run
 
 
-def test_domain_sharing_is_enabled_by_default() -> None:
-    assert Settings.model_fields["adoption_telemetry_share_domains"].default is True
-    assert Settings.model_fields["adoption_telemetry_share_domain_activity"].default is False
+def test_adoption_has_one_setting_and_is_enabled_by_default() -> None:
+    assert {name for name in Settings.model_fields if name.startswith("adoption_telemetry_")} == {
+        "adoption_telemetry_enabled"
+    }
+    assert Settings.model_fields["adoption_telemetry_enabled"].default is True
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -530,16 +532,16 @@ async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.Mo
     monkeypatch.setattr(adoption_telemetry, "get_http_client", http)
 
     assert "adoption_telemetry" not in {worker.name for worker in enabled_workers()}
+    assert not await adoption_telemetry.first_pass_due()
     await adoption_telemetry.run_pass()
     ch.assert_not_called()
     http.assert_not_called()
 
 
-def test_adoption_worker_uses_the_configured_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_adoption_worker_checks_hourly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
-    monkeypatch.setattr(settings, "adoption_telemetry_interval_seconds", 120)
     worker = next(worker for worker in enabled_workers() if worker.name == "adoption_telemetry")
-    assert worker.interval_seconds == 120
+    assert worker.interval_seconds == 3600
 
 
 @pytest.mark.parametrize(
@@ -554,7 +556,6 @@ async def test_boot_reports_unacknowledged_windows_without_a_stagger(
     monkeypatch: pytest.MonkeyPatch, cursor: str, due: bool
 ) -> None:
     monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
-    monkeypatch.setattr(settings, "adoption_telemetry_interval_seconds", 3600)
     monkeypatch.setattr(
         adoption_telemetry, "utc_now", lambda: datetime(2026, 11, 24, 12, 59, tzinfo=UTC)
     )
@@ -595,13 +596,11 @@ async def test_missing_deployment_id_surfaces_status_without_delivery(
     ],
     ids=["redirect", "wrong-acknowledgement", "oversized-acknowledgement"],
 )
-@pytest.mark.parametrize("share_domains", [False, True])
 async def test_delivery_retries_without_recounting_after_ack(
-    monkeypatch: pytest.MonkeyPatch, rejection: httpx.Response | None, share_domains: bool
+    monkeypatch: pytest.MonkeyPatch,
+    rejection: httpx.Response | None,
 ) -> None:
     monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
-    monkeypatch.setattr(settings, "adoption_telemetry_share_domains", share_domains)
-    monkeypatch.setattr(settings, "adoption_telemetry_share_domain_activity", True)
     monkeypatch.setattr(
         adoption_telemetry, "utc_now", lambda: datetime(2026, 11, 24, 3, tzinfo=UTC)
     )
@@ -611,26 +610,20 @@ async def test_delivery_retries_without_recounting_after_ack(
     monkeypatch.setattr(adoption_telemetry, "get_client", object)
     restricted_pairs = {("test", "restricted")}
 
-    def configured_pairs() -> set[tuple[str, str]]:
-        assert share_domains
-        return restricted_pairs
-
-    monkeypatch.setattr(adoption_telemetry, "configured_restricted_pairs", configured_pairs)
+    monkeypatch.setattr(adoption_telemetry, "configured_restricted_pairs", lambda: restricted_pairs)
 
     async def report(
         start: datetime,
         end: datetime,
         installation_id: UUID,
         *,
-        restricted: set[tuple[str, str]] | None,
-        share_domain_activity: bool,
+        restricted: set[tuple[str, str]],
         ch: object,
     ) -> dict[str, str]:
         assert installation_id != deployment_id
         assert start == datetime(2026, 11, 23, 12, tzinfo=UTC)
         assert end == datetime(2026, 11, 24, tzinfo=UTC)
-        assert restricted == (restricted_pairs if share_domains else None)
-        assert share_domain_activity is True
+        assert restricted == restricted_pairs
         return {"installation_id": str(installation_id), "window_start": start.isoformat()}
 
     aggregate = AsyncMock(side_effect=report)
