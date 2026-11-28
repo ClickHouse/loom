@@ -9,7 +9,7 @@ code_scip_apply worker. Symbol ids come from the SAME shared hash
 Apply semantics per touched file: upsert every symbol/edge the delta
 emits for it, tombstone scip rows in that file the delta no longer emits;
 files in `deleted_files` tombstone entirely. A file in `skipped_files` (its
-document failed to convert) keeps its rows and is marked stale. Idempotent —
+document failed to convert) keeps its rows and joins its tier's stale row. Idempotent —
 re-applying the same delta converges to the same live set.
 """
 
@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from server.code.app.index.entry_lock import check_held
 from server.code.domain.extract.treesitter import symbol_id
+from server.code.domain.index.compiler_tiers import SUFFIXES, owns_path
 from server.code.domain.index.state import SCIP_STALE_PREFIX
 from server.code.store.index import CodeRepo, build_row
 from server.workers import pass_context
@@ -119,7 +120,6 @@ class ScipApplyStats(BaseModel):
     edges_dropped_declarations: int = 0
     files_skipped_out_of_scope: int = 0
     files_skipped_excluded: int = 0  # the entry's path denylist
-    files_skipped_failed: int = 0  # the converter skipped them; their rows are marked stale
 
 
 def _path_refusal(org: str, ns: str) -> Any:
@@ -238,11 +238,14 @@ async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: _Delta) -> ScipA
     prefixes = _indexable_prefixes(org, ns)
     refused = _path_refusal(org, ns)
 
+    def out_of_scope(path: str) -> bool:
+        return bool(prefixes) and not any(path.startswith(p) for p in prefixes)
+
     def keep(path: str) -> bool:
         # Server-side scope enforcement: a full scip index sweeps the whole compile
         # graph (contrib/, build/, system headers). Only the repo's configured
         # prefixes belong in the index.
-        if prefixes and not any(path.startswith(p) for p in prefixes):
+        if out_of_scope(path):
             stats.files_skipped_out_of_scope += 1
             return False
         # The entry's path denylist (exclude globs, the built-in rules) binds the
@@ -272,8 +275,9 @@ async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: _Delta) -> ScipA
         # its thread keeps it until that read returns and the rounds are collected
         if not reading:
             rounds.close()
-    await _mark_stale(repo, org, ns, delta, refreshed)
-    stats.files_skipped_failed = len(delta.skipped_files)
+    # a skipped file the entry would not keep is never marked: nothing would clear it
+    skipped = {p for p in delta.skipped_files if not out_of_scope(p) and not refused(p)}
+    await _mark_stale(repo, org, ns, skipped, refreshed)
     if FEATURE_CTOR_CALLS in delta.features:
         check_held()
         await repo.set_state(
@@ -287,19 +291,28 @@ async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: _Delta) -> ScipA
     return stats
 
 
-async def _mark_stale(repo: Any, org: str, ns: str, delta: _Delta, refreshed: set[str]) -> None:
-    """Mark each skipped file stale at the delta's commit, and drop the mark of a file
-    this delta applied or deleted (`SCIP_STALE_PREFIX`)."""
-    skipped = set(delta.skipped_files)
+def _stale_key(path: str) -> str:
+    """The stale row of the tier whose documents `path` is one of."""
+    return SCIP_STALE_PREFIX + next((t for t in SUFFIXES if owns_path(t, path)), "")
+
+
+async def _mark_stale(repo: Any, org: str, ns: str, skipped: set[str], refreshed: set[str]) -> None:
+    """Rewrite each tier's stale row (`SCIP_STALE_PREFIX`) this delta changes: the files
+    it held, plus the ones skipped, minus the ones applied or deleted. One read, and at
+    most one insert."""
     refreshed -= skipped
     if not skipped and not refreshed:
         return
-    check_held()
-    for path in sorted(skipped):
-        await repo.set_state(org, ns, SCIP_STALE_PREFIX + path, delta.commit)
-    if refreshed:
-        for path in sorted(await repo.scip_stale_marks(org, ns) & refreshed):
-            await repo.set_state(org, ns, SCIP_STALE_PREFIX + path, "")
+    marks = await repo.scip_stale_marks(org, ns)
+    rows: dict[str, str] = {}
+    for key in set(marks) | {_stale_key(p) for p in skipped}:
+        before = marks.get(key, set())
+        after = (before - refreshed) | {p for p in skipped if _stale_key(p) == key}
+        if after != before:
+            rows[key] = json.dumps(sorted(after))
+    if rows:
+        check_held()
+        await repo.set_states(org, ns, rows)
 
 
 async def _apply_files(

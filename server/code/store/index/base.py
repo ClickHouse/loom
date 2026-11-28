@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.code.domain.index.state import IndexState, StateEntry
+from server.code.domain.index.state import SCIP_STALE_PREFIX, IndexState, StateEntry
 from server.code.store.index.rows import (
     _TABLE_COLS,
     VERSION_INVARIANT_COLS,
@@ -111,9 +111,10 @@ class CodeRepoBase:
             SELECT state_key, state_value, detail, updated_at
             FROM loom.code_index_state FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
+              AND NOT startsWith(state_key, {stale:String})
             ORDER BY state_key
             """,
-            {"org": org, "ns": ns},
+            {"org": org, "ns": ns, "stale": SCIP_STALE_PREFIX},
         )
         return {
             str(r["state_key"]): StateEntry(
@@ -135,9 +136,10 @@ class CodeRepoBase:
             SELECT org, namespace, state_key, state_value, detail, updated_at
             FROM loom.code_index_state FINAL
             WHERE (org, namespace) IN {pairs:Array(Tuple(String, String))}
+              AND NOT startsWith(state_key, {stale:String})
             ORDER BY org, namespace, state_key
             """,
-            {"pairs": [(str(o), str(n)) for o, n in pairs]},
+            {"pairs": [(str(o), str(n)) for o, n in pairs], "stale": SCIP_STALE_PREFIX},
         )
         out: dict[tuple[str, str], IndexState] = {(str(o), str(n)): {} for o, n in pairs}
         for r in rows:
@@ -147,6 +149,11 @@ class CodeRepoBase:
         return out
 
     async def set_state(self, org: str, ns: str, key: str, value: str, detail: str = "") -> None:
+        await self.set_states(org, ns, {key: value}, detail)
+
+    async def set_states(self, org: str, ns: str, values: dict[str, str], detail: str = "") -> None:
+        """Several state rows of one namespace in one insert."""
+        now, version = _now(), version_now()
         await self._ch.insert(
             "loom.code_index_state",
             [
@@ -156,9 +163,10 @@ class CodeRepoBase:
                     "state_key": key,
                     "state_value": value,
                     "detail": detail,
-                    "updated_at": _now(),
-                    "version": version_now(),
+                    "updated_at": now,
+                    "version": version,
                 }
+                for key, value in values.items()
             ],
         )
 

@@ -1773,6 +1773,7 @@ c6cde2e02fad	ALTER TABLE loom.conversations DELETE WHERE (org = {org:String} AND
 c6d2cd622bdf	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 c6e9dc907dc7	SELECT value FROM loom.oauth_signin_state WHERE claim_key = {k:String}
 c6fedc654be3	SELECT count() AS n FROM loom.code_context_packs FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND pr_number = {pr:UInt32}
+c7139b45f19a	SELECT state_key, state_value, detail, updated_at FROM loom.code_index_state FINAL WHERE org = {org:String} AND namespace = {ns:String} AND NOT startsWith(state_key, {stale:String}) ORDER BY state_key
 c71b88136b17	SELECT count() AS n FROM loom.learnings_supporters WHERE org = {org:String} AND user_id = {uid:String} AND ?
 c72e7e6dceb9	SELECT count() AS n FROM loom.working_memory FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}
 c77ef954081d	SELECT chunk_id, path, scope, kind, start_line, end_line, content, symbol_ids, context_description, arraySum(arrayMap((tok, idf) -> idf * countSubstrings(concat(?, lexemes, ?), concat(?, tok, ?)), {to
@@ -1968,7 +1969,6 @@ da1d5a654f1e	SELECT count() AS n FROM loom.knowledge_uploads WHERE org = {org:St
 da366d9eb046	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 daa35ab01384	SELECT count() AS n, countIf(embedding_dim > ?) AS embedded, countIf(NOT startsWith(embed_last_error, {unembedded:String})) AS embeddable FROM loom.code_chunks FINAL WHERE org = {org:String} AND names
 daa9953aad14	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
-dabe37717488	SELECT state_key, state_value, detail, updated_at FROM loom.code_index_state FINAL WHERE org = {org:String} AND namespace = {ns:String} ORDER BY state_key
 dae0d2378112	SELECT count() AS n FROM loom.memory_code_links FINAL WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL
 dae4a1968b69	ALTER TABLE loom.context_blobs UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutat
 db13fde1fa1b	SELECT count() AS n FROM loom.code_files FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL

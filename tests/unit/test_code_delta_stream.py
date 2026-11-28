@@ -172,8 +172,8 @@ class _Repo:
     async def set_state(self, org: str, ns: str, key: str, value: str, **_: Any) -> None:
         self.state[key] = value
 
-    async def scip_stale_marks(self, org: str, ns: str) -> set[str]:
-        return set()
+    async def scip_stale_marks(self, org: str, ns: str) -> dict[str, set[str]]:
+        return {}
 
 
 @pytest.mark.asyncio

@@ -108,6 +108,12 @@ def _converter():
     return mod
 
 
+def test_the_server_logs_the_converters_warning_line() -> None:
+    from server.code.app.index.compiler_tier import SKIPPED_WARNING
+
+    assert _converter().SKIPPED_WARNING == SKIPPED_WARNING
+
+
 def test_a_document_that_fails_to_convert_is_skipped_and_listed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

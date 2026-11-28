@@ -351,7 +351,7 @@ def _convert(tmp_path: Path, *, changed=None, source: bool = True, full: bool = 
     docs = _docs()
     with (
         patch.object(scip_to_delta, "_ensure_scip_pb2", return_value=_PB),
-        patch.object(scip_to_delta, "_stream_documents", lambda data, pb, **_: iter(docs)),
+        patch.object(scip_to_delta, "_indexed_documents", lambda *a: enumerate(docs)),
         patch.object(scip_to_delta, "_top_level_records", lambda data: iter([])),
         patch.object(
             scip_to_delta,
@@ -474,8 +474,8 @@ class _ApplyRepo:
     async def set_state(self, org, ns, key, value, detail=""):
         self.state.append((key, value, detail))
 
-    async def scip_stale_marks(self, org: str, ns: str) -> set[str]:
-        return set()
+    async def scip_stale_marks(self, org: str, ns: str) -> dict[str, set[str]]:
+        return {}
 
 
 @pytest.mark.asyncio

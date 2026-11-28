@@ -138,6 +138,31 @@ def test_a_modified_file_is_read_from_the_index(tmp_path: Path, tier: str) -> No
 
 
 @pytest.mark.parametrize("tier", sorted(_TIERS))
+def test_with_the_stop_switch_a_failed_document_fails_the_run(tmp_path: Path, tier: str) -> None:
+    """SCIP_STOP_ON_FAILED_DOCUMENT=1 (`code_scip_stop_on_failed_document`): a document
+    that does not parse fails the run and writes no delta, so the worker keeps its
+    watermark. The Go harness converts each module in an `xargs` job, which passes the
+    failure on."""
+    w = _Window(tmp_path, tier)
+    (w.repo / w.path("a")).write_text("x_a = 2\n")
+    head = _commit(w.repo, "edit a")
+    _write_index(w.index, [w.path("a")])
+    raw = w.index.read_bytes()
+    # same length, so every length prefix holds; python-protobuf refuses the path
+    w.index.write_bytes(raw.replace(b"src/a.", b"src/\xff."))
+    proc = subprocess.run(
+        ["bash", str(w.script), str(w.repo), w.base, head],
+        env={**w.env, "SCIP_STOP_ON_FAILED_DOCUMENT": "1"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert "DecodeError" in proc.stderr
+    assert not w.delta.exists()
+
+
+@pytest.mark.parametrize("tier", sorted(_TIERS))
 def test_a_rename_tombstones_the_old_path(tmp_path: Path, tier: str) -> None:
     w = _Window(tmp_path, tier)
     _git(w.repo, "mv", w.path("a"), w.path("c"))

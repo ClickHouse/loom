@@ -1916,7 +1916,7 @@
         "code_scip_stop_on_failed_document": {
           "default": false,
           "type": "boolean",
-          "description": "True fails the entry's compiler-tier pass on a document that fails to parse or convert (a string that is not UTF-8, say). False: the document is skipped and logged, and its file keeps its compiler rows, marked stale."
+          "description": "True fails the compiler-tier pass on a document that fails to parse or convert; false skips and logs it, and its file's compiler rows stay, marked stale."
         },
         "code_scip_ts_delta_enabled": {
           "default": true,

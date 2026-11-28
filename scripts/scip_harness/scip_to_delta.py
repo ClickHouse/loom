@@ -856,7 +856,7 @@ class _Skips:
         self.labels: set[str] = set()
         self.paths: set[str] = set()
 
-    def add(self, path: str, err: Exception, index: int = -1) -> None:
+    def add(self, path: str, err: Exception, index: int) -> None:
         if self.stop:
             raise err
         # a document whose path cannot be read is told apart by its place in the index
@@ -876,7 +876,13 @@ SKIPPED_WARNING = "scip_to_delta: warning: skipped document"
 def _stream_documents(
     data, scip_pb2, *, skips: _Skips, paths: set[str] | None = None, ordered: bool = False
 ):
-    """Yield scip.Document messages by streaming the Index's top-level
+    """`_indexed_documents` without each document's place in the index."""
+    for _i, doc in _indexed_documents(data, scip_pb2, skips, paths, ordered):
+        yield doc
+
+
+def _indexed_documents(data, scip_pb2, skips: _Skips, paths: set[str] | None, ordered: bool):
+    """Yield (place in the index, scip.Document) by streaming the Index's top-level
     records (field 2 = documents) instead of parsing one giant message —
     a full ClickHouse index is ~1GB, which trips python-protobuf's
     whole-message limits ("Wire format was corrupt"). `paths` parses only
@@ -900,7 +906,7 @@ def _stream_documents(
         except Exception as e:  # noqa: BLE001 — any failure of one document skips it
             skips.add(_document_path(payload), e, i)
             continue
-        yield doc
+        yield i, doc
 
 
 _TS_TYPE_KINDS = frozenset({"class", "interface", "type", "enum"})
@@ -1286,15 +1292,13 @@ class DeltaStream:
         self.files = self._files(data, scip_pb2, changed)
 
     def _files(self, data, scip_pb2, changed: set[str] | None):
-        for doc in _stream_documents(
-            data, scip_pb2, skips=self._skips, paths=changed, ordered=True
-        ):
+        for i, doc in _indexed_documents(data, scip_pb2, self._skips, changed, True):
             if changed is not None and doc.relative_path not in changed:
                 continue
             try:
                 entry = _convert_document(doc, self._run)
             except Exception as e:  # noqa: BLE001 — any failure of one document skips it
-                self._skips.add(doc.relative_path, e)
+                self._skips.add(doc.relative_path, e, i)
                 continue
             if entry is None:
                 continue

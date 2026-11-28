@@ -62,6 +62,8 @@ else
 fi
 
 run_module() {
+  # an xargs child: without these a failed conversion would pass as `tail`'s exit
+  set -o pipefail
   local dir=$1 work
   work=$(mktemp -d)
   trap 'rm -rf "$work"' RETURN
@@ -102,11 +104,10 @@ run_module() {
     echo "skip $dir: scip-go failed: $(tail -1 "$work/scip-go.log")" >&2
     return 0
   fi
-  # the converter's summary line and its last line (where the delta went)
   if [[ -n "${DELTA_OUT_DIR:-}" ]]; then
-    DELTA_OUT="$DELTA_OUT_DIR/${prefix//\//__}.json" convert_delta "${args[@]}" | sed -n '/^delta: /p;$p'
+    DELTA_OUT="$DELTA_OUT_DIR/${prefix//\//__}.json" convert_delta "${args[@]}" | tail -1 || return 1
   else
-    convert_delta "${args[@]}" | sed -n '/^delta: /p;$p'
+    convert_delta "${args[@]}" | tail -1 || return 1
   fi
   echo "done $dir"
 }

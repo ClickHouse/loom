@@ -1505,9 +1505,8 @@ settings:
   # memory bound; one value over it fails the pass (code-index-operations.md). [live]
   # code_scip_delta_round_max_nodes: 3000000
 
-  # True fails the entry's compiler-tier pass on a document that fails to parse or
-  # convert (a string that is not UTF-8, say). False: the document is skipped and
-  # logged, and its file keeps its compiler rows, marked stale. [restart]
+  # True fails the compiler-tier pass on a document that fails to parse or convert;
+  # false skips and logs it, and its file's compiler rows stay, marked stale. [restart]
   # code_scip_stop_on_failed_document: false
 
   # C++ full re-index: seeds an entry the delta has no watermark for, and re-indexes
