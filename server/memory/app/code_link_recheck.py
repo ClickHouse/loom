@@ -408,11 +408,12 @@ async def _moved(
     """What a link found under no name it had became where it may have moved; `renamed`
     as it is for any other link, and for one already missing: only its own name finds
     that one again. First with its tokens under another name, in any file or scope: the
-    only one is it, whatever the searches of its own file and name left unsure. Then
-    edited, unless the same-file search left it unsure for more than new definitions
-    there that were each compared with it, none close: in another module under its name
-    (`far`), or under another name. Not found there either, it is as unsure as any of
-    the searches left it."""
+    only one is it, whatever the searches of its own file and name left unsure, and
+    several, or one another removed definition had too, leave it unsure: no edited
+    definition outweighs its tokens. Then edited, unless the same-file search left it
+    unsure for more than new definitions there that were each compared with it, none
+    close: in another module under its name (`far`), or under another name. Not found
+    there either, it is as unsure as any of the searches left it."""
     if (
         not r.lost
         or renamed.definition is not None
@@ -426,7 +427,7 @@ async def _moved(
     # namesake with an edit (`far`), and where the edited rules are withheld
     if not mirror_unsure and (far or not edits):
         whole = await _renamed_elsewhere(files, r, head, edited=False)
-    if whole.definition is not None:
+    if whole.definition is not None or whole.exact:
         return whole
     if edits:
         if far:

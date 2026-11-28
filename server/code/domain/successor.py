@@ -63,7 +63,8 @@ _CLASS_KINDS = {"class", "struct", "interface", "trait", "record", "enum"}
 @dataclass(frozen=True)
 class Successor:
     definition: Definition | None
-    # the shape matched: only the name changed
+    # the shape matched: only the name changed. With no definition, in another file or
+    # scope: its shape is there, under more than one name or with another claimant
     exact: bool = False
     # new definitions in its scope may be it; none certainly is
     uncertain: bool = False
@@ -344,7 +345,9 @@ def _same_shape(
     rivals: list[Definition],
 ) -> Successor | None:
     """`was` renamed alone into one of `arrived`: the only one with its exact shape.
-    None when no such definition arrived."""
+    Several of that shape, or one another removed definition had too, are uncertain and
+    still `exact`: its tokens are there, so no edited definition is it. None when no
+    such definition arrived."""
     shape, name = was.shape.exact, _bare(was)
     if not shape:
         return None
@@ -361,7 +364,7 @@ def _same_shape(
         d, side = same[0]
         carried = _left_its_class(was, before, d, side)
         return Successor(d, exact=not carried, carried=carried)
-    return Successor(None, uncertain=True) if same else None
+    return Successor(None, exact=True, uncertain=True) if same else None
 
 
 def _same_name(

@@ -6024,6 +6024,34 @@ async def test_its_tokens_under_another_name_are_weighed_before_a_namesake_with_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("contested", ["under-two-names", "a-removed-twin-had-them"])
+async def test_its_tokens_held_twice_are_not_outweighed_by_a_namesake_with_an_edit(
+    monkeypatch, contested: str
+) -> None:
+    # b.py takes its name with an edit, and its tokens are under another name in c.py
+    # and d.py, or in c.py alone where a.py lost a twin too: one of those holds the code
+    # the memory was written against, and the edited name is not followed past them
+    twin = "\n\n" + _LONG_ROWS.replace("fetch_rows", "drain_rows")
+    lost_twin = contested == "a-removed-twin-had-them"
+    commits = {
+        ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS + (twin if lost_twin else ""),
+        ("c1", "pkg/a.py"): _KEEP,
+        ("c1", "pkg/b.py"): _LONG_ROWS.replace("out.append(-i)", "out.append(-i * 2)"),
+        ("c1", "pkg/c.py"): _LONG_ROWS.replace("fetch_rows", "warm_up"),
+    }
+    if not lost_twin:
+        commits["c1", "pkg/d.py"] = _LONG_ROWS.replace("fetch_rows", "prime_rows")
+    files, row = _renaming_world(monkeypatch, commits)
+    _history(monkeypatch, files, commits)
+
+    async def candidates(org, cns, *, names=None, qualified_names=None):
+        return [Definition("pkg/b.py", "pkg.b::fetch_rows", "fetch_rows")]
+
+    monkeypatch.setattr(code_links.code, "candidates", candidates)
+    assert await _followed(files, row) == [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("edited", [False, True], ids=["its-tokens", "nearly-its-text"])
 async def test_a_definition_renamed_as_it_moved_is_followed_past_new_ones_in_its_own_scope(
     monkeypatch, edited: bool
