@@ -210,7 +210,8 @@ async def _grep(
     except (gitrepo.ArgumentsTooLong, gitrepo.GrepTimedOut) as e:
         log.warning(  # a missing link the mirror could have followed reads as the index says
             "memory links: mirror search for %s over %d paths of %s cut short: %s",
-            literal if isinstance(literal, str) else literal[0][:80],
+            # a line of source may hold a literal: only how many were searched for
+            literal if isinstance(literal, str) else f"{len(literal)} of its lines",
             len(paths),
             scope.cfg.namespace,
             type(e).__name__,

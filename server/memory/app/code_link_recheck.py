@@ -31,6 +31,7 @@ from server.code.domain.successor import (
     close_to,
     elsewhere,
     own_lines,
+    retaken,
     successor,
 )
 from server.core.datetimes import naive_utc_now
@@ -593,13 +594,15 @@ async def _renamed_elsewhere(
 ) -> Successor:
     """What the lost link's definition became in another file or scope
     (`successor.elsewhere`), among the definitions new since `_searched_from` in the
-    files changed since: the one with its tokens, or with `edited` one with a close
-    text. A range of more than `_MAX_ELSEWHERE` files is read only where a line of the
-    definition is held, in as many files at most. Nothing, as before this search, when
-    the range brought no definition in or cannot be read, or the link's last-read text
-    cannot. A link already unresolved is unsure over a range not searched: its range
-    starts at its own commit and only grows, and the candidates that left it unresolved
-    may still be there."""
+    files changed since: the one with its tokens, also under a name its file had for
+    another text (`successor.retaken`), or with `edited` one with a close text. A range
+    of more than `_MAX_ELSEWHERE` files is read only where a line of the definition is
+    held, in as many files at most. Nothing, as before this search, when the range
+    brought no definition in or cannot be read, or the link's last-read text cannot. A
+    link already unresolved is unsure over a range not read whole, unless that read
+    names its successor: its range starts at its own commit and only grows, and the
+    candidates that left it unresolved may still be there, in a file that holds none of
+    its lines as written."""
     checked, path = r.row["checked_commit"], r.before.read_path
     base = _searched_from(r.before, r.row, r.range)
     how = "edited" if edited else "whole"
@@ -607,27 +610,40 @@ async def _renamed_elsewhere(
     if (known := files.successors.get(key)) is not None:
         return known
     turnover = await files.turnover(base, head, limit=_MAX_ELSEWHERE)
-    if turnover is not None and not any(side.defs for side in turnover.new):
-        return Successor(None)
     try:
         old = await files.at(checked, path) if checked and await files.has(checked) else None
     except code.ParseFailed:
         old = None
     was = [d for d in old.defs if d.qualified_name == r.before.qualified_name] if old else []
     then = Side(path, old.defs, old.lines) if old else None
-    if turnover is None and then is not None and was:
+    # what a range not read whole leaves of a link already unresolved
+    unread = Successor(None, uncertain=r.before.state == "unresolved")
+    narrowed = turnover is None
+    if narrowed and then is not None and was:
         # too wide to read whole: where its lines are
         turnover = await files.turnover_holding(
             base, head, own_lines(was[0], then), path, limit=_MAX_ELSEWHERE
         )
     if turnover is None:
-        return Successor(None, uncertain=r.before.state == "unresolved")
-    if then is None or not was or not any(side.defs for side in turnover.new):
+        return unread
+    if then is None or not was:
         return Successor(None)
+    replaced = await files.replaced(base, head, retaken(was[0], then, turnover.kept))
+    if not replaced and not any(side.defs for side in turnover.new):
+        return unread if narrowed else Successor(None)
     # comparing texts is CPU work: off the loop, once per definition and pass
     found = await asyncio.to_thread(
-        elsewhere, was[0], then, turnover.new, turnover.gone, turnover.kept, edited=edited
+        elsewhere,
+        was[0],
+        then,
+        turnover.new,
+        turnover.gone,
+        turnover.kept,
+        edited=edited,
+        replaced=replaced,
     )
+    if narrowed and found.definition is None and unread.uncertain:
+        found = replace(found, uncertain=True)
     files.successors[key] = found
     return found
 

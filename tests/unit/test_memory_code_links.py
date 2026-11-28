@@ -5507,6 +5507,47 @@ async def test_a_name_the_other_file_already_defined_is_not_the_renamed_one(monk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("renamed", [False, True], ids=["file-kept", "file-renamed"])
+async def test_its_tokens_under_a_name_the_other_file_had_for_another_text_are_followed(
+    monkeypatch, renamed: bool
+) -> None:
+    # b.py had a `warm_up` of its own, which now holds the removed definition's tokens:
+    # the commit put it under that name, where a copy that was already there is another
+    # definition. What the name held is read at the file's old path
+    was = "pkg/c.py" if renamed else "pkg/b.py"
+    commits = {
+        ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
+        ("c0", was): "def warm_up(host):\n    return connect(host).ping()\n",
+        ("c1", "pkg/a.py"): _KEEP,
+        ("c1", "pkg/b.py"): _LONG_ROWS.replace("fetch_rows", "warm_up"),
+    }
+    files, row = _renaming_world(monkeypatch, commits, renames={was: "pkg/b.py"} if renamed else {})
+    assert await _followed(files, row) == [("moved", "pkg/b.py", "pkg.b::warm_up")]
+
+
+@pytest.mark.asyncio
+async def test_a_name_whose_old_text_cannot_be_read_is_not_the_renamed_one(monkeypatch) -> None:
+    # b.py at c0 does not parse: what `warm_up` held there is unknown, so it stays a name
+    # the file had
+    commits = {
+        ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
+        ("c0", "pkg/b.py"): "def warm_up(host):\n    return connect(host).ping()\n",
+        ("c1", "pkg/a.py"): _KEEP,
+        ("c1", "pkg/b.py"): _LONG_ROWS.replace("fetch_rows", "warm_up"),
+    }
+    files, row = _renaming_world(monkeypatch, commits)
+    at = files.at
+
+    async def unparsed(commit, path):
+        if (commit, path) == ("c0", "pkg/b.py"):
+            raise code_links.code.ParseFailed(path, "syntax")
+        return await at(commit, path)
+
+    monkeypatch.setattr(files, "at", unparsed)
+    assert await _followed(files, row) == [("missing", "pkg/a.py", "pkg.a::fetch_rows")]
+
+
+@pytest.mark.asyncio
 async def test_a_missing_link_is_not_handed_to_a_definition_renamed_elsewhere(monkeypatch) -> None:
     # deleted at c1 and read missing then; a definition of its shape added at c2 is new code
     commits = {
@@ -5683,10 +5724,66 @@ async def test_an_unresolved_link_stays_unresolved_when_the_line_search_is_cut_s
     lost = row | {"state": "unresolved", "changed_since": "c1"}
     with caplog.at_level(logging.INFO, logger=code_link_pass.log.name):
         assert await _followed(files, lost, "c1", "c2") == []
+    cut = "GrepTimedOut" if why == "timed-out" else "ArgumentsTooLong"
+    # the warning counts the lines searched for: a line of source may hold a literal
     assert [r.getMessage() for r in caplog.records] == [
+        f"memory links: mirror search for 3 of its lines over 36 paths of code-a cut short: {cut}",
         "memory links: a definition not searched for across the 36 files changed in "
-        "c0..c2 of code-a: git cannot search them"
+        "c0..c2 of code-a: git cannot search them",
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_line_search_git_cannot_finish_is_not_made_again_over_the_range(
+    monkeypatch,
+) -> None:
+    # the paths are the same for every lost definition of a range: the second one's
+    # search would wait as long as the first
+    commits = _wide({("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS, ("c1", "pkg/a.py"): _KEEP})
+    files, _ = _renaming_world(monkeypatch, commits)
+    searched = []
+
+    async def no_search(scope, commit, lines, paths, *, limit):
+        searched.append(list(lines))
+        return None
+
+    monkeypatch.setattr(code_links.code, "grep_lines", no_search)
+    for line in ("a line of one definition", "a line of another"):
+        assert await files.turnover_holding("c0", "c1", [line], "pkg/a.py", limit=2) is None
+    assert searched == [["a line of one definition"]]
+
+
+# `_LONG_ROWS` under another name with each of its three longest lines edited: nearly
+# its text, and no line a search for them finds
+_REWRITTEN_ROWS = (
+    _LONG_ROWS.replace("range(start, n)", "range(start, n, 1)")
+    .replace("out.append(-i)", "out.append(-i * 1)")
+    .replace("sorted(out)", "sorted(out, key=abs)")
+)
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_link_stays_unresolved_when_its_candidates_hold_none_of_its_lines(
+    monkeypatch,
+) -> None:
+    # b.py and c.py each gain nearly its text at c1, every long line of it edited, and c2
+    # changes 33 other files: the range is read only in the link's own file, which
+    # cannot show the two candidates gone
+    two = {
+        "pkg/b.py": _REWRITTEN_ROWS.replace("fetch_rows", "warm_up"),
+        "pkg/c.py": _REWRITTEN_ROWS.replace("fetch_rows", "cool_down"),
+    }
+    commits = {("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS}
+    commits |= {("c1", path): src for path, src in ({"pkg/a.py": _KEEP} | two).items()}
+    others = {f"pkg/n{i}.py": f"N{i} = 1\n" for i in range(33)}
+    commits |= {("c2", path): src for path, src in ({"pkg/a.py": _KEEP} | two | others).items()}
+    files, row = _renaming_world(monkeypatch, commits)
+    assert await _followed(files, row) == [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]
+    read = _reads_counted(monkeypatch, files)
+    lost = row | {"state": "unresolved", "changed_since": "c1"}
+    assert await _followed(files, lost, "c1", "c2") == []
+    assert {path for _, path in read} == {"pkg/a.py"}
+    assert files.wide_ranges == 1
 
 
 @pytest.mark.asyncio
@@ -5966,28 +6063,49 @@ async def test_a_method_is_followed_into_its_class_renamed_with_one_member(monke
     assert await _followed(files, row) == [("moved", "pkg/a.py", "pkg.a::Check::fetch_rows")]
 
 
+_ROWS_METHOD = _LONG_ROWS.replace("def fetch_rows(n,", "def fetch_rows(self, n,").replace(
+    "\n", "\n    "
+)
+_SYNC = "class Sync:\n    " + _ROWS_METHOD.rstrip() + "\n"
+
+
 @pytest.mark.asyncio
-async def test_a_close_namesake_the_changed_files_kept_leaves_the_link_unresolved(
+async def test_a_class_moved_onto_the_name_another_gave_up_takes_its_method_along(
     monkeypatch,
 ) -> None:
     # b.py's Client keeps its name and takes the removed text, and its old text arrives
-    # as Async: the new definition is not the only close one of that name
-    method = _LONG_ROWS.replace("def fetch_rows(n,", "def fetch_rows(self, n,").replace(
-        "\n", "\n    "
-    )
-    sync = "class Sync:\n    " + method.rstrip() + "\n"
-    other = method.replace("sorted(out)", "list(out)").rstrip() + "\n"
+    # as Async: `Client.fetch_rows` held another text, so it is the removed definition
+    # under a name the file had, not a copy that was there
+    other = _ROWS_METHOD.replace("sorted(out)", "list(out)").rstrip() + "\n"
     commits = {
-        ("c0", "pkg/a.py"): sync,
+        ("c0", "pkg/a.py"): _SYNC,
         ("c0", "pkg/b.py"): "class Client:\n    " + other,
-        ("c1", "pkg/b.py"): sync.replace("Sync", "Client") + "\n\nclass Async:\n    " + other,
+        ("c1", "pkg/b.py"): _SYNC.replace("Sync", "Client") + "\n\nclass Async:\n    " + other,
     }
     files, row = _renaming_world(monkeypatch, commits)
-    assert await _followed(files, row) == [("unresolved", "pkg/a.py", row["qualified_name"])]
+    assert await _followed(files, row) == [("moved", "pkg/b.py", "pkg.b::Client::fetch_rows")]
     turnover = await files.turnover("c0", "c1", limit=32)
     assert [[x.qualified_name for x in side.defs] for side in turnover.kept] == [
         ["pkg.b::Client", "pkg.b::Client::fetch_rows"]
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_close_namesake_the_changed_files_kept_leaves_the_link_unresolved(
+    monkeypatch,
+) -> None:
+    # b.py's Client keeps its method as it was, close to the removed one, and Async
+    # arrives with a close text too: the new definition is not the only close one of
+    # that name
+    other = _ROWS_METHOD.replace("sorted(out)", "list(out)").rstrip() + "\n"
+    third = _ROWS_METHOD.replace("sorted(out)", "tuple(out)").rstrip() + "\n"
+    commits = {
+        ("c0", "pkg/a.py"): _SYNC,
+        ("c0", "pkg/b.py"): "class Client:\n    " + other,
+        ("c1", "pkg/b.py"): "class Client:\n    " + other + "\n\nclass Async:\n    " + third,
+    }
+    files, row = _renaming_world(monkeypatch, commits)
+    assert await _followed(files, row) == [("unresolved", "pkg/a.py", row["qualified_name"])]
 
 
 @pytest.mark.asyncio

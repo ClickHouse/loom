@@ -12,10 +12,11 @@ file.
 The definition may also have been renamed as it moved to another file or scope
 (`elsewhere`): among the definitions the changed files did not have before, the one with
 its exact shape, which is looked for first; then the one of its own name with a close
-text, or the one whose text is nearly its own under any name. A small definition is told
-by its shape alone only with its scope: from module level under a name of its own words
-or one that holds them, and with its class otherwise; and by its text under another name
-only token for token.
+text, or the one whose text is nearly its own under any name. Its exact shape under a
+name a file already had for another text is new there too (`retaken`). A small definition
+is told by its shape alone only with its scope: from module level under a name of its own
+words or one that holds them, and with its class otherwise; and by its text under another
+name only token for token.
 """
 
 from __future__ import annotations
@@ -174,12 +175,14 @@ def elsewhere(
     kept: Sequence[Side] = (),
     *,
     edited: bool = True,
+    replaced: Sequence[Definition] = (),
 ) -> Successor:
     """What `was` (in `before`) became in another file or scope. `new` holds, file by
     file, the definitions a file did not define before; `gone` those whose name left
     their file, `was` among them: one new definition is the successor of one of them at
     most; `kept` those the changed files still define under a name they had, which never
-    inherit a link whatever their text.
+    inherit a link whatever their text, but for the `replaced` ones: those of `retaken`
+    whose name held another text before, new definitions under an old name.
 
     The one with its exact shape is it renamed alone: the only answer without `edited`.
     Else the one of its own name with a close text is it edited, when no definition of
@@ -191,12 +194,14 @@ def elsewhere(
     small = _small(was, before)
     left = next((side for side in gone if side.path == before.path), None)
     had = {side.path: side for side in kept}
+    took = {(d.path, d.qualified_name) for d in replaced}
     arrived = [
         (d, side)
         for side in new
         for d in side.defs
         if not small or _may_be(was, before, d, side, had.get(side.path), left)
     ]
+    arrived += [(d, s) for s in kept for d in s.defs if (d.path, d.qualified_name) in took]
     rivals = [
         (r, side)
         for side in gone
@@ -206,11 +211,23 @@ def elsewhere(
     found = _same_shape(was, before, arrived, [r for r, _ in rivals])
     if found is not None or not edited:
         return found or Successor(None)
-    stayed = [(d, side) for side in kept for d in side.defs]
+    stayed = [(d, s) for s in kept for d in s.defs if (d.path, d.qualified_name) not in took]
     found = _same_name(was, before, arrived, rivals, stayed)
     if found.definition is not None or found.uncertain:
         return found
     return _nearly(was, before, arrived, rivals, stayed, 1.0 if small else _NEAR)
+
+
+def retaken(was: Definition, before: Side, kept: Sequence[Side]) -> list[Definition]:
+    """The definitions of `kept` that hold `was`'s tokens. One whose name held another
+    text before is `was` put under a name its file already had (`SyncClient` moved in as
+    `Client` while the `Client` there became `AsyncClient`): the caller reads what the
+    name held and hands those to `elsewhere` as `replaced`. One that held these tokens
+    already is a copy that was there. None for a small `was`: two stubs have one shape,
+    and a name that stayed vouches for neither."""
+    if not was.shape.exact or _small(was, before):
+        return []
+    return [d for side in kept for d in side.defs if d.shape.exact == was.shape.exact]
 
 
 def _may_be(
@@ -221,8 +238,9 @@ def _may_be(
     ReadError(Exception): pass`, `RetryError`). From module level its name is its own:
     it goes, into any scope, under a name of its own words (`_read_rows`,
     `read_rows_v2`), and to the module level of another file under one that holds them
-    (`_grown`; in its own file `successor` decides, where a width alone is a sibling);
-    one shared word is no kinship among every changed file. A member's name is one any
+    or that they hold, two words at least or a number apart (`_grown`; in its own file
+    `successor` decides, where a width alone is a sibling); one shared word is no
+    kinship among every changed file. A member's name is one any
     class may define (`__iter__`, `close`): it goes only with its class
     (`_with_its_class`), under a name the search of its own file would take (`_kin`)."""
     a, b = _words(was.name), _words(d.name)
@@ -237,12 +255,19 @@ def _may_be(
 
 def _grown(a: list[str], b: list[str]) -> bool:
     """One name is the other with words before or after it (`ClassicConvCToBool` for
-    `ConvCToBool`, `D2` for `D`): what a definition is called once it stands beside
-    another of its name."""
+    `ConvCToBool`): what a definition is called once it stands beside another of its
+    name. A name of one word is held by any name about the same thing (`Error` by
+    `ReadError`, `fetch` by `fetch_rows`): it grows by a number alone (`D2` for `D`)."""
     short, long = sorted((a, b), key=len)
     if not short or len(short) == len(long):
         return False
-    return long[: len(short)] == short or long[-len(short) :] == short
+    if long[: len(short)] == short:
+        more = long[len(short) :]
+    elif long[-len(short) :] == short:
+        more = long[: -len(short)]
+    else:
+        return False
+    return len(short) > 1 or all(w.isdigit() for w in more)
 
 
 def _with_its_class(
@@ -253,9 +278,11 @@ def _with_its_class(
     with nearly its text, or the one keeping its members' names: half of them, weighed
     with those it already had (`had`: what `now`'s file kept), so a class that took two
     methods in is not it; or two, where one more member told by its own text came with
-    its tokens. Or, whatever stays behind: two more of its members, each told by its
-    own text, left for `d`'s class under their names with their tokens (a class split
-    in two); small ones vouch for nothing, any dict-like class has them."""
+    its tokens: `d` under `was`'s own name is one of the two, so that one larger member
+    is then all that tells the class. Or, whatever stays behind: two more of its
+    members, each told by its own text, left for `d`'s class under their names with
+    their tokens (a class split in two); small ones vouch for nothing, any dict-like
+    class has them."""
     scope, target = _scope_of(was), _scope_of(d)
     lost = left.defs if left is not None else ()
     theirs = {_bare(m): m.shape.exact for m in now.defs if _scope_of(m) == target}

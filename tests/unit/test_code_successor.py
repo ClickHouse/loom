@@ -8,7 +8,14 @@ import pytest
 
 from server.code.app.memory_links import file_definitions
 from server.code.domain.anchor import Link, local_name, locate, recheck, unnumbered
-from server.code.domain.successor import _MAX_LINES, Side, elsewhere, own_lines, successor
+from server.code.domain.successor import (
+    _MAX_LINES,
+    Side,
+    elsewhere,
+    own_lines,
+    retaken,
+    successor,
+)
 from tests.unit.step_count import steps as count
 
 
@@ -667,6 +674,20 @@ def _turnover(
     return new, gone, kept
 
 
+def _replaced(was, old: Side, before: dict[str, str], kept: list[Side]) -> list:
+    """Of the definitions under a name that stayed which hold `was`'s tokens, those
+    whose name held another text before: what the recheck reads at the range's base."""
+
+    def held(d) -> set[str]:
+        name = unnumbered(local_name(d.qualified_name, d.path))
+        there = _side(d.path, before.get(d.path, "")).defs
+        return {
+            x.shape.exact for x in there if unnumbered(local_name(x.qualified_name, d.path)) == name
+        }
+
+    return [d for d in retaken(was, old, kept) if d.shape.exact not in held(d)]
+
+
 def _elsewhere(before: dict[str, str], after: dict[str, str], name: str = "fetch_rows") -> Link:
     """The link on `name` in a.py (or the only file of `before`) once the files are as
     `after`, where its own file no longer defines it."""
@@ -675,7 +696,8 @@ def _elsewhere(before: dict[str, str], after: dict[str, str], name: str = "fetch
     was = next(d for d in old.defs if local_name(d.qualified_name, path) == name or d.name == name)
     link = Link(path, was.qualified_name, was.body_hash, checked_hash=was.body_hash)
     here = _side(path, after[path]).defs if path in after else []
-    s = elsewhere(was, old, *_turnover(before, after))
+    new, gone, kept = _turnover(before, after)
+    s = elsewhere(was, old, new, gone, kept, replaced=_replaced(was, old, before, kept))
     return recheck(
         link,
         path_now=path if path in after else "",
@@ -725,7 +747,8 @@ def test_a_function_renamed_as_it_moved_to_another_file_is_moved(gone: str | Non
         ("bulk_fetch_rows", "moved"),
         ("fetch_rows_once", "moved"),
         ("fetch_rows2", "moved"),
-        ("fetch", "moved"),
+        # one word of it is in any name about the same thing
+        ("fetch", "missing"),
         ("load_rows", "missing"),
         ("fetch_bulk_rows", "missing"),
         ("warm_up", "missing"),
@@ -802,6 +825,29 @@ def test_a_removed_stub_is_not_handed_to_a_new_stub_sharing_a_word_of_its_name()
     after = {"errors.py": _KEEP, "retry.py": stub.replace("ReadError", "_ReadError")}
     got = _elsewhere(before, after, "ReadError")
     assert (got.state, got.qualified_name) == ("moved", "retry::_ReadError")
+
+
+@pytest.mark.parametrize(
+    ("name", "theirs", "state"),
+    [
+        # a name of one word is held by any name about the same thing
+        ("Error", "ReadError", "missing"),
+        ("ReadError", "Error", "missing"),
+        # with a number alone after it, it is that name
+        ("Error", "Error2", "moved"),
+        ("Error2", "Error", "moved"),
+        # two words are its own
+        ("ReadError", "SocketReadError", "moved"),
+    ],
+)
+def test_a_stub_of_one_word_is_not_handed_to_a_stub_whose_name_holds_it(
+    name: str, theirs: str, state: str
+) -> None:
+    stub = f"class {name}(Exception):\n    pass\n"
+    before = {"errors.py": _KEEP + "\n\n" + stub}
+    after = {"errors.py": _KEEP, "retry.py": stub.replace(name, theirs)}
+    got = _elsewhere(before, after, name)
+    assert (got.state, got.path) == (state, "retry.py" if state == "moved" else "errors.py")
 
 
 @pytest.mark.parametrize("name", ["Reader", "Reader.fetch_rows", "Reader.close"])
@@ -934,12 +980,13 @@ def test_a_small_method_never_becomes_a_function_of_its_name() -> None:
 
 
 def test_a_close_namesake_that_stayed_leaves_an_edited_move_unresolved() -> None:
-    # sibling classes share the method. Client keeps its name and takes the text of the
-    # removed Sync, while Client's old text arrives as Async: the new one is not the
-    # only close one, and the one that stayed never inherits a link
+    # sibling classes share the method. Client's stays as it was, close to the removed
+    # Sync's, and Async arrives with a close text too: the new one is not the only close
+    # one, and the one that stayed never inherits a link
     sync, other = _METHOD, _METHOD.replace("sorted(self.rows)", "list(self.rows)")
+    third = _METHOD.replace("sorted(self.rows)", "tuple(self.rows)")
     before = {"a.py": "class Sync:\n" + sync, "b.py": "class Client:\n" + other}
-    after = {"b.py": "class Client:\n" + sync + "\n\nclass Async:\n" + other}
+    after = {"b.py": "class Client:\n" + other + "\n\nclass Async:\n" + third}
     got = _elsewhere(before, after, "Sync.fetch_rows")
     assert (got.state, got.path) == ("unresolved", "a.py")
     # with no namesake kept beside it, the new one is followed
@@ -953,6 +1000,34 @@ def test_a_namesake_that_stayed_never_makes_removed_code_unresolved() -> None:
     before = {"a.py": "class Sync:\n" + _METHOD, "b.py": "class Client:\n" + _METHOD}
     after = {"a.py": _KEEP, "b.py": "class Client:\n" + _METHOD + "\n\nX = 1\n"}
     assert _elsewhere(before, after, "Sync.fetch_rows").state == "missing"
+
+
+@pytest.mark.parametrize(
+    ("theirs", "state"),
+    # renamed too, its class is no longer the one it left with nothing but its name changed
+    [("fetch_rows", "moved"), ("load_rows", "changed")],
+    ids=["its-name", "another-name"],
+)
+def test_its_tokens_under_a_name_that_held_another_text_are_it(theirs: str, state: str) -> None:
+    # Client keeps its name and takes the text of the removed Sync, while Client's old
+    # text arrives as Async: the sync class moved onto the name the async one gave up
+    sync = _METHOD.replace("fetch_rows", theirs)
+    other = sync.replace("sorted(self.rows)", "list(self.rows)")
+    before = {"a.py": "class Sync:\n" + _METHOD, "b.py": "class Client:\n" + other}
+    after = {"b.py": "class Client:\n" + sync + "\n\nclass Async:\n" + other}
+    got = _elsewhere(before, after, "Sync.fetch_rows")
+    assert (got.state, got.qualified_name) == (state, f"b::Client::{theirs}")
+    # a second name that took its tokens: either may be it
+    after["b.py"] += "\n\nclass Third:\n" + sync
+    before["b.py"] += "\n\nclass Third:\n" + other
+    assert _elsewhere(before, after, "Sync.fetch_rows").state == "unresolved"
+
+
+def test_a_small_definition_is_never_told_under_a_name_that_stayed() -> None:
+    # two stubs have one shape: b.py's `fetch_rows` rewritten to these tokens is its own
+    before = {"a.py": _KEEP + "\n\n" + _SMALL_ROWS, "b.py": "def fetch_rows(n):\n    return n\n"}
+    after = {"a.py": _KEEP, "b.py": _SMALL_ROWS}
+    assert _elsewhere(before, after).state == "missing"
 
 
 def test_two_new_definitions_of_its_shape_leave_it_unresolved() -> None:
@@ -1045,13 +1120,14 @@ def test_a_near_text_goes_to_the_removed_definition_nearest_to_it() -> None:
 
 
 def test_a_text_that_stayed_as_near_under_a_name_it_had_leaves_it_unresolved() -> None:
-    # Client keeps its name and takes Sync's text; Client's old text, nearly the same,
-    # arrives as Async.load_rows: Sync's may have gone under the name that stayed
+    # Client.load_rows stays, as near to Sync's text as the one that arrives as
+    # Async.load_rows, and neither has its tokens: Sync's may have gone under the name
+    # that stayed
     sync, other = _METHOD, _METHOD.replace("sorted(self.rows)", "list(self.rows)")
     theirs = other.replace("fetch_rows", "load_rows")
-    before = {"a.py": "class Sync:\n" + sync, "b.py": "class Client:\n" + theirs}
-    after = {"b.py": "class Client:\n" + sync.replace("fetch_rows", "load_rows")}
-    after["b.py"] += "\n\nclass Async:\n" + theirs
+    stays = theirs.replace("list(self.rows)", "tuple(self.rows)")
+    before = {"a.py": "class Sync:\n" + sync, "b.py": "class Client:\n" + stays}
+    after = {"b.py": "class Client:\n" + stays + "\n\nclass Async:\n" + theirs}
     got = _elsewhere(before, after, "Sync.fetch_rows")
     assert (got.state, got.path) == ("unresolved", "a.py")
     # with no such name kept beside it, the near one is it

@@ -317,6 +317,28 @@ class RepoReads:
 
         return await self._once(("turnover", base, head, path, *lines), read)
 
+    async def replaced(self, base: str, head: str, kept: Sequence[Definition]) -> list[Definition]:
+        """Those of `kept` (definitions at `head` under a name their file had at `base`)
+        whose name held another text at `base`: the range put this text under it. One
+        whose file at `base` does not parse stays a kept name."""
+        changed = await self.range(base, head) if kept else None
+        was_at = {now: old for old, now in changed.paths.items()} if changed else {}
+        found = []
+        for d in kept:
+            try:
+                there = await self.at(base, was_at.get(d.path, d.path))
+            except code.ParseFailed:
+                continue
+            name = unnumbered(local_name(d.qualified_name, d.path))
+            held = {
+                x.shape.exact
+                for x in (there.defs if there else ())
+                if unnumbered(local_name(x.qualified_name, x.path)) == name
+            }
+            if held and d.shape.exact not in held:
+                found.append(d)
+        return found
+
     async def _changed(
         self, base: str, head: str
     ) -> tuple[code.IngestScope, dict[str, str]] | None:
@@ -361,8 +383,8 @@ class RepoReads:
         one. None when that cannot be told: no line to look for, more than
         `memory_code_links_mirror_changed_files` paths (each is an argument to git),
         more than `limit` files holding one at either end (a line any file has), or a
-        search git cannot run or finish. Each is logged, the second as a warning once a
-        range."""
+        search git cannot run or finish, which is then not made again over this range.
+        Each is logged, the second as a warning once a range."""
         if len(paths) > settings.memory_code_links_mirror_changed_files:
             if ("too wide", base, head) not in self._read:
                 self._read["too wide", base, head] = True
@@ -378,11 +400,17 @@ class RepoReads:
             return None
         held: set[str] = set()
         why = "" if lines else "it has no line of its own"
-        ends = ((head, set(paths.values()) - {""}), (base, set(paths))) if lines else ()
+        if ("unsearchable", base, head) in self._read:
+            why = "git cannot search them"  # found out for another definition: not again
+        ends = ((head, set(paths.values()) - {""}), (base, set(paths))) if not why else ()
         for commit, some in ends:
             takes = sorted(filter(scope.takes, some))
             # one past the bound: a cut list is never taken as whole
             found = await code.grep_lines(scope, commit, lines, takes, limit=limit + 1)
+            if found is None:
+                # the paths are the same for every definition of the range: the next
+                # one's search would wait as long
+                self._read["unsearchable", base, head] = True
             if found is None or len(found) > limit:
                 why = "git cannot search them" if found is None else "its lines are in too many"
                 break
