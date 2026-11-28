@@ -34,11 +34,16 @@
 // nothing for that event, and one that dies leaves its job file to be
 // replayed; no cursor has moved, so the next Stop sends the conversation
 // turns again.
+//
+// The launcher starts scripts of every plane, and each checks the install's
+// mode itself (`planeEnabled`); what the launcher does itself, keeping the
+// run's begin, is the ledger's.
 
 import { spawnDetached } from "../lib/flush-job.mjs";
 import {
   agentMode,
   normalizePayload,
+  planeEnabled,
   printHookAnswer,
   readStdinText,
   resolveScope,
@@ -85,7 +90,7 @@ export function mergedContext(event, answers) {
  *  copy then asks nothing. */
 function keepBegin(raw) {
   try {
-    if (!runLedgerEnabled() || !resolveToken()) return;
+    if (!planeEnabled("ledger") || !runLedgerEnabled() || !resolveToken()) return;
     const payload = normalizePayload(JSON.parse(raw));
     if (payload.session_id) keepRunBegin(payload, () => resolveScope(payload.cwd || process.cwd()));
   } catch {

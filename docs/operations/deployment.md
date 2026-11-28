@@ -826,17 +826,20 @@ and what it leaves:
   (`code.bisect_candidates`, `code.pr_check`, `code.impact`) or `assistant` (`code.search`,
   `code.symbol`) lists code tools that refuse. The plugins, `loom install` for Claude Code,
   Codex and Cursor, the lines `loom up` and `loom init` print, and the dashboard's Claude Code,
-  Codex and Cursor snippets ask for `coding`. Point those entries at `core` (with `tasks`
-  added where agents use the task inbox): the Claude Code plugin's `toolset` option
-  ([options](../features/integrations/claude-code.md#install)),
+  Codex and Cursor snippets ask for `coding`. Install the Claude Code plugin with
+  `mode=memory`, which lists no code tool
+  ([modes](../features/integrations/claude-code.md#modes)). Point the other entries at
+  `core` (with `tasks` added where agents use the task inbox):
   `loom install --toolset core`, or for the Codex plugin a `[mcp_servers.loom]` override in
   `~/.codex/config.toml` that keeps the plugin's `http_headers_helper` line, since the
   override replaces the entry whole
   ([the server](../features/integrations/codex.md#the-server)).
 - The plugin hooks find a session's repository through `code.repos`, which is refused, and
   ask again about once a minute. The session-start primer then adds a code-index line that
-  points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in the environment
-  the agent runs its hooks with to leave it out.
+  points the agent at the `loom_code_*` tools. The plugin's memory mode (`mode=memory`
+  under Claude Code, `LOOM_MODE=memory` for the Codex hooks) sends no code request and
+  prints no such line; in any other mode set `LOOM_CODE_MAP=false` in the environment
+  the agent runs its hooks with to leave the line out.
 - The switch also stops the coverage workers (`code_coverage_notify`, which delivers
   coverage watches, and `code_coverage_import`). Every other code and tracker worker has its
   own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository and no

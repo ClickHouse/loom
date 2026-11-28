@@ -73,7 +73,7 @@ test("no team namespace: the body names only the caller's namespace; no answer i
     return null;
   };
   const out = await lookupFileContext({ scope, rel: "a.cpp", tokenBudget: 300, entry: null, post });
-  assert.equal(out, "");
+  assert.equal(out, null, "no answer is told apart from an answer with nothing in it");
   assert.equal("extra_namespaces" in bodies[0], false);
   assert.deepEqual(forFileBody(scope, "a.cpp", 300, null), {
     org: "clickhouse",

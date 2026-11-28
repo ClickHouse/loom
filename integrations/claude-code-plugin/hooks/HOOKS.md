@@ -98,7 +98,8 @@ receives on stdout.
 | UserPromptSubmit, detached                                     | loom-run              | prompt, session_id                 | none                     | run.begin on the first prompt; appends the turn journal                                                                                                                                                               | `LOOM_RUN_LEDGER=off`              |
 | UserPromptSubmit, detached                                     | loom-namespace-health | cwd, session_id                    | none                     | namespace.audit, once per session; the verdict goes to the session's state file                                                                                                                                       | `LOOM_NAMESPACE_HEALTH=off`        |
 | PreToolUse Read\|Grep\|Bash                                    | loom-code-shunt       | tool_name, tool_input, cwd         | JSON permission decision | code.repos; one code.outline, code.symbol or tracker.duplicate_check before a deny; deny text                                                                                                                         | `LOOM_CODE_SHUNT=off`              |
-| PreToolUse Edit\|Write\|MultiEdit\|NotebookEdit                | loom-file-context     | tool_input, session_id             | JSON additionalContext   | memory.for_file                                                                                                                                                                                                       | `LOOM_FILE_CONTEXT=off`            |
+| PreToolUse Edit\|Write\|MultiEdit\|NotebookEdit                | loom-file-context     | tool_input, session_id, agent_id   | JSON additionalContext   | memory.for_file, unless this agent context was shown the file in the last 30 min                                                                                                                                      | `LOOM_FILE_CONTEXT=off`            |
+| PostToolUse Read\|Grep\|Bash                                   | loom-file-context     | tool_*, cwd, session_id, agent_id  | JSON additionalContext   | memory.for_file for each file of the checkout the call read that this agent context has not been shown: at most three per call, 40 per session                                                                        | `LOOM_FILE_CONTEXT=off`            |
 | PostToolUse loom tools                                         | loom-mentor-hint      | tool_name, tool_response           | JSON additionalContext   | none                                                                                                                                                                                                                  | `LOOM_MENTOR_HINTS=off`            |
 | PostToolUse Edit\|Write\|MultiEdit                             | loom-blast-radius     | tool_input, cwd, transcript head   | JSON additionalContext   | code.impact; code.test_gate for a file's first edit (`LOOM_TEST_GATE=off` or `block` stops that one)                                                                                                                  | `LOOM_BLAST_RADIUS=off`            |
 | PostToolUse Bash\|PowerShell                                   | loom-test-gate        | tool_input, cwd, transcript head   | JSON additionalContext   | code.test_gate for each changed file the command names, once per file                                                                                                                                                 | `LOOM_TEST_GATE=off` or `block`    |
@@ -107,6 +108,7 @@ receives on stdout.
 | PreCompact                                                     | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
 | PreCompact                                                     | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set                                                                                                                                                                                                    | `LOOM_WORKING_MEMORY=off`          |
 | PreCompact                                                     | loom-session-brief    | transcript, cwd                    | none                     | session.brief_save via the flusher                                                                                                                                                                                    | `LOOM_SESSION_BRIEF=off`           |
+| PreCompact                                                     | loom-file-context     | session_id                         | none                     | none: forgets which files the session was shown                                                                                                                                                                       | `LOOM_FILE_CONTEXT=off`            |
 | Stop, detached                                                 | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
 | Stop, detached                                                 | loom-conversation     | transcript, last_assistant_message | none                     | conversation.append via the flusher                                                                                                                                                                                   | `LOOM_CAPTURE_CONVERSATIONS=false` |
 | Stop, detached                                                 | loom-usage            | transcript                         | none                     | cost.record_turns                                                                                                                                                                                                     | `LOOM_USAGE=off`                   |
@@ -126,6 +128,73 @@ Codex and generic wirings start those scripts directly, each at the event
 its row names (`loom-namespace-health` at Stop only).
 `hooks/loom-flush.mjs` is not wired to an event: the hooks above spawn it
 detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
+
+## Modes
+
+The `mode` install option picks which of Loom's planes a session uses:
+`both` (the default), `memory` or `code`. A wiring with no install option
+(Codex, a hand-wired client) sets `LOOM_MODE`; the option outranks the
+variable, since it also picks the listing of the plugin's MCP entry. A value
+that is no mode is `both`.
+
+What a hook sends belongs to one of three planes. **memory** is what the
+session's memory is made of or read from: tool observations, the
+conversation, briefs, the working-memory note, the session hand-off the
+server extracts facts from, recall and a file's memories. **code** is the
+code index: the shunt, the prompt's code pointers, the blast radius, the test
+gate and the outcome of a code lookup. **ledger** is the session's own
+record: the run and its usage counters.
+
+| Mode     | Planes               | The plugin's MCP entry lists           | Ops a session can send                                     |
+| -------- | -------------------- | -------------------------------------- | ---------------------------------------------------------- |
+| `both`   | memory, code, ledger | every tool of the `coding` toolset     | every op in the events table                               |
+| `memory` | memory, ledger       | the listing without its code tools     | no `code.*`                                                |
+| `code`   | code, ledger         | the code tools alone, bound or unbound | `code.*`, `run.begin`, `run.complete`, `cost.record_turns` |
+
+- **Every script names its plane** (`planeEnabled` in
+  `lib/loom-client.mjs`). One whose plane is off sends no request and prints
+  nothing; a script of one plane returns before it reads its payload. The
+  wiring is the same in every mode, so its process still starts and exits.
+- **The ledger runs in every mode.** `run.begin` carries the first prompt
+  (the run's goal), `run.complete` the last assistant text, and
+  `cost.record_turns` the usage counters, also in code mode.
+  `LOOM_RUN_LEDGER=off` and `LOOM_USAGE=off` turn them off.
+- **SessionStart probes `GET /v1/health` in every mode**, for the request
+  bound and the server version warning.
+- **Code mode captures nothing**: no `observe.record`, no
+  `conversation.append`, no brief, no working-memory note, no session
+  hand-off, so the server has nothing to extract and makes no model call for
+  the session. It reads no memory either: no primer pack, no recall, no file
+  context.
+- **Memory mode sends no code request.** The headers helper names no
+  repository and looks none up, so the file lookup has no team-rules
+  namespace to ask and covers the person's own. A first prompt that names a
+  definition gets the recall the code pointers would otherwise answer.
+- **The MCP listing needs a server that reads `?mode=`.** An older one
+  ignores it and lists both planes; the hooks follow the mode either way.
+  The Codex plugin's entry is fixed and lists what it always did.
+
+| Script                | Plane                                                                               |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| loom-blast-radius     | code                                                                                |
+| loom-capture          | memory (observations, crystallize, recalled keys); code (`code.outcome`)            |
+| loom-code-shunt       | code; its `gh` issue-search redirect asks the tracker and runs with memory too      |
+| loom-conversation     | memory                                                                              |
+| loom-file-context     | memory                                                                              |
+| loom-flush            | memory: every job it delivers is a memory script's                                  |
+| loom-mentor-hint      | memory and code together: a hint names the plane a session is not using             |
+| loom-namespace-health | memory                                                                              |
+| loom-prompt-pack      | code                                                                                |
+| loom-prompt-recall    | memory; where code runs, a prompt naming a definition is left to the code pointers  |
+| loom-record           | ledger (keeps the run's begin); each script it starts checks its own plane          |
+| loom-run              | ledger                                                                              |
+| loom-session-brief    | memory                                                                              |
+| loom-session-memory   | memory                                                                              |
+| loom-session-start    | memory (pack, tag, task, brief, collections and recording lines); code (scope, map) |
+| loom-test-gate        | code                                                                                |
+| loom-usage            | ledger                                                                              |
+| loom-validate-gate    | memory                                                                              |
+| loom-working-memory   | memory                                                                              |
 
 ## Hooks
 
@@ -162,56 +231,79 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   `LOOM_CODE_MAP_TOKEN_BUDGET` of 100 or more, the repo map; the task inbox line
   (`LOOM_TASK_INBOX_LINE=off`); the saved-briefs line (only with
   `LOOM_SESSION_BRIEF_PRIMER=on`); the collections line
-  (`LOOM_COLLECTIONS_LINE=off`); where the session's toolset lists the
+  (`LOOM_COLLECTIONS_LINE=off`); for a wiring whose MCP entry may list the
   conversation tools, the recording line, which states the owner's Record
   conversations switch; and a once-a-day notice when
   ~/.claude.json also mounts the same server. Outside an indexed checkout the
   code line says why no index was looked up (no checkout, no remote, not
   indexed, no answer in time), so the hook prints nothing only with
-  `LOOM_CODE_MAP=false` and no other part to show.
+  `LOOM_CODE_MAP=false`, or in memory mode, and no other part to show. The code scope line and
+  the repo map are the code plane's; every other part is memory's, the
+  repository's memory tag and the team-rules line included. A session in one
+  mode asks for and prints that plane's parts alone (**Modes**, above).
 - **loom-session-start, the plugin's own MCP entry.** Claude Code runs its
   plugin's hooks with CLAUDE_PLUGIN_ROOT, and that plugin mounts its own MCP
   entry: its helper binds loom_code_* calls to the checkout's repository when
-  the checkout resolved to an indexed one, its URL names the `plugin` profile
-  and its toolset is the `toolset` option. On a
-  toolset with a `coding` part (the default) that profile's startup
+  the checkout resolved to an indexed one, and its URL names the `coding`
+  toolset, the `plugin` profile and the `mode` option. That profile's startup
   instructions say how to route a lookup, so the checkout is one line (the
   code namespace, the fetch time of a stalled mirror, the memory tag). The
   tag is one short instruction to save memory about the repository with it:
   the server adds the tag to a save only on a bound connection, and the hook
   cannot see whether the helper sent the header, so the model is told to pass
-  it in every session of this entry. Any
-  other toolset (`all`, `core`, `tracker`) gets the server's general rules,
-  which route no code lookup, so its primer keeps the arbitration rules under
-  the short scope line. The recording line is printed only when the toolset
-  lists the conversation tools (`all`). A union holding `all`, `readonly` or
-  `assistant` is no toolset the server serves and takes the deployment's
-  default, so it keeps both the arbitration rules and the recording line. Any
+  it in every session of this entry. The entry lists no conversation tool, so
+  its primer has no recording line. Any
   other wiring (Codex, whose hooks
   name their client, or a hand-wired client) mounts an entry the hook cannot
   read, so its primer keeps the full scope line, the arbitration rules, the
   full repository tag line and the recording line.
 - **loom-session-start, collections line.** One `collection.list` for the
-  session's org, cached a minute per (server, org, token, toolset); when the token
+  session's org, cached a minute per (server, org, token); when the token
   reads shared collections, a few lines list up to six (how a search covers
   them is the server's own instructions' to say), those the caller holds most on first, one JSON line
   each with the caller's role and description. When the caller writes one of
-  them and the toolset is not read-only, they also say how `knowledge.add`
+  them, they also say how `knowledge.add`
   writes one when asked. The names and descriptions are their creators'
-  words, so the list sits inside the recalled-data block. None on the assistant
-  toolset; silent with no collection, or when the server does not answer.
+  words, so the list sits inside the recalled-data block. Silent with no
+  collection, or when the server does not answer.
 - **loom-session-start, task inbox line.** One `task.counts` for the
   session's scope, cached a minute per (server, org, namespace); when inboxes
   the namespace owns hold tasks in triage or todo, one line names the counts
   and `task.pull`. Silent on an empty board, a 404, a 403 or a slow server.
-- **loom-file-context.** Before Edit/Write, asks memory.for_file what Loom
-  knows about the target file (its files[] facet, the person's namespace and
-  the repository's team-rules namespace) and injects, as additionalContext, a
-  heading the plugin writes, the server's text inside a recalled-data block
-  whose tags carry an id only this install can compute, and after the
-  block, in the plugin's words, how to remove a wrong team rule and read
-  rows left out (each only when the server's text ends with that footer). One lookup per
-  (session, file) per 30 min; fail-open; never a permission decision.
+- **loom-file-context.** After a local read of a file in the checkout and
+  before Edit/Write, asks memory.for_file what Loom knows about the file (its
+  files[] facet, the person's namespace and the repository's team-rules
+  namespace) and injects, as additionalContext on the read's result or
+  before the edit, a heading the plugin writes, the server's text unchanged
+  inside a recalled-data block whose tags carry an id only this install can
+  compute, and after the block, in the plugin's words, how to remove a wrong
+  team rule and read rows left out (each only when the server's text ends
+  with that footer). The block costs no model request, and a file with no
+  memory adds nothing. A read is Read's file, a Grep of one file, and in a
+  shell command each file read whole or by a line range (`cat`, `sed -n`,
+  `head`, `tail`, an awk NR range) or searched by name (`grep pattern file`),
+  as lib/shell-command.mjs parses the command; one it cannot follow (a
+  heredoc, a read piped onward, a script that opens the file) starts no
+  lookup. Under Claude Code a call the code shunt refused starts no
+  PostToolUse hook, so nothing is looked up for it.
+  One lookup per session, agent context and file: the files shown are kept
+  by their path on disk, under the subagent's id (`agent_id`) for a call a
+  subagent made, so a subagent's read leaves the main agent's block for the
+  main agent's own read or edit. A symlink to a file is looked up and kept
+  under its own path, apart from its target. PreCompact forgets them, since a
+  compaction drops the blocks. After a read a file already asked about is
+  not asked about again, and costs no git call and no request. Before an
+  edit a file asked about in the last 30 min (LOOM_FILE_CONTEXT_TTL_MIN) is
+  not asked about again; an edit lookup the server did not answer counts for
+  the file's edits alone, so a read of it still asks.
+  A read's lookups are bounded: at most three files per call, asked side by
+  side and given up after 1 s, with the process ended by 2 s whatever hangs;
+  40 per session; and none after three the server did not answer. A file
+  past those bounds, or whose lookup was not answered, stays unseen, so its
+  next read or its edit asks. The block's size is the server's: rows other
+  than decisions and constraints within LOOM_FILE_CONTEXT_TOKENS (300), and
+  decisions and constraints whole up to the server's
+  `memory_for_file_whole_tokens`. Fail-open; never a permission decision.
   LOOM_FILE_CONTEXT=off disables.
 - **loom-code-shunt.** In a loom-indexed repo, a whole-file Read or `cat` of
   a file longer than LOOM_SHUNT_MAX_LINES (default 800) is denied with the
@@ -348,7 +440,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   At Stop, with uncommitted changes this session made in a loom-indexed
   repo (dirty paths the transcript shows an edit tool targeted or a shell
   command named, written since the session's first row; a tree left dirty
-  before the session gates nothing), it sends the change's paths, hunk
+  before the session gates nothing; in a Codex rollout the calls read are
+  `apply_patch` and the shell tool under each name `rolloutShell` takes,
+  in either mode), it sends the change's paths, hunk
   ranges and function names only (`diffHeaders`) to code.test_gate for its
   obligations and blocks the stop once per distinct change with a reason
   naming them. By default a stop passes, and asks the server nothing, when
@@ -358,8 +452,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   (`testedSince`, `lastCodeChange`): the command's text is read for a
   runner's name only, not for which tests ran or how they went, so a run
   that failed, was piped or ran between `git stash` and `git stash pop`
-  passes, in a Claude Code transcript or a Codex rollout. With no
-  transcript the default holds no stop.
+  in the same command passes, in a Claude Code transcript or a Codex
+  rollout; a pop in a later command rewrites the changed files, and that
+  stop is held. With no transcript the default holds no stop.
   With LOOM_TEST_GATE=block nothing is printed at edit time, and a Claude
   Code stop passes only when its transcript already answers the ask to run
   the named tests (`runAnswered` in lib/test-gate.mjs); a Codex rollout
@@ -424,7 +519,8 @@ awaits its `run.complete` and exits at once.
 
 Install-time options (`claude plugin install loom@loom --config key=value`)
 reach the hooks as `CLAUDE_PLUGIN_OPTION_<KEY>`: `server_url` and `token`
-(read by `lib/loom-client.mjs`), `toolset` (the MCP URL only),
+(read by `lib/loom-client.mjs`), `mode` (also on the MCP URL, so it outranks
+`LOOM_MODE`; **Modes**, above),
 `local_first` and `code_repo` (`CLAUDE_PLUGIN_OPTION_CODE_REPO`). Resolution order: the environment, then the option, then
 the file `LOOM_API_KEY_FILE` names (token only), then
 ~/.loom/config.json (`LOOM_CONFIG_FILE`), then ~/.loom/token
@@ -456,6 +552,7 @@ Switches read on/true/1/yes and off/false/0/no. Defaults in parentheses.
 | `LOOM_ORG`, `LOOM_NAMESPACE`, `LOOM_AGENT`                                                                                                    | every hook                    | identity; default from the token's claims (`coding` namespace)                           |
 | `LOOM_PROJECT_NAME`, `LOOM_PROJECT_SCOPE` (tag)                                                                                               | every hook                    | project name override; `namespace` makes the project the namespace                       |
 | `LOOM_REPO_REMOTE`                                                                                                                            | every hook                    | the remote the `repo:<id>` tag hashes                                                    |
+| `LOOM_MODE` (both), the `mode` option                                                                                                         | every hook, headers helper    | `both`, `memory` or `code`: the planes the session uses                                  |
 | `LOOM_CLIENT` (claude-code)                                                                                                                   | every hook                    | the client name when no argument names it                                                |
 | `LOOM_HOOK_TIMEOUT_MS`, `LOOM_HOOK_EXIT_MS`                                                                                                   | every hook                    | request bound and exit grace overrides                                                   |
 | `LOOM_HOOK_DEBUG` (off)                                                                                                                       | hooks ending in `runHookMain` | swallowed errors to stderr, redacted                                                     |

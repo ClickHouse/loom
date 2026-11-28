@@ -64,13 +64,14 @@ from server.transport.mcp_op import (
     routes_writes,
 )
 from server.transport.mcp_schemas import (
-    PLUGIN_SCHEMA_PROFILE,
+    PLUGIN_SCHEMA_PROFILES,
     _shape_schema,
     _strip_blob_fields_from_knowledge,
     _strip_org_from_input_schema,
     apply_schema_profile,
     compact_shapes,
     model_schema,
+    plugin_plane,
     resolve_schema_profile,
     strip_model_docstring,
 )
@@ -406,11 +407,11 @@ def _curated_description(toolset: str, op_name: str) -> str | None:
 
 def listed_tool_names(toolset: str | None, schema_profile: str | None = None) -> set[str]:
     """The tool names a `tools/list` on ``toolset`` shows. ``schema_profile`` is
-    the URL's own value, as `code_only_listing` reads it."""
+    the URL's own value, as `listing_plane` reads it."""
     from server.settings import settings
 
     resolved = resolve_toolset(toolset, settings.mcp_toolset)
-    return _listing(resolved, code_only=code_only_listing(resolved, schema_profile))[1]
+    return _listing(resolved, plane=listing_plane(resolved, schema_profile))[1]
 
 
 def name_ops_for_toolset(text: str, toolset: str | None, schema_profile: str | None = None) -> str:
@@ -463,13 +464,16 @@ def _tool_names(ops: list[Operation], resolved: str) -> set[str]:
     return names if is_assistant(resolved) else names | SYNTHETIC_TOOL_NAMES
 
 
-def _listing(resolved: str, *, code_only: bool) -> tuple[list[Operation], set[str]]:
+def _listing(resolved: str, *, plane: str) -> tuple[list[Operation], set[str]]:
     """The registry ops a `tools/list` on a resolved toolset describes, and every
-    tool name it shows. ``code_only`` is the connection's `code_only_listing`."""
+    tool name it shows. ``plane`` is the connection's `listing_plane`: `code` lists
+    the code tools alone, `memory` every tool but those."""
     ops = listed_ops(resolved)
-    if code_only:
+    if plane == "code":
         ops = [op for op in ops if op.name.startswith("code.")]
         return ops, {op.mcp_tool_name for op in ops}
+    if plane == "memory":
+        ops = [op for op in ops if not op.name.startswith("code.")]
     return ops, _tool_names(ops, resolved)
 
 
@@ -567,13 +571,28 @@ _CODE_ONLY_GREP_OMITTED_ARGS = _COMPACT_CODING_GREP_OMITTED_ARGS | {
 _PLUGIN_GREP_OMITTED_ARGS = _CODE_ONLY_GREP_OMITTED_ARGS - {"namespace"}
 
 
+def listing_plane(toolset: str | None, schema_profile: str | None) -> str:
+    """The one plane this connection lists, '' when it lists every tool of its
+    toolset. `code`, the code tools alone: a `coding` connection bound to a
+    repository whose URL asks for the compact profile, and a plugin connection in
+    code mode, bound or not. `memory`, every tool but the code tools: a plugin
+    connection in memory mode. A plugin's mode counts on a toolset with a `coding`
+    part, where its profile's own instructions do. ``schema_profile`` is the URL's
+    own value: a compact profile that is only the deployment's default keeps every
+    tool listed, since the client did not ask for the narrower listing. Every other
+    tool stays callable by name."""
+    from server.settings import settings
+
+    if lists_follow_code_scope(toolset, schema_profile):
+        return "code" if current_code_scope() is not None else ""
+    if "coding" in toolset_parts(resolve_toolset(toolset, settings.mcp_toolset)):
+        return plugin_plane(schema_profile)
+    return ""
+
+
 def code_only_listing(toolset: str | None, schema_profile: str | None) -> bool:
-    """Whether this connection lists the code tools alone: a `coding` connection
-    bound to a repository whose URL asks for the compact profile. ``schema_profile``
-    is the URL's own value: a compact profile that is only the deployment's default
-    keeps every tool listed, since the client did not ask for the narrower listing.
-    Every other tool stays callable by name."""
-    return lists_follow_code_scope(toolset, schema_profile) and current_code_scope() is not None
+    """Whether this connection lists the code tools alone (`listing_plane`)."""
+    return listing_plane(toolset, schema_profile) == "code"
 
 
 def lists_follow_code_scope(toolset: str | None, schema_profile: str | None) -> bool:
@@ -601,15 +620,16 @@ async def _tools_descriptor(
     `initialize` `instructions` field, not duplicated per tool; descriptors
     do not vary by caller, except on a `coding` connection whose URL asks for the
     compact profile, where they follow the request's repository header
-    (`code_only_listing`). ``toolset`` is the per-request ``?toolset=`` override.
+    (`listing_plane`). ``toolset`` is the per-request ``?toolset=`` override.
     """
     from server.settings import settings
 
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
     profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
     descriptors: list[dict[str, Any]] = []
-    code_only = code_only_listing(toolset, schema_profile)
-    ops, listed = _listing(toolset, code_only=code_only)
+    plane = listing_plane(toolset, schema_profile)
+    code_only = plane == "code"
+    ops, listed = _listing(toolset, plane=plane)
     writes = routes_writes(toolset)
     for op in ops:
         custom = _curated_description(toolset, op.name)
@@ -649,10 +669,10 @@ async def _tools_descriptor(
         if compact_shapes(profile) and toolset == "coding" and op.name == "code.grep":
             input_schema = _without(
                 input_schema,
-                _CODE_ONLY_GREP_OMITTED_ARGS
+                _PLUGIN_GREP_OMITTED_ARGS
+                if profile in PLUGIN_SCHEMA_PROFILES
+                else _CODE_ONLY_GREP_OMITTED_ARGS
                 if code_only
-                else _PLUGIN_GREP_OMITTED_ARGS
-                if profile == PLUGIN_SCHEMA_PROFILE
                 else _COMPACT_CODING_GREP_OMITTED_ARGS,
             )
             # JSON Schema numeric bounds do not constrain a string alternative.

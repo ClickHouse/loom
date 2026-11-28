@@ -34,6 +34,7 @@ import {
   git,
   gitToplevel,
   pathUnder,
+  planeEnabled,
   postBounded,
   postFireAndForget,
   readStdinJson,
@@ -88,7 +89,7 @@ import {
   writeSessionState,
 } from "../lib/tmp-state.mjs";
 
-const ENABLED = envSwitch("LOOM_CODE_SHUNT", true);
+const ENABLED = planeEnabled("code") && envSwitch("LOOM_CODE_SHUNT", true);
 const MAX_LINES = Number(process.env.LOOM_SHUNT_MAX_LINES || DEFAULT_MAX_LINES);
 const READ_CAP = Math.max(0, Number(process.env.LOOM_SHUNT_READ_CAP || DEFAULT_READ_CAP) || 0);
 // The deny text stops naming its own bypass unless asked to.
@@ -96,7 +97,9 @@ const SHUNT_GREP = envSwitch("LOOM_SHUNT_GREP", true);
 const SHUNT_BASH = envSwitch("LOOM_SHUNT_BASH", true);
 // `gh issue list --search` / `gh search issues` inside an
 // indexed checkout is answered by the tracker record first. `LOOM_TRACKER_SHUNT=off`.
-const SHUNT_TRACKER = envSwitch("LOOM_TRACKER_SHUNT", true);
+// It asks tracker.duplicate_check, which is no code op, and names a tool the
+// listing of code tools alone leaves out: a session with both planes only.
+const SHUNT_TRACKER = planeEnabled("memory") && envSwitch("LOOM_TRACKER_SHUNT", true);
 const TRACKER_SEARCH_TIMEOUT_MS = Math.max(500, Number(process.env.LOOM_TRACKER_SHUNT_TIMEOUT_MS || 3000) || 3000);
 // One symbol or outline answer, asked only for a call the local rules would
 // refuse. A call it does not answer runs having waited for it: once per symbol
