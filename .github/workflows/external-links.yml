@@ -1,0 +1,103 @@
+name: External documentation links
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/external-links.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/external-links.yml"
+  schedule:
+    - cron: "23 7 * * 3"
+
+permissions:
+  contents: read
+
+jobs:
+  external-links:
+    if: github.repository == 'ClickHouse/loom'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            docs
+            sdk
+      - name: Install Lychee
+        working-directory: ${{ runner.temp }}
+        run: |
+          archive=lychee-x86_64-unknown-linux-gnu.tar.gz
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/$archive" -o "$archive"
+          echo "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" --strip-components=1 lychee-x86_64-unknown-linux-gnu/lychee
+      - name: Verify the link inventory on workflow changes
+        if: github.event_name == 'pull_request'
+        run: |
+          "$RUNNER_TEMP/lychee" --scheme https --scheme http --exclude-all-private \
+            --dump README.md CONTRIBUTING.md 'docs/getting-started/**/*.md' 'sdk/*/README.md' \
+            > "$RUNNER_TEMP/links.txt"
+          test -s "$RUNNER_TEMP/links.txt"
+      - name: Read the trusted documentation on workflow pull requests
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: link-baseline
+          persist-credentials: false
+          sparse-checkout: |
+            docs
+            sdk
+      - name: Verify VS Code install redirects
+        working-directory: ${{ github.event_name == 'pull_request' && 'link-baseline' || '.' }}
+        run: |
+          python3 - <<'PYTHON'
+          import re
+          import subprocess
+          from pathlib import Path
+          from urllib.parse import parse_qs, urlsplit
+
+          readme = Path("README.md").read_text()
+          for link in re.findall(r"https://(?:insiders\.)?vscode\.dev/redirect\?url=[^\s)>]+", readme):
+              parts = urlsplit(link)
+              target, = parse_qs(parts.query)["url"]
+              app = "vscode-insiders" if parts.hostname == "insiders.vscode.dev" else "vscode"
+              if not target.startswith(f"{app}:mcp/install?"):
+                  raise SystemExit(f"Install link has the wrong application target: {link}")
+              status, location = subprocess.check_output(
+                  ["curl", "--proto", "=https", "--tlsv1.2", "--silent", "--show-error",
+                   "--max-time", "10", "--output", "/dev/null",
+                   "--write-out", "%{http_code}\n%{redirect_url}", link],
+                  text=True,
+              ).split("\n", 1)
+              if status != "302" or location != target:
+                  raise SystemExit(f"Install redirect returned the wrong status or destination: {link}")
+          PYTHON
+      - name: Check public documentation URLs
+        working-directory: ${{ github.event_name == 'pull_request' && 'link-baseline' || '.' }}
+        run: |
+          "$RUNNER_TEMP/lychee" --scheme https --scheme http --exclude-all-private \
+            --exclude '^https?://([^/]+\.)?example\.(com|org|net)([:/]|$)' \
+            --exclude '^https://(insiders\.)?vscode\.dev/redirect\?url=' \
+            --remap '^https://www[.]npmjs[.]com/package/@clickhouse/loom$ https://registry.npmjs.org/@clickhouse/loom/latest' \
+            --exclude '^https?://localhost([:/]|$)' --max-concurrency 8 \
+            --timeout 10 --max-retries 1 --no-progress --format markdown \
+            --output "$RUNNER_TEMP/external-links.md" \
+            README.md CONTRIBUTING.md 'docs/getting-started/**/*.md' 'sdk/*/README.md'
+      - name: Report the checked links
+        if: "!cancelled()"
+        run: |
+          if [ -f "$RUNNER_TEMP/external-links.md" ]; then
+            cat "$RUNNER_TEMP/external-links.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: "!cancelled()"
+        with:
+          name: external-link-report
+          path: ${{ runner.temp }}/external-links.md
+          if-no-files-found: ignore
+          retention-days: 7
