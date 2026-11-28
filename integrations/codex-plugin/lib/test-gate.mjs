@@ -5,11 +5,9 @@
 // a file carries one line with the command of the tests the index links to
 // it, or of the file itself when it is a test, or with the changed functions
 // the index links no test to when it has no test to name; once per file per
-// session, and the stop is never held (`adviceFiles`, `adviceLines`). Whether a
-// session then ran the tests is the agent's to judge: a hook that reads
-// shell text to decide it blocks sessions that did.
+// session (`adviceFiles`, `adviceLines`).
 //
-// With LOOM_TEST_GATE=block the gate holds the stop instead. When the agent
+// At Stop it holds a session that changed code and ran no test. When the agent
 // is about to stop with uncommitted changes in a loom-indexed repo, it asks
 // `code.test_gate` what the change obliges: the tests that reach
 // it (evidence-ordered, with a run command when derivable) and the touched
@@ -19,8 +17,13 @@
 // in review. The second stop on the
 // same change passes: the agent has seen the obligation and either ran the
 // tests or chose not to, and a gate that nags is a gate that gets disabled.
-// A stop whose transcript already answers the ask is not blocked at all
-// (`runAnswered`): a block costs the session one more model request.
+// A block costs the session one more model request, so by default any test
+// run since the change lets the stop pass before anything is asked
+// (`testedSince`): which tests it ran and how they went is the agent's to
+// judge, and a hook that reads shell text to decide it blocks sessions that
+// ran them. With LOOM_TEST_GATE=block nothing is named at edit time and the
+// stop passes only when the transcript shows the named tests ran on the tree
+// as it stands (`runAnswered`).
 //
 // The change is the session's, not the tree's: `sessionScope` keeps only
 // the dirty paths the transcript shows this session edited or named in a
@@ -51,8 +54,9 @@ import { parseLines, readRange } from "./transcript.mjs";
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "str_replace_editor", "apply_patch"]);
 
 /** What the gate does, from LOOM_TEST_GATE: "advise" names an edited file's
- *  tests on the tool call that edited it (unset, or any on-word); "block"
- *  holds the stop instead; "off" does neither. */
+ *  tests on the tool call that edited it and holds the stop of a session that
+ *  ran no test since its change (unset, or any on-word); "block" names
+ *  nothing and holds the stop until the named tests ran; "off" does neither. */
 export function gateMode(env = process.env) {
   if (
     String(env.LOOM_TEST_GATE ?? "")
@@ -490,7 +494,8 @@ function newest(map, max = 300) {
 }
 
 /** Adds `keys` to the session's test-advice map `field` (`seen`: files asked
- *  about; `named`: tests a line named). The state is read and written here
+ *  about; `retried`: files to ask about once more; `named`: tests a line
+ *  named). The state is read and written here
  *  with nothing between, not locked: two hooks of one session that write in
  *  the same instant (parallel tool calls) keep one's entries, and the other's
  *  file is then asked about twice or its test named twice. */
@@ -505,15 +510,16 @@ function remember(sessionId, field, keys) {
  * The edit-time lines for `files` (from `adviceFiles`), as `{ rel, text,
  * tests }` for each file that has one: `tests` counts the tests `text` names,
  * 0 when it names the functions the index links no test to. Each file is
- * asked about once per session, at its first change and whatever the server
- * answers, so a server that is down costs a session one bounded request per
- * file and not one per tool call; a function changed later in the same file
- * is not asked about. A file whose change is comments only is not asked
+ * asked about once per session, at its first change, so a function changed
+ * later in the same file is not asked about. A file the server gave no
+ * answer for is asked about once more, at the next call that names it, so a
+ * server that is down costs a session two bounded requests per file and not
+ * one per tool call. A file whose change is comments only is not asked
  * about and stays unasked: it owes no test until it changes code. A test is
  * named once per session: the test file a session edits after the source
- * file it tests adds no second line with the same command. A test whose
- * command the call's own command holds is not named: the line would arrive
- * on the result of that run. Only the diff's paths, hunk ranges and function
+ * file it tests adds no second line with the same command. A test the call's
+ * own command runs is not named (`runsHere`): the line would arrive on the
+ * result of that run. Only the diff's paths, hunk ranges and function
  * names are sent (`diffHeaders`).
  */
 export async function adviceLines(payload, files, { root, repo, token, depth = gateDepth() } = {}) {
@@ -524,11 +530,6 @@ export async function adviceLines(payload, files, { root, repo, token, depth = g
     ])
     .filter(([, diff]) => !commentOnlyDiff(diff));
   if (!asked.length) return [];
-  remember(
-    payload.session_id,
-    "seen",
-    asked.map(([rel]) => rel),
-  );
   const gates = await Promise.all(
     asked.map(([rel, diff]) =>
       postBounded(
@@ -545,7 +546,19 @@ export async function adviceLines(payload, files, { root, repo, token, depth = g
       ),
     ),
   );
-  const named = { ...readSessionState("testadvice", payload.session_id).named };
+  const state = readSessionState("testadvice", payload.session_id);
+  const rels = asked.map(([rel]) => rel);
+  // No answer (a timeout, a 5xx): the file stays unasked for one more call that names it.
+  const again = rels.filter((rel, i) => !gates[i] && !(state.retried || {})[rel]);
+  if (again.length) remember(payload.session_id, "retried", again);
+  if (again.length < rels.length) {
+    remember(
+      payload.session_id,
+      "seen",
+      rels.filter((rel) => !again.includes(rel)),
+    );
+  }
+  const named = { ...state.named };
   const command = commandText(payload.tool_input);
   const testExists = testsIn(root);
   let python;
@@ -553,7 +566,7 @@ export async function adviceLines(payload, files, { root, repo, token, depth = g
   const printed = [];
   for (const [i, [rel]] of asked.entries()) {
     const tests = adviceTests(rel, gates[i], testExists);
-    const fresh = tests.filter((t) => !named[t.test_path] && !(t.run && command.includes(t.run)));
+    const fresh = tests.filter((t) => !named[t.test_path] && !(t.run && runsHere(command, String(t.run))));
     if (python === undefined && fresh.some((t) => isPytest(t.run))) python = checkoutPython(root);
     // Functions are named only for a file with no test to run in this checkout.
     const untested = tests.length ? "" : untestedNames(gates[i]).list;
@@ -604,6 +617,74 @@ const ELSEWHERE = /\b(?:ssh|docker|podman|kubectl)\s/;
 /** True when `head`, a command's text up to a pytest run, shows the run
  *  started in this checkout. */
 const ranHere = (head) => !ELSEWHERE.test(head) && LAUNCHER.test(head.split(/[;&|(\n]/).pop());
+/** True when `command` runs `run`, a test's whole command, in this checkout:
+ *  `pytest tests/test_a.py::test_one` runs one test of the file, and `echo
+ *  "pytest tests/test_a.py"` and `docker exec app pytest tests/test_a.py` run
+ *  nothing here. */
+function runsHere(command, run) {
+  const at = command.indexOf(run);
+  return at >= 0 && /^(?:[\s;|&)]|$)/.test(command.slice(at + run.length)) && ranHere(command.slice(0, at));
+}
+
+// A shell command that starts a test runner, wrapped or piped in any way: a
+// program `code.test_gate` names a run with or a common other one, or a
+// build tool with `test` among its arguments (`make test-unit`, `npm run
+// test`, `node --test`). `import pytest`, `pip install pytest` and
+// `pytest.raises` are not runs. A command that only mentions a runner counts:
+// what is read is whether the session ran a test at all.
+const RUNNER =
+  /(?<![\w.-])(?:(?<!(?:import|install)\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*test)/;
+
+/**
+ * True when the transcript holds a shell command that starts a test runner
+ * (`RUNNER`) and finished at or after `since` (epoch ms), or has no dated
+ * result: Claude Code rows and Codex rollout calls, sidechains skipped. Its
+ * output is not read, so a run that failed, was piped into `grep` or ran
+ * between `git stash` and `git stash pop` counts.
+ */
+export function testedSince(objs, since) {
+  const done = new Map();
+  const runs = [];
+  for (const o of objs || []) {
+    const at = Date.parse((o && o.timestamp) || "");
+    if (o?.type === "response_item") {
+      const call = o.payload || {};
+      if (/_output$/.test(call.type)) done.set(call.call_id, at);
+      else if (["exec", "exec_command", "shell"].includes(call.name) && RUNNER.test(call.input ?? call.arguments)) {
+        runs.push(call.call_id);
+      }
+      continue;
+    }
+    const content = o && !o.isSidechain && o.message && o.message.content;
+    for (const b of Array.isArray(content) ? content : []) {
+      if (o.type === "user" && b?.type === "tool_result") done.set(b.tool_use_id, at);
+      else if (
+        o.type === "assistant" &&
+        b?.type === "tool_use" &&
+        ["Bash", "PowerShell"].includes(normalizeToolName(b.name)) &&
+        RUNNER.test(commandText(b.input))
+      ) {
+        runs.push(b.id);
+      }
+    }
+  }
+  return runs.some((id) => !(done.get(id) < since));
+}
+
+/** The oldest modification time, in epoch ms, among `files` under `root`: a
+ *  test run that finished since then saw at least one of them as it stands.
+ *  0 when none can be read (each one deleted). */
+export function oldestChange(root, files) {
+  const times = files.flatMap((file) => {
+    try {
+      return [fs.statSync(path.join(root, file)).mtimeMs];
+    } catch {
+      return [];
+    }
+  });
+  return times.length ? Math.min(...times) : 0;
+}
+
 // pytest's last line, whose order is fixed: failed, passed, skipped,
 // deselected, xfailed, xpassed, warnings, errors. A whole line starts at
 // "failed" or "passed" and names nothing deselected, so a -k subset is not

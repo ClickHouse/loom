@@ -9,26 +9,30 @@
 // per file and once per test per session. The line rides the tool result, so it
 // costs no model request, and it arrives while the file is still being
 // edited. An edit tool's call gets the same line from loom-blast-radius, the
-// one hook wired for those tools. The stop is never held: whether the tests
-// then ran is the agent's to judge.
+// one hook wired for those tools.
 //
-// Stop, with LOOM_TEST_GATE=block: the gate holds the stop instead, and
-// names nothing at edit time. If the working tree has uncommitted changes
-// THIS SESSION made
+// Stop: if the working tree has uncommitted changes THIS SESSION made
 // in a loom-indexed repo, ask `code.test_gate` for the change's obligations
 // (tests to run, untested touched functions) and block the stop ONCE per
 // distinct change with a reason that names them. "This session's" is read
 // from the transcript: dirty paths an edit tool targeted or a shell command
 // named, written since the session began (by the file's modification time);
 // a tree left dirty before the session does not gate a turn that changed
-// nothing. A Claude Code transcript that already answers the ask does not
-// block either (`runAnswered` in lib/test-gate.mjs); a Codex rollout answers
-// nothing, so its stop blocks.
+// nothing. By default any test run since the change lets the stop pass,
+// whatever it ran and however it went (`testedSince` in lib/test-gate.mjs):
+// the stop is held for a session that changed code and ran no test, and
+// nothing is asked of the server for one that ran some.
+//
+// With LOOM_TEST_GATE=block nothing is named at edit time, and the stop
+// passes only when a Claude Code transcript shows the named tests ran on the
+// tree as it stands (`runAnswered`); a Codex rollout answers nothing there,
+// so its stop blocks.
 //
 // Fail-open everywhere: no token, not an indexed repo, clean tree, nothing
 // of the tree touched this session, server down, second stop on the same
-// change — the agent stops as normal. Without a transcript path the whole
-// dirty tree is the change.
+// change — the agent stops as normal. Without a transcript path the default
+// holds no stop, and LOOM_TEST_GATE=block takes the whole dirty tree as the
+// change.
 // LOOM_TEST_GATE=off disables both; LOOM_TEST_GATE_DEPTH (1-3) sets the hops.
 
 import crypto from "node:crypto";
@@ -59,10 +63,12 @@ import {
   gatePayload,
   gateSignature,
   newestChange,
+  oldestChange,
   renderGate,
   runAnswered,
   sessionScope,
   sessionStart,
+  testedSince,
   testsIn,
   writtenSince,
 } from "../lib/test-gate.mjs";
@@ -88,7 +94,7 @@ async function advise(payload, token) {
 }
 
 async function main() {
-  if (MODE !== (AFTER_TOOL ? "advise" : "block")) {
+  if (MODE === "off" || (AFTER_TOOL && MODE === "block")) {
     scheduleExit(0);
     return;
   }
@@ -128,6 +134,11 @@ async function main() {
   const rows = transcript ? readAllLines(transcript) : [];
   const changed = transcript ? writtenSince(root, sessionScope(dirty, rows, { root, cwd }), sessionStart(rows)) : dirty;
   if (!changed.length) {
+    scheduleExit(0);
+    return;
+  }
+  // The default holds the stop of a session whose transcript shows no test run since its change.
+  if (MODE === "advise" && (!transcript || testedSince(rows, oldestChange(root, changed)))) {
     scheduleExit(0);
     return;
   }
