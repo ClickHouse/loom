@@ -13,6 +13,7 @@ from typing import Any
 from server.code.app import fan_in as code_fan_in
 from server.code.domain.extract.tokenize import code_tokens
 from server.code.domain.idents import embedded_idents
+from server.code.domain.index.path_class import is_noise_path, is_prose_path
 from server.code.domain.units import CodeUnit
 from server.core.datetimes import naive_utc_now
 from server.settings import settings
@@ -67,20 +68,11 @@ def _dir_match(path: str, recent_dirs: list[str]) -> bool:
 
 # ---- fusion rank priors: post-fusion path / definition signals that lift
 # recall@10 over plain RRF, all deterministic and LLM-free. Path-noise prior:
-# test/example/fuzzer code is indexed on purpose (agents ask "how is X tested"), but for
-# a conceptual question the implementation should outrank its tests — demote, never
-# drop.
-_NOISE_DIR_RE = re.compile(r"(?:^|/)(?:tests?|examples?|fuzzers|benchmarks)(?:/|$)")
-
-
-_NOISE_FILE_RE = re.compile(r"(?:^|/)(?:test_[^/]+|[^/]+_(?:test|fuzz))\.(?:h|hpp|cpp|cc|cxx)$")
-
-
-def _noise_path(path: str) -> bool:
-    """A test, example, fuzzer or benchmark path: what the noise penalty demotes."""
-    return bool(_NOISE_DIR_RE.search(path) or _NOISE_FILE_RE.search(path))
-
-
+# test/example/fuzzer code (`path_class.is_noise_path`) is indexed on purpose (agents
+# ask "how is X tested"), but for a conceptual question the implementation should
+# outrank its tests: demote, never drop. The lexical leg cuts its pool on the same
+# factor (`pool_penalties`): it keeps the rows whose vote times the factor is largest,
+# so a test row leaves the pool only when that many rows count for more.
 # 0.35 with tests/ and ci/ in the corpus: a grid on the C++ conceptual fixture (penalty
 # {0.5, 0.35, 0.25}) read r@5 0.741/0.769/0.769, r@10 0.801/0.810/0.810 — knee at 0.35,
 # recovering most of the dilution the larger corpus caused (0.778 without tests/ and
@@ -98,18 +90,8 @@ _CATALOGUE_FILE_RE = re.compile(
 )
 
 
-# Prose files — documentation, release notes, changelogs — by extension or by a
-# changelog-style name, never by a directory word (`src/Coordination/Changelog.cpp`
-# is code). A bug report's words are the ones the release notes repeat, so prose
-# outranks the source it describes: asked with public bug reports, a prose file
-# ranked first on a quarter of them although every fix changed only source.
-_PROSE_EXT_RE = re.compile(r"\.(?:md|mdx|markdown|rst|adoc|txt)$", re.I)
-_PROSE_NAME_RE = re.compile(
-    r"(?:^|/)(?:CHANGELOG|CHANGES|HISTORY|NEWS|RELEASE[-_]?NOTES)(?:\.[a-z]+)?$", re.I
-)
-_CODE_EXT_RE = re.compile(r"\.(?:py|pyi|h|hpp|c|cc|cpp|cxx|go|rs|ts|tsx|js|jsx|java|kt|sql|sh)$")
-
-# Query tokens that mean the asker wants documentation; the prose penalty skips them.
+# Query tokens that mean the asker wants documentation (`path_class.is_prose_path`);
+# the prose penalty skips them.
 _DOC_INTENT_TOKENS = frozenset(
     {
         "doc",
@@ -125,15 +107,6 @@ _DOC_INTENT_TOKENS = frozenset(
         "manual",
     }
 )
-
-
-def is_prose_path(path: str) -> bool:
-    """True for a documentation or release-notes file (`CMakeLists.txt` is build code)."""
-    if path.rsplit("/", 1)[-1].lower() == "cmakelists.txt":
-        return False
-    if _PROSE_EXT_RE.search(path):
-        return True
-    return bool(_PROSE_NAME_RE.search(path)) and not _CODE_EXT_RE.search(path)
 
 
 def _prose_penalty(*, eligible: bool) -> float:
@@ -199,26 +172,41 @@ _TEST_INTENT_TOKENS = frozenset(
 )
 
 
+def pool_penalties(query: str, *, prose_eligible: bool) -> tuple[float, float]:
+    """The factors the ranking multiplies a test path and a prose file by on this query
+    (1.0 = not applied): a test word turns the first off, a doc word the second, and
+    both are off with the fusion signals. `prose_eligible` is False for a search
+    constrained to paths and for a symbol lookup. The lexical leg cuts its pool on the
+    pair and `_apply_fusion_signals` multiplies by it."""
+    if not settings.code_fusion_signals:
+        return 1.0, 1.0
+    q_tokens = frozenset(code_tokens(query))
+    return (
+        1.0 if q_tokens & _TEST_INTENT_TOKENS else _NOISE_PENALTY,
+        1.0 if q_tokens & _DOC_INTENT_TOKENS else _prose_penalty(eligible=prose_eligible),
+    )
+
+
 def _apply_fusion_signals(
     ranked: list[CodeUnit],
     query: str,
     *,
+    path_penalties: tuple[float, float],
     prior_cap: float = 0.0,
     catalogue_penalty: float = 1.0,
-    prose_penalty: float = 1.0,
 ) -> list[CodeUnit]:
     """Path-noise penalty, stem affinity, embedded-identifier boost, file coherence —
     and, when `prior_cap` > 0, the fan-in prior: x(1 + cap * log1p(fan_in) / log1p(max
     fan_in in the pool)), read from CodeUnit.fan_in, skipped under test intent and on
     noise paths (the same two exemptions as the penalty), never applied to a unit
-    without callers. Calibration ran before this on the raw fusion, so abstention is
-    unaffected. Default cap 0 = the prior is not computed."""
+    without callers. `path_penalties` is the query's `pool_penalties` pair, the one the
+    lexical leg cut its pool on. Calibration ran before this on the raw fusion, so
+    abstention is unaffected. Default cap 0 = the prior is not computed."""
     if not ranked:
         return ranked
     q_tokens = frozenset(code_tokens(query))
+    noise_penalty, prose_penalty = path_penalties
     test_intent = bool(q_tokens & _TEST_INTENT_TOKENS)
-    if q_tokens & _DOC_INTENT_TOKENS:
-        prose_penalty = 1.0
     keywords = frozenset(t for t in q_tokens if len(t) > 2 and t not in _QUERY_STOPWORDS)
     embedded = embedded_idents(query)
     max_fan_in = max((u.fan_in for u in ranked), default=0) if prior_cap > 0 else 0
@@ -226,9 +214,9 @@ def _apply_fusion_signals(
     scored: list[tuple[CodeUnit, float]] = []
     for u in ranked:
         s = u.score
-        noisy = _noise_path(u.path)
-        if not test_intent and noisy:
-            s *= _NOISE_PENALTY
+        noisy = is_noise_path(u.path)
+        if noisy:
+            s *= noise_penalty
         if catalogue_penalty != 1.0 and _CATALOGUE_FILE_RE.search(u.path):
             s *= catalogue_penalty
         if prose_penalty != 1.0 and is_prose_path(u.path):

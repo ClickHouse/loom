@@ -69,6 +69,54 @@ def test_lexical_statement_byte_for_byte() -> None:
     }
 
 
+def test_a_path_penalty_wraps_the_statement_in_the_cut_on_votes() -> None:
+    """The leg's own statement, read `cut_depth` rows deep, inside one that ranks those
+    rows, marks the pool with the largest factor / (RRF_K + rank) and returns it with
+    the leg's first rows. Both order rows of one score by their factor."""
+    from server.code.store.index.sql import path_penalty_sql
+
+    sql, params = _statement(noise_penalty=0.35)
+    factor, factor_params = path_penalty_sql("path", 0.35, 1.0)
+    order = f"ORDER BY lex_score DESC, {factor} DESC"
+    inner = _TODAY.replace("ORDER BY lex_score DESC", order).replace(
+        "LIMIT {pool:UInt32}", "LIMIT {depth:UInt32}"
+    )
+    assert sql == (
+        """
+            SELECT *
+            FROM (
+                SELECT *, row_number() OVER (
+                    ORDER BY """
+        + factor
+        + """ / ({rrf_k:Float64} + lex_rank) DESC
+                ) <= {pool:UInt32} AS in_pool
+                FROM (
+                    SELECT *, row_number() OVER ("""
+        + order
+        + """) AS lex_rank
+                    FROM ("""
+        + inner
+        + """)
+                )
+            )
+            WHERE in_pool OR lex_rank <= {pool:UInt32}
+            ORDER BY lex_rank
+            """
+    )
+    assert params == {
+        "org": "o",
+        "ns": "n",
+        "model": "m",
+        "tokens": ["merge", "tree"],
+        "gate_query": "merge tree",
+        "idfs": [2.5, 0.7],
+        "pool": 200,
+        "rrf_k": 60.0,
+        "depth": 683,
+        **factor_params,
+    }
+
+
 # ---- corpus stats ------------------------------------------------------------
 
 
@@ -142,8 +190,8 @@ def test_code_term_df_refresh_replaces_the_snapshot_hourly() -> None:
 
 
 def test_search_gates_on_every_query_token_and_times_the_leg() -> None:
-    """The service hands the leg its tokens and idfs (every token gates) and
-    records the leg's wall time."""
+    """The service hands the leg its tokens and idfs (every token gates) and the
+    path penalties the pool is cut on, and records the leg's wall time."""
     from server.code.app import search as cs
 
     seen: dict[str, Any] = {}
@@ -185,5 +233,5 @@ def test_search_gates_on_every_query_token_and_times_the_leg() -> None:
     res = asyncio.run(run())
     tokens, idfs = seen["args"][3], seen["args"][4]
     assert tokens and len(idfs) == len(tokens)
-    assert set(seen["kw"]) == {"path_prefix", "pool", "scope"}
+    assert set(seen["kw"]) == {"path_prefix", "pool", "scope", "noise_penalty", "prose_penalty"}
     assert "lexical_leg_ms" in res.retrieval_work

@@ -9,11 +9,34 @@ import asyncio
 from datetime import datetime
 from typing import Any
 
+from server.code.domain.index import pool_cut
 from server.code.domain.index.grep_plan import GREP_FINAL_SETTINGS
 from server.code.domain.search_scope import SearchScope
 from server.code.store.index.base import CodeRepoBase
-from server.code.store.index.sql import _scope_sql, skip_tests_sql
+from server.code.store.index.sql import _scope_sql, path_penalty_sql, skip_tests_sql
 from server.core.datetimes import naive_utc_now as _now
+
+
+def _cut_on_votes(ranked_sql: str, order: str, factor: str) -> str:
+    """Wrap the lexical statement, limited to `{depth:UInt32}` rows in `order`, so it
+    ranks those rows in that order (`lex_rank`) and marks as `in_pool` the `pool` of
+    them with the largest vote in the ranking: `factor`, the factor of the row's path,
+    over RRF_K plus its rank. It returns them with the first `pool` rows by rank, in
+    rank order."""
+    return f"""
+            SELECT *
+            FROM (
+                SELECT *, row_number() OVER (
+                    ORDER BY {factor} / ({{rrf_k:Float64}} + lex_rank) DESC
+                ) <= {{pool:UInt32}} AS in_pool
+                FROM (
+                    SELECT *, row_number() OVER (ORDER BY {order}) AS lex_rank
+                    FROM ({ranked_sql})
+                )
+            )
+            WHERE in_pool OR lex_rank <= {{pool:UInt32}}
+            ORDER BY lex_rank
+            """
 
 
 class SearchMixin(CodeRepoBase):
@@ -30,6 +53,8 @@ class SearchMixin(CodeRepoBase):
         path_prefix: str = "",
         pool: int = 200,
         scope: SearchScope | None = None,
+        noise_penalty: float = 1.0,
+        prose_penalty: float = 1.0,
     ) -> list[dict[str, Any]]:
         """Lexical leg over app-tokenized lexemes: the idf-weighted sum of
         `countSubstrings` over the deduplicated lexemes. tf counts space-bounded
@@ -40,6 +65,22 @@ class SearchMixin(CodeRepoBase):
 
         `scope` adds the pattern / path predicates to the plain WHERE after
         the identity keys; unset, the statement is unchanged byte for byte.
+
+        `noise_penalty` and `prose_penalty` are the factors the ranking will
+        multiply a test path and a prose file by. Below 1, the pool is cut on
+        the row's vote in the ranking, its factor / (RRF_K + its rank by
+        `lex_score`), not on the rank alone: tests and docs repeat the
+        vocabulary of the source they cover, and a row the ranking demotes
+        must not take a pool slot from a source row whose vote counts for
+        more. Every row then carries its rank in the whole leg (`lex_rank`,
+        what it votes with) and `in_pool`; the rows are that pool and the
+        leg's own first `pool` rows, which calibration reads, in rank order.
+        Rows with one score rank by their factor, the largest first: a short
+        query's rows tie by the thousand, ClickHouse returns equal rows in
+        no fixed order, and the rank decides the pool. The scan reads
+        `pool_cut.cut_depth` rows deep, past which no row can be in the
+        pool. At 1 the statement is unchanged byte for byte, the rows are
+        the pool, and a row's rank is its position.
 
         The String query form of `hasAnyTokens` tokenizes the query with
         the text index's splitByNonAlpha tokenizer. Its Array form takes
@@ -64,8 +105,10 @@ class SearchMixin(CodeRepoBase):
             "{tokens:Array(String)}, {idfs:Array(Float32)}))"
         )
         scope_sql, scope_params = _scope_sql(scope)
-        rows = await self._ch.query_all(
-            f"""
+        cut = noise_penalty != 1.0 or prose_penalty != 1.0
+        factor, factor_params = path_penalty_sql("path", noise_penalty, prose_penalty)
+        order = f"lex_score DESC, {factor} DESC" if cut else "lex_score DESC"
+        sql = f"""
             SELECT chunk_id, path, scope, kind, start_line, end_line,
                    content, symbol_ids, context_description,
                    {score} AS lex_score
@@ -76,9 +119,16 @@ class SearchMixin(CodeRepoBase):
               AND {score} > 0
               {where_prefix}
               {scope_sql}
-            ORDER BY lex_score DESC
-            LIMIT {{pool:UInt32}}
-            """,
+            ORDER BY {order}
+            LIMIT {"{depth:UInt32}" if cut else "{pool:UInt32}"}
+            """
+        cut_params: dict[str, Any] = {}
+        if cut:
+            sql = _cut_on_votes(sql, order, factor)
+            depth = pool_cut.cut_depth(pool, noise_penalty, prose_penalty)
+            cut_params = {**factor_params, "rrf_k": pool_cut.RRF_K, "depth": depth}
+        return await self._ch.query_all(
+            sql,
             {
                 "org": org,
                 "ns": ns,
@@ -89,9 +139,9 @@ class SearchMixin(CodeRepoBase):
                 **({"gate_query": " ".join(tokens)} if gate else {}),
                 **({"prefix": path_prefix} if path_prefix else {}),
                 **scope_params,
+                **cut_params,
             },
         )
-        return rows
 
     async def definition_chunks(
         self,

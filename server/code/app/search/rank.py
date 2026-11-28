@@ -15,7 +15,6 @@ from server.code.app.search.priors import (
     _apply_outcome_boost,
     _catalogue_penalty,
     _kind_prior_table,
-    _prose_penalty,
     _user_tiebreak,
 )
 from server.code.app.search.rerank import _rerank_stage
@@ -88,15 +87,16 @@ async def _rank_units(
     # ---- fusion rank priors: path-noise penalty, query<->path stem affinity, file
     # coherence. Applied to RRF scores BEFORE the outcome boost so both stay
     # multiplicative-capped priors under relevance; calibration already ran on the raw
-    # fusion, so abstention is unaffected.
+    # fusion, so abstention is unaffected. The two path penalties are the pair the
+    # lexical leg cut its pool on (`_gather_legs` decides it for both).
     fusion_signals = False
     if settings.code_fusion_signals:
         ranked = _apply_fusion_signals(
             ranked,
             query,
+            path_penalties=st.path_penalties,
             prior_cap=prior_cap,
             catalogue_penalty=_catalogue_penalty(work, prose=not constrained and shape != "symbol"),
-            prose_penalty=_prose_penalty(eligible=not constrained and shape != "symbol"),
         )
         fusion_signals = True
 
