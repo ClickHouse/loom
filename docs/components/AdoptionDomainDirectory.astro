@@ -123,7 +123,7 @@ const headers = [
           {page < lastPage && <Button {...{ name: "domain_page", value: String(page + 1) }} htmlType="submit" type="secondary" iconRight="chevron-right" label="Next" />}
         </form>}
       </div>
-      {withUsage && <Text size="sm" color="muted">Active instances ran a successful request. Usage covers installations sharing domain activity. User and process counts use the latest measured UTC day.</Text>}
+      {withUsage && <Text size="sm" color="muted">Active instances ran a successful request. Domain activity uses completed daily reports. User and process counts use the latest measured UTC day.</Text>}
     </Panel>
   )}
 </section>

@@ -39,23 +39,7 @@
         "adoption_telemetry_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Self-hosted adoption reports. Set false to stop all adoption reporting."
-        },
-        "adoption_telemetry_interval_seconds": {
-          "default": 3600,
-          "minimum": 60,
-          "type": "integer",
-          "description": "Seconds between adoption checks and retries. A report covers 12 hours."
-        },
-        "adoption_telemetry_share_domain_activity": {
-          "default": true,
-          "type": "boolean",
-          "description": "Share daily account, successful request and serving process counts for contact domains. Requires domain sharing."
-        },
-        "adoption_telemetry_share_domains": {
-          "default": true,
-          "type": "boolean",
-          "description": "Share namespace contact domains and counts in adoption reports. Set false to omit them."
+          "description": "Self-hosted adoption reports, including public aggregate activity for contact domains. Set false to stop adoption reporting."
         },
         "allow_insecure": {
           "default": false,
