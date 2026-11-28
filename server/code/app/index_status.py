@@ -395,7 +395,7 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
         provider=cfg.provider,
         profile=cfg.profile,
         compiler_candidates=candidates,
-        quality_warnings=warnings,
+        quality_warnings=warnings + await _calibration_warnings(org, ns),
         git_head=git_head,
         scip_commit=scip_commit,
         scip_commit_py=val("scip_commit_py"),
@@ -428,6 +428,22 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
         workers=workers,
         **coverage,
     )
+
+
+async def _calibration_warnings(org: str, namespace: str) -> list[str]:
+    from server.memory.app.embedder_calibration import get_namespace_calibration
+
+    try:
+        calibration = await get_namespace_calibration(org, namespace)
+    except Exception as e:  # noqa: BLE001 — diagnostics must not break status
+        logger.debug("code status: calibration lookup unavailable: %s", e)
+        return ["Code retrieval calibration could not be checked."]
+    if calibration is not None:
+        return []
+    return [
+        "No namespace calibration is available; code retrieval uses cluster or configured "
+        "thresholds."
+    ]
 
 
 async def _index_quality(
