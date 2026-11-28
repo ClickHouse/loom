@@ -82,9 +82,10 @@ test("readPaths: Read's file, Grep's path, and the files a shell command reads o
     ),
     at("/r/src/a.py", "/r/tests/t.py"),
   );
+  // A one-letter first directory is Git Bash's spelling of a drive on Windows, so the cd names a longer one.
   assert.deepEqual(
-    readPaths("Bash", { command: "cd /r/src; grep -n x a.py b.py; sed -n 1,5p a.py" }, "/w"),
-    at("/r/src/a.py", "/r/src/b.py"),
+    readPaths("Bash", { command: "cd /repo/src; grep -n x a.py b.py; sed -n 1,5p a.py" }, "/w"),
+    at("/repo/src/a.py", "/repo/src/b.py"),
   );
   // A tree-wide search names a directory: the hook keeps regular files only.
   assert.deepEqual(readPaths("Bash", { command: "grep -rn x src" }, "/r"), at("/r/src"));
