@@ -174,7 +174,28 @@ async def grep_words(
     """Up to `limit` of `paths` whose text at `commit` holds the word `literal`, read
     from the mirror; an empty list for paths too many to pass to git or to search in its
     time (the index decides, as for a range too wide); None when git cannot tell."""
-    if not paths:
+    return await _grep(scope, commit, literal, paths, limit=limit, word=True)
+
+
+async def grep_lines(
+    scope: IngestScope, commit: str, lines: Sequence[str], paths: list[str], *, limit: int
+) -> list[str] | None:
+    """Up to `limit` of `paths` whose text at `commit` holds one of `lines` as written.
+    None when git cannot tell, and for paths too many to pass to git or to search in its
+    time: no index answers for a line, so a search cut short found nothing out."""
+    return await _grep(scope, commit, list(lines), paths, limit=limit, word=False)
+
+
+async def _grep(
+    scope: IngestScope,
+    commit: str,
+    literal: str | list[str],
+    paths: list[str],
+    *,
+    limit: int,
+    word: bool,
+) -> list[str] | None:
+    if not paths or not literal:
         return []
     try:
         return await gitrepo.grep_paths(
@@ -184,17 +205,18 @@ async def grep_words(
             tuple(paths),
             limit=limit,
             literal_paths=True,
-            word=True,
+            word=word,
         )
     except (gitrepo.ArgumentsTooLong, gitrepo.GrepTimedOut) as e:
         log.warning(  # a missing link the mirror could have followed reads as the index says
             "memory links: mirror search for %s over %d paths of %s cut short: %s",
-            literal,
+            # a line of source may hold a literal: only how many were searched for
+            literal if isinstance(literal, str) else f"{len(literal)} of its lines",
             len(paths),
             scope.cfg.namespace,
             type(e).__name__,
         )
-        return []
+        return [] if word else None
     except gitrepo.GitError:
         return None
 
