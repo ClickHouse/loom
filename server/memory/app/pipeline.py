@@ -704,9 +704,10 @@ async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) 
     earlier session may already have stored of this capture's claims. One `embed_many`
     call for the capture, and the reads bounded like the conflict checks of the write
     that follows. None for a fact that carries `valid_at`, `valid_to` or `foresight`:
-    the verifier compares text and sees no validity. None under `append_only`, where
-    every write is its own event, or under a policy that could not be read. Fail-open:
-    with none, no fact is dropped as already stored."""
+    the verifier compares text and sees no validity. The call's own `valid_at` default
+    is not read: a fact that takes its start from it is still compared. None under
+    `append_only`, where every write is its own event, or under a policy that could not
+    be read. Fail-open: with none, no fact is dropped as already stored."""
     import server.memory.store as memory_repo
     from server.embedding import get_embedder
     from server.memory.app.handlers import nearest_existing_rows
