@@ -721,7 +721,13 @@ def test_a_function_renamed_as_it_moved_to_another_file_is_moved(gone: str | Non
     [
         ("_fetch_rows", "moved"),
         ("fetch_rows_v2", "moved"),
+        # its words with more before or after them: what it is called beside a namesake
+        ("bulk_fetch_rows", "moved"),
+        ("fetch_rows_once", "moved"),
+        ("fetch_rows2", "moved"),
+        ("fetch", "moved"),
         ("load_rows", "missing"),
+        ("fetch_bulk_rows", "missing"),
         ("warm_up", "missing"),
     ],
 )
@@ -732,6 +738,57 @@ def test_a_small_function_renamed_as_it_moved_keeps_the_words_of_its_name(
     # changed file one shared word is no kinship
     after = {"a.py": _KEEP, "b.py": _SMALL_ROWS.replace("fetch_rows", name)}
     assert _elsewhere({"a.py": _KEEP + "\n\n" + _SMALL_ROWS}, after).state == state
+
+
+def test_a_name_that_holds_its_words_is_its_own_only_in_another_file() -> None:
+    # beside where it was the search of its own file decides, and a width alone is a
+    # sibling there (`sha`, `sha256`)
+    after = {"a.py": _KEEP + "\n\n" + _SMALL_ROWS.replace("fetch_rows", "fetch_rows2")}
+    assert _elsewhere({"a.py": _KEEP + "\n\n" + _SMALL_ROWS}, after).state == "missing"
+
+
+@pytest.mark.parametrize(
+    ("theirs", "state"),
+    [
+        # a name that holds its words is told by its tokens, never by a text that is close
+        ("def bulk_fetch_rows(n):\n    return list(range(n + 1))\n", "missing"),
+        # its own name with another text, in a class: not close, so another definition
+        ("class Rows:\n    def fetch_rows(self):\n        return self.rows\n", "missing"),
+        ("class Rows:\n    def fetch_rows(self, n):\n        return list(range(n))\n", "changed"),
+    ],
+    ids=["grown-and-edited", "unrelated-member", "close-member"],
+)
+def test_a_small_function_is_told_under_another_name_only_by_its_tokens(
+    theirs: str, state: str
+) -> None:
+    after = {"a.py": _KEEP, "b.py": theirs}
+    assert _elsewhere({"a.py": _KEEP + "\n\n" + _SMALL_ROWS}, after).state == state
+
+
+_GUARDED = "if OLD_SSL:\n    class NAME(ValueError):\n        pass\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "stayed", "state"),
+    [
+        # under a condition it did not have: its tokens, not its shape, and what
+        # surrounds it changed
+        ("SSLCertError", "", "changed"),
+        ("RetryError", "", "missing"),
+        # a stub that stayed has those tokens too: any of them may be what it became
+        ("SSLCertError", "class KeyMissing(ValueError):\n    pass\n", "unresolved"),
+    ],
+    ids=["its-words", "other-words", "a-stub-that-stayed"],
+)
+def test_a_small_definition_moved_under_a_condition_is_told_token_for_token(
+    name: str, stayed: str, state: str
+) -> None:
+    stub = "class CertError(ValueError):\n    pass\n"
+    before = {"a.py": _KEEP + "\n\n" + stub, "b.py": "X = 1\n" + stayed}
+    after = {"a.py": _KEEP, "b.py": "X = 1\n" + stayed + _GUARDED.replace("NAME", name)}
+    got = _elsewhere(before, after, "CertError")
+    assert got.state == state
+    assert (got.qualified_name == f"b::{name}") == (state == "changed")
 
 
 def test_a_removed_stub_is_not_handed_to_a_new_stub_sharing_a_word_of_its_name() -> None:
@@ -1045,7 +1102,9 @@ _FIXTURE = "def make_row():\n    class NAME:\n        x = field()\n        y = f
 
 
 @pytest.mark.parametrize(
-    ("name", "state"), [("Row", "changed"), ("_Row", "changed"), ("Pair", "missing")]
+    ("name", "state"),
+    # a name that only holds its words (`BigRow`) is its own at module level alone
+    [("Row", "changed"), ("_Row", "changed"), ("Pair", "missing"), ("BigRow", "missing")],
 )
 def test_a_small_module_level_definition_goes_into_a_scope_under_its_own_words(
     name: str, state: str
@@ -1115,6 +1174,44 @@ def test_a_small_method_goes_to_the_class_its_larger_siblings_left_for(
     got = _elsewhere(before, after, "Multi.__iter__")
     assert got.state == state
     assert (got.path == "b.py") == (state == "changed")
+
+
+_JAR = (
+    "class NAME:\n"
+    "    def __getitem__(self, name):\n        return self._find(name)\n\n"
+    "    def get(self, name, default=None):\n        try:\n            return self._find(name)\n"
+    "        except KeyError:\n            self.misses += 1\n            return default\n\n"
+    "    def set(self, name, value):\n        self.data[name] = VALUE\n"
+)
+_JAR_OLD = "    def update(self, other):\n        self.data.update(other)\n"
+_JAR_NEW = (
+    "    def copy(self):\n        return type(self)(self.data)\n\n"
+    "    def clear(self):\n        self.data.clear()\n\n"
+    "    def keys(self):\n        return list(self.data)\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("get", "state"),
+    [("self._find(name)", "changed"), ("self._find(name.lower())", "missing")],
+    ids=["a-larger-sibling-came-along", "none-with-its-tokens"],
+)
+def test_a_small_method_goes_with_a_class_keeping_two_names_and_a_larger_siblings_text(
+    get: str, state: str
+) -> None:
+    # CookieJar left a.py whole and RequestsJar keeps three of its four names among its
+    # six, under half of all seven: `get`, told by its own text, vouches for the class
+    old = _JAR.replace("NAME", "CookieJar").replace("VALUE", "value") + "\n" + _JAR_OLD
+    new = _JAR.replace("NAME", "RequestsJar").replace("VALUE", "str(value)") + "\n" + _JAR_NEW
+    after = {
+        "a.py": _KEEP,
+        "b.py": new.replace(
+            "return self._find(name)\n        except", f"return {get}\n        except"
+        ),
+    }
+    got = _elsewhere({"a.py": _KEEP + "\n\n" + old}, after, "CookieJar.__getitem__")
+    assert got.state == state
+    assert (got.qualified_name == "b::RequestsJar::__getitem__") == (state == "changed")
 
 
 def test_small_siblings_do_not_vouch_for_a_small_method() -> None:

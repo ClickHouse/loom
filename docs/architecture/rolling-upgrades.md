@@ -967,7 +967,8 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     the other as any followed link. Where N follows a definition and N-1 does not (its
     tokens in a range of more than 32 changed files or past new definitions in its own
     scope, a text nearly its own under another name, a definition under 30 tokens that
-    went with its scope), N-1 reads the link `missing` or `unresolved`. N weighs an
+    went with its scope or under a name that holds its own), N-1 reads the link `missing`
+    or `unresolved`. N weighs an
     `unresolved` link again from the commit its code was last read at, at its next
     recheck within 30 days or when its file changes. A `missing` link is never handed to
     a definition added since, so a link N-1 read `missing` during the rollout stays

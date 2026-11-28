@@ -286,16 +286,23 @@ class RepoReads:
         return await self._once(("turnover", base, head), read)
 
     async def turnover_holding(
-        self, base: str, head: str, lines: Sequence[str], path: str
+        self, base: str, head: str, lines: Sequence[str], path: str, *, limit: int
     ) -> Turnover | None:
         """`turnover` of a range too wide to read whole, over `path` and the files that
         hold one of `lines` at either end: parsing thousands of files takes longer than
         a pass may run, and a definition that moved whole took its lines with it. None
-        when the range cannot be read or those files cannot be told (`_holding`)."""
+        when the range cannot be read, those files cannot be told (`_holding`) or they
+        are more than `limit` with `path`: no more is parsed than of a range read whole.
+        A definition in a file that holds none of `lines` is not read: a removed or kept
+        one that differs from the lost one in exactly those lines, or was rewrapped,
+        contests nothing here, where in a range read whole it would leave the link
+        unsure."""
 
         async def read() -> Turnover | None:
             paths = await self._changed(base, head)
-            held = await self._holding(paths[0], base, head, paths[1], lines) if paths else None
+            held = (
+                await self._holding(paths[0], base, head, paths[1], lines, limit) if paths else None
+            )
             if paths is None or held is None:
                 return None
             some = {
@@ -303,6 +310,9 @@ class RepoReads:
                 for old, now in paths[1].items()
                 if old in held or now in held or path in (old, now)
             }
+            if len(some) > limit:
+                self._unsearched(base, head, len(paths[1]), "its lines are in too many")
+                return None
             return await self._read_turnover(paths[0], base, head, some)
 
         return await self._once(("turnover", base, head, path, *lines), read)
@@ -344,14 +354,15 @@ class RepoReads:
         head: str,
         paths: dict[str, str],
         lines: Sequence[str],
+        limit: int,
     ) -> set[str] | None:
         """The paths of a wide range (`paths`: old -> its path at `head`) whose text
         holds one of `lines`: at `head` under its path there, at `base` under its old
         one. None when that cannot be told: no line to look for, more than
         `memory_code_links_mirror_changed_files` paths (each is an argument to git),
-        `memory_code_links_mirror_naming_files` or more files holding one at either end
-        (a line any file has), or a search git cannot run. Each is logged, the second as
-        a warning once a range."""
+        more than `limit` files holding one at either end (a line any file has), or a
+        search git cannot run or finish. Each is logged, the second as a warning once a
+        range."""
         if len(paths) > settings.memory_code_links_mirror_changed_files:
             if ("too wide", base, head) not in self._read:
                 self._read["too wide", base, head] = True
@@ -365,29 +376,32 @@ class RepoReads:
                     self.cns,
                 )
             return None
-        limit = settings.memory_code_links_mirror_naming_files
         held: set[str] = set()
         why = "" if lines else "it has no line of its own"
         ends = ((head, set(paths.values()) - {""}), (base, set(paths))) if lines else ()
         for commit, some in ends:
             takes = sorted(filter(scope.takes, some))
-            found = await code.grep_lines(scope, commit, lines, takes, limit=limit)
-            if found is None or len(found) >= limit:
+            # one past the bound: a cut list is never taken as whole
+            found = await code.grep_lines(scope, commit, lines, takes, limit=limit + 1)
+            if found is None or len(found) > limit:
                 why = "git cannot search them" if found is None else "its lines are in too many"
                 break
             held.update(found)
         if why:
-            log.info(
-                "memory links: a definition not searched for across the %d files changed in "
-                "%s..%s of %s: %s",
-                len(paths),
-                base[:12],
-                head[:12],
-                self.cns,
-                why,
-            )
+            self._unsearched(base, head, len(paths), why)
             return None
         return held
+
+    def _unsearched(self, base: str, head: str, changed: int, why: str) -> None:
+        log.info(
+            "memory links: a definition not searched for across the %d files changed in "
+            "%s..%s of %s: %s",
+            changed,
+            base[:12],
+            head[:12],
+            self.cns,
+            why,
+        )
 
     async def _file_turnover(
         self, scope: code.IngestScope, base: str, old: str, head: str, now: str, found: Turnover

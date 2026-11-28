@@ -1329,7 +1329,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` |  | Days to retry a code-shaped name absent from trunk, measured when each pending scan starts. |
 | `LOOM_MEMORY_CODE_LINKS_REVISE_PER_PASS` | `int` | `20` |  | Changed claims one pass re-checks with the LLM under the `revise` policy. |
 | `LOOM_MEMORY_CODE_LINKS_MIRROR_NAMING_FILES` | `int` | `200` |  | Changed files that may hold a lost link's name (its callers count) for the mirror's answer to be used; from this many on, the code index alone decides. |
-| `LOOM_MEMORY_CODE_LINKS_MIRROR_CHANGED_FILES` | `int` | `5000` |  | Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched (at most 20,000: each is an argument to git); past it, the code index alone decides. |
+| `LOOM_MEMORY_CODE_LINKS_MIRROR_CHANGED_FILES` | `int` | `5000` |  | Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched, for its name and, in a range of more than 32 files, for its lines (at most 20,000: each is an argument to git); past it, the code index alone decides. |
 
 ### Memory chunks
 

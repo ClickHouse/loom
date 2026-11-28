@@ -171,7 +171,7 @@ _LOST_SEARCHED_DAYS = 30
 
 # files of namesakes a lost link is weighed against: past it, the answer is unsure; and
 # files a range may change to be read whole for a definition renamed as it moved: past
-# it, that one is looked for in the files that hold its lines
+# it, that one is looked for in the files that hold its lines, as many of them at most
 _MAX_ELSEWHERE = 32
 
 
@@ -420,11 +420,14 @@ async def _moved(
     ):
         return renamed
     unsure, whole = renamed.uncertain, Successor(None)
-    if not mirror_unsure:
+    edits = not unsure or renamed.unmatched
+    # its tokens alone, where the edited search does not look for them first: before a
+    # namesake with an edit (`far`), and where the edited rules are withheld
+    if not mirror_unsure and (far or not edits):
         whole = await _renamed_elsewhere(files, r, head, edited=False)
     if whole.definition is not None:
         return whole
-    if not unsure or renamed.unmatched:
+    if edits:
         if far:
             renamed = await _moved_and_edited(files, r.before, r.row, far, head)
         if not mirror_unsure and renamed.definition is None:
@@ -592,10 +595,11 @@ async def _renamed_elsewhere(
     (`successor.elsewhere`), among the definitions new since `_searched_from` in the
     files changed since: the one with its tokens, or with `edited` one with a close
     text. A range of more than `_MAX_ELSEWHERE` files is read only where a line of the
-    definition is held. Nothing, as before this search, when the range brought no
-    definition in or cannot be read, or the link's last-read text cannot. A link already
-    unresolved is unsure over a range not searched: its range starts at its own commit
-    and only grows, and the candidates that left it unresolved may still be there."""
+    definition is held, in as many files at most. Nothing, as before this search, when
+    the range brought no definition in or cannot be read, or the link's last-read text
+    cannot. A link already unresolved is unsure over a range not searched: its range
+    starts at its own commit and only grows, and the candidates that left it unresolved
+    may still be there."""
     checked, path = r.row["checked_commit"], r.before.read_path
     base = _searched_from(r.before, r.row, r.range)
     how = "edited" if edited else "whole"
@@ -613,7 +617,9 @@ async def _renamed_elsewhere(
     then = Side(path, old.defs, old.lines) if old else None
     if turnover is None and then is not None and was:
         # too wide to read whole: where its lines are
-        turnover = await files.turnover_holding(base, head, own_lines(was[0], then), path)
+        turnover = await files.turnover_holding(
+            base, head, own_lines(was[0], then), path, limit=_MAX_ELSEWHERE
+        )
     if turnover is None:
         return Successor(None, uncertain=r.before.state == "unresolved")
     if then is None or not was or not any(side.defs for side in turnover.new):

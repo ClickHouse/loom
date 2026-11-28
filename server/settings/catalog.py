@@ -3255,8 +3255,9 @@ class MemorySettings(BaseModel):
     # answer to be used; from this many on, the code index alone decides.
     memory_code_links_mirror_naming_files: int = Field(default=200, ge=1)
     # Files under the entry's prefixes a lost link's commit range may change for the
-    # mirror to be searched (at most 20,000: each is an argument to git); past it, the
-    # code index alone decides.
+    # mirror to be searched, for its name and, in a range of more than 32 files, for
+    # its lines (at most 20,000: each is an argument to git); past it, the code index
+    # alone decides.
     memory_code_links_mirror_changed_files: int = Field(default=5000, ge=1, le=20000)
 
     # ---- memory chunks ----

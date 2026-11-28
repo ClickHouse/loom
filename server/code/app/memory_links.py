@@ -180,8 +180,9 @@ async def grep_words(
 async def grep_lines(
     scope: IngestScope, commit: str, lines: Sequence[str], paths: list[str], *, limit: int
 ) -> list[str] | None:
-    """Up to `limit` of `paths` whose text at `commit` holds one of `lines` as written;
-    an empty list and None as `grep_words`."""
+    """Up to `limit` of `paths` whose text at `commit` holds one of `lines` as written.
+    None when git cannot tell, and for paths too many to pass to git or to search in its
+    time: no index answers for a line, so a search cut short found nothing out."""
     return await _grep(scope, commit, list(lines), paths, limit=limit, word=False)
 
 
@@ -214,7 +215,7 @@ async def _grep(
             scope.cfg.namespace,
             type(e).__name__,
         )
-        return []
+        return [] if word else None
     except gitrepo.GitError:
         return None
 

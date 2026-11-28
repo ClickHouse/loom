@@ -37,6 +37,8 @@ _TEXTS, _JUDGE = code_link_policy._texts, code_link_policy._judge
 # fixtures stub
 _REAL_CONTAINING = code_link_pass.RepoReads.containing
 _REAL_TURNOVER = code_link_pass.RepoReads.turnover
+# the mirror's line search, which `_renaming_world` answers from its fake history
+_REAL_GREP_LINES = code_links.code.grep_lines
 
 
 @pytest.fixture(autouse=True)
@@ -5308,6 +5310,8 @@ async def test_paths_too_many_for_git_leave_the_index_verdict(monkeypatch, why) 
     monkeypatch.setattr(gitrepo, "grep_paths", too_many)
     scope = SimpleNamespace(cfg=SimpleNamespace(git_dir="/nowhere", namespace="code-a"))
     assert await memory_links.grep_words(scope, "c1", "f", ["a.py"], limit=5) == []
+    # no index answers for a line: a search cut short found nothing out
+    assert await memory_links.grep_lines(scope, "c1", ["f(x)"], ["a.py"], limit=5) is None
 
 
 @pytest.mark.asyncio
@@ -5516,6 +5520,19 @@ async def test_a_missing_link_is_not_handed_to_a_definition_renamed_elsewhere(mo
     assert await _followed(files, lost, "c1", "c2") == []
 
 
+def _reads_counted(monkeypatch, files: Any) -> list[tuple[str, str]]:
+    """The (commit, path) of every file `files` parses from here on."""
+    read: list[tuple[str, str]] = []
+    at = files.at
+
+    async def counted(commit, path):
+        read.append((commit, path))
+        return await at(commit, path)
+
+    monkeypatch.setattr(files, "at", counted)
+    return read
+
+
 def _wide(commits: dict[tuple[str, str], str], n: int = 3) -> dict[tuple[str, str], str]:
     """`commits` with `n` more files changed at c1, none holding a line of `_LONG_ROWS`."""
     return commits | {("c1", f"pkg/n{i}.py"): f"def n{i}():\n    return {i}\n" for i in range(n)}
@@ -5538,14 +5555,7 @@ async def test_a_range_past_the_file_cap_is_read_where_the_definitions_lines_are
     )
     files, row = _renaming_world(monkeypatch, commits)
     monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 2)  # five changed
-    read: list[tuple[str, str]] = []
-    at = files.at
-
-    async def counted(commit, path):
-        read.append((commit, path))
-        return await at(commit, path)
-
-    monkeypatch.setattr(files, "at", counted)
+    read = _reads_counted(monkeypatch, files)
     with caplog.at_level(logging.INFO, logger=code_link_pass.log.name):
         state = "changed" if edited else "moved"
         assert await _followed(files, row) == [(state, "pkg/b.py", "pkg.b::warm_up")]
@@ -5569,26 +5579,31 @@ async def test_a_wide_range_whose_files_cannot_be_told_is_not_searched(
             ("c1", "pkg/b.py"): _LONG_ROWS.replace("fetch_rows", "warm_up"),
         }
     )
+    if why == "too-many-hold-them":  # b.py and two more: past the two a whole read may parse
+        commits |= {
+            ("c1", f"pkg/h{i}.py"): f"def h{i}(out):\n    return sorted(out)\n" for i in (0, 1)
+        }
     files, row = _renaming_world(monkeypatch, commits)
     monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 2)
-    grep = code_links.code.grep_lines
+    if why == "git-cannot-search":
 
-    async def grep_lines(scope, commit, lines, paths, *, limit):
-        return (
-            None if why == "git-cannot-search" else await grep(scope, commit, lines, paths, limit=1)
-        )
+        async def no_search(scope, commit, lines, paths, *, limit):
+            return None
 
-    monkeypatch.setattr(code_links.code, "grep_lines", grep_lines)
-    if why == "too-many-hold-them":
-        monkeypatch.setattr(settings, "memory_code_links_mirror_naming_files", 1)
+        monkeypatch.setattr(code_links.code, "grep_lines", no_search)
     if why == "past-the-setting":
         monkeypatch.setattr(settings, "memory_code_links_mirror_changed_files", 4)
+    read = _reads_counted(monkeypatch, files)
     with caplog.at_level(logging.INFO, logger=code_link_pass.log.name):
         assert await _followed(files, row) == [("missing", "pkg/a.py", "pkg.a::fetch_rows")]
         # a second link lost over the range: the warning is logged once a range
-        assert await files.turnover_holding("c0", "c1", ["return sorted(out)"], "pkg/z.py") is None
+        lines = ["return sorted(out)"]
+        assert await files.turnover_holding("c0", "c1", lines, "pkg/z.py", limit=2) is None
+    # no file is parsed for a range that is not searched, but the link's own
+    assert {path for _, path in read} == {"pkg/a.py"}
     assert files.wide_ranges == 1
     logged = [(r.levelname, r.getMessage()) for r in caplog.records]
+    changed = 7 if why == "too-many-hold-them" else 5
     if why == "past-the-setting":
         # a warning, the only trace when `code.refresh` rechecks: it keeps no pass outcome
         assert logged == [
@@ -5607,12 +5622,71 @@ async def test_a_wide_range_whose_files_cannot_be_told_is_not_searched(
             == [
                 (
                     "INFO",
-                    "memory links: a definition not searched for across the 5 files changed in "
-                    f"c0..c1 of code-a: {reason}",
+                    f"memory links: a definition not searched for across the {changed} files "
+                    f"changed in c0..c1 of code-a: {reason}",
                 )
             ]
             * 2
         )
+
+
+@pytest.mark.asyncio
+async def test_a_wide_range_parses_no_more_files_than_a_range_read_whole(monkeypatch) -> None:
+    # the link's file, b.py and h0.py hold its lines: three files, where a whole read may
+    # parse three and no more
+    commits = _wide(
+        {
+            ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
+            ("c1", "pkg/a.py"): _KEEP,
+            ("c1", "pkg/b.py"): _LONG_ROWS.replace("fetch_rows", "warm_up"),
+            ("c1", "pkg/h0.py"): "def h0(out):\n    return sorted(out)\n",
+        },
+        n=6,
+    )
+    files, row = _renaming_world(monkeypatch, commits)
+    monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 3)  # nine changed
+    read = _reads_counted(monkeypatch, files)
+    assert await _followed(files, row) == [("moved", "pkg/b.py", "pkg.b::warm_up")]
+    assert {path for _, path in read} == {"pkg/a.py", "pkg/b.py", "pkg/h0.py"}
+    # one file more holds a line: with the link's own, more than a whole read may parse
+    commits |= {("c1", "pkg/h1.py"): "def h1(out):\n    return sorted(out)\n"}
+    files, row = _renaming_world(monkeypatch, commits)
+    read = _reads_counted(monkeypatch, files)
+    assert await _followed(files, row) == [("missing", "pkg/a.py", "pkg.a::fetch_rows")]
+    assert {path for _, path in read} == {"pkg/a.py"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("why", ["timed-out", "too-many-arguments"])
+async def test_an_unresolved_link_stays_unresolved_when_the_line_search_is_cut_short(
+    monkeypatch, caplog, why: str
+) -> None:
+    # c2 changes 33 other files and git does not finish the search for the lines: no
+    # file was shown to hold none of them, so the two candidates may still be there
+    from server.code.app.index import gitrepo
+
+    two = {p: src for (c, p), src in _two_that_may_be_it({}).items() if c == "c1"}
+    others = {f"pkg/n{i}.py": f"N{i} = 1\n" for i in range(33)}
+    files, row = _renaming_world(monkeypatch, _two_that_may_be_it(two | others))
+    assert await _followed(files, row) == [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]
+
+    async def cut_short(*a, **k):
+        raise (gitrepo.GrepTimedOut if why == "timed-out" else gitrepo.ArgumentsTooLong)("lines")
+
+    async def ingest_scope(org, cns, commit):
+        cfg = SimpleNamespace(git_dir="/nowhere", namespace="code-a")
+        return SimpleNamespace(under=lambda path: True, takes=lambda path: True, cfg=cfg)
+
+    monkeypatch.setattr(gitrepo, "grep_paths", cut_short)
+    monkeypatch.setattr(code_links.code, "ingest_scope", ingest_scope)
+    monkeypatch.setattr(code_links.code, "grep_lines", _REAL_GREP_LINES)
+    lost = row | {"state": "unresolved", "changed_since": "c1"}
+    with caplog.at_level(logging.INFO, logger=code_link_pass.log.name):
+        assert await _followed(files, lost, "c1", "c2") == []
+    assert [r.getMessage() for r in caplog.records] == [
+        "memory links: a definition not searched for across the 36 files changed in "
+        "c0..c2 of code-a: git cannot search them"
+    ]
 
 
 @pytest.mark.asyncio
@@ -5650,7 +5724,7 @@ async def test_a_wide_range_is_read_at_its_base_for_another_removed_definition(
         }
     )
     files, row = _renaming_world(monkeypatch, commits)
-    monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 2)
+    monkeypatch.setattr(code_link_recheck, "_MAX_ELSEWHERE", 3)  # six changed, three read
     assert await _followed(files, row) == [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]
 
 
