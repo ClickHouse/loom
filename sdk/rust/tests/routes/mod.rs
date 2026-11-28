@@ -1,5 +1,5 @@
 use super::*;
-use clickhouse_loom::{CallFailure, CallOptions, RouteRequest, RouteResponse};
+use clickhouse_loom::{CallFailure, CallOptions, Method, RouteRequest, RouteResponse};
 
 pub(super) fn unused_response() -> String {
     // A queued response keeps the fixture listening, so an extra request would arrive.
@@ -189,9 +189,8 @@ async fn a_429_with_no_wait_to_take_is_returned() {
             .is_err()
     );
 
-    // The last wait is cut to what is left of the budget, then the 429 stands.
+    // After one wait, the next hint no longer fits the remaining budget.
     let server = Server::new(vec![
-        refused(json!(0.05)),
         refused(json!(0.05)),
         refused(json!(0.05)),
         unused_response(),
@@ -206,8 +205,8 @@ async fn a_429_with_no_wait_to_take_is_returned() {
         .request_json_with_options::<Value>(route(), CallOptions::default())
         .await
         .unwrap_err();
-    assert_eq!(attempts_of(failure), 3);
-    for _ in 0..3 {
+    assert_eq!(attempts_of(failure), 2);
+    for _ in 0..2 {
         server.request().await;
     }
     assert!(
@@ -233,6 +232,38 @@ async fn a_route_is_not_resent_when_the_connection_closes_without_an_answer() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn a_raw_503_is_not_retryable_after_a_route_write() {
+    for (method, path, retryable) in [
+        (Method::POST, "/v1/knowledge.upload", false),
+        (Method::GET, "/v1/whoami", true),
+    ] {
+        let server = Server::new(vec![
+            response(503, "Service unavailable", ""),
+            unused_response(),
+        ]);
+        let failure = server
+            .client()
+            .request_json_with_options::<Value>(
+                RouteRequest::new(method.clone(), path),
+                CallOptions::default(),
+            )
+            .await
+            .unwrap_err();
+        let Error::Api(error) = failure.error else {
+            panic!("expected API error");
+        };
+        assert_eq!(error.status, 503);
+        assert_eq!(error.retryable, None);
+        assert_eq!(error.retryable(), retryable, "{method}");
+        assert_eq!(failure.metadata.unwrap().attempts, 1);
+        assert_eq!(
+            server.request().await.line,
+            format!("{method} {path} HTTP/1.1")
+        );
+    }
 }
 
 #[tokio::test]

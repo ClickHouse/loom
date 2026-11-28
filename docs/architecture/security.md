@@ -1508,11 +1508,15 @@ bucket's write role is bound to the export's own Kubernetes ServiceAccount, not 
 pods, and the upload never replaces an object.
 
 [Adoption telemetry](../features/observability/telemetry.md#self-hosted-adoption)
-reads a 12-hour window from the ordinary request ledger. It sends deployment-wide
-counts and a reporting UUID derived from the storage authority's deployment ID to
-the Loom HTTPS collector. Operators can separately enable sharing of verified domain
-counts. The collector is outside Loom's erasure boundary. Verified company attribution
-uses a separate warehouse enrollment record.
+is enabled by default and reads 12-hour windows from the ordinary request ledger.
+It sends deployment-wide counts and a reporting UUID derived from the storage
+authority's deployment ID to the Loom HTTPS collector. Reports include eligible
+namespace contact domains, which can come from self-reported addresses. The public
+directory uses aggregate activity for those domains from snapshots sent every five
+minutes and from completed daily reports.
+Set `LOOM_ADOPTION_TELEMETRY_ENABLED=false` to stop all adoption reporting. The
+collector is outside Loom's erasure boundary. Verified company attribution uses
+a separate warehouse enrollment record.
 
 ## The SQL surface
 
