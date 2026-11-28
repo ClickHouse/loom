@@ -616,10 +616,16 @@ export interface CodeLink {
   code_namespace: string;
   path: string;
   symbol: string;
+  /** The definition's lines at the link's last check; 0 for a file link and for code not found. */
+  start_line?: number;
+  end_line?: number;
   state: "fresh" | "moved" | "changed" | "unresolved" | "missing";
   changed_since: string;
   /** The `revise` policy's corrected claim for the code as it is now; "" when none. */
   suggestion?: string;
+  /** The path and symbol the memory was written against, when the code is now at another; "" otherwise. */
+  was_path?: string;
+  was_symbol?: string;
 }
 
 export async function getMemory(
