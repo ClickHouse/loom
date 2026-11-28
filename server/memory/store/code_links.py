@@ -453,55 +453,76 @@ async def _for_code(
     )
 
 
-_BEHIND = (
+async def clock(*, ch: _CHClient | None = None) -> int:
+    """ClickHouse's time in milliseconds, the clock that stamps `inserted_at`."""
+    rows = await (ch or _default_client()).query_all("SELECT toUnixTimestamp64Milli(now64(3)) AS t")
+    return int(rows[0]["t"])
+
+
+_UNCHECKED = (
     "{_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
-    "AND state != 'pending' AND checked_commit != {{head:String}}"
+    "AND state != 'pending' AND checked_commit != {{head:String}} "
+    "AND toUnixTimestamp64Milli(inserted_at) >= {{since:Int64}}"
 )
 
 
-async def behind_digest(
-    org: str, code_namespace: str, head: str, *, ch: _CHClient | None = None
-) -> str:
-    """A digest of the live links not checked at `head`: it changes whenever one is
-    inserted, relinked or removed. A lost link keeps its commit when a recheck rewrites
-    it, so it counts by key and commit, not version: rechecking it changes nothing.
-    One aggregate over the repository's live links, on every pass."""
-    rows = await (ch or _default_client()).query_all(
-        f"SELECT count() AS n, hex(groupBitXor(if(state IN ('unresolved', 'missing'), "
-        f"sipHash64({_KEY}, checked_commit), sipHash64({_KEY}, version)))) AS d "
-        + _BEHIND.format(_LIVE=_LIVE),
-        params={"org": org, "cns": code_namespace, "head": head},
-    )
-    return f"{rows[0]['n']}:{rows[0]['d']}"
-
-
-async def behind(
+async def inserted_since(
     org: str,
     code_namespace: str,
     head: str,
+    since: int,
     *,
     after: tuple[str, ...] | None,
     limit: int,
     ch: _CHClient | None = None,
 ) -> tuple[list[LinkRow], tuple[str, ...] | None]:
-    """Up to `limit` live links not checked at `head`, in key order after `after`, and
-    the next page's start (None at the end)."""
-    since = f" AND {_past(_KEY_COLUMNS, _KEY_TYPES)}" if after else ""
+    """Up to `limit` live links not checked at `head` that were inserted at or after
+    `since` (ms), in key order after `after`, and the next page's start (None at the end)."""
+    past = f"AND {_past(_KEY_COLUMNS, _KEY_TYPES)} " if after else ""
     rows = _links(
         await (ch or _default_client()).query_all(
             "SELECT * "
-            + _BEHIND.format(_LIVE=_LIVE)
-            + f"{since} ORDER BY {_KEY} LIMIT {{lim:UInt32}}",
+            + _UNCHECKED.format(_LIVE=_LIVE)
+            + f" {past}ORDER BY {_KEY} LIMIT {{lim:UInt32}}",
             params={
                 "org": org,
                 "cns": code_namespace,
                 "head": head,
+                "since": since,
                 "lim": int(limit),
                 **_past_params(after or ()),
             },
         )
     )
     return rows, _key(rows[-1]) if len(rows) == int(limit) else None
+
+
+async def unchecked_memories(
+    org: str,
+    code_namespace: str,
+    memory_ids: Sequence[str],
+    head: str,
+    since: int,
+    *,
+    ch: _CHClient | None = None,
+) -> set[str]:
+    """The memories among `memory_ids` with a live link not checked at `head` that was
+    inserted at or after `since` (ms)."""
+    rows = await query_all_sliced(
+        ch or _default_client(),
+        "SELECT DISTINCT memory_id "
+        + _UNCHECKED.format(_LIVE=_LIVE)
+        + " AND memory_id IN {ids:Array(UUID)}",
+        {
+            "org": org,
+            "cns": code_namespace,
+            "head": head,
+            "since": since,
+            "ids": sorted(set(memory_ids)),
+        },
+        "ids",
+    )
+    return {str(r["memory_id"]) for r in rows}
 
 
 async def stale_fingerprints(

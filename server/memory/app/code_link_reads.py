@@ -17,6 +17,7 @@ from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import RegistryUnread, configured_repos
 from server.core.hashing import hash_text
 from server.memory.api.models_crud import CodeLink
+from server.memory.app import code_link_pass as link_pass
 from server.memory.app.code_link_pass import unparsed_cursor
 from server.memory.domain import code_change
 from server.memory.domain.redaction_lineage import is_content_hash
@@ -153,9 +154,14 @@ def guidance_link_state(links: Sequence[LinkRow], readable: set[str]) -> str:
     return state or "unknown"
 
 
-async def _guidance_coverage(org: str, cns: str) -> tuple[str, set[str]]:
+async def _guidance_coverage(org: str, cns: str) -> tuple[str, set[str], int | None]:
+    """The head the repository's links were last checked at, the paths still owed a
+    recheck, and the ClickHouse time (ms) the last finished catch-up began reading at
+    (None before one finished): a link stamped after it may be one no pass has seen."""
     checked = await code.checked_head(org, cns)
-    return checked, set(await unparsed_cursor(org, cns).read()) if checked else set()
+    owed = set(await unparsed_cursor(org, cns).read()) if checked else set()
+    read = (await link_pass.Cursor[dict[str, Any]](f"seen/{org}/{cns}", {}).read()).get("read")
+    return checked, owed, read
 
 
 async def _guidance_indexed_heads(org: str, namespaces: list[str]) -> dict[str, str]:
@@ -166,6 +172,34 @@ async def _guidance_indexed_heads(org: str, namespaces: list[str]) -> dict[str, 
     except Exception as error:  # noqa: BLE001 — unavailable coverage leaves guidance uncertain
         log.debug("Guidance code heads unavailable: %s", type(error).__name__)
         return {}
+
+
+async def _seen_hits(
+    org: str, cns: str, head: str, read: int, hits: list[tuple[int, str, str]]
+) -> dict[int, str]:
+    """The hits whose memories hold no link stamped after the catch-up began reading."""
+    try:
+        unseen = await store.unchecked_memories(org, cns, [mid for _, _, mid in hits], head, read)
+    except Exception as error:  # noqa: BLE001 — unread stamps leave guidance uncertain
+        log.debug("Guidance link stamps unavailable: %s", type(error).__name__)
+        return {}
+    return {index: state for index, state, mid in hits if mid not in unseen}
+
+
+async def _confirm(
+    org: str,
+    positive: dict[tuple[str, str], list[tuple[int, str, str]]],
+    coverage: dict[str, Any],
+    states: list[str],
+) -> None:
+    """Serve the positive states of the repositories whose checked head is the indexed
+    one, for the memories no link stamped after the finished catch-up began reading."""
+    indexed = await _guidance_indexed_heads(org, [cns for cns, _ in positive])
+    for (cns, checked_head), hits in positive.items():
+        read = coverage[cns][2]
+        if indexed.get(cns) == checked_head and read is not None:
+            for index, state in (await _seen_hits(org, cns, checked_head, read, hits)).items():
+                states[index] = state
 
 
 async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -219,17 +253,13 @@ async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> l
             proof = coverage.get(key[2])
             if not isinstance(proof, tuple):
                 continue
-            checked_head, owed = proof
+            checked_head, owed, _ = proof
             if not checked_head or any(link["path"] in owed for link in rows_for_hit):
                 continue
-            positive[key[2], checked_head].append((index, state))
+            positive[key[2], checked_head].append((index, state, key[0]))
         else:
             states[index] = state
-    indexed = await _guidance_indexed_heads(org, [cns for cns, _ in positive])
-    for (cns, checked_head), hits in positive.items():
-        if indexed.get(cns) == checked_head:
-            for index, state in hits:
-                states[index] = state
+    await _confirm(org, positive, coverage, states)
     return states
 
 

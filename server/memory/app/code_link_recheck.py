@@ -125,7 +125,7 @@ async def _recheck_repository(
     files = link_pass.RepoReads(org, cns)
     head = await code.indexed_head(org, cns)
     checked = await code.checked_head(org, cns)
-    behind = await store.behind_digest(org, cns, head) if head else ""  # before any link read
+    started = await store.clock() - _SKEW_MS  # before any link read
     await _recheck_pending(org, cns, head, files, result)
     await rehash.refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
@@ -146,7 +146,7 @@ async def _recheck_repository(
         await _follow(org, cns, checked, head, files, result)
         await code.set_checked_head(org, cns, head)
     if head:
-        await _catch_up(org, cns, head, behind, files, result)
+        await _catch_up(org, cns, head, started, files, result)
     result.wide_ranges += files.wide_ranges
     await policy.apply_policies(org, cns, head, files, budget, result)
 
@@ -308,41 +308,49 @@ async def _recheck_rows(
     return still, failed
 
 
+# ponytail: ClickHouse stamps `inserted_at` on whichever replica takes the write, so a
+# slow clock can stamp a link just before a pass's start. The margin covers a replica
+# this far behind; NTP-synced clocks are a precondition, a larger skew needs a larger one.
+_SKEW_MS = 2000
+
+
 async def _catch_up(
     org: str,
     cns: str,
     head: str,
-    now: str,
+    started: int,
     files: link_pass.RepoReads,
     result: link_pass.PassResult,
 ) -> None:
-    """Recheck the links not checked at `head` that no pass followed. A pass at an
-    unchanged head follows nothing, so a link an older build inserted after the last pass
-    read the table, built at another commit, would keep its state. `now` is a digest of
-    those links taken before the pass read any link. It is trusted only as the digest of
-    a set already rechecked: when the cursor holds no verified digest for this head, or a
-    different one, the whole set is rechecked, a page of the batch size per pass in key
-    order, and the digest the sweep started at is stored after its last page. Rechecked
-    links leave the set and lost ones keep their digest, so a sweep that moved links is
-    followed by one that rechecks nothing."""
-    seen = link_pass.Cursor[dict[str, Any]](f"behind/{org}/{cns}", {})
-    before = await seen.read()
-    mine = before.get("head") == head
-    if mine and before.get("links") == now:
-        return
-    after = tuple(before["after"]) if mine and before.get("after") else None
-    target = before["target"] if after else now
-    links, nxt = await store.behind(
-        org, cns, head, after=after, limit=int(settings.memory_code_links_batch)
+    """Recheck the links an older build inserted after the last pass read the table. A
+    pass at an unchanged head follows nothing, so a link built at another commit would
+    keep its state. ClickHouse stamps each link as it is inserted, and `started` is its
+    time (less a skew margin) before this pass read any link: every link stamped since
+    the previous pass's `read` that is not checked at `head` is rechecked from its own
+    commit, a page of the batch size per pass in key order. `read` moves to this pass's
+    start only after the last page, and guidance trusts no link stamped after it. With
+    no cursor (the first pass, or links an older build had stored) every link not at
+    `head` is rechecked once."""
+    seen = link_pass.Cursor[dict[str, Any]](f"seen/{org}/{cns}", {})
+    cursor = await seen.read()
+    after = tuple(cursor["after"]) if cursor.get("after") else None
+    target = cursor["target"] if after else started
+    links, nxt = await store.inserted_since(
+        org,
+        cns,
+        head,
+        cursor.get("read", 0),
+        after=after,
+        limit=int(settings.memory_code_links_batch),
     )
     still, failed = await _recheck_rows(org, cns, head, files, result, links)
     await _set_unparsed(org, cns, await _unparsed(org, cns) | still)
     if failed:
         result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
     if nxt:
-        await seen.write({"head": head, "links": "", "target": target, "after": list(nxt)})
+        await seen.write({**cursor, "target": target, "after": list(nxt)})
     else:
-        await seen.write({"head": head, "links": target})
+        await seen.write({"read": target})
 
 
 async def _unparsed(org: str, cns: str) -> set[str]:

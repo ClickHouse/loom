@@ -702,20 +702,23 @@ sequential read, which `loom doctor` checks through `select_sequential_consisten
 
 A build without the lease, such as the previous build during a rolling upgrade, can
 insert a link built at an older commit after a pass read the table. A pass at an
-unchanged head follows nothing, so each pass takes a digest of the live links not
-checked at its head (`store.behind_digest`, over each key and version, and over each
-key and commit for a lost link) before it reads any link. It trusts that digest only as
-the digest of a set it has already rechecked. When the `behind/` cursor holds no
-verified digest for this head, or a different one, `_catch_up` rechecks the whole set
-from each link's own checked commit. That includes the first pass after an upgrade, a
-pass at a new head (after its follow, which moves the links it loaded out of the set),
-and a pass that finds the digest changed. It reads a page of `memory_code_links_batch`
-links in key order per pass and keeps its place in the cursor. The cursor stores the
-digest the sweep started at only after the last page, so a link that arrives during the
-sweep makes the digest differ and starts another. The check compares digests and never
-timestamps, so no host's clock matters. A recheck moves the links it finds out of that
-set, and a lost link keeps its digest when the recheck rewrites it, so the sweep after
-it rechecks nothing.
+unchanged head follows nothing, so ClickHouse stamps every link row with `inserted_at`
+as it is inserted, and each pass takes ClickHouse's time before it reads any link. Its
+catch-up (`_catch_up`) rechecks every live link not checked at the head that was stamped
+since the previous pass's start, from each link's own checked commit. That covers a
+link inserted at any point after the previous pass began reading, including one that
+arrives while the pass itself runs. It reads a page of `memory_code_links_batch` links
+in key order per pass and keeps its place in the `seen/` cursor. The cursor's `read`
+moves to the start of the pass only after the last page. With no cursor, as on the first
+pass after an upgrade, every link not at the head is rechecked once. A link a recheck
+leaves unchanged writes nothing, so a lost link is rechecked once and then stays out.
+
+The read side trusts a link only if it is checked at the checked head or was stamped
+before `read`. A link stamped later may be one no pass has seen, and without a `read`
+no link qualifies, so guidance on it is unknown until the catch-up finishes. A skew
+margin of two seconds on a pass's start covers a replica whose clock runs behind. This
+needs ClickHouse to assign `inserted_at` on replicas with synchronised clocks; a larger
+skew than the margin needs a larger margin.
 
 ## Invariants
 

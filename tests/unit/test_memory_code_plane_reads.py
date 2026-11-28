@@ -302,7 +302,7 @@ async def test_code_guidance_reads_only_authorized_repository_bindings(monkeypat
         return ""
 
     async def link_cursor(name):
-        assert name == "unparsed/o/code-a"
+        assert name in ("unparsed/o/code-a", "seen/o/code-a")
         return ""
 
     monkeypatch.setattr(
@@ -328,6 +328,8 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
     checked = indexed
     fetched = "b" * 40
     unparsed = ""
+    seen = '{"read": 500}'
+    stamped: set[str] = set()
     complete_during_read = False
 
     async def readable(org, namespaces):
@@ -353,7 +355,11 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
         return checked
 
     async def link_cursor(name):
-        return unparsed
+        return seen if name.startswith("seen/") else unparsed
+
+    async def unchecked_memories(org, cns, ids, head, since):
+        assert (cns, head, since) == ("code-a", checked, 500)
+        return stamped & set(ids)
 
     monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda *_: "code-a")
     monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
@@ -366,6 +372,7 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
     )
     monkeypatch.setattr(code_link_reads.code, "checked_head", checked_head)
     monkeypatch.setattr(code_link_reads.code, "link_cursor", link_cursor)
+    monkeypatch.setattr(code_link_reads.store, "unchecked_memories", unchecked_memories)
     assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
     indexed = fetched
     assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
@@ -374,6 +381,14 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
     unparsed = '["src/a.py"]'
     assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
     unparsed = '["src/other.py"]'
+    # a link stamped after the last finished catch-up began reading may be one no pass saw,
+    # and with no finished catch-up none is known to be seen
+    stamped = {"m1"}
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    stamped = set()
+    seen = ""
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    seen = '{"read": 500}'
     # a link the writer parked behind a running pass is unknown even at the checked head
     expected = "unknown" if state == "pending" else state
     assert await code_link_reads.guidance_code_states("o", [row]) == [expected]

@@ -57,12 +57,12 @@ def _free_leases(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _no_links_behind(monkeypatch):
-    # no ClickHouse here: no link waits behind the head unless a test says so
-    async def digest(org, cns, head):
-        return "0:0"
+def _a_clock(monkeypatch):
+    # no ClickHouse here: its clock stands still unless a test moves it
+    async def clock():
+        return 10_000
 
-    monkeypatch.setattr(code_links.store, "behind_digest", digest)
+    monkeypatch.setattr(code_links.store, "clock", clock)
 
 
 @pytest.fixture(autouse=True)
@@ -6314,215 +6314,154 @@ async def test_a_file_link_is_not_dropped_beside_a_move_the_current_check_discar
     assert written == []
 
 
-@pytest.mark.asyncio
-async def test_a_link_an_older_build_inserted_after_a_pass_read_is_rechecked_at_the_same_head(
-    monkeypatch,
-) -> None:
-    # the table's links behind h1: what the passes read and what a writer inserts
-    behind: list[dict[str, Any]] = []
-    cursors: dict[str, str] = {}
-    rechecked: list[list[str]] = []
+class _Stamped:
+    """The link table as ClickHouse keeps it: each row has the time (ms) it was inserted,
+    and a recheck moves a live link to the head, as `_write_moves` does, leaving a lost
+    one unwritten, as `_recheck` does when nothing about it changed."""
 
-    async def digest(org, cns, head):
-        return str(sorted(a["memory_id"] for a in behind))
+    def __init__(self, monkeypatch, page: int = 100) -> None:
+        self.now = 10_000
+        self.table: list[dict[str, Any]] = []
+        self.cursors: dict[str, str] = {}
+        self.rechecked: list[list[str]] = []
 
-    async def read_behind(org, cns, head, *, after, limit):
-        return list(behind), None
+        async def clock():
+            return self.now
 
-    async def recheck_rows(org, cns, head, files, result, links):
-        rechecked.extend([[a["memory_id"] for a in links]] if links else [])
-        behind.clear()  # rechecked at the head
-        return set(), set()
+        async def inserted_since(org, cns, head, since, *, after, limit):
+            rows = sorted(
+                (
+                    a
+                    for a in self.table
+                    if a["checked_commit"] != head
+                    and a["state"] != "pending"
+                    and a["ins"] >= since
+                    and (after is None or (a["memory_id"],) > after)
+                ),
+                key=lambda a: a["memory_id"],
+            )[:limit]
+            return rows, ((rows[-1]["memory_id"],) if len(rows) == limit else None)
 
-    async def get(name):
-        return cursors.get(name, "")
+        async def recheck_rows(org, cns, head, files, result, links):
+            self.rechecked.append([a["memory_id"] for a in links])
+            for a in links:
+                if a["state"] not in ("missing", "unresolved"):
+                    a["checked_commit"], a["ins"] = head, self.now
+            return set(), set()
 
-    async def put(name, value):
-        cursors[name] = value
+        async def get(name):
+            return self.cursors.get(name, "")
 
-    async def unparsed(org, cns):
-        return set()
+        async def put(name, value):
+            self.cursors[name] = value
 
-    async def set_unparsed(org, cns, paths):
-        return None
+        async def unparsed(org, cns):
+            return set()
 
-    monkeypatch.setattr(code_links.store, "behind_digest", digest)
-    monkeypatch.setattr(code_links.store, "behind", read_behind)
-    monkeypatch.setattr(code_link_recheck, "_recheck_rows", recheck_rows)
-    monkeypatch.setattr(code_link_recheck, "_unparsed", unparsed)
-    monkeypatch.setattr(code_link_recheck, "_set_unparsed", set_unparsed)
-    monkeypatch.setattr(code_links.code, "link_cursor", get)
-    monkeypatch.setattr(code_links.code, "set_link_cursor", put)
+        async def set_unparsed(org, cns, paths):
+            return None
 
-    async def one_pass() -> None:
-        # the digest is read first, as `_recheck_repository` does, before any link
-        now = await digest("o", "code-a", "h1")
-        await code_link_recheck._catch_up(
-            "o",
-            "code-a",
-            "h1",
-            now,
-            None,
-            code_link_pass.PassResult(),  # type: ignore[arg-type]
-        )
+        monkeypatch.setattr(settings, "memory_code_links_batch", page)
+        monkeypatch.setattr(code_links.store, "clock", clock)
+        monkeypatch.setattr(code_links.store, "inserted_since", inserted_since)
+        monkeypatch.setattr(code_link_recheck, "_recheck_rows", recheck_rows)
+        monkeypatch.setattr(code_link_recheck, "_unparsed", unparsed)
+        monkeypatch.setattr(code_link_recheck, "_set_unparsed", set_unparsed)
+        monkeypatch.setattr(code_links.code, "link_cursor", get)
+        monkeypatch.setattr(code_links.code, "set_link_cursor", put)
 
-    await one_pass()  # the first pass at h1: nothing waits
-    behind.append(_full({"memory_id": "late", "checked_commit": "h0"}))  # an older build's insert
-    await one_pass()  # the next pass at h1 reads it behind the head
-    assert rechecked == [["late"]]
-    await one_pass()  # settled: the recheck made the digest differ once, then it holds
-    await one_pass()
-    assert rechecked == [["late"]]
+    def add(self, memory_id: str, checked_commit: str, state: str = "fresh", ins: int = 1) -> None:
+        link = _full({"memory_id": memory_id, "checked_commit": checked_commit, "state": state})
+        self.table.append(link | {"ins": ins})
 
-
-@pytest.mark.asyncio
-async def test_a_lost_link_at_a_steady_head_is_not_rechecked_by_later_passes(monkeypatch) -> None:
-    # a lost link keeps its checked commit, so a recheck rewrites it as another version:
-    # the digest counts it by key and commit, as the store's does, and stays put
-    lost = _full({"memory_id": "m", "state": "missing", "checked_commit": "h0", "version": 1})
-    table = [lost]
-    cursors: dict[str, str] = {}
-    rechecks: list[int] = []
-
-    async def digest(org, cns, head):
-        return str([(a["memory_id"], a["checked_commit"]) for a in table])
-
-    async def read_behind(org, cns, head, *, after, limit):
-        return list(table), None
-
-    async def recheck_rows(org, cns, head, files, result, links):
-        rechecks.append(len(links))
-        table[:] = [a | {"version": a["version"] + 1} for a in table]  # rewritten, still lost
-        return set(), set()
-
-    async def get(name):
-        return cursors.get(name, "")
-
-    async def put(name, value):
-        cursors[name] = value
-
-    async def unparsed(org, cns):
-        return set()
-
-    async def set_unparsed(org, cns, paths):
-        return None
-
-    monkeypatch.setattr(code_links.store, "behind", read_behind)
-    monkeypatch.setattr(code_link_recheck, "_recheck_rows", recheck_rows)
-    monkeypatch.setattr(code_link_recheck, "_unparsed", unparsed)
-    monkeypatch.setattr(code_link_recheck, "_set_unparsed", set_unparsed)
-    monkeypatch.setattr(code_links.code, "link_cursor", get)
-    monkeypatch.setattr(code_links.code, "set_link_cursor", put)
-    for _ in range(3):
-        now = await digest("o", "code-a", "h1")
-        await code_link_recheck._catch_up(
-            "o",
-            "code-a",
-            "h1",
-            now,
-            None,
-            code_link_pass.PassResult(),  # type: ignore[arg-type]
-        )
-    assert rechecks == [1]  # the first pass checks it; the rewrites change no digest
-
-
-def _catch_up_world(monkeypatch, behind: list[dict[str, Any]], page: int = 100):
-    """A table of links behind the head, a cursor store and the rechecks made, per page."""
-    cursors: dict[str, str] = {}
-    rechecked: list[list[str]] = []
-
-    async def digest_of() -> str:
-        return str(sorted(a["memory_id"] for a in behind))
-
-    async def read_behind(org, cns, head, *, after, limit):
-        rows = [
-            a
-            for a in sorted(behind, key=lambda a: a["memory_id"])
-            if after is None or (a["memory_id"],) > after
-        ]
-        rows = rows[:limit]
-        return rows, ((rows[-1]["memory_id"],) if len(rows) == limit else None)
-
-    async def recheck_rows(org, cns, head, files, result, links):
-        rechecked.extend([[a["memory_id"] for a in links]] if links else [])
-        for a in links:
-            behind.remove(a)  # rechecked at the head
-        return set(), set()
-
-    async def get(name):
-        return cursors.get(name, "")
-
-    async def put(name, value):
-        cursors[name] = value
-
-    async def unparsed(org, cns):
-        return set()
-
-    async def set_unparsed(org, cns, paths):
-        return None
-
-    monkeypatch.setattr(settings, "memory_code_links_batch", page)
-    monkeypatch.setattr(code_links.store, "behind", read_behind)
-    monkeypatch.setattr(code_link_recheck, "_recheck_rows", recheck_rows)
-    monkeypatch.setattr(code_link_recheck, "_unparsed", unparsed)
-    monkeypatch.setattr(code_link_recheck, "_set_unparsed", set_unparsed)
-    monkeypatch.setattr(code_links.code, "link_cursor", get)
-    monkeypatch.setattr(code_links.code, "set_link_cursor", put)
-
-    async def one_pass(head: str = "h1", *, between=None) -> None:
-        now = await digest_of()  # read before any link, as `_recheck_repository` does
-        if between:
-            between()  # a write while the pass runs
+    async def pass_at(self, head: str = "h1", *, between=None) -> None:
+        """One pass: it takes its start first, as `_recheck_repository` does."""
+        started = await code_links.store.clock() - code_link_recheck._SKEW_MS
+        self.now += 1000
         await code_link_recheck._catch_up(
             "o",
             "code-a",
             head,
-            now,
+            started,
             None,
             code_link_pass.PassResult(),  # type: ignore[arg-type]
         )
+        if between:
+            between()  # a writer inserts after the pass read the table
 
-    return rechecked, one_pass, cursors
-
-
-@pytest.mark.asyncio
-async def test_the_first_pass_with_no_cursor_rechecks_the_links_already_behind(monkeypatch) -> None:
-    # an older writer's link at the previous commit, found before any pass kept a digest
-    behind = [_full({"memory_id": "a", "checked_commit": "h0"})]
-    rechecked, one_pass, _ = _catch_up_world(monkeypatch, behind)
-    await one_pass()
-    assert rechecked == [["a"]]
-    await one_pass()
-    assert rechecked == [["a"]]
+    def read(self) -> int | None:
+        """What guidance trusts: the start of the last finished catch-up."""
+        return json.loads(self.cursors["seen/o/code-a"]).get("read")
 
 
 @pytest.mark.asyncio
-async def test_a_link_inserted_while_a_head_moving_pass_runs_is_not_vouched_for(
+async def test_a_link_an_older_build_inserted_after_a_pass_read_is_rechecked_at_the_same_head(
     monkeypatch,
 ) -> None:
-    behind: list[dict[str, Any]] = []
-    rechecked, one_pass, _ = _catch_up_world(monkeypatch, behind)
-    await one_pass("h0")
-    late = _full({"memory_id": "late", "checked_commit": "h0"})
-    # the pass at the new head took its digest, then the writer inserted, then it ended
-    await one_pass("h1", between=lambda: behind.append(late))
-    assert rechecked == [["late"]]  # this pass's catch-up reads the table after the follow
-    await one_pass("h1")
-    assert rechecked == [["late"]]
+    w = _Stamped(monkeypatch)
+    w.add("old", "h0", ins=1)  # stored before the first pass, still at h0
+    await w.pass_at()
+    assert w.rechecked == [["old"]]  # no cursor: the first pass rechecks what is behind
+    read = w.read()
+    await w.pass_at()  # steady head, nothing inserted since
+    assert w.rechecked == [["old"], []]
+    # an older build inserts a link built at h0 after a pass at h1 read the table
+    await w.pass_at(between=lambda: w.add("late", "h0", ins=w.now))
+    late = next(a for a in w.table if a["memory_id"] == "late")
+    # guidance distrusts it: it was stamped after the finished catch-up began reading
+    assert late["ins"] >= w.read()
+    await w.pass_at()
+    assert w.rechecked[-1] == ["late"]  # the next pass rechecks it at the same head
+    assert late["checked_commit"] == "h1"
+    assert w.read() > read
 
 
 @pytest.mark.asyncio
-async def test_more_links_than_a_page_take_several_passes_and_the_digest_comes_last(
+async def test_a_steady_head_with_no_inserts_rechecks_nothing(monkeypatch) -> None:
+    w = _Stamped(monkeypatch)
+    w.add("a", "h1")
+    w.add("b", "h0")  # unchanged since a past pass: it keeps an older commit
+    await w.pass_at()
+    w.add("c", "h1", ins=w.now)  # at the head: nothing to recheck
+    for _ in range(3):
+        await w.pass_at()
+    assert w.rechecked == [["b"], [], [], []]
+
+
+@pytest.mark.asyncio
+async def test_a_lost_link_is_rechecked_once_and_never_rewritten_each_pass(monkeypatch) -> None:
+    w = _Stamped(monkeypatch)
+    w.add("m", "h0", state="missing")
+    for _ in range(3):
+        await w.pass_at()
+    assert w.rechecked == [["m"], [], []]
+
+
+@pytest.mark.asyncio
+async def test_the_first_pass_after_an_upgrade_rechecks_links_stored_before_the_column(
     monkeypatch,
 ) -> None:
-    behind = [_full({"memory_id": f"m{i}", "checked_commit": "h0"}) for i in range(5)]
-    rechecked, one_pass, cursors = _catch_up_world(monkeypatch, behind, page=2)
-    await one_pass()
-    await one_pass()
-    assert [len(r) for r in rechecked] == [2, 2]
-    assert json.loads(cursors["behind/o/code-a"])["links"] == ""  # not yet vouched for
-    await one_pass()
-    assert [len(r) for r in rechecked] == [2, 2, 1]
-    assert json.loads(cursors["behind/o/code-a"])["links"] != ""
-    await one_pass()
-    assert [len(r) for r in rechecked] == [2, 2, 1]
+    w = _Stamped(monkeypatch)
+    w.add("a", "h0", ins=0)  # an older build's link, long stored
+    assert "seen/o/code-a" not in w.cursors  # guidance trusts no link without a cursor
+    await w.pass_at()
+    assert w.rechecked == [["a"]]
+    assert w.read() is not None
+
+
+@pytest.mark.asyncio
+async def test_more_links_than_a_page_take_several_passes_and_the_mark_moves_last(
+    monkeypatch,
+) -> None:
+    w = _Stamped(monkeypatch, page=2)
+    for i in range(5):
+        w.add(f"m{i}", "h0")
+    await w.pass_at()
+    await w.pass_at()
+    assert [len(r) for r in w.rechecked] == [2, 2]
+    assert "seen/o/code-a" in w.cursors and w.read() is None  # still sweeping
+    await w.pass_at()
+    assert [len(r) for r in w.rechecked] == [2, 2, 1]
+    assert w.read() is not None
+    await w.pass_at()
+    assert [len(r) for r in w.rechecked] == [2, 2, 1, 0]
