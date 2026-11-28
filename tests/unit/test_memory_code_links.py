@@ -2784,7 +2784,7 @@ _TWO_CLOSE = (
             "fresh",
             [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")],
         ),
-        # deleted beside the export list, its name nowhere else: unsure, as before
+        # deleted beside an added export list, its name nowhere else: unsure, not removed
         (_EXPORTS, {}, "fresh", [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]),
         # its name is new in another module over an unrelated text: unsure
         (
