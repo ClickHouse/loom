@@ -2,11 +2,19 @@ import "./temp-home.mjs";
 import { noIds } from "./recalled-block.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import {
+  FILE_READ_HEADING,
   FILE_RULES_HEADING,
+  READ_LOOKUPS_PER_SESSION,
+  READ_UNANSWERED_PER_SESSION,
   contextPayload,
   decideInject,
+  readContextPayload,
+  readLookupsLeft,
+  readPaths,
   relativeForLookup,
+  seenKey,
   targetPath,
 } from "../lib/file-context.mjs";
 
@@ -41,6 +49,100 @@ test("decideInject: once per (session, path) within the TTL, bounded cache", () 
   let cache = { seen: {} };
   for (let i = 0; i < 600; i++) cache = decideInject(cache, `f${i}`, i, ttl).cache;
   assert.ok(Object.keys(cache.seen).length <= 500);
+});
+
+test("decideInject: a read never asks again about a seen file, and the session's counts are kept", () => {
+  let d = decideInject({ reads: 3, unanswered: 1 }, "/r/a.py", 1_000, Infinity);
+  assert.equal(d.inject, true);
+  assert.deepEqual(d.cache, { reads: 3, unanswered: 1, seen: { "/r/a.py": 1_000 } });
+  d = decideInject(d.cache, "/r/a.py", 1_000 + 24 * 3600 * 1000, Infinity);
+  assert.equal(d.inject, false);
+  assert.equal(d.cache.reads, 3);
+});
+
+test("readPaths: Read's file, Grep's path, and the files a shell command reads or searches by name", () => {
+  // The paths as this platform spells them: Windows adds a drive and backslashes.
+  const at = (...names) => names.map((name) => path.resolve(name));
+  assert.deepEqual(readPaths("Read", { file_path: "/r/src/a.py", offset: 5, limit: 10 }, "/r"), at("/r/src/a.py"));
+  assert.deepEqual(readPaths("Grep", { pattern: "x", path: "src/a.py" }, "/r"), at("/r/src/a.py"));
+  assert.deepEqual(readPaths("Grep", { pattern: "x" }, "/r"), []);
+  assert.deepEqual(readPaths("Bash", { command: "cat src/a.py" }, "/r"), at("/r/src/a.py"));
+  assert.deepEqual(
+    readPaths("Bash", { command: "sed -n '10,40p' src/a.py; head -20 CHANGES.rst" }, "/r"),
+    at("/r/src/a.py", "/r/CHANGES.rst"),
+  );
+  // The shape the recorded sessions open with: one-file greps, piped, two files in one call.
+  assert.deepEqual(
+    readPaths(
+      "Bash",
+      {
+        command: `grep -n '"\\." in name\\|def __init__' -A3 src/a.py | head -40; grep -n "def test_" tests/t.py | head`,
+      },
+      "/r",
+    ),
+    at("/r/src/a.py", "/r/tests/t.py"),
+  );
+  // A one-letter first directory is Git Bash's spelling of a drive on Windows, so the cd names a longer one.
+  assert.deepEqual(
+    readPaths("Bash", { command: "cd /repo/src; grep -n x a.py b.py; sed -n 1,5p a.py" }, "/w"),
+    at("/repo/src/a.py", "/repo/src/b.py"),
+  );
+  // A tree-wide search names a directory: the hook keeps regular files only.
+  assert.deepEqual(readPaths("Bash", { command: "grep -rn x src" }, "/r"), at("/r/src"));
+  // Codex's shell tool, its command an argv array.
+  assert.deepEqual(readPaths("shell", { command: ["bash", "-lc", "cat src/a.py"] }, "/r"), at("/r/src/a.py"));
+  // Not a read: a write, a read piped onward, a heredoc, a test run, an edit tool.
+  for (const command of [
+    "cat > src/a.py",
+    "cat src/a.py | wc -l",
+    "python - <<'EOF'\nopen('src/a.py').read()\nEOF",
+    "python -m pytest tests/t.py -q",
+    "sed -i s/a/b/ src/a.py",
+  ]) {
+    assert.deepEqual(readPaths("Bash", { command }, "/r"), [], command);
+  }
+  assert.deepEqual(readPaths("Edit", { file_path: "/r/src/a.py" }, "/r"), []);
+  assert.deepEqual(readPaths("Read", {}, "/r"), []);
+  assert.deepEqual(readPaths("Bash", null, "/r"), []);
+});
+
+test("seenKey: a subagent's read is kept apart from the main agent's", () => {
+  assert.equal(seenKey(undefined, "/r/a.py"), "/r/a.py");
+  assert.equal(seenKey("", "/r/a.py"), "/r/a.py");
+  assert.notEqual(seenKey("agent-1", "/r/a.py"), seenKey(undefined, "/r/a.py"));
+  assert.notEqual(seenKey("agent-1", "/r/a.py"), seenKey("agent-2", "/r/a.py"));
+  assert.equal(seenKey(7, "/r/a.py"), "/r/a.py", "an id of the wrong type is the main agent");
+});
+
+test("readLookupsLeft: a fixed number per session, none once the server stopped answering", () => {
+  assert.equal(readLookupsLeft({}), READ_LOOKUPS_PER_SESSION);
+  assert.equal(readLookupsLeft(null), READ_LOOKUPS_PER_SESSION);
+  assert.equal(readLookupsLeft({ reads: READ_LOOKUPS_PER_SESSION - 2 }), 2);
+  assert.equal(readLookupsLeft({ reads: READ_LOOKUPS_PER_SESSION + 5 }), 0);
+  assert.equal(
+    readLookupsLeft({ reads: 1, unanswered: READ_UNANSWERED_PER_SESSION - 1 }),
+    READ_LOOKUPS_PER_SESSION - 1,
+  );
+  assert.equal(readLookupsLeft({ reads: 1, unanswered: READ_UNANSWERED_PER_SESSION }), 0);
+});
+
+test("readContextPayload: one block per file on the tool result, the server's text as rendered", () => {
+  const rendered =
+    "Loom: 1 memory anchored to src/a.py — read before editing:\n" +
+    "code_state and rev describe the repository as indexed, not your checkout.\n" +
+    "- k (code_state=changed rev=3d6f0b4c2a1e first_written=2026-09-14) (its code changed since it was written, " +
+    "commit 7ee9ceb71e86: check before relying on it): keep the order";
+  const p = readContextPayload([
+    { rel: "src/a.py", rendered, teamNamespace: "" },
+    { rel: "src/b.py", rendered: "Loom: 1 memory anchored to src/b.py — read before editing:\n- k2: mine" },
+  ]);
+  assert.equal(p.hookSpecificOutput.hookEventName, "PostToolUse");
+  assert.equal("permissionDecision" in p.hookSpecificOutput, false);
+  const ctx = noIds(p.hookSpecificOutput.additionalContext);
+  assert.equal(ctx.split(`${FILE_READ_HEADING}\n<loom-recalled-data>\n`).length, 3, "a heading and a block per file");
+  assert.ok(ctx.includes(`\n${rendered}\n</loom-recalled-data>\n${FILE_READ_HEADING}`));
+  assert.ok(ctx.endsWith("- k2: mine\n</loom-recalled-data>"));
+  assert.doesNotMatch(ctx, /this edit touches/);
 });
 
 test("contextPayload adds fenced context and never decides permission", () => {

@@ -1,14 +1,16 @@
-// Helpers for the loom-file-context PreToolUse hook (unit-tested).
+// Helpers for the loom-file-context hook (unit-tested).
 //
-// The hook fires before Edit/Write/MultiEdit/NotebookEdit and asks Loom what it
-// knows about the target file (`memory.for_file`), then injects the rendered
-// block as additionalContext. These helpers decide WHICH path to ask about and
-// WHETHER to ask again — the same file edited ten times in a session should
-// cost one lookup, not ten.
+// The hook fires after a local read of a file (Read, a one-file Grep, a shell
+// read or one-file grep) and before Edit/Write/MultiEdit/NotebookEdit, asks
+// Loom what it knows about the file (`memory.for_file`), then injects the
+// rendered block as additionalContext. These helpers decide WHICH paths to ask
+// about and WHETHER to ask again — the same file read or edited ten times in a
+// session should cost one lookup, not ten.
 
 import path from "node:path";
-import { patchFiles, pathUnder } from "./loom-client.mjs";
+import { commandText, normalizeToolName, patchFiles, pathUnder } from "./loom-client.mjs";
 import { recalledDataBlock } from "./prompt-recall.mjs";
+import { parseBashBulkSegments } from "./shell-command.mjs";
 
 export const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"]);
 
@@ -38,14 +40,75 @@ export function relativeForLookup(root, filePath, cwd) {
   return path.basename(abs);
 }
 
+// --- reads ---------------------------------------------------
+// A session reads far more files than it edits, and `memory.for_file` scans the
+// namespace, so the lookups a read starts are bounded three ways: per call, per
+// session, and by a server that stops answering.
+
+/** Files of one call that are looked up; a shell command can read more. */
+export const READ_FILES_PER_CALL = 3;
+/** Lookups reads start in one session; past it a file's memory arrives at its edit. */
+export const READ_LOOKUPS_PER_SESSION = 40;
+/** Unanswered lookups after which reads start no more in the session. */
+export const READ_UNANSWERED_PER_SESSION = 3;
+/** How long a read's result waits for the lookups it started. */
+export const READ_LOOKUP_TIMEOUT_MS = 1000;
+
 /**
- * Session cache policy: inject once per (session, path) within `ttlMs`.
- * `cache` is {seen: {[key]: ts}}; returns {inject: boolean, cache: updated}.
+ * The files a finished tool call read, as absolute paths in the call's order:
+ * Read's file, Grep's path, and in a shell command each file read whole or by
+ * a line range (`cat`, `sed -n 'A,Bp'`, `head`, `tail`, `awk` NR ranges) or
+ * searched by name (`grep pattern file`), as lib/shell-command.mjs parses them.
+ * A path may be a directory or missing: the caller keeps regular files. A
+ * command the parser cannot follow reads nothing here.
+ */
+export function readPaths(toolName, toolInput, cwd) {
+  const tool = normalizeToolName(toolName);
+  const ti = toolInput && typeof toolInput === "object" ? toolInput : {};
+  const found = [];
+  if (tool === "Read") found.push([cwd, ti.file_path]);
+  else if (tool === "Grep") found.push([cwd, ti.path]);
+  else if (tool === "Bash") {
+    for (const seg of parseBashBulkSegments(commandText(ti))) {
+      const dir = path.resolve(cwd, seg.cwd || ".");
+      for (const f of seg.kind === "read" ? [seg.file] : seg.files || [seg.dir]) found.push([dir, f]);
+    }
+  }
+  const paths = found
+    .filter(([, f]) => typeof f === "string" && f.trim())
+    .map(([dir, f]) => path.resolve(dir, f.trim()));
+  return [...new Set(paths)];
+}
+
+/**
+ * The seen-state key of a file: its path on disk (so a seen file needs no git
+ * call to recognise), under the subagent's id when the call came from one
+ * (`agent_id`, absent on the main thread). A subagent's read puts the block
+ * in the subagent's context, so it must not use up the main agent's.
+ */
+export function seenKey(agentId, abs) {
+  const agent = typeof agentId === "string" ? agentId.trim() : "";
+  return agent ? `${agent}\n${abs}` : abs;
+}
+
+/** How many more lookups reads may start in a session with this state. */
+export function readLookupsLeft(state) {
+  const s = state || {};
+  if (Number(s.unanswered || 0) >= READ_UNANSWERED_PER_SESSION) return 0;
+  return Math.max(0, READ_LOOKUPS_PER_SESSION - Number(s.reads || 0));
+}
+
+/**
+ * Session cache policy: inject once per (session, key) within `ttlMs`; a
+ * read passes Infinity, so a key seen at all is never asked about again.
+ * `cache` is the session's state, {seen: {[key]: ts}, …}; returns {inject:
+ * boolean, cache: the state with the key marked}.
  */
 export function decideInject(cache, key, now, ttlMs) {
-  const seen = (cache && cache.seen) || {};
+  const state = cache && typeof cache === "object" ? cache : {};
+  const seen = state.seen && typeof state.seen === "object" ? state.seen : {};
   const last = Number(seen[key] || 0);
-  if (last && now - last < ttlMs) return { inject: false, cache: { seen } };
+  if (last && now - last < ttlMs) return { inject: false, cache: { ...state, seen } };
   const next = { ...seen, [key]: now };
   // Bound the cache so a long session cannot grow the tmp file without limit.
   const keys = Object.keys(next);
@@ -55,11 +118,13 @@ export function decideInject(cache, key, now, ttlMs) {
       .slice(0, keys.length - 500)
       .forEach((k) => delete next[k]);
   }
-  return { inject: true, cache: { seen: next } };
+  return { inject: true, cache: { ...state, seen: next } };
 }
 
 export const FILE_RULES_HEADING =
   "Loom file rules and notes for the file this edit touches; a teammate's rule names its author:";
+export const FILE_READ_HEADING =
+  "Loom file rules and notes for a file this call read; a teammate's rule names its author:";
 
 // The server's footer lines (render_block in server/memory/app/for_file.py): the
 // removal line last, and the left-out lines right before it, budget then ceiling.
@@ -128,16 +193,32 @@ export function fileRulesGuidance(rendered, { rel = "", teamNamespace = "" } = {
   return lines.join("\n");
 }
 
-/** The hook's stdout payload: additional context only — never a permission decision.
- *  Team rules come from a namespace every member writes, so the text goes inside the
- *  recalled-data block under a heading the plugin writes, and what to do about a row
- *  follows it in the plugin's own words. */
-export function contextPayload(rendered, { rel = "", teamNamespace = "" } = {}) {
+/** One file's context: a heading the plugin writes, the server's text inside
+ *  the recalled-data block, and what to do about a row in the plugin's own words.
+ *  Team rules come from a namespace every member writes, hence the block. */
+function fileBlock(heading, rendered, { rel = "", teamNamespace = "" } = {}) {
   const guidance = fileRulesGuidance(rendered, { rel, teamNamespace });
+  return `${heading}\n${recalledDataBlock(rendered)}${guidance ? `\n${guidance}` : ""}`;
+}
+
+/** The hook's stdout payload before an edit: additional context only — never
+ *  a permission decision. */
+export function contextPayload(rendered, opts = {}) {
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      additionalContext: `${FILE_RULES_HEADING}\n${recalledDataBlock(rendered)}${guidance ? `\n${guidance}` : ""}`,
+      additionalContext: fileBlock(FILE_RULES_HEADING, rendered, opts),
+    },
+  };
+}
+
+/** The hook's stdout payload after a read: one block per file with memory,
+ *  `files` being [{rendered, rel, teamNamespace}], on the tool result. */
+export function readContextPayload(files) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PostToolUse",
+      additionalContext: files.map((f) => fileBlock(FILE_READ_HEADING, f.rendered, f)).join("\n"),
     },
   };
 }
@@ -174,12 +255,14 @@ export function forFileBody(scope, rel, tokenBudget, entry) {
 }
 
 /**
- * One bounded lookup; the rendered block to inject, or "" (nothing known, or
- * no answer — this hook never errors). `post` is injectable for tests.
+ * One bounded lookup: the rendered block to inject, "" when Loom knows
+ * nothing about the file, null when it did not answer — this hook never
+ * errors. `post` is injectable for tests.
  */
 export async function lookupFileContext({ scope, rel, tokenBudget, entry, post, bound = {} }) {
   const res = await post("memory.for_file", forFileBody(scope, rel, tokenBudget, entry), bound);
-  return res && res.total > 0 && typeof res.rendered === "string" ? res.rendered : "";
+  if (!res) return null;
+  return res.total > 0 && typeof res.rendered === "string" ? res.rendered : "";
 }
 
 /** The session primer's one line naming where team file rules live, or "". */

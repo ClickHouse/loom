@@ -46,6 +46,16 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Read|Grep|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-file-context.mjs", "PostToolUse"]
+          }
+        ]
+      },
+      {
         "matcher": "mcp__plugin_loom_loom__.*",
         "hooks": [
           {
@@ -115,6 +125,11 @@
             "type": "command",
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-brief.mjs", "PreCompact"]
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-file-context.mjs", "PreCompact"]
           }
         ]
       }
