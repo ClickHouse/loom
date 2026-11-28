@@ -350,21 +350,53 @@ Traceback (most recent call last):
 """
 
 
-def test_a_traceback_keeps_the_names_its_frames_call_and_repeats_its_format() -> None:
+def test_a_traceback_keeps_its_subject_and_the_files_its_frames_name() -> None:
     p = qt.plan(_TRACEBACK, None, 48, {})
     assert p.active
-    df = dict.fromkeys(p.all_tokens, 40) | {"django": 60_000, "py": 90_000}
+    common = ("django", "py", "get", "admin", "self", "return", "contrib")
+    df = dict.fromkeys(p.all_tokens, 40) | dict.fromkeys(common, 60_000)
     kept = _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said)
     # every function a frame names is asked for, whole
     frames = {"get_response", "_get_response", "wrapped_callback", "changelist_view"}
     assert frames | {"is_valid", "full_clean", "validationerror", "managementform"} <= set(kept)
-    # the stated limit: each frame repeats the words of its format and the directories
-    # of its path, and they take 7 of the 16 word slots, before the words the question
-    # says once and the ones the later frames repeat
-    assert {"file", "line", "usr", "lib", "python", "site", "packages"} <= set(kept)
-    assert {"saving", "raises", "upgrade"}.isdisjoint(kept)
-    assert {"admin", "forms", "formsets", "options"}.isdisjoint(kept)
+    # the directories every frame repeats are an address: they take no word slot
+    assert {"usr", "lib", "python", "site", "packages", "core", "handlers"}.isdisjoint(kept)
+    # so the subject the sentence states and the files the frames name are asked for
+    assert {"changelist", "form", "error"} <= set(kept)
+    assert {"options", "formsets", "errors", "valid"} <= set(kept)
+    # the stated limit: `File` and `line` open every frame and take two word slots
+    assert {"file", "line"} <= set(kept)
     assert len(kept) == 16 + len(p.keep)
+
+
+def test_the_directories_of_a_file_path_are_not_counted() -> None:
+    said = qt.term_counts(_TRACEBACK)
+    # seven frames under one prefix: its directories are said once, a file's name as written
+    assert {said[t] for t in ("usr", "lib", "python", "site", "packages", "django")} == {1}
+    assert said["core"] == said["handlers"] == said["forms"] == 1
+    assert said["formsets"] == 3 and said["options"] == 2 and said["py"] == 7
+    # a word outside the paths is counted as before
+    assert said["admin"] == 2 and said["file"] == said["line"] == 7
+    # relative with an extension, after a drive, under a home or the working directory
+    for path in (
+        "db/models/query.py:12",
+        r"C:\db\models\query.py",
+        "~/db/models/query",
+        "./db/models/query",
+    ):
+        said = qt.term_counts(f"{path} and {path} again")
+        assert (said["db"], said["models"], said["query"]) == (1, 1, 2), path
+    # a directory word the prose also says is counted where the prose says it
+    said = qt.term_counts("the forms break in /x/forms/a.py and /x/forms/b.py, all forms")
+    assert said["forms"] == 2 and said["in"] == 0
+    # a function word among the directories stays one prose never wrote as code
+    assert qt.term_counts("/opt/in/a.py /opt/in/b.py")["in"] == 0
+    # words set side by side, a fraction and a date are not a path
+    said = qt.term_counts("the request/response cycle, request/response again, 1/8 on 2024/01/02")
+    assert said["request"] == said["response"] == 2
+    # the stated limit: a route written like a path is read as one
+    said = qt.term_counts("/admin/login/ redirects to /admin/login/")
+    assert said["admin"] == said["login"] == 1
 
 
 _GREETING = "Hi team, I have been looking at this for a while now and am not sure what is going on."

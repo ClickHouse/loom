@@ -17,7 +17,9 @@ This module is the plan for such a question, pure and unit-testable:
   URLs, UUIDs and hashes.
 * `term_counts` counts how often the question says each lexeme. An English function
   word counts only where the question writes it as code (`only()`, `qs.only`,
-  `returns None`): prose repeats it by grammar.
+  `returns None`): prose repeats it by grammar. The directories of a file path are
+  not counted: every frame of a traceback repeats them, and they say where the file
+  is installed. The file's own name is counted.
 * `select_terms` keeps, for at most `WORD_SHARE` of the list, the words: those the
   question says more than once first, then the others, each in reading order. The
   whole forms of the identifiers (camel / snake / `a::b`) take the rest. When more
@@ -38,9 +40,10 @@ the chunks hold when other words fill the share. The function words are English,
 one that is also a name in code is asked for as a word only where it is written as
 code: `over` in `an aggregate over a window` is not. A capitalised one after a
 heading that lost its line break, or in a title in title case, reads as code.
-Repetition marks a format as well as a subject: each frame of a traceback repeats
-`File`, `line` and the directories of its path, and these take word slots before the
-prose; the functions the frames name are identifiers and are kept. A question that
+Repetition marks a format as well as a subject: each frame of a Python traceback
+repeats `File` and `line`, and these take two word slots; the functions the frames
+name are identifiers and are kept. A route written like a path (`/admin/login/`) is
+read as one, so its words are not counted as repeated. A question that
 fills the list alone is asked without a caller's terms. A short id that reads as a
 word and a number (`ff0000`, `a456`) is kept as an identifier, as a code (`f401`) is.
 
@@ -145,6 +148,11 @@ _ADDRESS_RE = re.compile(
     re.IGNORECASE,
 )
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
+# Names joined by `/` or `\`, read from the first name so a long run costs one pass:
+# group 1 is the directories, group 2 the last name.
+_SLASHED_RE = re.compile(r"(?<![\w.~+@/\\-])((?:[\w.~+@-]*+[/\\])++)([\w.+@-]*+)")
+# The last name is a file's when it has an extension (`query.py`, `main.rs:5`).
+_EXTENSION_RE = re.compile(r"\.[A-Za-z]\w*+(?![\w.])")
 # What stands before a word read off an object (`qs.only`, `f().only`, `a[0].only`), and
 # before a word inside a sentence.
 _ATTRIBUTE_RE = re.compile(r"[A-Za-z0-9_)\]]\.")
@@ -232,12 +240,30 @@ def written_as_code(text: str, start: int, end: int) -> bool:
     )
 
 
+def is_file_path(directories: str, name: str) -> bool:
+    """Whether names joined by `/` or `\\` are a file path and not words set side by side
+    (`request/response`, `and/or`, `1/8`): it starts at a root (`/usr/lib`, `./manage.py`,
+    `~/src`, `\\Users` after a drive) or ends in a file name with an extension."""
+    return directories[0] in "/\\~." or bool(_EXTENSION_RE.search(name))
+
+
 def term_counts(text: str) -> dict[str, int]:
     """How many words of `text` hold each lexeme, whole or as a subtoken. A function
     word counts only where it stands alone and is written as code: prose repeats it by
     grammar, and so do the identifiers that hold it (`order_by`, `run_from_argv`). One
-    the question never says that way is in the result at 0."""
+    the question never says that way is in the result at 0. The directories of a file
+    path are an address and are not counted, however many paths hold them: a lexeme
+    only they hold is in the result at 1. The file's own name is counted."""
     counts: Counter[str] = Counter()
+    directories: set[str] = set()
+
+    def without_directories(m: re.Match[str]) -> str:
+        if not is_file_path(m.group(1), m.group(2)):
+            return m.group(0)
+        directories.update(code_tokens(m.group(1)))
+        return "  " + m.group(2)
+
+    text = _SLASHED_RE.sub(without_directories, text)
     for m in _WORD_RE.finditer(text):
         whole = m.group(0).lower()
         for t in code_tokens(m.group(0)):
@@ -245,6 +271,8 @@ def term_counts(text: str) -> dict[str, int]:
                 counts[t] += 1
             else:
                 counts[t] += t == whole and written_as_code(text, *m.span())
+    for t in directories:
+        counts[t] = max(counts[t], int(t not in _FUNCTION_WORDS))
     return dict(counts)
 
 
