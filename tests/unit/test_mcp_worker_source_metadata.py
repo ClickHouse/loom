@@ -5,8 +5,9 @@ from uuid import UUID
 
 import pytest
 
+from server.core.ch import query_settings
 from server.core.errors import OverloadedError
-from server.erasure.app.connected_accounts import require_sources_erased
+from server.erasure.app.connected_accounts import require_restore_erased, require_sources_erased
 from server.knowledge.app.connected_restore import _metadata
 from server.knowledge.domain.sources import mirror_synced, served
 from server.knowledge.store import sources
@@ -168,12 +169,28 @@ async def test_slot_history_and_erasure_bind_same_owner_and_canonical_connection
 
 
 async def test_deployment_restore_refuses_worker_history_before_native_inventory():
-    ch = RecordingCH().on("SELECT 1 AS present", [{"present": 1}])
+    def worker_history(_sql, _params):
+        return [{"present": 1}] if query_settings().get("select_sequential_consistency") else []
+
+    ch = RecordingCH(strict=False).on("SELECT 1 AS present", worker_history)
     with pytest.raises(RuntimeError, match="worker source history requires worker-aware restore"):
         await _metadata(ch)
     [query] = ch.calls
     assert "source_kind = 'mcp' OR kind = 'mcp' OR credential_mode = 'worker'" in query.sql
     assert "LIMIT 1" in query.sql and "FINAL" not in query.sql
+
+
+async def test_deployment_restore_census_refuses_worker_history_on_a_lagging_replica():
+    def worker_history(_sql, _params):
+        return [{"n": 1 if query_settings().get("select_sequential_consistency") else 0}]
+
+    ch = (
+        RecordingCH()
+        .on("FROM loom.connected_accounts", [{"n": 0}])
+        .on("FROM loom.knowledge_sources", worker_history)
+    )
+    with pytest.raises(OverloadedError, match="restore cleanup is incomplete"):
+        await require_restore_erased(ch=ch)
 
 
 @pytest.mark.parametrize("slot", ["mcp", "mcp:wrong", "mcp:" + "0" * 32])

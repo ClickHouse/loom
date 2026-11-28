@@ -26,6 +26,7 @@ import json
 from datetime import datetime
 from typing import Any, Literal, NamedTuple
 
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.live_chunks import has_live_chunks_sql
@@ -577,9 +578,10 @@ __all__ = [
 
 async def worker_history_exists(*, ch: _CHClient | None = None) -> bool:
     """Refuse native restore if it would miss worker-owned source history."""
-    row = await (ch or _default_client()).query_one(
-        f"SELECT 1 AS present FROM {TABLE} WHERE {WORKER_HISTORY} LIMIT 1"
-    )
+    with sequential_reads():
+        row = await (ch or _default_client()).query_one(
+            f"SELECT 1 AS present FROM {TABLE} WHERE {WORKER_HISTORY} LIMIT 1"
+        )
     return row is not None
 
 

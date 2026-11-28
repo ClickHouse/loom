@@ -1059,17 +1059,18 @@ async def _owned_on_first_page(bucket: str, org: str, namespace: str) -> int:
 
 async def connected_restore_residue(*, ch: _CHClient | None = None) -> int:
     """Offline restore purges all account and connected-source history in this deployment."""
-    from server.core.ch import set_query_tag
+    from server.core.ch import sequential_reads, set_query_tag
 
     set_query_tag("erasure.connected_accounts.restore")
     client = ch or _default_client()
     total = 0
-    for table, predicate in (
-        ("loom.connected_accounts", "1"),
-        ("loom.knowledge_sources", f"credential_mode = 'connected' OR {WORKER_HISTORY}"),
-    ):
-        row = await client.query_one(f"SELECT count() AS n FROM {table} WHERE {predicate}")
-        if row is None or "n" not in row:
-            raise RuntimeError("connected_restore_census_unavailable")
-        total += int(row["n"])
+    with sequential_reads():
+        for table, predicate in (
+            ("loom.connected_accounts", "1"),
+            ("loom.knowledge_sources", f"credential_mode = 'connected' OR {WORKER_HISTORY}"),
+        ):
+            row = await client.query_one(f"SELECT count() AS n FROM {table} WHERE {predicate}")
+            if row is None or "n" not in row:
+                raise RuntimeError("connected_restore_census_unavailable")
+            total += int(row["n"])
     return total
