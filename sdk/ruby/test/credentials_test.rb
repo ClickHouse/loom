@@ -169,6 +169,13 @@ second line
     assert_empty @server.requests
   end
 
+  def test_the_checked_base_url_cannot_be_changed_afterwards
+    provider = Struct.new(:origin) { def token(_) = "t" }.new(@server.base_url)
+    c = client(token_provider: provider)
+    assert_raises(FrozenError) { c.base_url.replace("https://other.example") }
+    assert_equal @server.base_url, c.base_url
+  end
+
   def test_a_provider_bound_to_this_origin_is_used
     provider = Struct.new(:origin) { def token(_) = "t" }.new(@server.base_url)
     respond_json(200, { found: false })

@@ -87,7 +87,7 @@ module ClickHouse
                      log_level: nil, sleeper: nil)
         config = Loom.configuration
         @base_url = first_non_blank(base_url, config.base_url, ENV.fetch("LOOM_BASE_URL", nil),
-                                    DEFAULT_BASE_URL).sub(%r{/+\z}, "")
+                                    DEFAULT_BASE_URL).sub(%r{/+\z}, "").freeze
         resolve_credential(config, api_key, token_provider)
         @identity = { "org" => first_non_blank(org, config.org),
                       "namespace" => first_non_blank(namespace, config.namespace),
