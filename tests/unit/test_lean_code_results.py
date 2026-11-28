@@ -12,6 +12,7 @@ from server.code.api.models_read import CodeReadInput
 from server.code.app.read import _request_ranges
 from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.settings import settings
+from server.transport import mcp_tools
 from server.transport.code_lean import lean_code
 
 
@@ -63,6 +64,50 @@ def test_scip_symbol_drops_rendered_description_already_in_source() -> None:
     assert extra["description"] == rendered + " Bypass startup on empty input."
     assert other["description"] == rendered.replace("class Group", "class Other")
     assert elided["description"] == rendered
+
+
+def test_scip_edit_context_drops_only_repeated_wrapped_function_documentation() -> None:
+    body = '''    def register(self, app: "Flask", name: str = "a  b") -> None:
+        """Register with :meth:`Flask.register_blueprint`.
+
+        Example:
+
+            register(app, "a  b")
+        """
+        pass
+'''
+    rendered = (
+        '```python\ndef register(\n  self,\n  app: Flask,\n  name: str = "a  b"\n) -> None:\n```\n'
+        "Register with :meth:`Flask.register_blueprint`.\n\n        Example:\n\n"
+        '            register(app, "a  b")'
+    )
+    distinct = [
+        rendered.replace("def register", "@setupmethod\ndef register"),
+        rendered.replace("app: Flask", "app: Other"),
+        rendered.replace('= "a  b"', '= "a b"'),
+        rendered.replace('app, "a  b"', 'app, "a b"'),
+        rendered.replace("            register(app", "        register(app"),
+        rendered.replace("  self,", "  self,  # Flag for setup"),
+        rendered.replace("-> None:\n```", "-> None:\n    side_effect()\n```"),
+        rendered + "\nExtra documentation.",
+    ]
+    source = {"symbol": "register", "tier": "scip", "body": body, "description": rendered}
+    large_source = {**source, "body": body + "        pass\n" * 2048}
+    out = lean_code(
+        "code.edit_context",
+        {
+            "definitions": [
+                source,
+                *[{**source, "description": item} for item in distinct],
+                large_source,
+            ]
+        },
+    )
+    repeated, *kept, large = out["definitions"]
+    assert repeated["body"] == body
+    assert "description" not in repeated
+    assert [definition["description"] for definition in kept] == distinct
+    assert large["body"] == large_source["body"] and large["description"] == rendered
 
 
 def test_scip_symbol_keeps_distinct_code_literals_in_docs() -> None:
@@ -484,6 +529,17 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
             "edit_context_next": edit_step,
             "next": suggestion,
         }
+    # a bound connection gets the same reply, and the listing of code tools alone
+    # carries both tools the reply names
+    scope = set_code_scope("acme/code-repo")
+    try:
+        bound = lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset="coding")
+        assert bound == {**result, "edit_context_next": edit_step, "next": suggestion}
+        assert {"loom_code_read", edit_step["tool"]} <= mcp_tools.listed_tool_names(
+            "coding", "compact"
+        )
+    finally:
+        reset_code_scope(scope)
 
 
 def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lookup() -> None:

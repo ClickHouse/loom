@@ -133,6 +133,7 @@
   --color-accent: var(--click-button-basic-color-primary-background-default);
   --color-accent-soft: color-mix(in srgb, var(--click-button-basic-color-primary-background-default) 5%, transparent);
   --color-on-accent: var(--click-button-basic-color-primary-text-default);
+  --color-nav-selected: color-mix(in srgb, var(--color-accent) 9%, var(--color-bg));
 
   /* Semantic — Click UI's opaque badge text colours, which read as text on the
      page and tint as `bg-x/15`. Info is the solid info badge colour. */
@@ -230,6 +231,144 @@ body {
 /* Loom's own classes sit in the components layer, so a utility on the same
    element still applies. */
 @layer components {
+  .workspace-shell {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .workspace-rail {
+    background: var(--global-color-background-sidebar);
+  }
+
+  .workspace-rail-brand,
+  .workspace-header,
+  .workspace-mobile-nav {
+    background: color-mix(in srgb, var(--color-bg) 55%, var(--color-surface-2));
+  }
+
+  .workspace-rail-brand {
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .workspace-brand-mark {
+    flex: none;
+    padding: 2px;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 25%, var(--color-border));
+    border-radius: var(--radius-md);
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+  }
+
+  .workspace-nav-item {
+    background: var(--click-sidebar-main-navigation-item-color-background-default);
+    color: var(--click-sidebar-main-navigation-item-color-text-default);
+  }
+
+  .workspace-nav-item:hover {
+    background: var(--click-sidebar-main-navigation-item-color-background-hover);
+    color: var(--click-sidebar-main-navigation-item-color-text-hover);
+  }
+
+  .workspace-nav-item[aria-current="page"],
+  .workspace-nav-current {
+    background: var(--color-nav-selected);
+    color: var(--color-text);
+  }
+
+  .workspace-nav-item[aria-current="page"]::before {
+    position: absolute;
+    inset-block: 25%;
+    inset-inline-start: 0;
+    width: 2px;
+    border-radius: var(--radius-sm);
+    background: var(--color-accent);
+    content: "";
+  }
+
+  .workspace-nav-item[aria-current="page"] > span > span:first-child {
+    color: var(--color-accent);
+  }
+
+  .workspace-namespace {
+    border: 1px solid var(--color-border);
+    background: var(--color-bg);
+  }
+
+  .workspace-namespace[data-state="open"] {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface-2);
+  }
+
+  .workspace-mobile-nav {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .workspace-page-header > div:first-child > h1 {
+    letter-spacing: -0.02em;
+  }
+
+  .workspace-page-description {
+    max-width: 70ch;
+    margin-top: var(--spaces-1);
+    color: var(--color-text-muted);
+  }
+
+  @media (min-width: 768px) {
+    .workspace-page-header > div:first-child > h1 {
+      font: var(--typography-styles-product-titles-2xl);
+      line-height: 1.25;
+    }
+  }
+
+  .gate-shell {
+    display: grid;
+    min-height: 100vh;
+    min-height: 100dvh;
+    place-items: center;
+    padding: var(--spaces-8) var(--spaces-4);
+    background: radial-gradient(ellipse at top, var(--color-accent-soft), transparent 45%), var(--color-bg);
+  }
+
+  .gate-shell h1 {
+    font: var(--typography-styles-product-titles-2xl);
+    letter-spacing: -0.03em;
+    line-height: 1.25;
+  }
+
+  .gate-panel {
+    border-top-color: var(--color-accent);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .gate-panel > div {
+    display: grid;
+    gap: var(--spaces-4);
+  }
+
+  .gate-sso {
+    min-height: var(--spacing-hit);
+    padding: var(--spaces-2) var(--spaces-4);
+    border-radius: var(--radius-sm);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    font-weight: 600;
+  }
+
+  .gate-sso:hover {
+    background: var(--click-button-basic-color-primary-background-hover);
+    color: var(--color-on-accent);
+    text-decoration: none;
+  }
+
+  .gate-support {
+    padding-top: var(--spaces-3);
+    border-top: 1px solid var(--color-border);
+  }
+
+  .gate-support h2 {
+    font: var(--typography-styles-product-titles-sm);
+  }
+
   /* Click UI's dialog close (its CrossButton, which the package does not export),
      drawn by ui/Modal. */
   .dialog-close {
@@ -1237,7 +1376,11 @@ textarea[aria-invalid="true"]:focus-visible {
     padding: var(--click-card-horizontal-space-md-y) var(--click-card-horizontal-space-md-x);
     border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
     border-radius: var(--click-card-horizontal-radii-all);
-    background: var(--click-card-horizontal-default-color-background-default);
+    background: color-mix(
+      in srgb,
+      var(--click-card-horizontal-default-color-background-default) 80%,
+      var(--color-surface-2)
+    );
     scroll-margin-block: var(--spaces-2);
     content-visibility: auto;
     /* Containment estimates content; row and skeleton heights include padding and borders. */

@@ -41,6 +41,7 @@ from server.cli.code_prs import (
 )
 from server.cli.code_run import _identity, _run
 from server.cli.code_scip import _entries, _entry_locked, _scip_delta, _scip_full, _scip_retry
+from server.cli.ops import _positive_int
 from server.code.domain.index.tier_health import COMPILER_TIERS
 
 
@@ -197,6 +198,13 @@ def _add_backfill_parser(csub: argparse._SubParsersAction[argparse.ArgumentParse
         "the branch tip; leaves the git_head watermark and cursor untouched",
     )
     p_bf.add_argument("--concurrency", type=int, default=4)
+    p_bf.add_argument(
+        "--workers",
+        type=_positive_int,
+        default=1,
+        help="--phase index: processes that index the cursor batches and run the edge "
+        "pass, each with its own connection and --concurrency (1: this process)",
+    )
     _add_backfill_pass_flags(p_bf)
     p_bf.set_defaults(func=_cmd_backfill)
 

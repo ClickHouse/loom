@@ -49,17 +49,16 @@ def _bare_name(qualified: str) -> str:
 
 
 def prefer_scip_edges(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """When both tiers observed the same call, keep only the scip row.
-    Keyed on the call site plus the BARE names of both ends, NOT symbol_ids
-    or qualified names — the tiers hash signatures differently (parameter
-    text vs scip overload hash) and, for Go and file-local
-    C++, scope one definition differently (`a.b.util::Recv.Name` from the
-    parser, `example.com/a/b::Recv::Name` from the compiler), so ids and
-    qualified names for the same logical symbol diverge across tiers while
-    the site (path, line) and the bare names do not."""
+    """Prefer the compiler when the edge kind, source site and bare endpoint names agree.
 
-    def key(r: dict[str, Any]) -> tuple[str, str, str, int]:
+    The tiers can assign different IDs and scopes to the same definition. For example,
+    Go's parser can report `a.b.util::Recv.Name` for `example.com/a/b::Recv::Name`
+    in the compiler index.
+    """
+
+    def key(r: dict[str, Any]) -> tuple[str, str, str, str, int]:
         return (
+            str(r.get("edge_kind", "")),
             _bare_name(str(r["from_qualified_name"])),
             _bare_name(str(r["to_qualified_name"])),
             str(r["path"]),

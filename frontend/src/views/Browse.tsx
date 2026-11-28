@@ -307,11 +307,13 @@ export function Browse() {
   // Typed over a full page and not answered yet: the page's own matches show meanwhile, and
   // nothing says a name is missing until the server has said so.
   const searching = !!serverQuery && !answer;
-  const filtered = useMemo(
-    () => serverRows ?? (rows || []).filter((r) => matchesSpace(r, typedName)),
-    [rows, serverRows, typedName],
-  );
-  const shown = showAll ? filtered : filtered.slice(0, ROW_CAP);
+  const filtered = useMemo(() => {
+    if (serverRows) return serverRows;
+    if (!rows || !typedName) return rows ?? [];
+    const matches = rows.filter((r) => matchesSpace(r, typedName));
+    return matches.length === rows.length ? rows : matches;
+  }, [rows, serverRows, typedName]);
+  const shown = useMemo(() => (showAll ? filtered : filtered.slice(0, ROW_CAP)), [showAll, filtered]);
   const managedShown = managedMemory.filter((r) => matchesSpace(r, typedName));
   // A namespace name no listed row carries may be a private one to request, even beside
   // partial matches; a repository's or collection's name points to its page instead.
@@ -391,11 +393,30 @@ export function Browse() {
     }),
     [],
   );
-  const standingOf = (ns: string): SpaceStanding => {
-    if (!mine.has(ns)) return "none";
-    if (pending.has(ns)) return "pending";
-    return myRole[ns] === "admin" ? "admin" : "member";
-  };
+  // A keystroke whose deferred filter still matches the same page leaves the row tree untouched.
+  const publicRows = useMemo(() => {
+    const standingOf = (ns: string): SpaceStanding => {
+      if (!mine.has(ns)) return "none";
+      if (pending.has(ns)) return "pending";
+      return myRole[ns] === "admin" ? "admin" : "member";
+    };
+    return shown.map((r) => (
+      <SpaceRow
+        key={r.namespace}
+        namespace={r.namespace}
+        visibility={r.visibility ?? "public"}
+        kind={isSystemKind(r.kind) ? r.kind : undefined}
+        description={r.description}
+        guideSummary={r.guide_summary}
+        members={r.member_count}
+        standing={standingOf(r.namespace)}
+        role={myRole[r.namespace]}
+        entry={r}
+        joining={joining === r.namespace}
+        actions={rowActions}
+      />
+    ));
+  }, [shown, mine, pending, myRole, joining, rowActions]);
 
   return (
     <PageContainer>
@@ -412,7 +433,7 @@ export function Browse() {
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </span>
       </PageHeader>
-      <p className="text-sm text-text-muted mb-3">
+      <p className="mb-3 max-w-2xl text-sm text-text-muted">
         A namespace is a project's or an agent's memory. Join public namespaces in your org, or invite people into the
         ones you manage.
       </p>
@@ -506,9 +527,12 @@ export function Browse() {
             />
           )}
 
-          {rows !== null && full && !listQuery && (
-            <p className="mb-2 text-xs text-text-muted" data-testid="browse-cut">
-              Showing the first {BROWSE_LIMIT} namespaces. Search to find one past them.
+          {/* Keep the notice mounted so rows stay put while the search runs. */}
+          {rows !== null && full && (!listQuery || searching) && (
+            <p className="mb-2 text-xs text-text-muted" data-testid={listQuery ? undefined : "browse-cut"}>
+              {searching
+                ? "Searching all public namespaces…"
+                : `Showing the first ${BROWSE_LIMIT} namespaces. Search to find one past them.`}
             </p>
           )}
 
@@ -545,22 +569,7 @@ export function Browse() {
               data-testid="browse-list"
               aria-busy={refreshing || searching || undefined}
             >
-              {shown.map((r) => (
-                <SpaceRow
-                  key={r.namespace}
-                  namespace={r.namespace}
-                  visibility={r.visibility ?? "public"}
-                  kind={isSystemKind(r.kind) ? r.kind : undefined}
-                  description={r.description}
-                  guideSummary={r.guide_summary}
-                  members={r.member_count}
-                  standing={standingOf(r.namespace)}
-                  role={myRole[r.namespace]}
-                  entry={r}
-                  joining={joining === r.namespace}
-                  actions={rowActions}
-                />
-              ))}
+              {publicRows}
               {shown.length < filtered.length && (
                 <Button
                   type="empty"

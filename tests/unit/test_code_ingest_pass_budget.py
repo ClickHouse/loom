@@ -185,10 +185,10 @@ def test_a_spent_budget_stops_starting_units_the_pass_succeeds_partial_with_the_
         "post:code-b",
         "post:code-c",
     ], "post-steps still run"
-    assert result.partial is True and result.resume == "code-a:walk"
-    assert ctx.cursor == "code-a:walk" and ctx.count == 0, "not a failed leg"
+    assert result.partial is True and result.resume == "o/code-a:walk"
+    assert ctx.cursor == "o/code-a:walk" and ctx.count == 0, "not a failed leg"
     outcome = w.pass_outcome(result)
-    assert outcome["partial"] is True and outcome["resume"] == "code-a:walk"
+    assert outcome["partial"] is True and outcome["resume"] == "o/code-a:walk"
     assert status_store.classify(success=True, outcome=outcome) in ("ok", "idle")
 
 
@@ -207,7 +207,7 @@ def test_the_budget_is_checked_before_each_entrys_commits_too(
     order = _wire_run(monkeypatch, [a, b], plans, clock, cost=200.0)
     result = asyncio.run(w.run_pass())
     assert order == ["commits:code-a", "post:code-a"]
-    assert result.partial and result.resume == "code-b:commits; code-a:walk"  # both phases
+    assert result.partial and result.resume == "o/code-b:commits; o/code-a:walk"  # both phases
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +371,7 @@ def test_a_cut_rechunk_advances_its_cursor_by_the_rounds_it_started_and_the_next
     asyncio.run(w._maybe_rechunk(repo, _cfg(), "head", result, budget=budget))
     detail = json.loads(state["extractor_stamp"]["detail"])
     assert healed_batches == [paths[:4]] and detail["cursor"] == 2, "cursor = attempted, not batch"
-    assert result.partial and result.resume == "code-a:rechunk@2/6"
+    assert result.partial and result.resume == "o/code-a:rechunk@2/6"
     assert (result.files_planned, result.files_done, result.rechunked) == (4, 2, 2)
 
     cut.update(attempted=4, partial=False)
@@ -398,7 +398,7 @@ def test_a_walk_whose_budget_is_spent_after_the_reconcile_does_not_start_the_rec
     result = ingest_budget.CodeIngestResult()
     spent = ingest_budget.PassBudget(started=0.0, stop_after=0.0)
     asyncio.run(w._steady_state(object(), _cfg(), "h", result, budget=spent))
-    assert calls == ["reconcile"] and result.resume == "code-a:rechunk"
+    assert calls == ["reconcile"] and result.resume == "o/code-a:rechunk"
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +717,7 @@ def test_the_outcome_states_the_rows_three_counts_and_the_first_sixteen_carry_pa
     assert status_store.classify(success=True, outcome=outcome) == "ok"
     args = _pass_args("code_ingest", spent=False, error=None, outcome=outcome)
     assert args["outcome_partial"] == "True"
-    assert args["outcome_resume"] == "code-clickhouse-26-3:rechunk@3600/22014"
+    assert args["outcome_resume"] == "o/code-clickhouse-26-3:rechunk@3600/22014"
     assert args["outcome_commits_done"] == "7"
     assert len([k for k in args if k.startswith("outcome_")]) == _OUTCOME_ARGS_MAX
     idle = w.pass_outcome(ingest_budget.CodeIngestResult())

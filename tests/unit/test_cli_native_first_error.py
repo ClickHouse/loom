@@ -447,7 +447,7 @@ def test_first_role_producer_failure_is_retrieved_and_does_not_skip_safe_drain(n
 
     with pytest.raises(OSError) as caught:
         _ch.run_connected(work, orgs=("o",))
-    assert caught.value is first
+    assert caught.value is first and command.unfinished_line(first) is None
     assert native.events[-3:] == ["pg", "certificate", "ch"]
     assert all(task.done() and not task._log_traceback for task in producers)
 
@@ -470,3 +470,60 @@ def test_actual_retirement_refusal_stays_registered_and_refuses_success(native, 
     assert "certificate" not in native.events
     assert native.gate.enrolled and native.gate.quiescent
     assert native.events[-2:] == ["pg", "ch"]
+
+
+@pytest.mark.parametrize("missing", ["host proof", "authority record"])
+def test_a_process_that_cannot_certify_succeeds_at_once_and_stays_registered(
+    native, monkeypatch, caplog, missing
+):
+    if missing == "host proof":
+        monkeypatch.setattr(barrier, "participant_proof", lambda: "")
+        reason = "this host gives no process identity (no readable /proc)"
+    else:
+        native.client.query_one = AsyncMock(return_value=None)
+        reason = (
+            "this ClickHouse has not recorded its storage authority yet "
+            "(a boot with LOOM_BOOT_MIGRATE on records it)"
+        )
+
+    async def work(_):
+        return 7
+
+    with caplog.at_level("WARNING", logger=command.__name__):
+        assert _ch.run_connected(work, orgs=("o",)) == 7
+    assert "certificate" not in native.events
+    assert native.gate.enrolled and native.gate.quiescent
+    assert len(native.terminal_ends) == 1 and not native.reversible_closes
+    assert native.events[-3:] == ["flush", "pg", "ch"]
+    warned = [r.getMessage() for r in caplog.records if r.name == command.__name__]
+    assert [message.partition(": ")[2] for message in warned] == [reason]
+
+
+def test_a_process_that_cannot_certify_still_fails_while_a_write_may_land(native, monkeypatch):
+    monkeypatch.setattr(command.settings, "native_command_drain_timeout_s", 0.02)
+    monkeypatch.setattr(barrier, "participant_proof", lambda: "")
+    monkeypatch.setattr(barrier, "_server_side_settled", AsyncMock(return_value=False))
+
+    async def work(_):
+        return 7
+
+    with pytest.raises(TimeoutError) as caught:
+        _ch.run_connected(work, orgs=("o",))
+    assert "certificate" not in native.events
+    assert native.events[-2:] == ["pg", "ch"]
+    line = command.unfinished_line(caught.value)
+    assert line and "\n" not in line
+    assert line.startswith(
+        "the command returned, but its shutdown did not complete (TimeoutError): "
+    )
+
+
+def test_a_failed_command_is_not_reported_as_an_unfinished_shutdown(native):
+    first = ValueError("work")
+
+    async def work(_):
+        raise first
+
+    with pytest.raises(ValueError) as caught:
+        _ch.run_connected(work, orgs=("o",))
+    assert caught.value is first and command.unfinished_line(first) is None

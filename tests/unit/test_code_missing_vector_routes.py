@@ -261,8 +261,13 @@ def test_continuations_keep_the_configured_model_when_initialization_fails(
         pool=pool,
         calibration={},
     )
+    # A continuation carries its original scope even when the search has no filters.
     cursor = search_cursor.encode(
-        kind="s", run_id="run", offset=1, params=params, indexed_commit="c" * 40
+        kind="s",
+        run_id=f"run.{search_cursor.search_scope_digest(build_scope())}",
+        offset=1,
+        params=params,
+        indexed_commit="c" * 40,
     )
 
     async def stored(*args: Any) -> Any:

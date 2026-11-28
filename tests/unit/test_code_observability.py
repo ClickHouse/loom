@@ -443,8 +443,6 @@ def test_freshness_status_word_and_the_as_of_cache(monkeypatch: pytest.MonkeyPat
     """`status` is the freshness envelope in one word (+7
     tokens measured), and the block is served from a 30 s per-namespace
     cache that code.refresh invalidates."""
-    from datetime import UTC, datetime
-
     assert cc.freshness_status(0, False) == "fresh"
     assert cc.freshness_status(3, False) == "behind"
     assert cc.freshness_status(40, True) == "stale"
@@ -455,9 +453,8 @@ def test_freshness_status_word_and_the_as_of_cache(monkeypatch: pytest.MonkeyPat
     class _Repo:
         async def all_state(self, org: str, ns: str) -> dict[str, Any]:
             calls.append(ns)
-            return {
-                "git_head": {"value": "a" * 40, "updated_at": datetime(2026, 9, 14, tzinfo=UTC)}
-            }
+            # no index time: the mirror-age verdict (its own test) has nothing to judge
+            return {"git_head": {"value": "a" * 40, "updated_at": None}}
 
     monkeypatch.setattr(
         "server.code.domain.index.repos.repo_for_namespace",

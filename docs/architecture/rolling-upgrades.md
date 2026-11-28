@@ -110,6 +110,9 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
    rows): N reads the old and the new format, and only N+1 writes the new one. Exception:
    a cursor for a request N-1 answers for `namespace` alone (a `knowledge.list` naming
    `namespaces`) is new in N, and each build refuses the one the other wrote (rule 12).
+   The `code_ingest` resume cursor names each cut as `org/namespace` in N; the other
+   build finds no entry of that name and serves its entries in configured order for
+   that pass.
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
    refresh interval (the command refuses less), so no process signs with a kid an N-1
    replica cannot verify yet.
@@ -929,6 +932,42 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     serving build supports the migration again. The [activation and rollback
     procedure](cost-budgets.md#activation-and-rollback) defines the maintenance boundary;
     the warning fleet check alone does not make a downgrade safe.
+
+63. **The `embed_exclude` marker** (`unembedded by design: reference (embed_exclude)` in
+    `embed_last_error` on `code_chunks`) extends the reference fixtures' marker, so N-1's
+    recovery, backfill embed phase and coverage counts skip it as they skip a fixture. N-1
+    reads neither `LOOM_CODE_EMBED_EXCLUDE` nor an entry's `embed_exclude`: where it runs,
+    its ingest embeds a matching path's new chunks, its `code_summary` pass writes their
+    cards, and its `loom code reembed` and provider rebuild embed the marked rows under the
+    target model. A chunk N-1 embedded keeps its vector until its content changes.
+
+64. **A compiler tier's checkout shares its mirror's packs** by hard link, each kept by
+    a `.keep` file, only with `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS`, off by default.
+    N-1's git jobs mount the checkout writable and no shared pack read-only, so they
+    could write the mirror's packs: turn it on only once no N-1 replica serves, and
+    before a rollback turn it off and remove the tier checkouts, which N-1 recreates
+    with its own objects. Off, N's checkout holds its own objects as N-1's does. In
+    `tests/unit/test_code_compiler_checkout.py`, a pass of N, then N-1's fetch,
+    `checkout --force` with the mirror out of sight and gc command, then N again, run
+    on one repository volume with no checkout file shared, and a pass of N with the
+    setting on then shares the packs.
+
+65. **A code namespace being erased** (`server/code/app/index/erasing.py`): N's code
+    writers skip a namespace an unfinished erasure may reach, and N's `code_index.purge`
+    refuses, retryably, while work begun before the erasure was recorded may still write
+    it. N-1's writers do neither and N-1's purge does not wait, so an erasure during the
+    rollout can leave rows written after its purge, as before; `verify.residue` fails
+    the saga on those in `code_chunks` and `code_summaries`, and it is repeated. No gate
+    holds the rollout.
+
+66. **A definition renamed as it moves to another file or scope**
+    (`server/code/domain/successor.py::elsewhere`): N's link recheck follows it; N-1's
+    reads the link `missing`, as before. One host rechecks a repository at a time, so a
+    range is read by one build. A `missing` link is never handed to a definition added
+    since, so a link N-1 read `missing` during the rollout stays `missing` under N
+    until its own name returns. The link rows are unchanged; `wide_ranges` is one more
+    number in the `memory_code_links` pass outcome, which every build serves as stored. No gate holds the
+    rollout.
 
 ## What checks them
 

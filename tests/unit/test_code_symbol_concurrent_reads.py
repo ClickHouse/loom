@@ -53,6 +53,51 @@ async def test_named_examples_skip_ambiguous_bare_types(monkeypatch) -> None:
     repo.source_chunks_for_span.assert_not_awaited()
 
 
+@pytest.mark.parametrize("tier", ["scip", "treesitter"])
+@pytest.mark.parametrize(("radius", "start"), [(2, 1), (1, 2)])
+async def test_named_examples_include_attached_decorators(monkeypatch, tier, radius, start) -> None:
+    from dataclasses import asdict
+
+    from server.code.app.symbol.named_examples import named_test_examples
+    from server.code.domain.extract.lang_python import parse_python
+    from server.code.domain.extract.py_decorated_chunks import python_chunks
+    from server.embedding.fake import fake_model_name
+
+    revision = "a" * 40
+    target = {**DEFS[0], "qualified_name": "modern::Cache", "name": "Cache", "kind": "class"}
+    source = '@pytest.mark.parametrize("value", [1])\ndef test_cache(value):\n    Cache(value)\n'
+    path = "tests/test_cache.py"
+    parsed = parse_python(path, source.encode())
+    (definition,) = (symbol for symbol in parsed.symbols if symbol.name == "test_cache")
+    repo = AsyncMock()
+    repo.symbols_by_name.return_value = [target]
+    repo.symbols_fuzzy.return_value = [
+        {
+            "path": path,
+            "name": definition.name,
+            "qualified_name": definition.qualified_name,
+            "kind": "function",
+            "tier": tier,
+            "start_line": definition.start_line,
+            "end_line": definition.end_line,
+            "indexed_commit": revision,
+        }
+    ]
+    repo.source_chunks_for_span.return_value = [
+        {**asdict(chunk), "indexed_commit": revision}
+        for chunk in python_chunks(parsed, max_chars=6000)
+    ]
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    (example,) = await named_test_examples(repo, "o", "n", target, radius)
+    assert example["context"] == {
+        "commit": revision,
+        "start_line": start,
+        "end_line": 3,
+        "text": "".join(source.splitlines(keepends=True)[start - 1 :]),
+    }
+    repo.source_chunks_for_span.assert_awaited_once()
+
+
 class _Clock:
     """Counts the reads in flight at once; the proof the legs overlap."""
 
@@ -299,3 +344,36 @@ def test_a_member_whose_lessons_went_unread_keeps_the_others_and_flags_it():
     # the member that was read still serves its lesson; the other may have had some
     assert [lesson["linked_symbols"] for lesson in out["lessons"]] == [["A::x"]]
     assert out["lessons_unread"] is True
+
+
+def test_a_memory_linked_to_two_relocated_members_names_where_each_is_now():
+    from server.code.api.models_symbol import CodeSymbolInput
+    from server.code.app import enrich as code_enrich
+    from server.code.app.symbol import symbol as h
+
+    def now(leaf: str) -> dict[str, Any]:
+        return {
+            "path": "b.py",
+            "symbol": f"b::C::{leaf}",
+            "state": "moved",
+            "was_path": "a.py",
+            "was_symbol": f"a::C::{leaf}",
+        }
+
+    async def lessons_for_symbol(org, ns, *, symbol_name, paths, extra_namespaces):
+        leaf = symbol_name.rsplit("::", 1)[-1]
+        moved = {"code_state": "moved", "code_moved": [now(leaf)]}
+        # `h` is where the memory names it
+        return [LESSON[0] | moved] if leaf != "h" else [dict(LESSON[0])]
+
+    head = [
+        {"qualified_name": f"b::C::{leaf}", "path": "b.py", "symbol_id": leaf}
+        for leaf in ("f", "g", "h")
+    ]
+    plain = CodeSymbolInput(name="C", include_history=False, include_examples=False)
+    with patch.object(code_enrich, "lessons_for_symbol", new=lessons_for_symbol):
+        out = asyncio.run(h._enrichment(None, "o", "n", plain, head, matched_members=True))
+    relocated, unmoved = out["lessons"]
+    assert relocated["linked_symbols"] == ["b::C::f", "b::C::g"]
+    assert relocated["code_moved"] == [now("f"), now("g")]
+    assert (unmoved["linked_symbols"], "code_moved" in unmoved) == (["b::C::h"], False)

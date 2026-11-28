@@ -89,7 +89,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs", "PostToolUse"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-record.mjs", "PostToolUse"]
           }
         ]
       }
@@ -101,7 +101,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs", "PostToolUseFailure"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-record.mjs", "PostToolUseFailure"]
           }
         ]
       }
@@ -133,17 +133,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs", "Stop"]
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-conversation.mjs", "Stop"]
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-usage.mjs", "Stop"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-record.mjs", "Stop"]
           },
           {
             "type": "command",
@@ -159,11 +149,6 @@
             "type": "command",
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-namespace-health.mjs", "Stop"]
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-working-memory.mjs", "Stop"]
           }
         ]
       }
@@ -174,31 +159,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs", "SessionEnd"],
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-conversation.mjs", "SessionEnd"],
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs", "SessionEnd"],
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-memory.mjs", "SessionEnd"],
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-brief.mjs", "SessionEnd"],
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-record.mjs", "SessionEnd"],
             "timeout": 10
           }
         ]

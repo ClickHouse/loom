@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SIGN_IN_FROM, SIGN_IN_PENDING } from "../lib/boot";
 import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
-import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, LinkTokenConfirm, TokenGate, resumeSsoOnce } from "./TokenGate";
+import { LinkTokenConfirm, TokenGate, resumeSsoOnce } from "./TokenGate";
 
 // The gate says why it is showing, tells a stranger how to get in, and every field is
 // labelled.
@@ -50,7 +50,7 @@ describe("TokenGate", () => {
     expect(await axeViolations(container)).toEqual([]);
   });
 
-  it("tells an operator how to get in, with links to the repo docs", () => {
+  it("tells an operator how to get in, with links to the public docs", () => {
     render(<TokenGate onLogin={() => undefined} />);
     expect(screen.getByText(/Running this yourself\?/)).toBeInTheDocument();
     expect(screen.getByText("loom mint-token …")).toBeInTheDocument();
@@ -60,14 +60,11 @@ describe("TokenGate", () => {
     expect(screen.getByText("LOOM_AUTH_REQUIRED=false")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tokens and grants (opens in a new tab)" })).toHaveAttribute(
       "href",
-      DOCS_TOKENS_URL,
+      "https://loom.clickhouse.com/docs/guides/tokens-and-grants",
     );
     expect(screen.getByRole("link", { name: "Quickstart (opens in a new tab)" })).toHaveAttribute(
       "href",
-      DOCS_QUICKSTART_URL,
-    );
-    expect(DOCS_TOKENS_URL).toMatch(
-      /^https:\/\/github\.com\/ClickHouse\/loom\/blob\/main\/docs\/guides\/tokens-and-grants\.md$/,
+      "https://loom.clickhouse.com/docs/getting-started/quickstart",
     );
   });
 

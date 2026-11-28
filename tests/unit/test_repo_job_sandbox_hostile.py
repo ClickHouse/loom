@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from server.code.app.index import compiler_tier, egress, sandbox
+from server.code.app.index import compiler_tier, egress, sandbox, tier_health
 from server.code.app.index.gitrepo import auth_env
 from tests.unit._hosts import resolves
 
@@ -458,3 +458,64 @@ async def test_a_job_writes_with_the_process_umask(tmp_path: Path, monkeypatch) 
     assert done.returncode == 0, done.stdout
     assert (out / "d").stat().st_mode & 0o777 == 0o770
     assert (out / "f").stat().st_mode & 0o777 == 0o660
+
+
+def _shared_pack_checkout(base: Path) -> tuple[Path, Path, str]:
+    """A tier checkout under `base` whose packs are its mirror's files, at the head."""
+    from tests.unit.code_fixtures import repo_config
+    from tests.unit.git_repo import git
+
+    source = base / "source"
+    source.mkdir()
+    git(source, "init", "-q")
+    (source / "main.py").write_text("print('ok')\n")
+    git(source, "add", "main.py")
+    git(source, "commit", "-qm", "initial")
+    git(base, "clone", "-q", "--bare", "--no-local", "source", "repo.git")
+    cfg = repo_config(git_dir=str(base / "repo.git"), scip_checkout_dir=str(base / "co"))
+    checkout, bare, missing = compiler_tier.resolve_checkout(cfg, "python")
+    assert missing is None and compiler_tier.shared_packs(checkout)
+    return checkout, bare, git(bare, "rev-parse", "HEAD").strip()
+
+
+@pytest.mark.parametrize("root", ["plain", "symlinked"])
+async def test_tier_jobs_run_in_a_checkout_sharing_the_mirrors_packs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root: str
+) -> None:
+    """The fetch, `checkout --force` and a harness's `git diff` in a checkout whose packs
+    are hard links of the mirror's, with the repos root reached through a symlink too;
+    the mirror is mounted only for the fetch, and no git job can write a shared pack,
+    not even after an earlier job removed the `.keep` files."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_compiler_share_mirror_packs", True)
+    base = tmp_path / "data"
+    base.mkdir()
+    if root == "symlinked":
+        (tmp_path / "repos").symlink_to(base, target_is_directory=True)
+        base = tmp_path / "repos"
+    checkout, bare, head = _shared_pack_checkout(base)
+
+    await compiler_tier.git(
+        checkout, *compiler_tier.checkout_fetch_args(bare, head), local_remote=bare
+    )
+    await compiler_tier.git(checkout, "checkout", "-q", "--force", head)
+    harness = tmp_path / "harness.sh"
+    harness.write_text('cd "$1" && git diff --quiet HEAD && git ls-files > "$2/files"\n')
+    out = tmp_path / "out"
+    out.mkdir()
+    code, output = await compiler_tier.run_harness(
+        harness, checkout, [str(out)], dict(ENV), out_dir=out, timeout_s=60, readonly=[harness]
+    )
+    assert (code, (out / "files").read_text()) == (0, "main.py\n"), output
+
+    pack = next(p for p in compiler_tier.shared_packs(checkout) if p.suffix == ".pack")
+    mirror_pack = bare / "objects" / "pack" / pack.name
+    before = (mirror_pack.stat().st_mode, mirror_pack.read_bytes())
+    write = f"alias.w=!chmod u+w {pack} && echo x >> {pack}"
+    with pytest.raises(tier_health.ToolOutputError, match="git -c failed"):
+        await compiler_tier.git(checkout, "-c", write, "w")
+    await compiler_tier.git(checkout, "-c", f"alias.r=!rm {pack.parent}/*.keep", "r")
+    with pytest.raises(tier_health.ToolOutputError, match="git -c failed"):
+        await compiler_tier.git(checkout, "-c", write, "w")
+    assert (mirror_pack.stat().st_mode, mirror_pack.read_bytes()) == before

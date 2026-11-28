@@ -31,8 +31,9 @@ Commands fall into two kinds:
   `init`, `demo`, `memory-search`, `ingest-transcript`, `export-okf`, `import-okf`). They take
   `--server-url` (`--base-url` on `demo`) and, except `init`, `--token`, resolved in the plugin
   hooks' order: the URL from `LOOM_BASE_URL`, then `~/.loom/config.json` `url`, else
-  `http://localhost:7777`; the token from `LOOM_API_KEY`, then `~/.loom/config.json` `token`,
-  then `~/.loom/token` (moved by `LOOM_API_KEY_FILE`). `LOOM_CONFIG_FILE` moves the config file.
+  `http://localhost:7777`; the token from `LOOM_API_KEY`, then the file `LOOM_API_KEY_FILE`
+  names, then `~/.loom/config.json` `token`, then, with that variable unset, `~/.loom/token`.
+  `LOOM_CONFIG_FILE` moves the config file.
   For an agent (`LOOM_CLIENT_ID` with a workload token) they use only `--token` or
   `LOOM_API_KEY`, never a saved token, and refuse (exit 2) without one; `loom install` refuses
   whatever `--token` says, `loom init` refuses before it signs anything up, and `loom call`
@@ -228,7 +229,7 @@ python scripts/codegen/docs_reference.py
 | --- | --- | --- |
 | `loom code` | Code intelligence plane operations. |  |
 | `loom code init` | Create the bare clone + seed state. | `--org`, `--namespace` |
-| `loom code backfill` | Full-tree indexing (resumable). | `--org`, `--namespace`, `--phase`, `--embed`, `--include-poisoned`, `--allow-fake-embedder`, `--no-fetch`, `--limit`, `--commit`, `--paths-file`, `--concurrency`, `--edges-second-pass`, `--no-edges-second-pass`, `--dialect-folder-pass`, `--embedding-model-suffix`, `--context-callees`, `--callers-from` |
+| `loom code backfill` | Full-tree indexing (resumable). | `--org`, `--namespace`, `--phase`, `--embed`, `--include-poisoned`, `--allow-fake-embedder`, `--no-fetch`, `--limit`, `--commit`, `--paths-file`, `--concurrency`, `--workers`, `--edges-second-pass`, `--no-edges-second-pass`, `--dialect-folder-pass`, `--embedding-model-suffix`, `--context-callees`, `--callers-from` |
 | `loom code reconcile` | Content-based staleness check: paths whose chunks predate their last change at the branch head; --heal re-ingests them (watermark untouched). | `--org`, `--namespace`, `--heal`, `--limit`, `--max-commits`, `--no-fetch`, `--show` |
 | `loom code compact` | OPTIMIZE ... FINAL a code vector table when its physical copies per key reach --min-ratio, and wait for the merge. | `--table`, `--min-ratio`, `--apply`, `--dry-run`, `--timeout-s` |
 | `loom code reembed` | Write the namespace's live chunks under a second embedding model's label: in-database, resumable, no checkout. | `--org`, `--namespace`, `--embedding-model`, `--source-model`, `--prefix`, `--batch` |

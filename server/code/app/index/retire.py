@@ -23,8 +23,8 @@ from typing import Any
 
 logger = logging.getLogger("loom.code_index.retire")
 
-# Telemetry stays: what a caller searched and what was answered is the
-# deployment's audit trail, keyed by namespace but not the repository's content.
+# Not purged here: search telemetry and the answer cache (`code_answers`) are deleted by
+# their own saga steps.
 KEEP_TABLES: frozenset[str] = frozenset(
     {"loom.code_search_trace", "loom.code_search_outcome", "loom.code_answers"}
 )

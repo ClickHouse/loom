@@ -11,8 +11,13 @@
 //   { posts, cursorPath, advanceTo, rollbackTo }
 //       the sender already moved the cursor; a failed post restores rollbackTo
 //
-// Job files are named loom-flush-<ms>-<pid>.json; the client status check
-// counts the ones older than ten minutes as stranded.
+// hooks/loom-record.mjs hands a whole hook payload to a detached copy of
+// itself the same way (spawnDetached). That file is not a flusher job: the
+// launcher replays it, and the flusher would find nothing in it to send.
+//
+// A flusher job is named loom-flush-<ms>-<pid>.json and a handed-off payload
+// loom-record-<Event>-<ms>-<pid>.json; the client status check counts the
+// ones older than ten minutes as stranded.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -24,30 +29,41 @@ import { writePrivateFile } from "./tmp-state.mjs";
 
 const FLUSHER = fileURLToPath(new URL("../hooks/loom-flush.mjs", import.meta.url));
 
-export function flushJobPath(tmp = os.tmpdir(), now = Date.now(), pid = process.pid) {
-  return path.join(tmp, `loom-flush-${now}-${pid}.json`);
+let lastStamp = 0;
+
+/**
+ * `<tmp>/loom-<kind>-<ms>-<pid>.json`. `ms` is the time, or one past the last
+ * stamp this process took: the scripts hooks/loom-record.mjs runs dispatch
+ * from one process, and two jobs of one millisecond would share a file.
+ */
+export function jobPath(kind, tmp = os.tmpdir()) {
+  lastStamp = Math.max(Date.now(), lastStamp + 1);
+  return path.join(tmp, `loom-${kind}-${lastStamp}-${process.pid}.json`);
 }
 
 /**
- * Write `job` and spawn the flusher on it with request bound `timeoutMs`.
- * True when the flusher was started; false (job file removed) otherwise.
+ * Write `text` to a new job file of `kind` and start `node <argv> <job file>`
+ * detached: in its own session with no inherited stdio, so it outlives the
+ * hook and the host process, though not a machine or container that goes
+ * with the host. True when it was started; false (job file removed)
+ * otherwise.
  */
-export function dispatchFlush(job, { timeoutMs = 15000, spawnImpl = spawn, tmp } = {}) {
-  const jobPath = flushJobPath(tmp);
+export function spawnDetached(argv, text, { kind = "flush", env = process.env, spawnImpl = spawn, tmp } = {}) {
+  const file = jobPath(kind, tmp);
   try {
     // The job carries session text: owner-only, like the other tmp state.
-    writePrivateFile(jobPath, JSON.stringify(job));
+    writePrivateFile(file, text);
   } catch {
     return false;
   }
   try {
-    const child = spawnImpl(process.execPath, [FLUSHER, jobPath], {
+    const child = spawnImpl(process.execPath, [...argv, file], {
       detached: true,
       stdio: "ignore",
       // A detached child on Windows gets its own console unless hidden: no
       // window flashes per Stop.
       windowsHide: true,
-      env: { ...process.env, LOOM_HOOK_TIMEOUT_MS: String(timeoutMs) },
+      env,
     });
     // A spawn failure arrives as an 'error' event; unheard, it would crash the hook.
     child.on("error", () => {});
@@ -55,12 +71,19 @@ export function dispatchFlush(job, { timeoutMs = 15000, spawnImpl = spawn, tmp }
     return true;
   } catch {
     try {
-      fs.unlinkSync(jobPath);
+      fs.unlinkSync(file);
     } catch {
       /* already gone */
     }
     return false;
   }
+}
+
+/** Hand `job` to the flusher, whose requests are bounded by `timeoutMs`
+ *  (spawnDetached's result). */
+export function dispatchFlush(job, { timeoutMs = 15000, spawnImpl = spawn, tmp } = {}) {
+  const env = { ...process.env, LOOM_HOOK_TIMEOUT_MS: String(timeoutMs) };
+  return spawnDetached([FLUSHER], JSON.stringify(job), { env, spawnImpl, tmp });
 }
 
 /**

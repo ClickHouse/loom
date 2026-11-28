@@ -120,7 +120,6 @@ server/code/app/index/merge_shas.py::SINCE_SLACK_S
 server/code/app/index/mirrors.py::_JITTER_S
 server/code/app/index/mirrors.py::_SWEEP_MIN_AGE_S
 server/code/app/index/packs.py::_DEFAULT_BUDGET_TOKENS
-server/code/app/index/pass_stream.py::_OLDEST_FIRST_HORIZON_S
 server/code/app/index/pr_overlay.py::MAX_DIFF_BYTES
 server/code/app/index/pr_overlay.py::MAX_FILES
 server/code/app/index/pr_overlay.py::MAX_FILE_BYTES

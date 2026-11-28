@@ -4,6 +4,7 @@ cursor), the file-name mode and the commit-message mode."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -160,10 +161,14 @@ async def _code_grep(
     # A continuation is a point read of the lines the first call extracted; a missing pool row
     # re-runs the grep and says so.
     if input.cursor:
-        page, fallback, offset = await _serve_grep_page(input, org, ns, repo, route, started)
+        page, fallback, offset = await _serve_grep_page(
+            input, org, ns, repo, route, started, scope=scope
+        )
         if page is not None:
             return page
-        return await _grep_page_by_rerun(input, offset=offset, reason=fallback, started=started)
+        return await _grep_page_by_rerun(
+            input, offset=offset, reason=fallback, started=started, exact_path=exact_path
+        )
     return await _grep_lines(
         repo,
         org,
@@ -514,7 +519,7 @@ async def _grep_lines(
     *,
     route: str,
     started: float,
-    scope: Any,
+    scope: SearchScope,
     line_re: Any,
     budget: code_deadline.Budget | None = None,
     offset: int = 0,
@@ -616,6 +621,7 @@ async def _grep_lines(
             context_source=context_source,
             complete_contexts=complete_contexts,
             match_commits=scan.match_commits,
+            scope=scope,
         )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
     # so the outcome fold skips this op; the paths still feed opened_file)
@@ -1322,8 +1328,6 @@ def _grep_trace_args(input: CodeGrepInput, *, context_lines: int | None = None) 
 
 
 def _grep_params_hash(input: CodeGrepInput) -> str:
-    import hashlib
-
     parts: dict[str, Any] = {
         "pattern": input.pattern,
         "regex": input.regex,
@@ -1335,6 +1339,17 @@ def _grep_params_hash(input: CodeGrepInput) -> str:
         parts["context_lines"] = input.context_lines
     # Ordering is stored in the pool so either server version can read a live page.
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _grep_path_scope(scope: SearchScope) -> str:
+    """Fingerprint the effective path filters for the signed grep pool id."""
+    parts = (
+        scope.exact_path,
+        sorted(set(scope.path_globs_re)),
+        sorted(set(scope.exclude_globs_re)),
+        sorted(set(scope.extensions)),
+    )
+    return hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode()).hexdigest()
 
 
 def _issue_grep_cursor(
@@ -1352,6 +1367,7 @@ def _issue_grep_cursor(
     context_source: ContextSource | None = None,
     complete_contexts: CompleteContexts = frozenset(),
     match_commits: dict[tuple[str, int], str],
+    scope: SearchScope,
 ) -> str:
     """Store every extracted line (served ones included, so offsets are
     pool positions) and return the cursor for the page after `served`;
@@ -1361,10 +1377,12 @@ def _issue_grep_cursor(
     if not paging.enabled() or len(matches) <= served:
         return ""
     ph = _grep_params_hash(input)
+    # Older replicas pass this opaque identifier through when issuing the next page.
+    pool_id = f"{run_id}.{_grep_path_scope(scope)}"
     paging.put_pool(
         org,
         ns,
-        paging.pool_key("g", run_id),
+        paging.pool_key("g", pool_id),
         {
             "v": paging.CURSOR_VERSION,
             "kind": "g",
@@ -1382,11 +1400,18 @@ def _issue_grep_cursor(
         indexed_commit="",
         route="grep",
     )
-    return paging.encode(kind="g", run_id=run_id, offset=served, params=ph, indexed_commit="")
+    return paging.encode(kind="g", run_id=pool_id, offset=served, params=ph, indexed_commit="")
 
 
 async def _serve_grep_page(
-    input: CodeGrepInput, org: str, ns: str, repo: CodeRepo, route: str, started: float
+    input: CodeGrepInput,
+    org: str,
+    ns: str,
+    repo: CodeRepo,
+    route: str,
+    started: float,
+    *,
+    scope: SearchScope,
 ) -> tuple[CodeGrepOutput | None, str, int]:
     from server.code.app import search_cursor as paging
 
@@ -1395,11 +1420,17 @@ async def _serve_grep_page(
         fields = paging.decode(input.cursor, kind="g", params=ph)
     except paging.CursorError as e:
         raise ValidationError(f"invalid cursor: {e}") from e
+    pool_id = str(fields["r"])
+    saved_scope = pool_id.partition(".")[2]
+    if not saved_scope:
+        return None, "path_scope_unrecorded", 0
+    if saved_scope != _grep_path_scope(scope):
+        raise ValidationError("invalid cursor: it was issued with different path filters")
     offset = int(fields["o"])
     if paging.expired(fields):
         return None, "expired", offset
     with code_span("grep.page_read", route=route):
-        row = await _read_pool_settling(org, ns, paging.pool_key("g", str(fields["r"])), fields)
+        row = await _read_pool_settling(org, ns, paging.pool_key("g", pool_id), fields)
     if row is None:
         return None, "pool_not_found", offset
     payload = row["payload"]
@@ -1424,7 +1455,7 @@ async def _serve_grep_page(
     next_cursor = (
         paging.encode(
             kind="g",
-            run_id=str(fields["r"]),
+            run_id=pool_id,
             offset=i,
             params=ph,
             indexed_commit="",
@@ -1532,22 +1563,31 @@ async def _serve_grep_page(
 
 
 async def _grep_page_by_rerun(
-    input: CodeGrepInput, *, offset: int, reason: str, started: float
+    input: CodeGrepInput, *, offset: int, reason: str, started: float, exact_path: str = ""
 ) -> CodeGrepOutput:
     """The pool row is gone: run the grep again deep enough to reach the
     offset, serve the slice past it, disclose why."""
     from server.code.app import search_cursor as paging
 
-    if input.prioritize_patterns and isinstance(input.pattern, list) and len(input.pattern) > 1:
+    if (
+        offset
+        and input.prioritize_patterns
+        and isinstance(input.pattern, list)
+        and len(input.pattern) > 1
+    ):
         raise ValidationError(f"grep cursor unavailable ({reason}); start a new search")
     limit = input.effective_limit
     fresh = input.model_copy(update={"cursor": "", "limit": min(200, offset + limit)})
-    out = await _code_grep(fresh, started=started, offset=offset, page_limit=limit)
+    out = await _code_grep(
+        fresh, started=started, offset=offset, page_limit=limit, exact_path=exact_path
+    )
     out.as_of = paging.disclose(out.as_of, page_commit="", offset=offset, fallback=reason)
     if reason == "source_line_mapping_changed":
         out.partial = True
         out.partial_reason = _notes(out.partial_reason, "cursor offset used another source mapping")
         out.note = _notes(out.note, "restart pagination for complete results")
+    elif reason == "path_scope_unrecorded":
+        out.note = _notes(out.note, "pagination restarted because the cursor's scope was not saved")
     set_code_span_attributes(page_offset=offset, page_fallback=reason)
     return out
 
@@ -1696,7 +1736,7 @@ async def _grep_message(
     *,
     route: str,
     started: float,
-    scope: Any = None,
+    scope: SearchScope,
     budget: code_deadline.Budget | None = None,
 ) -> CodeGrepOutput:
     """mode=message: the rendered text's literal spans
@@ -1924,7 +1964,7 @@ async def _message_literal_fallback(
     *,
     route: str,
     started: float,
-    scope: Any,
+    scope: SearchScope,
     budget: code_deadline.Budget | None,
 ) -> CodeGrepOutput | None:
     """The message pattern as a plain literal matches grep, marked `fallback: literal`; None

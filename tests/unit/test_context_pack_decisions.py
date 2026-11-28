@@ -243,10 +243,10 @@ def test_a_line_whose_code_changed_says_so_with_the_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _dead_other_sections(monkeypatch)
-    link = {"state": "changed", "changed_since": "c0ffee" * 4, "checked_at": "2026-11-01"}
-    fact = NS(**{**vars(_FACT), "code_state": "changed", "_code_links": [link]})
-    gone = {"state": "missing", "changed_since": "dead" * 10, "path": "a.py", "qualified_name": ""}
-    decision = NS(**{**vars(_DECISION), "code_state": "missing", "_code_links": [gone]})
+    changed = {"code_state": "changed", "code_changed_since": "c0ffee" * 4}
+    fact = NS(**{**vars(_FACT), **changed})
+    gone = {"code_state": "missing", "code_changed_since": "dead" * 10}
+    decision = NS(**{**vars(_DECISION), **gone})
     moved = NS(**{**vars(_FACT), "memory_key": "m2", "code_state": "moved"})
     monkeypatch.setattr(
         "server.memory.app.search.handle_memory_search", _search_stub([fact, decision, moved])
@@ -265,6 +265,51 @@ def test_a_line_whose_code_changed_says_so_with_the_commit(
     assert (
         "(the code it is about is gone, commit deaddeaddead: check before relying on it) "
         "we chose clickhouse"
+    ) in out.sections["decisions"]
+
+
+def test_a_line_whose_code_moved_names_where_it_is_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A memory line carries the place ahead of its text, beside its label; a decision
+    line in its note."""
+    _dead_other_sections(monkeypatch)
+    link = {
+        "code_namespace": "code-a",
+        "path": "src/reader.py",
+        "symbol": "reader::load_rows",
+        "start_line": 12,
+        "end_line": 40,
+        "state": "moved",
+        "was_path": "src/reader.py",
+        "was_symbol": "reader::fetch_rows",
+    }
+    now = "`reader::fetch_rows` is now `reader::load_rows` at src/reader.py:12-40"
+    moved = NS(**{**vars(_FACT), "code_state": "moved", "code_moved": [link]})
+    edited = {"code_state": "changed", "code_changed_since": "c0ffee" * 4, "code_moved": [link]}
+    changed = NS(**{**vars(_FACT), "memory_key": "m2", **edited})
+    decision = NS(**{**vars(_DECISION), **edited})
+    plain = NS(**{**vars(_FACT), "memory_key": "m3", "code_state": "moved"})
+    monkeypatch.setattr(
+        "server.memory.app.search.handle_memory_search",
+        _search_stub([moved, changed, decision, plain]),
+    )
+
+    async def _records(ch: Any, org: str, ns: str, keys: list[str]) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr("server.memory.app.decision._decision_records", _records)
+    out = asyncio.run(
+        handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
+    )
+    lines = out.sections["memories"].splitlines()
+    assert [ln.split("] ", 1)[1] for ln in lines] == [
+        f"(code moved: {now}) deploys are Tue/Thu",
+        f"(code moved: {now}) deploys are Tue/Thu",
+        "deploys are Tue/Thu",
+    ]
+    assert ["code_state=" in ln for ln in lines] == [False, True, False]
+    assert (
+        "(its code changed since it was written, commit c0ffeec0ffee: check before relying "
+        f"on it; {now}) we chose clickhouse"
     ) in out.sections["decisions"]
 
 

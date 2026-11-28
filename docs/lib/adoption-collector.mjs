@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-const maxBodyBytes = 16_384;
+const maxBodyBytes = 1_048_576;
 const halfDayMs = 12 * 60 * 60 * 1_000;
 const maxAgeMs = 14 * halfDayMs;
 const installationPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -30,6 +30,7 @@ const countFields = [
   "output_tokens",
   "embedding_tokens",
 ];
+const dailyActivityFields = ["daily_successful_requests", "active_accounts", "serving_processes", "domain_activity"];
 const reportFields = new Set([
   "schema_version",
   "installation_id",
@@ -39,6 +40,7 @@ const reportFields = new Set([
   "loom_version",
   "clickhouse_version",
   "user_domains",
+  ...dailyActivityFields,
   ...countFields,
 ]);
 
@@ -54,12 +56,45 @@ function windowTime(value) {
   return canonical === value ? timestamp : NaN;
 }
 
+function hasValidDailyActivity(report, domains) {
+  const { active_accounts: accounts, serving_processes: processes, domain_activity: rows = [] } = report;
+  if (report.schema_version < 3) {
+    return dailyActivityFields.every((name) => !Object.hasOwn(report, name));
+  }
+  if (!Array.isArray(rows) || rows.length > domains.size) return false;
+  if (accounts === undefined || accounts === null)
+    return (processes === undefined || processes === null) && rows.length === 0;
+  if (!isCount(accounts) || accounts > report.daily_successful_requests) return false;
+  if (
+    processes !== undefined &&
+    processes !== null &&
+    (!isCount(processes) || processes > report.daily_successful_requests)
+  )
+    return false;
+  return (
+    rows.every(
+      (row) =>
+        isObject(row) &&
+        Object.keys(row).length === 4 &&
+        row.successful_requests === domains.get(row.domain) &&
+        isCount(row.active_accounts) &&
+        row.active_accounts <= accounts &&
+        isCount(row.successful_requests) &&
+        row.active_accounts <= row.successful_requests &&
+        (row.serving_processes === null ||
+          (isCount(row.serving_processes) &&
+            row.serving_processes <= (processes ?? 0) &&
+            row.serving_processes <= row.successful_requests)),
+    ) && new Set(rows.map(({ domain }) => domain)).size === rows.length
+  );
+}
+
 function isReport(report, now) {
   if (!isObject(report) || Object.keys(report).some((name) => !reportFields.has(name))) {
     return false;
   }
   if (
-    report.schema_version !== 1 ||
+    ![1, 2, 3].includes(report.schema_version) ||
     !matches(installationPattern, report.installation_id) ||
     !matches(versionPattern, report.loom_version) ||
     !matches(versionPattern, report.clickhouse_version) ||
@@ -71,8 +106,19 @@ function isReport(report, now) {
   if (end - start !== halfDayMs || end > now || end < now - maxAgeMs || report.day !== report.window_start.slice(0, 10))
     return false;
 
+  const daily = report.schema_version === 3;
+  const successfulRequests = daily ? report.daily_successful_requests : report.successful_requests;
+  if (
+    !isCount(successfulRequests) ||
+    (daily &&
+      (new Date(end).getUTCHours() !== 0 ||
+        successfulRequests < report.successful_requests ||
+        report.successful_requests > report.requests - report.server_errors))
+  )
+    return false;
+
   const domains = report.user_domains;
-  if (!Array.isArray(domains) || domains.length > 30) return false;
+  if (!Array.isArray(domains) || (!daily && domains.length > 30)) return false;
   const validDomains = domains.every(
     (row) =>
       isObject(row) &&
@@ -81,28 +127,31 @@ function isReport(report, now) {
       row.domain.length <= 253 &&
       isCount(row.user_count) &&
       row.user_count > 0 &&
-      isCount(row.successful_requests),
+      isCount(row.successful_requests) &&
+      (!daily || row.successful_requests > 0),
   );
+  if (!validDomains) return false;
+  const domainCounts = new Map(domains.map(({ domain, successful_requests }) => [domain, successful_requests]));
   return (
-    validDomains &&
-    new Set(domains.map(({ domain }) => domain)).size === domains.length &&
-    domains.reduce((count, row) => count + row.successful_requests, 0) <= report.successful_requests
+    domainCounts.size === domains.length &&
+    domains.reduce((count, row) => count + row.successful_requests, 0) <= successfulRequests &&
+    hasValidDailyActivity(report, domainCounts)
   );
 }
 
 async function readBody(request) {
   const reader = request.body?.getReader();
   if (!reader) return null;
-  const buffer = new Uint8Array(maxBodyBytes);
+  const chunks = [];
   let size = 0;
   for (;;) {
     const { done, value } = await reader.read();
-    if (done) return buffer.subarray(0, size);
+    if (done) return Buffer.concat(chunks, size);
     if (size + value.length > maxBodyBytes) {
       await reader.cancel();
       return null;
     }
-    buffer.set(value, size);
+    chunks.push(value);
     size += value.length;
   }
 }

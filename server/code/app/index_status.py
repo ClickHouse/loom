@@ -329,7 +329,8 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
     from server.code.app.common import fetch_freshness
 
     clone_fetched_at, fetch_overdue = fetch_freshness(
-        (state.get("clone_head") or {}).get("updated_at")
+        (state.get("clone_head") or {}).get("updated_at"),
+        indexed_at=(state.get("git_head") or {}).get("updated_at"),
     )
 
     # keyed by state key; -1 = unset watermark or unreadable clone
@@ -383,7 +384,7 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
 
     coverage = coverage_fields(counts)
     candidates, warnings = await _index_quality(
-        repo, cfg, state, workers, git_head=git_head, fetch_overdue=fetch_overdue
+        repo, cfg, state, git_head=git_head, fetch_overdue=fetch_overdue
     )
 
     return CodeIndexStatusOutput(
@@ -433,7 +434,6 @@ async def _index_quality(
     repo: CodeRepo,
     cfg: Any,
     state: IndexState,
-    workers: dict[str, CodeWorkerStatus],
     *,
     git_head: str,
     fetch_overdue: bool,
@@ -460,9 +460,6 @@ async def _index_quality(
         if spec and not value(spec.watermark_key):
             names = ", ".join(spec.workers)
             warnings.append(f"{spec.tool} is available for this tree but has not run ({names}).")
-    failed = sorted(name for name, worker in workers.items() if worker.last_error)
-    if failed:
-        warnings.append("Index workers reporting errors: " + ", ".join(failed) + ".")
     return candidates, warnings
 
 

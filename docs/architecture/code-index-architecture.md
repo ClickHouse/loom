@@ -190,7 +190,9 @@ flowchart LR
 2. **Re-indexes exactly the changed files** of each commit (`ingest_file` in
    `code/app/index/ingest.py`): parse, chunk, symbols, edges, call guards, the file
    row, and a context pack and review brief for the merged PR the commit names. Then it
-   advances `git_head`. A crash re-runs from the last complete commit.
+   advances `git_head`. A crash re-runs from the last complete commit. Across entries
+   the pass takes one commit per entry per round, so a long backlog never holds another
+   entry's new commits; a round the budget ends resumes next pass at the entry (org and namespace) it missed.
 3. **Walks** with the share `LOOM_CODE_INGEST_WALK_BUDGET_SHARE` leaves: reconciliation
    heals and extractor re-chunks (below).
 
@@ -209,6 +211,13 @@ Lanes help because a lane waits on ClickHouse round trips, not CPU.
 (`code/app/index/denylist.py`, `LOOM_CODE_INGEST_EXCLUDE`,
 `LOOM_CODE_INGEST_IGNORE_FILE`), is binary, or exceeds `LOOM_CODE_INGEST_MAX_FILE_BYTES`.
 So `coverage_floor: true` on a grep means every admitted chunk, not every byte.
+A path the entry's `embed_exclude` globs name (`LOOM_CODE_EMBED_EXCLUDE` for the scalar
+entry) is admitted, chunked and mapped, but its chunks are neither described nor embedded:
+they carry the `unembedded by design` marker, which every writer of a vector or a
+description honours and the coverage counts skip, the `code_summary` pass writes no card
+for them, and code.search reaches them through the lexical leg only. A changed glob
+applies to chunks written after it, in both directions (the operations guide's
+`embed_exclude` notes name the repair).
 
 ### Choosing a parser
 
@@ -560,11 +569,13 @@ Every column is in the generated [schema reference](../reference/schema.md).
 
 A file-qualified symbol request (`src/module.py:Type.method` or
 `src/Type.cpp:Namespace::Type::method`) keeps the filename as a hard constraint.
-Candidate discovery reads that file's symbol rows; the authoritative live read
-checks the filename again before ranking and limiting. It never retries the name
-against other files. `resolved_by: file_symbol` discloses the binding; stored
-symbol names and ids stay intact. The shared resolver applies this spelling to
-structural code operations.
+The exact indexed path takes precedence even when it lacks the requested symbol.
+If it is absent, an unanchored relative path with two or more components can match
+the complete suffix of one live indexed file in the namespace. A `./` or absolute
+path keeps the lookup exact. Both symbol reads use the selected path before ranking
+and limiting. The response includes `resolved_by: file_symbol`, the canonical
+indexed path, and the stored symbol name and id. The shared resolver applies this
+spelling to structural code operations.
 
 Python import spellings use the bounded short-name candidate read after an exact
 symbol miss. Read-side matching preserves dotted module scopes and treats a package's
@@ -578,18 +589,50 @@ in `pkg/json/__init__.py`; its stored qualified name remains intact. Constructor
 names remain explicit, and ambiguous matches stay unlinked unless the memory's
 file scope selects one definition.
 
-| Op                               | Path                          | How                                                                                                                                                                                                                                                                                                                                                                                                |
-| -------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `code.search`                    | `code/app/search/pipeline.py` | Routes first (pattern, path, history question), then runs legs under the deadline (`gather.py`): lexical (idf-weighted token count), vector (a scan with no vector index, or twin shortlist), PR history, fuzzy symbol vote. `fusion.py` fuses by reciprocal rank (k = 60); `serve.py` pages into the token budget or abstains. A repeat within the memo window is one read of `code_search_memo`. |
-| `code.grep`                      | `code/store/index/grep.py`    | The 3-gram index narrows granules; `position()` or `match()` decides; each hit joins its enclosing unit. `mode=presence` spans up to eight branch namespaces.                                                                                                                                                                                                                                      |
-| `code.symbol`                    | `code/app/symbol/`            | A qualified name is a key-prefix read of `code_symbols`; a short name goes through `code_symbol_names`; several definitions rank by `near_paths` or the PR under review.                                                                                                                                                                                                                           |
-| `code.callers`, `code.impact`    | `code/store/index/edges.py`   | Callers are the `to_symbol_id` range of `code_edges`, compiler rows preferred, with the unresolved count. `code.impact` maps diff hunks to seed symbols and walks outward; an empty walk answers `no_indexed_paths`, `no_seeds_in_hunks` or `no_static_callers`.                                                                                                                                   |
-| `code.outline`, `code.enclosing` | —                             | Per-path reads of `code_symbols` and `code_chunks` spans.                                                                                                                                                                                                                                                                                                                                          |
+| Op                               | Path                          | How                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code.search`                    | `code/app/search/pipeline.py` | Routes first (pattern, path, history question), then runs legs under the deadline (`gather.py`): lexical (idf-weighted token count), vector (a scan with no vector index, or twin shortlist), PR history, the definitions of the first name the query spells out as code (`definitions.py`), fuzzy symbol vote. `fusion.py` fuses by reciprocal rank (k = 60); `rank.py` applies the priors and then serves the named definitions directly after the first unit, at its score; `serve.py` pages into the token budget or abstains. A repeat within the memo window is one read of `code_search_memo`. |
+| `code.grep`                      | `code/store/index/grep.py`    | The 3-gram index narrows granules; `position()` or `match()` decides; each hit joins its enclosing unit. `mode=presence` spans up to eight branch namespaces.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `code.symbol`                    | `code/app/symbol/`            | A qualified name is a key-prefix read of `code_symbols`; a short name goes through `code_symbol_names`; several definitions rank by `near_paths` or the PR under review.                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `code.callers`, `code.impact`    | `code/store/index/edges.py`   | Callers are the `to_symbol_id` range of `code_edges`, compiler rows preferred, with the unresolved count. `code.impact` maps diff hunks to seed symbols and walks outward; an empty walk answers `no_indexed_paths`, `no_seeds_in_hunks` or `no_static_callers`.                                                                                                                                                                                                                                                                                                                                      |
+| `code.outline`, `code.enclosing` | —                             | Per-path reads of `code_symbols` and `code_chunks` spans.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 The lexical text-index gate tokenizes the query with `splitByNonAlpha`, matching the
 index tokenizer. The score counts only whole app lexemes and rejects partial matches
 from the gate. Underscore-only lexemes use the exact score within the same tenant,
 model and path scope because the text index has no token for them.
+
+For a question about the implementation, ranking multiplies the score of a test,
+example or benchmark path and of a prose file by a penalty. A test word in the query
+turns off the test-path penalty, the fan-in prior, the kind prior and saturation, and
+leaves the prose penalty on. A doc word turns off the prose penalty only.
+
+The lexical leg cuts its pool on the same two penalties. Fusion gives a row of the leg
+`1 / (60 + rank)`, and ranking multiplies that vote by the penalty of the row's path. A
+pool of the leg's first 200 rows by rank therefore drops source rows whose vote counts
+for more than the vote of the test and prose rows it keeps. The leg keeps the 200 rows
+with the largest `penalty / (60 + rank)` instead:
+
+- **A row keeps its rank in the whole leg** and votes with it, so a row in the pool
+  scores what it would if the leg returned every row. A source row admitted from rank
+  340 votes `1 / 400`.
+- **A test or prose row leaves the pool only when 200 rows count for more.** The leg's
+  first-ranked test row votes `0.35 / 61`, as much as a source row at rank 114, and
+  stays.
+- **Rows with one score rank by their penalty, the undemoted first.** The score is a
+  sum of idfs over the query words a chunk holds, so the rows of a one-word or
+  two-word query tie by the thousand, and ClickHouse returns equal rows in no fixed
+  order. Without the second key the order the table holds them in would decide which
+  of them are ranked first, and with them the pool.
+- **The scan reads a bounded depth.** No row past rank `260 / f - 60` can be in the
+  pool, where `f` is the smallest factor a path can get: 2,912 rows for the default
+  penalties together, 980 for the prose penalty alone, at most 10,000.
+- **Calibration does not read the cut.** The statement also returns the leg's own
+  first 200 rows, and leg agreement, the top similarity and abstention are computed on
+  those, as without the penalties. A penalty reaches them only as the order of rows
+  with one score.
+
+The vector leg and the concept leg are not cut.
 
 After relevance ranking, per-file saturation spreads broad search results across
 files. It is skipped for an explicit path, a symbol route, test intent, or a

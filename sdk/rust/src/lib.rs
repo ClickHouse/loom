@@ -7,7 +7,10 @@
 //! including `serde_json::Value`.
 //!
 //! Identity is bound once on [`Client`]. Calls return typed responses, and
-//! [`Error::Api`] preserves the server's error classification.
+//! [`Error::Api`] preserves the server's error classification. Every error
+//! answers [`Error::category`] and [`Error::retryable`] with the server's
+//! declaration or the SDK's own class; an API error also has a typed
+//! [`ApiError::kind`].
 //! Search defaults to all agents with no user or session filter. Set filters on
 //! [`SearchRequest`] explicitly. Builder identity values apply to declared identity
 //! fields; optional reader filters keep the values in the request.
@@ -23,9 +26,10 @@
 //! [`Client::with_retry`] creates a policy override sharing connections and rate state.
 //! Dropping a call future cancels its retries and waits, but cannot undo a write.
 //! Logs use the `log` facade without installing a logger or recording payloads.
-//! Retries after dispatch require a known, declared idempotent operation.
-//! Unknown operations receive bound org and namespace and retry only connection
-//! failures. Operation names must be dotted identifiers.
+//! A 429 is paced on every operation. Other retries after dispatch require a
+//! known, declared idempotent operation, unless the answer shows nothing ran:
+//! HTTP 408 or `AUTH_UNAVAILABLE`. Unknown operations receive bound org and
+//! namespace. Operation names must be dotted identifiers.
 //!
 //! Enable the `blocking` feature for a synchronous client in the `blocking` module.
 //! It runs the async transport on a dedicated thread and rejects calls on Tokio
@@ -70,6 +74,39 @@
 //! let result = client.get_with_options("preference", options).await?;
 //! assert_eq!(result.metadata.sent_request_id, "recall-1");
 //! println!("{} attempts={}", result.metadata.request_id, result.metadata.attempts);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Routes outside the op registry
+//!
+//! [`Client::request`] and [`Client::request_json`] reach the routes the
+//! registry does not hold, such as `/v1/whoami` and `/v1/knowledge.upload`.
+//! The body and query go out as given. The SDK can wait and resend on a 429.
+//! The HTTP transport does not retry requests.
+//!
+//! ```
+//! use clickhouse_loom::{Client, Error, RouteRequest};
+//! use serde_json::{json, Value};
+//!
+//! # async fn example(client: Client) -> Result<(), Error> {
+//! let me: Value = client.request_json(RouteRequest::get("/v1/whoami")).await?;
+//! let chosen: Value = client
+//!     .request_json(
+//!         RouteRequest::post("/v1/me/set-default-namespace").json(&json!({"namespace": "eng"})),
+//!     )
+//!     .await?;
+//! let stored: Value = client
+//!     .request_json(
+//!         RouteRequest::post("/v1/knowledge.upload")
+//!             .query("org", "dev")
+//!             .query("namespace", "local")
+//!             .query("filename", "notes.bin")
+//!             .query("content_type", "application/octet-stream")
+//!             .bytes("application/octet-stream", vec![0, 1, 2, 3]),
+//!     )
+//!     .await?;
+//! println!("{} {} {}", me["org"], chosen["default_namespace"], stored);
 //! # Ok(())
 //! # }
 //! ```
@@ -164,6 +201,7 @@ mod error;
 mod models;
 mod operations;
 mod retry;
+mod routes;
 mod wire_models;
 
 #[cfg(feature = "blocking")]
@@ -174,7 +212,8 @@ mod blocking_operations;
 pub use call::{CallFailure, CallMetadata, CallOptions, CallResult, RateLimit};
 pub use capabilities::{ProbeReport, ProbeRequest};
 pub use client::{Client, ClientBuilder};
-pub use error::{ApiError, Error};
+pub use error::{ApiError, Error, ErrorCategory, ErrorKind};
 pub use models::*;
 pub use retry::{RetryPolicy, RetryTimeouts};
+pub use routes::{Method, RouteRequest, RouteResponse};
 pub use wire_models::*;

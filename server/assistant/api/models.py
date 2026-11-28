@@ -6,9 +6,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from server.assistant.domain.limits import MAX_HISTORY, MAX_MESSAGE_CHARS
+
 # What one request carries: the chat route holds its messages to the same bounds.
-MAX_HISTORY = 50  # not a setting: part of the op's wire contract
-MAX_MESSAGE_CHARS = 20_000  # not a setting: part of the op's wire contract
 
 
 class AssistantMessage(BaseModel):
@@ -50,7 +50,8 @@ class AssistantCitation(BaseModel):
     # The citation as the answer wrote it.
     text: str
     # True when the answer's own tool calls read the memory key or ran the statement, or
-    # the document, or this build's documentation page, holds the section.
+    # the document or this build's documentation page holds the section, or a code
+    # result returned the cited path and line span.
     verified: bool = False
     # Why it is not verified ('' when it is).
     reason: str = ""

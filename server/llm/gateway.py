@@ -289,8 +289,8 @@ async def answered(response: httpx.Response) -> None:
     table = settings.identity_refusals()
     if not any(e["status"] == status for entries in table.values() for e in entries):
         return  # the provider's answer, as always: read by the sender
-    await response.aread()
-    fields = _error_fields(response)
+    bounded = response.request.extensions.get("loom_bounded_refusal", False)
+    fields = await _identity_error_fields(response, bounded=bounded)
     for kind, entries in table.items():
         for entry in entries:
             if entry["status"] == status and all(
@@ -312,6 +312,31 @@ async def answered(response: httpx.Response) -> None:
                         else:
                             raise RetryIdentityCall(response, seconds)
                 raise _hold(response, entry, wait=kind == "wait")
+    if bounded:
+        response.raise_for_status()
+
+
+async def _identity_error_fields(response: httpx.Response, *, bounded: bool) -> dict[str, str]:
+    if not bounded:
+        await response.aread()
+        return _error_fields(response)
+    # Match the native stream's frame ceiling before buffering an error body.
+    body = bytearray()
+    try:
+        async with asyncio.timeout(settings.llm_request_timeout_s):
+            async for chunk in response.aiter_bytes():
+                if len(body) + len(chunk) > 262144:
+                    raise httpx.HTTPStatusError(
+                        "the model error body exceeded its byte limit",
+                        request=response.request,
+                        response=response,
+                    )
+                body.extend(chunk)
+    except TimeoutError as error:
+        raise httpx.ReadTimeout(
+            "the model error body exceeded its read deadline", request=response.request
+        ) from error
+    return _error_fields(httpx.Response(response.status_code, content=bytes(body)))
 
 
 def _judges_identities(request: httpx.Request) -> bool:
