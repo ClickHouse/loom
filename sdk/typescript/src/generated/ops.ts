@@ -5172,8 +5172,9 @@ export interface MemorySearchHit {
   version?: number;
   created_at?: string;
   namespace?: string;
-  code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
+  code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "unlinked" | "";
   code_changed_since?: string;
+  code_rev?: string;
   code_moved?: CodeLink[];
   body_truncated?: boolean;
   next?: string;
@@ -7230,6 +7231,7 @@ export interface MemorySearchInput {
 
 export interface MemorySearchOutput {
   results: MemorySearchHit[];
+  code_note?: string;
   reader_block?: string;
   reader_instructions?: string;
   bodies_returned?: number;

@@ -438,7 +438,11 @@ async def _pack_startup_recall(st: _PackState) -> None:
             ),
             conflict=(r.status == "conflicted"),
             author=author_label([getattr(r, "actor", "")]),
-            code_state=code_change.label(*_code_state_and_commit(h)),
+            code_state=_code_label(h),
+            code_rev=str(getattr(h, "code_rev", "") or ""),
+            # the row's first write: a pin, a lock or a write of the text moves
+            # `updated_at`, never this
+            code_first_written=r.created_at.isoformat() if r.created_at else "",
         )
         for h in hits
         for r in [h.row]
@@ -516,6 +520,13 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
         return {}
 
 
+def _code_label(hit: Any) -> str:
+    """The hit's code state as a line's label: `<state>@<commit>` when a commit put it
+    there (`code_change.label`), the state alone otherwise; '' when it names no code."""
+    state, commit = _code_state_and_commit(hit)
+    return code_change.label(state, commit) or state
+
+
 def _code_state_and_commit(hit: Any) -> tuple[str, str]:
     """The hit's `code_state` and `code_changed_since`."""
     return (
@@ -572,9 +583,7 @@ async def _pack_decisions_from_hits(
         made = str(rec.get("made_at") or "")[:10]
         author = _hit_author(actors, input, h)
         line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
-        line += (f" {made}" if made else "") + code_change.note(
-            *_code_state_and_commit(h), getattr(h, "code_moved", None) or []
-        )
+        line += (f" {made}" if made else "") + code_change.hit_note(h)
         line += f" {scenario}"
         if outcome:
             line += f" → {rec['stage']}: {outcome}"
@@ -586,6 +595,8 @@ async def _pack_decisions_from_hits(
             line += f"; realized: {realized}{verdict}"
         lines.append(one_item(line))
         citations.append(f"decision:{ns}/{h.memory_key}")
+    if compared := code_change.compared(_code_state_and_commit(h)[0] for h in decision_hits):
+        lines.insert(0, compared)
     st.put(
         "decisions",
         "\n".join(lines),
@@ -691,7 +702,9 @@ async def _pack_memories(st: _PackState) -> None:
                     conflict=getattr(h, "status", "") == "conflicted",
                     author=_hit_author(actors, input, h),
                     derived_from=tuple(getattr(h, "derived_from", None) or ()),
-                    code_state=code_change.label(*_code_state_and_commit(h)),
+                    code_state=_code_label(h),
+                    code_rev=str(getattr(h, "code_rev", "") or ""),
+                    code_written=str(getattr(h, "created_at", "") or ""),
                 )
             )
         packed = pack_evidence(

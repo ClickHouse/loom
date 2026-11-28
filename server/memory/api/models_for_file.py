@@ -97,9 +97,11 @@ class _MemoryForFileHit(BaseModel):
     # The row's attestation (`memory.verify`), as on memory.get; an attested row whose value
     # was cut and has no stored hash reads stale.
     verification: VerificationState = "none"
-    # The worst state of the row's links to code in the file ('' when it only names the
-    # file in `files`): `fresh`, `moved`, `changed` (that code changed since the row was
-    # written), `unresolved` (renamed or removed and not followed) or `missing` (gone).
+    # The worst state of the row's links to code in the file, compared with the
+    # repository's indexed head: `fresh`, `moved`, `changed` (that code changed since the
+    # row was written), `unresolved` (renamed or removed and not followed) or `missing`
+    # (gone). '' when it holds no such link; `rendered` marks its line `unlinked` when
+    # its text names a file by its path.
     code_state: CodeState | Literal[""] = ""
     # The row's links to code in the file that are now at another path or symbol than it
     # was written against, each with where the code is and what the row's text still calls
@@ -117,7 +119,10 @@ class MemoryForFileOutput(BaseModel):
     # placed above it (two typed decisions keep their order).
     hits: list[_MemoryForFileHit]
     # Prompt-ready block: decisions and constraints whole, the other rows cut at token_budget.
-    # Empty when total == 0.
+    # A row that names code says on its line its code state, the commit its link was
+    # anchored at and the day it was first written, and one sentence after the header says
+    # what was compared: no code for an unlinked row, the repository as indexed for the
+    # others, never the caller's checkout. Empty when total == 0.
     rendered: str = ""
     # Size of `rendered` at 4 chars per token; 0 when it is empty.
     tokens_estimate: int = 0

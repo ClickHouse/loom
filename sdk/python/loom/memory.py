@@ -398,13 +398,19 @@ class MemorySearchHit:
     # the number to threshold on.
     similarity: float = 0.0
     namespace: str = ""
-    # The hit's worst link to code ('' when it names no indexed code): `fresh`,
-    # `moved`, `changed` (check the code before relying on it), `unresolved` (gone
-    # where it was, maybe renamed) or `missing`.
+    # The hit's worst link to code, compared with the repository's indexed head
+    # (not the caller's checkout): `fresh`, `moved`, `changed` (check the code
+    # before relying on it), `unresolved` (gone where it was, maybe renamed) or
+    # `missing`. `unlinked` for a hit that shows no link and whose text names a
+    # file by its path: the search has no comparison with code for it. '' when
+    # it names none.
     code_state: str = ""
     # The commit that put `code_state` at `changed`, `unresolved` or `missing`; ''
     # for any other state, and when no commit is known.
     code_changed_since: str = field(default="", kw_only=True)
+    # The commit the hit's worst link was anchored at: the repository's indexed
+    # head when the memory was linked or last re-anchored. '' with no link.
+    code_rev: str = field(default="", kw_only=True)
     # The hit's links whose code is now at another path or symbol than the memory
     # was written against: each names where it is (`path`, `symbol`, `start_line`,
     # `end_line`) and what the text still calls it (`was_path`, `was_symbol`).
@@ -630,6 +636,7 @@ def _parse_search_hit(r: dict[str, Any]) -> MemorySearchHit:
         namespace=str(r.get("namespace") or ""),
         code_state=str(r.get("code_state") or ""),
         code_changed_since=str(r.get("code_changed_since") or ""),
+        code_rev=str(r.get("code_rev") or ""),
         code_moved=list(r.get("code_moved") or []),
         rank_score=float(r.get("rank_score") or 0.0),
         below_threshold=bool(r.get("below_threshold") or False),

@@ -552,6 +552,11 @@ fn memory_search() {
     let encoded = serde_json::to_value(value).unwrap();
     assert!(encoded.is_object());
     assert_eq!(
+        encoded["code_note"],
+        serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
+        "memory.search:code_note"
+    );
+    assert_eq!(
         encoded["reader_block"],
         serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
         "memory.search:reader_block"
