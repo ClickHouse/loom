@@ -1273,6 +1273,7 @@ class DeltaStream:
         scip_pb2 = _ensure_scip_pb2()
         data = _read_index(index_path)
         self._skips = _Skips(stop_on_failed_document)
+        self._changed = changed
         self._run = _prepare(
             data, scip_pb2, source_root, exclude_generated, path_prefix, self._skips
         )
@@ -1309,9 +1310,11 @@ class DeltaStream:
     def tail(self) -> dict:
         out: dict = {
             "deleted_files": self._deleted,
-            # repository-relative, as the emitted paths are
+            # the window's files only, the server marks them; repository-relative
             "skipped_files": sorted(
-                f"{self._prefix}/{p}" if self._prefix else p for p in self._skips.paths
+                f"{self._prefix}/{p}" if self._prefix else p
+                for p in self._skips.paths
+                if self._changed is None or p in self._changed
             ),
             "stats": {
                 "factory_ctor_edges": self._run.factory_edges,

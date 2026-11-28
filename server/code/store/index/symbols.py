@@ -9,6 +9,7 @@ from typing import Any
 
 from clickhouse_connect.driver.binding import format_bind_value
 
+from server.code.domain.index.compiler_tiers import TIERS
 from server.code.domain.index.state import SCIP_STALE_PREFIX
 from server.code.domain.index.test_gate import TEST_PATH_PATTERN
 from server.code.store.index.base import CodeRepoBase
@@ -548,6 +549,8 @@ class SymbolsMixin(CodeRepoBase):
         if not paths:
             return set()
         asked = list(dict.fromkeys(paths))[:200]
+        # the asked paths' marks under every tier: point keys, never the whole prefix
+        marks = [f"{SCIP_STALE_PREFIX}{t.producer}:{p}" for t in TIERS for p in asked]
         rows = await self._ch.query_all(
             """
             WITH
@@ -567,10 +570,10 @@ class SymbolsMixin(CodeRepoBase):
                   SELECT arrayStringConcat(arraySlice(splitByChar(':', state_key), 3), ':')
                   FROM loom.code_index_state FINAL
                   WHERE org = {org:String} AND namespace = {ns:String}
-                    AND startsWith(state_key, {mark:String}) AND state_value != ''
+                    AND state_key IN {marks:Array(String)} AND state_value != ''
               )
             """,
-            {"org": org, "ns": ns, "paths": asked, "mark": SCIP_STALE_PREFIX},
+            {"org": org, "ns": ns, "paths": asked, "marks": marks},
         )
         # the query names the FRESH paths; every other asked path is stale
         return set(asked) - {str(r["path"]) for r in rows}

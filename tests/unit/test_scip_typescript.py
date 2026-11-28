@@ -199,7 +199,7 @@ async def test_only_call_edges_are_dropped_on_declaration_lines() -> None:
         path_prefixes = ("packages/",)
 
     with patch("server.code.domain.index.repos.repo_for_namespace", return_value=_Cfg()):
-        stats = await apply_delta(repo, "org", "ns", delta)
+        stats = await apply_delta(repo, "org", "ns", delta, tier="clang")
     assert stats.edges_dropped_declarations == 1 and stats.edges_new == 3
     inserted = [
         r
@@ -313,7 +313,7 @@ async def test_calls_inside_a_wrapped_component_are_not_declarations():
         path_prefixes = ("src/",)
 
     with patch("server.code.domain.index.repos.repo_for_namespace", return_value=_Cfg()):
-        stats = await apply_delta(repo, "org", "ns", delta)
+        stats = await apply_delta(repo, "org", "ns", delta, tier="clang")
     # line 808 is inside the function symbol: a call; line 47 sits in a
     # skeleton window and no function: a declaration
     assert stats.edges_new == 1 and stats.edges_dropped_declarations == 1

@@ -98,11 +98,14 @@ class _RoundRepo:
     async def set_state(self, org, ns, key, value, detail=""):
         self.state[key] = value
 
+    async def scip_stale_marks(self, org: str, ns: str, tier: str) -> set[str]:
+        return set()
+
 
 def test_a_delta_is_applied_in_rounds_with_one_read_and_one_insert_per_table() -> None:
     repo = _RoundRepo()
     with patch("server.code.domain.index.repos.repo_for_namespace", return_value=_Cfg()):
-        stats = asyncio.run(sd.apply_delta(repo, "o", "n", _delta(250)))  # type: ignore[arg-type]
+        stats = asyncio.run(sd.apply_delta(repo, "o", "n", _delta(250), tier="clang"))  # type: ignore[arg-type]
     # 250 files + 1 deletion = 251 → three rounds of ≤100; three reads each
     rounds = [r for r in repo.reads if r[0] == "symbols:scip"]
     assert [len(r[1]) for r in rounds] == [100, 100, 51]
@@ -139,6 +142,9 @@ class _PerFileRepo:
     async def set_state(self, *a: Any, **k: Any) -> None:
         return None
 
+    async def scip_stale_marks(self, org: str, ns: str, tier: str) -> set[str]:
+        return set()
+
 
 def test_a_repository_without_round_reads_keeps_the_per_file_path() -> None:
     from unittest.mock import AsyncMock
@@ -149,7 +155,7 @@ def test_a_repository_without_round_reads_keeps_the_per_file_path() -> None:
     assert sd._has_round_reads(CodeRepo.__new__(CodeRepo)) is True
     repo = _PerFileRepo()
     with patch("server.code.domain.index.repos.repo_for_namespace", return_value=_Cfg()):
-        stats = asyncio.run(sd.apply_delta(repo, "o", "n", _delta(3)))  # type: ignore[arg-type]
+        stats = asyncio.run(sd.apply_delta(repo, "o", "n", _delta(3), tier="clang"))  # type: ignore[arg-type]
     assert repo.calls == ["src/f0.cpp", "src/f1.cpp", "src/f2.cpp", "src/gone.cpp"]
     assert stats.files == 4 and stats.symbols_new == 3 and stats.edges_new == 3
     # per file: one insert per table, even when empty (the historical shape)

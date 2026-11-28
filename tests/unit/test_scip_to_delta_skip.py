@@ -141,3 +141,13 @@ def test_a_document_that_fails_to_convert_is_skipped_and_listed(
     conv.DeltaStream(index, None, [], "h" * 40, "", source_root="", full=True)
     assert first.tail()["skipped_files"] == ["src/bad.cpp"]
     assert first.tail()["stats"]["skipped_failed"] == 1
+
+
+def test_a_window_lists_only_its_own_failed_documents(tmp_path: Path) -> None:
+    """The index-wide passes meet a bad document the window does not hold: it is warned
+    about and counted, but not listed, so the server marks only what the window asked."""
+    conv = _converter()
+    index = str(_bad_utf8_index(tmp_path))
+    delta = conv.convert(index, {"src/a.cpp"}, [], "h" * 40, "b" * 40, source_root="")
+    assert [f["path"] for f in delta["files"]] == ["src/a.cpp"]
+    assert delta["skipped_files"] == [] and delta["stats"]["skipped_failed"] == 1

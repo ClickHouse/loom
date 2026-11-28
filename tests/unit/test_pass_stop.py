@@ -105,7 +105,7 @@ def test_a_delta_stops_between_rounds_when_the_lease_goes_stale(lease: _Lease) -
     async def run() -> None:
         pass_context.begin("code_scip_delta")
         try:
-            await sd.apply_delta(repo, "o", "n", _delta(250))  # type: ignore[arg-type]
+            await sd.apply_delta(repo, "o", "n", _delta(250), tier="clang")  # type: ignore[arg-type]
         finally:
             pass_context.clear()
 
@@ -134,7 +134,7 @@ def test_a_delta_stops_when_its_entry_lease_is_lost(monkeypatch: pytest.MonkeyPa
     async def run() -> None:
         token = el._current.set(lease)  # type: ignore[arg-type]
         try:
-            await sd.apply_delta(repo, "o", "n", _delta(250))  # type: ignore[arg-type]
+            await sd.apply_delta(repo, "o", "n", _delta(250), tier="clang")  # type: ignore[arg-type]
         finally:
             el._current.reset(token)
 

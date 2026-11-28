@@ -231,11 +231,11 @@ def _has_round_reads(repo: Any) -> bool:
 
 
 async def apply_delta(
-    repo: CodeRepo, org: str, ns: str, delta: _Delta, *, tier: str = ""
+    repo: CodeRepo, org: str, ns: str, delta: _Delta, *, tier: str
 ) -> ScipApplyStats:
     """Apply `delta` a round of files at a time, each round read off the event loop;
     its deleted paths go last. `tier` is the compiler tier the delta comes from: its
-    skipped files are marked stale under it (`_mark_stale`); without one, nothing is."""
+    skipped files are marked stale under it (`_mark_stale`)."""
     stats = ScipApplyStats()
     prefixes = _indexable_prefixes(org, ns)
     refused = _path_refusal(org, ns)
@@ -306,7 +306,7 @@ async def _mark_stale(
     `commit`, and the mark of each file this delta applied or deleted emptied. Another
     tier's marks are never read or written, so tiers applying side by side keep both."""
     refreshed -= skipped
-    if not tier or not (skipped or refreshed):
+    if not (skipped or refreshed):
         return
     prefix = f"{SCIP_STALE_PREFIX}{tier}:"
     marked = await repo.scip_stale_marks(org, ns, tier) if refreshed else set()
