@@ -9,7 +9,6 @@ interface Props {
   mode?: "line" | "bars";
   color?: "accent" | "info";
   axisMaximum?: number;
-  fitObservedRange?: boolean;
   axisStart?: string;
   axisEnd?: string;
   compact?: boolean;
@@ -25,7 +24,6 @@ const {
   mode = "bars",
   color = "accent",
   axisMaximum = 0,
-  fitObservedRange = false,
   axisStart,
   axisEnd,
   compact = false,
@@ -58,14 +56,8 @@ const rawMaximum = Math.max(0, axisMaximum, ...reported.map(({ value }) => value
 const rawMinimum = Math.min(0, ...reported.map(({ value }) => value));
 const signed = rawMinimum < 0;
 const upper = signed && rawMaximum > 0 ? scaleLimit(Math.max(rawMaximum, -rawMinimum)) : scaleLimit(rawMaximum);
-let minimum = signed ? (rawMaximum > 0 ? -upper : -scaleLimit(-rawMinimum)) : 0;
-let maximum = !signed && upper === 0 ? 1 : upper;
-if (fitObservedRange && mode === "line" && reported.length > 0 && !signed) {
-  const lower = Math.min(...reported.map(({ value }) => value));
-  const step = scaleLimit(Math.max(1, (rawMaximum - lower) / 2));
-  minimum = Math.max(0, Math.floor((lower - step / 3) / step) * step);
-  maximum = Math.max(minimum + 2 * step, Math.ceil(rawMaximum / step) * step);
-}
+const minimum = signed ? (rawMaximum > 0 ? -upper : -scaleLimit(-rawMinimum)) : 0;
+const maximum = !signed && upper === 0 ? 1 : upper;
 const yPosition = (value: number) => 100 - ((value - minimum) * 100) / (maximum - minimum);
 const zero = yPosition(0);
 

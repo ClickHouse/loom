@@ -14,8 +14,8 @@ import SiteFrame from "../components/SiteFrame.astro";
 >
   <Title type="h1" size="xl" family="brand">Telemetry and privacy</Title>
   <Text color="muted" className="lead">
-    Self-hosted Loom reports aggregate usage so we can see which features people use
-    and how installations adopt them.
+    Self-hosted Loom reports aggregate usage by default so we can see which features
+    people use and how installations adopt them.
   </Text>
   <div class="telemetry-grid">
     <div class="details">
@@ -25,8 +25,10 @@ import SiteFrame from "../components/SiteFrame.astro";
         Every completed 12-hour window can produce one report with an installation identifier,
         software versions, and counts of requests, feature usage, namespaces, agents, and sessions.
         The second report of the day includes counts of active users and serving processes.
+        The adoption overview shows the latest daily serving process count as active instances.
         An active user is an authenticated identity, including a service identity, that made
         a successful request. Serving processes are the server processes that handled successful requests.
+        Loom also sends aggregate activity for eligible contact domains every five minutes.
         Reports contain no customer content, account identifiers, full email addresses, or credentials.
       </Text>
     </section>
@@ -34,23 +36,16 @@ import SiteFrame from "../components/SiteFrame.astro";
       <Title type="h2" size="lg">Where it goes</Title>
       <Text color="muted">
         The server sends reports over HTTPS to <code>loom.clickhouse.com/api/v1/adoption</code>.
-        Reports are retained for 400 days.
+        Completed reports are retained for 400 days. Domain snapshots are retained for two days.
       </Text>
-      <Text color="muted">The <Link href="/adoption#reported-contact-domains">public adoption page</Link> lists namespace contact domains with successful requests in the selected reporting period.</Text>
+      <Text color="muted">The <Link href="/adoption#reported-contact-domains">public adoption page</Link> lists eligible namespace contact domains and their aggregate activity, including successful requests, active users, active installations, and serving processes.</Text>
     </section>
     <Link className="text-link" href="/docs/features/observability/telemetry#self-hosted-adoption">Read the telemetry field reference <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
     </div>
-    <Panel orientation="vertical" alignItems="start" gap="none" hasBorder role="region" aria-labelledby="sharing-heading" className="site-panel sharing">
-      <Title type="h2" size="lg" id="sharing-heading">Control sharing</Title>
-      <Text color="muted">Set these options on every server and worker replica.</Text>
-      <Title type="h3" size="md">Disable adoption reports</Title>
+    <Panel orientation="vertical" alignItems="start" gap="none" hasBorder role="region" aria-labelledby="sharing-heading" className="site-panel">
+      <Title type="h2" size="lg" id="sharing-heading">Disable adoption reports</Title>
+      <Text color="muted">Set this on every server and worker replica to stop adoption reports.</Text>
       <pre><code>LOOM_ADOPTION_TELEMETRY_ENABLED=false</code></pre>
-      <Title type="h3" size="md">Share counts only</Title>
-      <Text color="muted">Reports include namespace contact domains and aggregate counts by default. Use this setting to omit domains.</Text>
-      <pre><code>LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false</code></pre>
-      <Title type="h3" size="md">Share activity by domain</Title>
-      <Text color="muted">Enable this setting alongside domain sharing to contribute public domain activity. The page can show successful requests, active installations, active users, serving processes, the latest reported Loom version, and first retained and latest activity dates. This setting is off by default.</Text>
-      <pre><code>LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY=true</code></pre>
     </Panel>
   </div>
 </SiteFrame>
@@ -61,6 +56,5 @@ import SiteFrame from "../components/SiteFrame.astro";
   section p { margin-top: 0.6rem; }
   code { overflow-wrap: anywhere; }
   pre { background: var(--page); padding: 0.75rem 0.9rem; white-space: pre-wrap; border-radius: var(--radius); }
-  .sharing h3 { margin-top: 1.2rem; }
   @media (max-width: 54rem) { .telemetry-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

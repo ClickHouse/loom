@@ -774,6 +774,13 @@ def effective_hyde_fallback_threshold(
     return c.hyde_fallback_threshold if c is not None else scalar_fallback
 
 
+def effective_rerank_skip_above(
+    scalar_fallback: float, calibration: CalibrationResult | None = None
+) -> float:
+    c = calibration if calibration is not None else _calibration
+    return c.rerank_skip_above if c is not None else scalar_fallback
+
+
 def effective_abstain_threshold(
     scalar_fallback: float, calibration: CalibrationResult | None = None
 ) -> float:

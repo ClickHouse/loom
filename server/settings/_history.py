@@ -141,16 +141,6 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
     ),
     DefaultChange(
         version="1.3.1",
-        name="adoption_telemetry_share_domains",
-        old=False,
-        new=True,
-        why=(
-            "Include namespace contact domains and aggregate counts in adoption reports. "
-            "Deployments can disable domain sharing while continuing to send usage totals."
-        ),
-    ),
-    DefaultChange(
-        version="1.3.1",
         name="code_ingest_enabled",
         old=False,
         new=True,
@@ -159,6 +149,32 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "setting: a deployment that never set the variable starts polling its "
             "repositories and embedding what changed. A deployment that indexes only "
             "when CI calls `code.refresh` sets it to false."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_search_medium_risk_from",
+        old=0.4,
+        new=0.35,
+        why=(
+            "code.search's `retrieval_confidence` is computed on a new scale: the vector "
+            "leg's best cosine read between the embedder's calibrated abstain threshold "
+            "and its cosine of a confident hit. On it about half of the measured prompts "
+            "sent to another repository's index scored under 0.35. A deployment that set "
+            "the variable for the old scale should unset it."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_search_low_risk_from",
+        old=0.55,
+        new=0.7,
+        why=(
+            "On the new `retrieval_confidence` scale low risk starts close to the cosine "
+            "of a confident hit. A prompt about other code usually scores lower; about "
+            "one in five sent to another repository's index still read low. A deployment "
+            "that set the variable for the old scale should unset it, and one that set "
+            "the plugins' `LOOM_PROMPT_PACK_MIN_CONF` should pick a value on the new scale."
         ),
     ),
 )

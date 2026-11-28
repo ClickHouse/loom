@@ -1,4 +1,11 @@
 import { daysBefore } from "./adoption-view.mjs";
+import {
+  readContainerPulls,
+  readGitHubRepository,
+  readReleaseDownloads,
+  readSource,
+  readStarHistory,
+} from "./oss-sources.mjs";
 
 const datasets = ["totals", "versions", "retention", "activity", "lifecycle", "oss"];
 const grains = ["day", "week", "month"];
@@ -116,19 +123,6 @@ function decodeFirstObservation(encoded) {
   return rows?.[0] ?? null;
 }
 
-function decodeVersionTrends(encoded) {
-  return (
-    decodeRows(encoded, ({ grain, period, period_end, product, version, active_installations }) =>
-      isPeriod({ grain, period, period_end }) &&
-      ["loom", "clickhouse"].includes(product) &&
-      (isVersion(version) || version === smokeVersion) &&
-      isCount(active_installations)
-        ? { grain, period, period_end, product, version, active_installations }
-        : null,
-    )?.filter(({ version }) => version !== smokeVersion) ?? null
-  );
-}
-
 function decodeCompanyTrends(encoded) {
   return decodeRows(encoded, ({ grain, period, period_end, companies, days_reported, complete_days_reported }) =>
     isPeriod({ grain, period, period_end }) &&
@@ -146,20 +140,6 @@ function decodeCompanyTrends(encoded) {
         }
       : null,
   );
-}
-
-async function readSource(url, options, decode = (response) => response.json()) {
-  try {
-    const response = await fetch(url, {
-      ...options,
-      redirect: "error",
-      signal: options?.signal ?? AbortSignal.timeout(5_000),
-    });
-    if (response.ok) return await decode(response);
-  } catch {
-    // A network or response error leaves the source unavailable for this refresh.
-  }
-  return null;
 }
 
 async function loadWarehouse(env) {
@@ -203,7 +183,6 @@ async function loadWarehouse(env) {
         domainDirectories,
         domainAccounts: decodeDomainAccounts(row.domain_accounts, domainDirectories),
         firstObservation: decodeFirstObservation(row.first_observation),
-        versionTrends: decodeVersionTrends(row.version_trends),
         companyTrends: decodeCompanyTrends(row.company_trends),
         growth,
         growthCoverage,
@@ -217,16 +196,6 @@ async function loadWarehouse(env) {
   return {};
 }
 
-async function containerPulls() {
-  return await readSource("https://github.com/ClickHouse/loom/pkgs/container/loom", undefined, async (response) => {
-    // GitHub displays a compact count with the exact total in the heading title.
-    const html = await response.text();
-    const total = html.match(/<span[^>]*>\s*Total downloads\s*<\/span>\s*<h3\s+title="([0-9]+)"/)?.[1];
-    const count = Number(total);
-    return Number.isSafeInteger(count) ? count : null;
-  });
-}
-
 const numberOrNull = (value) => (Number.isFinite(value) ? value : null);
 
 function readRegistryMetrics(today) {
@@ -234,24 +203,54 @@ function readRegistryMetrics(today) {
   const historyStart = daysBefore(today, 730);
   const yesterday = daysBefore(today, 1);
   return Promise.all([
-    readSource("https://api.github.com/repos/ClickHouse/loom"),
-    readSource("https://api.github.com/repos/ClickHouse/loom/releases?per_page=100"),
+    readGitHubRepository(),
+    readReleaseDownloads(),
     readSource("https://pypistats.org/api/packages/clickhouse-loom/overall?mirrors=false"),
     readSource(`https://api.npmjs.org/downloads/range/${firstDay}:${yesterday}/@clickhouse/loom`),
     readSource(`https://api.npmjs.org/downloads/range/${historyStart}:${daysBefore(firstDay, 1)}/@clickhouse/loom`),
     readSource("https://crates.io/api/v1/crates/clickhouse-loom/downloads", {
       headers: { "User-Agent": "ClickHouse Loom Adoption (https://github.com/ClickHouse/loom)" },
     }),
-    containerPulls(),
+    readContainerPulls(),
+    readStarHistory(),
   ]);
+}
+
+const sundayOf = (day) => daysBefore(day, new Date(day).getUTCDay());
+
+function reconstructStarHistory(weeks, repository, today, historyStart) {
+  const { created_at, stargazers_count } = repository ?? {};
+  const created = typeof created_at === "string" ? created_at.slice(0, 10) : null;
+  if (!weeks?.length || !isDay(created) || !isCount(stargazers_count)) return [];
+
+  let expected = sundayOf(today);
+  let remaining = stargazers_count;
+  for (const { day, total } of weeks) {
+    if (day !== expected) return [];
+    remaining -= total;
+    expected = daysBefore(expected, 7);
+  }
+  if (remaining !== 0 || weeks.at(-1).day !== sundayOf(created)) return [];
+
+  let value = 0;
+  const history = [];
+  for (const { day, days } of weeks.toReversed()) {
+    for (const [index, count] of days.entries()) {
+      const date = daysBefore(day, -index);
+      value += count;
+      if (date >= created && date >= historyStart && date < today) {
+        history.push({ day: date, value, reconstructed: true });
+      }
+    }
+  }
+  return history;
 }
 
 async function loadOpenSource(warehouse, today, readRegistries) {
   const historyStart = daysBefore(today, 730);
-  const [aggregates, [repository, releases, python, npm, olderNpm, rust, pulls]] = await Promise.all([
-    warehouse,
-    readRegistries(today),
-  ]);
+  const [aggregates, [repository, releaseDownloads, python, npm, olderNpm, rust, pulls, starWeeks]] = await Promise.all(
+    [warehouse, readRegistries(today)],
+  );
   const oss = aggregates.oss ?? [];
   const series = (source, metric) => oss.filter((row) => row.source === source && row.metric === metric);
   const fetchDays = (rows) =>
@@ -277,10 +276,6 @@ async function loadOpenSource(warehouse, today, readRegistries) {
       }
     }
   }
-  const releaseDownloads =
-    Array.isArray(releases) && releases.length < 100
-      ? releases.flatMap(({ assets }) => assets ?? []).reduce((total, asset) => total + asset.download_count, 0)
-      : null;
   const counter = (source, metric, current) => {
     const history = series(source, metric)
       .map(({ day, value }) => ({ day, value }))
@@ -308,13 +303,19 @@ async function loadOpenSource(warehouse, today, readRegistries) {
         .map(([day, value]) => ({ day, value })),
     };
   };
+  const stars = counter("github", "stars", repository?.stargazers_count);
+  const firstSnapshot = stars.history[0]?.day ?? today;
+  const reconstructedStars = reconstructStarHistory(starWeeks, repository, today, historyStart).filter(
+    ({ day }) => day < firstSnapshot,
+  );
 
   return [
     {
       id: "stars",
       label: "GitHub stars",
       source: "GitHub",
-      ...counter("github", "stars", repository?.stargazers_count),
+      ...stars,
+      history: [...stars.history, ...reconstructedStars].sort((left, right) => left.day.localeCompare(right.day)),
     },
     { id: "forks", label: "GitHub forks", source: "GitHub", ...counter("github", "forks", repository?.forks_count) },
     {
@@ -371,7 +372,6 @@ export function createAdoptionReader(env, now, readRegistries = readRegistryMetr
       domainDirectories,
       domainAccounts,
       firstObservation,
-      versionTrends,
       companyTrends,
       growth,
       growthCoverage,
@@ -392,7 +392,6 @@ export function createAdoptionReader(env, now, readRegistries = readRegistryMetr
         domainDirectories: domainDirectories ?? null,
         domainAccounts: domainAccounts ?? null,
         firstObservation: firstObservation ?? null,
-        versionTrends: versionTrends ?? null,
         companyTrends: companyTrends ?? null,
       },
       openSource: [],

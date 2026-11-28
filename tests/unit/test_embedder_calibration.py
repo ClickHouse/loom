@@ -234,6 +234,9 @@ async def test_code_calibrate_persists_query_document_positive_gates(monkeypatch
     assert row["abstain_threshold"] == pytest.approx(0.30)
     assert result.noise_floor == pytest.approx(row["noise_floor"])
     assert result.abstain_threshold == pytest.approx(row["abstain_threshold"])
+    # the confident-hit cosine code.search reads its confidence against
+    assert result.rerank_skip_above == pytest.approx(row["rerank_skip_above"])
+    assert result.rerank_skip_above == pytest.approx(0.65)
     assert (result.positives, result.distractors) == (5, 5)
 
 

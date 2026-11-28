@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 const maxBodyBytes = 1_048_576;
 const halfDayMs = 12 * 60 * 60 * 1_000;
 const maxAgeMs = 14 * halfDayMs;
+const snapshotMaxAgeMs = 2 * 60 * 60 * 1_000;
+const snapshotTimePattern = /^\d{4}-\d{2}-\d{2}T\d{2}:[0-5][05]:00\+00:00$/;
 const installationPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const timestampPattern = /^\d{4}-\d{2}-\d{2}T(?:00|12):00:00\+00:00$/;
 const versionPattern = /^[0-9][0-9A-Za-z.+-]{0,63}$/;
@@ -56,6 +58,48 @@ function windowTime(value) {
   return canonical === value ? timestamp : NaN;
 }
 
+function isDomainActivity(row) {
+  return (
+    isObject(row) &&
+    Object.keys(row).length === 4 &&
+    matches(domainPattern, row.domain) &&
+    row.domain.length <= 253 &&
+    isCount(row.active_accounts) &&
+    isCount(row.successful_requests) &&
+    row.successful_requests > 0 &&
+    row.active_accounts <= row.successful_requests &&
+    (row.serving_processes === null ||
+      (isCount(row.serving_processes) && row.serving_processes <= row.successful_requests))
+  );
+}
+
+function isDomainSnapshot(report, now) {
+  if (
+    Object.keys(report).length !== 7 ||
+    !matches(installationPattern, report.installation_id) ||
+    !matches(versionPattern, report.loom_version) ||
+    !matches(versionPattern, report.clickhouse_version) ||
+    !matches(snapshotTimePattern, report.observed_at)
+  )
+    return false;
+  const end = Date.parse(report.observed_at);
+  if (
+    !Number.isFinite(end) ||
+    end > now ||
+    end < now - snapshotMaxAgeMs ||
+    new Date(end).toISOString().replace(".000Z", "+00:00") !== report.observed_at ||
+    report.day !== report.observed_at.slice(0, 10)
+  )
+    return false;
+  const rows = report.domain_activity;
+  return (
+    Array.isArray(rows) &&
+    rows.length <= 2000 &&
+    rows.every(isDomainActivity) &&
+    new Set(rows.map(({ domain }) => domain)).size === rows.length
+  );
+}
+
 function hasValidDailyActivity(report, domains) {
   const { active_accounts: accounts, serving_processes: processes, domain_activity: rows = [] } = report;
   if (report.schema_version < 3) {
@@ -74,17 +118,10 @@ function hasValidDailyActivity(report, domains) {
   return (
     rows.every(
       (row) =>
-        isObject(row) &&
-        Object.keys(row).length === 4 &&
+        isDomainActivity(row) &&
         row.successful_requests === domains.get(row.domain) &&
-        isCount(row.active_accounts) &&
         row.active_accounts <= accounts &&
-        isCount(row.successful_requests) &&
-        row.active_accounts <= row.successful_requests &&
-        (row.serving_processes === null ||
-          (isCount(row.serving_processes) &&
-            row.serving_processes <= (processes ?? 0) &&
-            row.serving_processes <= row.successful_requests)),
+        (row.serving_processes === null || row.serving_processes <= (processes ?? 0)),
     ) && new Set(rows.map(({ domain }) => domain)).size === rows.length
   );
 }
@@ -165,13 +202,17 @@ async function storeReport(report, env, fetcher) {
   if (!address || !user || !password) return false;
   const url = new URL(address);
   if (url.protocol !== "https:" || url.username || url.password) return false;
-  url.searchParams.set("query", "INSERT INTO loom_product_analytics.adoption_reports FORMAT JSONEachRow");
+  const snapshot = report.schema_version === 4;
+  const table = snapshot ? "adoption_domain_snapshots" : "adoption_reports";
+  url.searchParams.set("query", `INSERT INTO loom_product_analytics.${table} FORMAT JSONEachRow`);
   url.searchParams.set("date_time_input_format", "best_effort");
   url.searchParams.set("async_insert", "0");
   url.searchParams.set("wait_end_of_query", "1");
   url.searchParams.set(
     "insert_deduplication_token",
-    createHash("sha256").update(`${report.installation_id}:${report.window_start}`).digest("hex"),
+    createHash("sha256")
+      .update(`${report.installation_id}:${snapshot ? "snapshot:" + report.observed_at : report.window_start}`)
+      .digest("hex"),
   );
   const response = await fetcher(url, {
     method: "POST",
@@ -206,12 +247,16 @@ export async function handleAdoption(request, { env = process.env, fetcher = fet
   } catch {
     return reply({ error: "invalid_json" }, 400);
   }
-  if (!isReport(report, now)) return reply({ error: "invalid_report" }, 400);
+  const snapshot = report?.schema_version === 4;
+  if (!(snapshot ? isDomainSnapshot(report, now) : isReport(report, now))) {
+    return reply({ error: "invalid_report" }, 400);
+  }
 
   try {
     if (await storeReport(report, env, fetcher)) {
-      const { installation_id, window_start } = report;
-      return reply({ stored: true, installation_id, window_start }, 200);
+      const { installation_id } = report;
+      const timestamp = snapshot ? { observed_at: report.observed_at } : { window_start: report.window_start };
+      return reply({ stored: true, installation_id, ...timestamp }, 200);
     }
   } catch {
     // Store errors can contain credentials or report data.

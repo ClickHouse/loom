@@ -53,6 +53,21 @@ ALTER TABLE loom_product_analytics.adoption_reports
 CREATE OR REPLACE VIEW loom_product_analytics.loom_adoption_windows AS
 SELECT * EXCEPT (received_at) FROM loom_product_analytics.adoption_reports FINAL;
 
+CREATE TABLE IF NOT EXISTS loom_product_analytics.adoption_domain_snapshots
+(
+    schema_version UInt8,
+    installation_id String,
+    day Date,
+    observed_at DateTime('UTC'),
+    loom_version LowCardinality(String),
+    clickhouse_version LowCardinality(String),
+    domain_activity Array(Tuple(domain String, active_accounts UInt64, successful_requests UInt64, serving_processes Nullable(UInt64)))
+)
+ENGINE = ReplacingMergeTree(observed_at)
+ORDER BY (day, installation_id)
+TTL observed_at + INTERVAL 2 DAY
+SETTINGS non_replicated_deduplication_window = 10000;
+
 CREATE TABLE IF NOT EXISTS loom_product_analytics.adoption_enrollments
 (
     installation_id String,
@@ -183,6 +198,41 @@ HAVING successful_requests > 0
 ORDER BY successful_requests DESC, domain
 LIMIT 50;
 
+-- Keep partial counts only while the domain is disclosed and final counts are unavailable.
+CREATE OR REPLACE VIEW loom_product_analytics.loom_adoption_live_domains AS
+SELECT snapshot.day, snapshot.installation_id,
+       if(completed.present = 0, snapshot.loom_version, completed.loom_version) AS loom_version,
+       if(completed.present = 0, snapshot.observed_at, completed.window_end) AS reported_at,
+       arrayMap(item -> CAST((
+           item.domain, item.active_accounts,
+           if(completed.present = 0, item.successful_requests, completed.requests[item.domain]),
+           item.serving_processes
+       ), 'Tuple(domain String, active_accounts UInt64, successful_requests UInt64, serving_processes Nullable(UInt64))'),
+       arrayFilter(item -> completed.present = 0 OR (
+           mapContains(completed.requests, item.domain) AND NOT has(completed.measured, item.domain)
+       ), snapshot.domain_activity)) AS domain_activity
+FROM (
+    SELECT day, installation_id, loom_version, observed_at, domain_activity
+    FROM loom_product_analytics.adoption_domain_snapshots FINAL
+    WHERE day BETWEEN toDate(now('UTC')) - 1 AND toDate(now('UTC'))
+        AND observed_at BETWEEN now('UTC') - INTERVAL 2 HOUR AND now('UTC')
+        AND loom_version != '0.0.0-smoke'
+        AND clickhouse_version != '0.0.0-smoke'
+        AND installation_id NOT IN (
+            SELECT installation_id FROM loom_product_analytics.loom_adoption_enrollments WHERE is_internal = 1
+        )
+) AS snapshot
+LEFT JOIN (
+    SELECT day, installation_id, loom_version, window_end, 1 AS present,
+           mapFromArrays(arrayMap(item -> item.domain, user_domains),
+                         arrayMap(item -> item.successful_requests, user_domains)) AS requests,
+           arrayMap(item -> item.domain, domain_activity) AS measured
+    FROM loom_product_analytics.loom_external_adoption_windows
+    WHERE schema_version = 3 AND window_end = toDateTime(day + 1, 'UTC')
+        AND day >= toDate(now('UTC')) - 1
+) AS completed USING (day, installation_id)
+SETTINGS join_use_nulls = 0;
+
 -- Only reports covered by the public domain-sharing notice supply names.
 CREATE OR REPLACE VIEW loom_product_analytics.loom_adoption_disclosed_domains AS
 WITH toDate(now('UTC')) AS today_utc
@@ -190,8 +240,19 @@ SELECT
     domain,
     sumIf(disclosed_requests, day >= today_utc - 30) AS successful_requests_30d,
     sum(disclosed_requests) AS successful_requests_90d
-FROM loom_product_analytics.loom_adoption_domain_daily
-WHERE day >= today_utc - 90 AND day <= today_utc AND disclosed_requests > 0
+FROM (
+    SELECT day, installation_id, domain, max(attributed_requests) AS disclosed_requests
+    FROM (
+        SELECT day, installation_id, domain, disclosed_requests AS attributed_requests
+        FROM loom_product_analytics.loom_adoption_domain_daily
+        WHERE day BETWEEN today_utc - 90 AND today_utc AND disclosed_requests > 0
+        UNION ALL
+        SELECT day, installation_id, counts.domain, counts.successful_requests
+        FROM loom_product_analytics.loom_adoption_live_domains
+        ARRAY JOIN domain_activity AS counts
+    )
+    GROUP BY day, installation_id, domain
+)
 GROUP BY domain;
 
 CREATE OR REPLACE VIEW loom_product_analytics.public_adoption_domains
@@ -212,7 +273,7 @@ FROM (
 )
 ARRAY JOIN [(30, domains_30d), (90, domains_90d)] AS directory;
 
--- Only explicit per-domain activity reports contribute to these complete-day counts.
+-- Publish daily counts from complete reports and the latest snapshots.
 CREATE OR REPLACE VIEW loom_product_analytics.public_adoption_domain_accounts
 SQL SECURITY DEFINER AS
 WITH
@@ -237,13 +298,18 @@ FROM (
         sumOrNull(counts.serving_processes) AS serving_processes,
         sum(counts.successful_requests) AS successful_requests,
         groupUniqArrayIf(installation_id, counts.successful_requests > 0) AS active_installation_ids,
-        argMaxOrNullIf(loom_version, tuple(window_start, installation_id), counts.successful_requests > 0) AS loom_version
-    FROM loom_product_analytics.loom_external_adoption_windows
+        argMaxOrNullIf(loom_version, tuple(reported_at, installation_id), counts.successful_requests > 0) AS loom_version
+    FROM (
+        SELECT day, installation_id, loom_version, window_end AS reported_at,
+               arrayFilter(count -> has(arrayMap(item -> item.domain, user_domains), count.domain),
+                           domain_activity) AS domain_activity
+        FROM loom_product_analytics.loom_external_adoption_windows
+        WHERE schema_version = 3 AND day < today_utc AND window_end = toDateTime(day + 1, 'UTC')
+        UNION ALL
+        SELECT day, installation_id, loom_version, reported_at, domain_activity
+        FROM loom_product_analytics.loom_adoption_live_domains
+    )
     ARRAY JOIN domain_activity AS counts
-    WHERE schema_version = 3
-        AND day < today_utc
-        AND window_end = toDateTime(day + 1, 'UTC')
-        AND has(arrayMap(item -> item.domain, user_domains), counts.domain)
     GROUP BY domain, day
 ) AS daily
 INNER JOIN loom_product_analytics.loom_adoption_disclosed_domains AS disclosed USING (domain)
@@ -330,29 +396,6 @@ SELECT day, loom_version, clickhouse_version
 FROM loom_product_analytics.loom_external_adoption_windows
 ORDER BY window_start, installation_id
 LIMIT 1;
-
-CREATE OR REPLACE VIEW loom_product_analytics.public_adoption_version_trends
-SQL SECURITY DEFINER AS
-SELECT
-    grain,
-    period,
-    multiIf(grain = 'day', addDays(period, 1), grain = 'week', addWeeks(period, 1), addMonths(period, 1)) AS period_end,
-    reported_version.1 AS product,
-    reported_version.2 AS version,
-    count() AS active_installations
-FROM (
-    SELECT
-        grain,
-        multiIf(grain = 'day', day, grain = 'week', toStartOfWeek(day, 1), toStartOfMonth(day)) AS period,
-        installation_id,
-        argMax(tuple(loom_version, clickhouse_version), day) AS versions
-    FROM loom_product_analytics.loom_external_adoption_daily
-    ARRAY JOIN ['day', 'week', 'month'] AS grain
-    WHERE day >= toDate(now('UTC')) - 365 AND day < toDate(now('UTC')) AND successful_requests > 0
-    GROUP BY grain, period, installation_id
-)
-ARRAY JOIN [('loom', versions.1), ('clickhouse', versions.2)] AS reported_version
-GROUP BY grain, period, product, version;
 
 CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_retention
 SQL SECURITY DEFINER AS

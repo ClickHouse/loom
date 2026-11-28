@@ -11672,7 +11672,7 @@ fn code_calibrate() {
     let value: clickhouse_loom::CodeCalibrateInput = serde_json::from_str("{}").unwrap();
     let encoded = serde_json::to_value(value).unwrap();
     assert!(encoded.is_object());
-    let value: clickhouse_loom::CodeCalibrateOutput = serde_json::from_str("{\"noise_floor\":1.0,\"abstain_threshold\":1.0,\"embedder_model\":\"sample\",\"positives\":1,\"distractors\":1}").unwrap();
+    let value: clickhouse_loom::CodeCalibrateOutput = serde_json::from_str("{\"noise_floor\":1.0,\"abstain_threshold\":1.0,\"rerank_skip_above\":1.0,\"embedder_model\":\"sample\",\"positives\":1,\"distractors\":1}").unwrap();
     let encoded = serde_json::to_value(value).unwrap();
     assert!(encoded.is_object());
 }
