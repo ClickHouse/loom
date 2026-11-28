@@ -109,7 +109,8 @@ _PROSE_NAME_RE = re.compile(
 )
 _CODE_EXT_RE = re.compile(r"\.(?:py|pyi|h|hpp|c|cc|cpp|cxx|go|rs|ts|tsx|js|jsx|java|kt|sql|sh)$")
 
-# Query tokens that mean the asker wants documentation; the prose penalty skips them.
+# Query tokens that mean the asker wants documentation; the prose penalty skips them
+# (see asks_for_docs).
 _DOC_INTENT_TOKENS = frozenset(
     {
         "doc",
@@ -199,6 +200,35 @@ _TEST_INTENT_TOKENS = frozenset(
 )
 
 
+# A question with more lexemes than `code_search_query_max_tokens` is an issue body. A
+# pasted report holds a test or a documentation word for where the fault showed (an
+# application called `test1`, a traceback path, `pytest: 7.1` in a version listing, a
+# `docs.` host, "the following test fails"), so only its opening can ask for tests or
+# documentation: the title of a report, or the request a long prompt starts with. A
+# title fits in 16 lexemes.
+_INTENT_HEAD_LEXEMES = 16
+
+
+def _intent_lexemes(query: str) -> frozenset[str]:
+    """The lexemes that can say what `query` asks for: all of them, or the first
+    `_INTENT_HEAD_LEXEMES` when the question is long enough to be an issue body."""
+    tokens = code_tokens(query)
+    cap = int(settings.code_search_query_max_tokens)
+    if 0 < cap < len(tokens):
+        tokens = tokens[:_INTENT_HEAD_LEXEMES]
+    return frozenset(tokens)
+
+
+def asks_for_tests(query: str) -> bool:
+    """True when `query` asks for test or CI code (see `_TEST_INTENT_TOKENS`)."""
+    return bool(_intent_lexemes(query) & _TEST_INTENT_TOKENS)
+
+
+def asks_for_docs(query: str) -> bool:
+    """True when `query` asks for documentation (see `_DOC_INTENT_TOKENS`)."""
+    return bool(_intent_lexemes(query) & _DOC_INTENT_TOKENS)
+
+
 def _apply_fusion_signals(
     ranked: list[CodeUnit],
     query: str,
@@ -216,8 +246,8 @@ def _apply_fusion_signals(
     if not ranked:
         return ranked
     q_tokens = frozenset(code_tokens(query))
-    test_intent = bool(q_tokens & _TEST_INTENT_TOKENS)
-    if q_tokens & _DOC_INTENT_TOKENS:
+    test_intent = asks_for_tests(query)
+    if asks_for_docs(query):
         prose_penalty = 1.0
     keywords = frozenset(t for t in q_tokens if len(t) > 2 and t not in _QUERY_STOPWORDS)
     embedded = embedded_idents(query)
@@ -287,7 +317,7 @@ def _apply_fusion_signals(
 #   - the query names a file or a path ("src/IO/WriteBufferFromS3.cpp",
 #     "parseQuery.cpp:120"): the asker wants that file's chunks whatever
 #     their kind — no prior;
-#   - test intent (see _TEST_INTENT_TOKENS): test bodies are mostly `other`
+#   - test intent (see asks_for_tests): test bodies are mostly `other`
 #     chunks (SQL, shell, pytest functions the C++ chunker never sees as
 #     functions) — no prior, as with the path-noise penalty;
 #   - structural phrasing ("the class that ...", "struct holding ...",
@@ -385,8 +415,7 @@ def _apply_kind_prior(
         return ranked, f"kind_prior={label}"
     if query_names_file(query):
         return ranked, f"kind_prior={label}:skip_file"
-    q_tokens = frozenset(code_tokens(query))
-    if q_tokens & _TEST_INTENT_TOKENS:
+    if asks_for_tests(query):
         return ranked, f"kind_prior={label}:skip_test_intent"
     named = structural_kind(query)
     out: list[CodeUnit] = []

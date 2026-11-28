@@ -669,6 +669,16 @@ questions about a named identifier. An unmatched identifier does not disable
 saturation. Per-symbol deduplication still removes repeated chunks of one definition,
 and continuation pages retain the final served order.
 
+A question asks for tests when it holds a test word (`test`, `pytest`, `fixture`,
+`ci`), and for documentation when it holds a documentation word (`docs`, `changelog`,
+`tutorial`). Test intent turns off the test-path penalty, the fan-in prior, the kind
+prior and per-file saturation; documentation intent turns off the prose penalty. A
+question with more lexemes than `LOOM_CODE_SEARCH_QUERY_MAX_TOKENS` is an issue body,
+where such a word names where a fault showed: a traceback path, a version listing, a
+link. Only its first 16 lexemes are read for intent, which hold the title of a report
+or the request a long prompt opens with. A long prompt that states its request after
+that opening is ranked as a report.
+
 ### Symbol bodies
 
 Literal hits, rendered-message matches and symbol mentions use the same retained-source

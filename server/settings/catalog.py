@@ -1639,7 +1639,9 @@ class CodeSettings(BaseModel):
     code_fusion_signals: bool = True
     # Long-question trim: past this many lexemes the question is treated as an
     # issue body (template headings stripped, the rarest 32 tokens gate, the
-    # first 512 cleaned words embed). Under the cap nothing changes. 0 = off.
+    # first 512 cleaned words embed, and a test or documentation word asks for
+    # tests or docs only among the first 16 lexemes). Under the cap nothing
+    # changes. 0 = off.
     code_search_query_max_tokens: int = 48
     # Per-file saturation: the 2nd, 3rd... unit from one path is multiplied by
     # decay^excess before the cut; a file's best unit never decays. 0 = off.
