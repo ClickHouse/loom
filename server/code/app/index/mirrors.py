@@ -371,15 +371,37 @@ async def _merge_page(cfg: Any, git_dir: str, repo: Any) -> None:
         logger.info("mirror %s: ledger merges of %s: %s", git_dir, cfg.namespace, e)
 
 
+# Every mirror fetch writes a pack, and a shared checkout's sandboxed job mounts each
+# one it links: a few thousand overflow its argv. Each repack makes every shared
+# checkout run a full gc, so it waits for far more packs than git's own limit of 50.
+_PACK_LIMIT = 500
+
+
+def _unkept_packs(git_dir: str) -> int:
+    """The packs a gc or repack may merge: a kept pack is never rewritten."""
+    try:
+        names = os.listdir(os.path.join(git_dir, "objects", "pack"))
+    except OSError:
+        return 0
+    kept = {n.removesuffix(".keep") for n in names if n.endswith(".keep")}
+    return sum(1 for n in names if n.endswith(".pack") and n.removesuffix(".pack") not in kept)
+
+
 async def gc_if_due(git_dir: str) -> None:
     """`git gc --no-prune` of a mirror or a compiler tier's checkout every
     `code_mirror_gc_interval_h`, or once its mark is gone, at low CPU and IO priority,
     only when the disk holds a second copy of what the gc rewrites plus the margin (the
     new pack is written beside the old one); without that room it waits another
     interval. Nothing unreachable is pruned, and a kept pack (a checkout's packs shared
-    with its mirror) is never rewritten."""
+    with its mirror) is never rewritten. Between gcs, more than `_PACK_LIMIT` packs get
+    a geometric repack, which merges the small ones and leaves the large one."""
     hours = float(settings.code_mirror_gc_interval_h)
-    if hours <= 0 or _mark_age_s(git_dir, _GC_MARK) < hours * 3600:
+    if hours <= 0:
+        return
+    if _mark_age_s(git_dir, _GC_MARK) < hours * 3600:
+        if _unkept_packs(git_dir) > _PACK_LIMIT:
+            rc = await _low_priority_git(git_dir, "repack", "-d", "-l", "--geometric=2", "-q")
+            logger.info("mirror %s: repack exit %s", git_dir, rc)
         return
     size = await asyncio.to_thread(_tree_bytes, git_dir)
     free = (await asyncio.to_thread(shutil.disk_usage, git_dir)).free
@@ -392,10 +414,15 @@ async def gc_if_due(git_dir: str) -> None:
             size // 1024**3,
         )
         return
-    argv = ["nice", "-n", "19", "git", "--git-dir", git_dir, "-c", "gc.auto=0", "gc"]
-    proc = await asyncio.create_subprocess_exec(
-        *argv, "--quiet", "--no-prune", stdout=asyncio.subprocess.DEVNULL
-    )
+    rc = await _low_priority_git(git_dir, "-c", "gc.auto=0", "gc", "--quiet", "--no-prune")
+    logger.info("mirror %s: gc exit %s", git_dir, rc)
+
+
+async def _low_priority_git(git_dir: str, *args: str) -> int:
+    """A housekeeping git command at the lowest CPU priority, bounded by
+    `code_mirror_gc_timeout_s`; its exit code, -1 when it timed out."""
+    argv = ["nice", "-n", "19", "git", "--git-dir", git_dir, *args]
+    proc = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.DEVNULL)
     rc = -1
     try:
         rc = await asyncio.wait_for(proc.wait(), settings.code_mirror_gc_timeout_s)
@@ -405,7 +432,7 @@ async def gc_if_due(git_dir: str) -> None:
         if proc.returncode is None:  # timed out, or a cancelled pass: no repack outlives its lock
             proc.kill()
             await proc.wait()
-    logger.info("mirror %s: gc exit %s", git_dir, rc)
+    return rc
 
 
 def _tree_bytes(path: str) -> int:

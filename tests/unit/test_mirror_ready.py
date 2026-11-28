@@ -493,3 +493,34 @@ async def test_the_leaders_clone_runs_in_the_background(monkeypatch, tmp_path) -
     assert (present, failed) == (False, "")
     await asyncio.sleep(0.3)
     assert await bootstrap.clone_in_background(cfg, _StateRepo("a" * 40)) == (True, "")
+
+
+def test_a_clone_from_a_local_path_keeps_its_objects_in_a_pack(monkeypatch, tmp_path) -> None:
+    """A checkout shares only the mirror's packs; a local clone would copy loose objects."""
+    import subprocess
+
+    from server.code.app.index import sandbox
+
+    source = tmp_path / "source"
+    source.mkdir()
+    argv = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-C", str(source)]
+    subprocess.run([*argv, "init", "-q"], check=True)
+    (source / "a.txt").write_text("a\n")
+    subprocess.run([*argv, "add", "a.txt"], check=True)
+    subprocess.run([*argv, "commit", "-qm", "a"], check=True)
+
+    async def _pin(_c: Any) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox, "sandbox_available", lambda: False)
+    monkeypatch.setattr(bootstrap, "_pin_ledger_merges", _pin)
+    cfg = _Cfg(str(tmp_path / "r.git"), git_remote=str(source))
+    assert asyncio.run(bootstrap.clone_and_pin(cfg)) == ""
+
+    count = subprocess.run(
+        ["git", "--git-dir", cfg.git_dir, "count-objects", "-v"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "count: 0\n" in count and "packs: 1\n" in count

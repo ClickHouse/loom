@@ -303,10 +303,14 @@ async def _network_git(
 ) -> tuple[int, bytes, bytes]:
     from server.code.app.index.sandbox import run_job
 
+    env = auth_env(token, remote)
+    # A fetch of fewer than `fetch.unpackLimit` objects (100 by default) is stored as
+    # loose objects, and a checkout shares only the mirror's packs.
+    add_git_config(env, "fetch.unpackLimit", "1")
     try:
         done = await run_job(
             argv,
-            env=auth_env(token, remote),
+            env=env,
             timeout_s=timeout_s,
             writable=[Path(git_dir)],
             stdin=stdin,

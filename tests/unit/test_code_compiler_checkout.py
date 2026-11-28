@@ -839,3 +839,64 @@ def test_the_checkout_gc_needs_no_room_for_the_packs_it_keeps(tmp_path: Path) ->
         keep.unlink()
 
     assert mirrors._tree_bytes(str(git_dir)) - kept > pack.stat().st_size
+
+
+def _loose_objects(git_dir: Path) -> int:
+    counts = dict(line.split(": ") for line in git(git_dir, "count-objects", "-v").splitlines())
+    return int(counts["count"])
+
+
+def _mirror_fetch(tmp_path: Path) -> None:
+    """The mirror's own fetch of the source's branch, as ingest runs it."""
+    from server.code.app.index import gitrepo
+
+    source = tmp_path / "source"
+    branch = git(source, "branch", "--show-current").strip()
+    asyncio.run(gitrepo.fetch(str(tmp_path / "repo.git"), str(source), branch))
+
+
+def test_a_small_mirror_fetch_keeps_its_objects_in_a_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Git unpacks a fetch of fewer than 100 objects into loose files by default, and a
+    checkout links only the mirror's packs."""
+    from server.code.app.index import sandbox
+
+    monkeypatch.setattr(sandbox, "sandbox_available", lambda: False)
+    bare = _packed_bare(tmp_path)
+    _commit(tmp_path / "source", "one.py")
+
+    _mirror_fetch(tmp_path)
+
+    assert _loose_objects(bare) == 0
+    assert git(bare, "cat-file", "-t", _head(tmp_path / "source")).strip() == "commit"
+
+
+def test_a_checkout_fetch_after_small_and_large_mirror_fetches_transfers_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A small mirror fetch, then a large one, then a tier pass: the shared packs hold
+    the target's whole closure, so the checkout's fetch writes nothing of its own."""
+    from server.code.app.index import sandbox
+
+    monkeypatch.setattr(sandbox, "sandbox_available", lambda: False)
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    checkout, _bare, _missing = resolve_checkout(cfg, "python")
+    _fetch_and_check_out(checkout, bare)
+    source = tmp_path / "source"
+    _commit(source, "one.py")
+    _mirror_fetch(tmp_path)
+    for i in range(150):
+        (source / f"f{i}.py").write_text(f"print({i})\n")
+    git(source, "add", ".")
+    git(source, "commit", "-qm", "many")
+    _mirror_fetch(tmp_path)
+
+    checkout, _bare, _missing = resolve_checkout(cfg, "python")
+    target = _fetch_and_check_out(checkout, bare)
+
+    assert _own_objects(checkout) == []
+    assert git(checkout, "rev-list", "--objects", "--quiet", target) == ""
+    assert (checkout / "one.py").read_text() == "print('one.py')\n"
+    assert (checkout / "f149.py").read_text() == "print(149)\n"
