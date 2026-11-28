@@ -22,6 +22,10 @@ from server.workers.status import record_pass
 
 logger = logging.getLogger("loom.workers.code_scip_apply")
 
+# The delta versions this worker applies. A version-2 delta lists skipped files, whose
+# stale marks a build that applies version 1 only does not write, so that build refuses it.
+DELTA_VERSIONS = (1, 2)
+
 
 @dataclass
 class CodeScipApplyResult:
@@ -98,7 +102,7 @@ async def _run(result: CodeScipApplyResult) -> None:
                 # The uploader reads `code.scip_status`: the first bad field, not its value.
                 where = ".".join(str(x) for x in e.errors()[0]["loc"]) or "the top"
                 raise ValidationError(f"the batch is not a SCIP delta (at {where})") from e
-            if delta.delta_version != 1:
+            if delta.delta_version not in DELTA_VERSIONS:
                 raise ValidationError(f"unsupported delta_version {delta.delta_version}")
             stats = await apply_delta(
                 repo, org, ns, delta, tier=tier_for(str(batch.get("producer") or ""))

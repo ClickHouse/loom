@@ -44,7 +44,8 @@ every document (no `--changed-files`), a failed document whose path cannot be
 read (one that is not UTF-8, say) fails the run: the server would read its
 file as gone. The server keeps
 that file's compiler rows and marks them stale until a later delta converts
-it. With
+it. A delta that lists skipped files is `delta_version` 2, which a server that
+applies version 1 only refuses. With
 `SCIP_STOP_ON_FAILED_DOCUMENT=1` (the server sets it from
 `LOOM_CODE_SCIP_STOP_ON_FAILED_DOCUMENT`) `convert_delta` passes
 `--stop-on-failed-document`, and such a document fails the run. An index whose

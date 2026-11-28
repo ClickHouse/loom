@@ -148,6 +148,78 @@ async def test_a_cpp_delta_beside_a_python_one_keeps_the_python_marks(
     }
 
 
+class _Uploads:
+    """`CodeRepo` for the apply worker: one complete pending batch holding `payload`."""
+
+    def __init__(self, payload: str) -> None:
+        self.payload = payload
+        self.statuses: list[str] = []
+        self.marks: dict[str, str] = {}
+        self.states: dict[str, str] = {}
+
+    async def pending_scip_batches(self, **kw: object) -> list[dict[str, object]]:
+        return [
+            {
+                "org": "o",
+                "namespace": "n",
+                "batch_id": "b1",
+                "commit_sha": "c" * 40,
+                "base_sha": "",
+                "total_parts": 1,
+                "producer": "scip_harness@ci",
+                "created_at": None,
+            }
+        ]
+
+    async def scip_parts(self, org: str, ns: str, batch_id: str) -> list[dict[str, object]]:
+        return [{"seq": 0, "payload": self.payload, "payload_hash": ""}]
+
+    async def upsert_scip_batch(self, org: str, ns: str, batch_id: str, **kw: object) -> None:
+        self.statuses.append(f"{kw['status']}: {kw.get('error', '')}")
+
+    async def scip_stale_marks(self, org: str, ns: str, tier: str) -> set[str]:
+        return set()
+
+    async def set_states(self, org: str, ns: str, rows: dict[str, str]) -> None:
+        self.marks.update(rows)
+
+    async def set_state(self, org: str, ns: str, key: str, value: str, detail: str = "") -> None:
+        self.states[key] = value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("older", [True, False])
+async def test_an_upload_that_skipped_a_document_waits_for_a_worker_that_marks_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, older: bool
+) -> None:
+    """Whichever build leads the workers applies an upload. Build N-1's worker applies
+    version 1 only and ignores `skipped_files`, so a delta that lists one is version 2:
+    under N-1 the batch fails and the watermark stays; under this build it applies and
+    the file is marked stale."""
+    import json
+
+    from server.code.workers import scip_apply
+    from tests.unit.test_scip_to_delta_skip import _bad_utf8_index, _converter
+
+    delta = _converter().convert(
+        str(_bad_utf8_index(tmp_path)), None, [], "c" * 40, "", source_root=""
+    )
+    assert delta["delta_version"] == 2
+    repo = _Uploads(json.dumps(delta))
+    monkeypatch.setattr("server.code.store.index.CodeRepo", lambda: repo)
+    monkeypatch.setattr(scip_delta, "_apply_files", AsyncMock())
+    if older:
+        monkeypatch.setattr(scip_apply, "DELTA_VERSIONS", (1,))
+    await scip_apply._run(scip_apply.CodeScipApplyResult())
+    if older:
+        assert repo.statuses == ["failed: VALIDATION_FAILED: unsupported delta_version 2"]
+        assert repo.marks == {} and repo.states == {}
+    else:
+        assert repo.statuses == ["applied: "]
+        assert repo.marks == {"scip_stale:clang:src/bad.cpp": "c" * 40}
+        assert repo.states == {"scip_commit": "c" * 40}
+
+
 def test_an_upload_applies_for_the_tier_whose_watermark_it_moves() -> None:
     from server.code.workers.scip_apply import tier_for
 

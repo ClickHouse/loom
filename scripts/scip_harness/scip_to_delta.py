@@ -1254,10 +1254,10 @@ def _convert_document(doc, run: _Run) -> dict | None:
 
 
 class DeltaStream:
-    """A delta produced one file at a time: `head` (version, commit, base),
+    """A delta produced one file at a time: `head` (commit, base),
     `files` (a one-shot iterator, sorted by path), then `tail()` — the
-    deleted paths, the skipped ones, the stats and the features, complete once
-    `files` is exhausted. A document that fails to parse or convert is skipped
+    deleted paths, the skipped ones, the stats, the features and the version,
+    complete once `files` is exhausted. A document that fails to parse or convert is skipped
     (`_Skips`), or fails the run with `stop_on_failed_document`."""
 
     def __init__(
@@ -1293,7 +1293,7 @@ class DeltaStream:
         self._claims_ctor_calls = (
             (changed is None or full) and self._run.src.available and self._run.is_cxx
         )
-        self.head = {"delta_version": 1, "commit": commit, "base": base}
+        self.head = {"commit": commit, "base": base}
         self.files = self._files(data, scip_pb2, changed)
 
     def _files(self, data, scip_pb2, changed: set[str] | None):
@@ -1312,14 +1312,15 @@ class DeltaStream:
             yield entry
 
     def tail(self) -> dict:
+        # the window's files only, the server marks them; repository-relative
+        skipped = sorted(
+            f"{self._prefix}/{p}" if self._prefix else p
+            for p in self._skips.paths
+            if self._changed is None or p in self._changed
+        )
         out: dict = {
             "deleted_files": self._deleted,
-            # the window's files only, the server marks them; repository-relative
-            "skipped_files": sorted(
-                f"{self._prefix}/{p}" if self._prefix else p
-                for p in self._skips.paths
-                if self._changed is None or p in self._changed
-            ),
+            "skipped_files": skipped,
             "stats": {
                 "factory_ctor_edges": self._run.factory_edges,
                 "skipped_generated": self._run.skipped_generated,
@@ -1328,6 +1329,10 @@ class DeltaStream:
         }
         if self._claims_ctor_calls:
             out["features"] = [CTOR_CALLS_FEATURE]
+        # 2 lists skipped files: a server that applies version 1 only refuses it instead of
+        # applying it without their stale marks. Last, since a document that fails to
+        # convert is known only once `files` is written.
+        out["delta_version"] = 2 if skipped else 1
         return out
 
 

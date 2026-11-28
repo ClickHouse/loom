@@ -63,6 +63,7 @@ def test_a_document_with_a_string_that_is_not_utf8_is_skipped_and_listed(
     assert [f["path"] for f in delta["files"]] == ["src/a.cpp"]
     assert delta["skipped_files"] == ["src/bad.cpp"]
     assert delta["stats"]["skipped_failed"] == 1
+    assert delta["delta_version"] == 2
     assert "1 failed documents skipped" in proc.stdout
     # named once, though several passes over the index read it
     assert proc.stderr.count("warning: skipped document 'src/bad.cpp'") == 1, proc.stderr
@@ -171,3 +172,4 @@ def test_a_window_lists_only_its_own_failed_documents(tmp_path: Path) -> None:
     delta = conv.convert(index, {"src/a.cpp"}, [], "h" * 40, "b" * 40, source_root="")
     assert [f["path"] for f in delta["files"]] == ["src/a.cpp"]
     assert delta["skipped_files"] == [] and delta["stats"]["skipped_failed"] == 1
+    assert delta["delta_version"] == 1
