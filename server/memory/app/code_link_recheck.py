@@ -103,15 +103,16 @@ async def recheck_all(result: link_pass.PassResult) -> None:
 
 async def recheck_repository(org: str, cns: str) -> link_pass.PassResult | None:
     """Follow one configured repository's links to its indexed head now, for the caller
-    that moved it: `recheck_all`'s work for that repository, with no judgement, so a
-    `revise` claim the change left due stays due for the link worker. None where that
-    worker would recheck nothing: links are off, or no memory links to the repository.
-    LeaseBusy while another pass checks it."""
+    that moved it: `recheck_all`'s work for that repository, with no judgement and no
+    revised text, so a `revise` claim and a memory whose link followed a rename stay due
+    for the link worker. None where that worker would recheck nothing: links are off,
+    or no memory links to the repository. LeaseBusy while another pass checks it."""
     if not settings.memory_code_links_enabled or (org, cns) not in await store.code_namespaces():
         return None
     result = link_pass.PassResult()
     async with link_pass.repository_locks.lease(_lock_name(org, cns)):
-        await _recheck_repository(org, cns, link_pass.Budget(judgements=0), result)
+        budget = link_pass.Budget(judgements=0, revises=False)
+        await _recheck_repository(org, cns, budget, result)
     return result
 
 
@@ -885,12 +886,16 @@ async def _write_moves(moves: list[Move], head: str) -> None:
                 **_baseline_moved(a, link, head),
                 suggestion=a["suggestion"] if corrected else "",
                 judged_hash=a["judged_hash"] if corrected else "",
-                # a file link is never due: `revise` judges definitions
+                # due for the judge (never a file link: `revise` judges definitions), or
+                # for its memory's text to be brought up to where the link now is
                 policy_due=int(
-                    link.state == "changed"
-                    and bool(link.qualified_name)
-                    and (a["org"], a["namespace"]) in revised
-                    and (_edited(a, link) or bool(a["policy_due"]))
+                    link.state == "moved"
+                    or (
+                        link.state == "changed"
+                        and bool(link.qualified_name)
+                        and (a["org"], a["namespace"]) in revised
+                        and (_edited(a, link) or bool(a["policy_due"]))
+                    )
                 ),
             )
         )
