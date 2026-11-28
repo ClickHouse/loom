@@ -9,7 +9,7 @@ from typing import NamedTuple
 PYTHON_SUFFIXES = (".py", ".pyi")
 # Lines read from a definition's first line to find the end of its docstring.
 DEFINITION_HEADER_SCAN_LINES = 80
-# Docstring lines an excerpt shows; a longer docstring keeps its first and last lines.
+# not a setting: The grep header page budget is derived from this excerpt size.
 DOCSTRING_MAX_LINES = 12
 _DOCSTRING_TAIL_LINES = 3
 _LAYOUT = frozenset({tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT})

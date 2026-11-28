@@ -28,9 +28,8 @@ logger = logging.getLogger(__name__)
 ContextSource = dict[str, dict[str, str | None]]
 CompleteContexts = frozenset[tuple[str, int]]
 GREP_MATCH_TEXT_CHARS = 300
-# Signature and docstring lines one page adds beyond its match windows: four
-# definitions at the docstring cap, about eight of typical size.
-GREP_HEADER_PAGE_LINES = 48
+# A page budgets four docstrings at the excerpt cap for its added header lines.
+GREP_HEADER_PAGE_LINES = 4 * DOCSTRING_MAX_LINES
 # A shorter run of docstring lines is shown: its mark and the window it splits cost more.
 _DOCSTRING_CUT_MIN_LINES = 3
 
