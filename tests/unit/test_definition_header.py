@@ -33,6 +33,15 @@ def _lines(text: str) -> list[str]:
         ('def joined():\n    "one" "two"\n    return 1\n', DefinitionHeader(1, 2, True)),
         ("def plain(value):\n    return value\n", DefinitionHeader(1, 1, True)),
         ("def inline(): return 1\n", DefinitionHeader(1, 1, True)),
+        # a suite on the signature's line is not part of the signature, however long
+        ("def table(): return {\n    1: 2,\n    3: 4,\n}\n", DefinitionHeader(1, 1, True)),
+        ('def told(): """Starts here\n    and goes on\n    """\n', DefinitionHeader(1, 1, True)),
+        (
+            "def typed[T: int](\n    key: T = {1: 2}[1], make=lambda: 1\n) -> T: return (\n"
+            "    key\n)\n",
+            DefinitionHeader(3, 3, True),
+        ),
+        ("class Names: known = [\n    1,\n]\n", DefinitionHeader(1, 1, True)),
         ('def called():\n    """Not a docstring.""".strip()\n', DefinitionHeader(1, 1, True)),
         ('def formatted():\n    f"""No {docstring}."""\n', DefinitionHeader(1, 1, True)),
         ("def cut():\n    return call(\n        first,\n", DefinitionHeader(1, 1, True)),

@@ -52,9 +52,10 @@ def python_definition_header(lines: Sequence[str]) -> DefinitionHeader | None:
             elif statement[0].string not in ("def", "class", "async"):
                 return None
             else:
-                signature = token.start[0]
-                if statement[-1].string != ":":  # the body shares the signature's line
+                if statement[-1].string != ":":  # the suite follows the colon on its line
+                    signature = _signature_colon_line(statement)
                     return DefinitionHeader(signature, signature, True)
+                signature = token.start[0]
                 statement = []
     except tokenize.TokenError:
         if not signature:
@@ -64,6 +65,17 @@ def python_definition_header(lines: Sequence[str]) -> DefinitionHeader | None:
     except SyntaxError:  # includes IndentationError
         return None
     return None
+
+
+def _signature_colon_line(statement: list[tokenize.TokenInfo]) -> int:
+    """Line of the colon that ends a signature; colons before it sit inside brackets."""
+    depth = 0
+    for token in statement:
+        if token.type == tokenize.OP:
+            depth += (token.string in "([{") - (token.string in ")]}")
+            if token.string == ":" and not depth:
+                return token.start[0]
+    return statement[-1].end[0]
 
 
 def shown_header_lines(header: DefinitionHeader) -> tuple[range, range]:
