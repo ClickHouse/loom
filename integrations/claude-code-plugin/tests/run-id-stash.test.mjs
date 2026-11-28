@@ -186,6 +186,23 @@ test("a begin answered after a SessionEnd that got no answer does not mark the r
   });
 });
 
+test("a begin answered while SessionEnd waits on its own ask stays begun, and the run is closed", async () => {
+  const tmp = freshTmp();
+  // The prompt's hook kept the begin, and its detached process is waiting on the answer.
+  writeJsonFile(sessionStatePath("run", "s4d", { tmp }), { attempted: true, body: { run_id: "cc-s4d" }, at: 1 });
+  // That answer lands once SessionEnd has asked again; SessionEnd's own ask gets none in its 400 ms.
+  const answered = () => writeRunBegun("s4d", "0a1b2c3d", { tmp });
+  await withServer({ beginRunId: "0a1b2c3d", firstBeginDelayMs: 600, onBegin: answered }, async (url, seen) => {
+    await runHook("SessionEnd", { session_id: "s4d", cwd: tmp, reason: "exit" }, { tmp, url });
+    const completes = seen.filter((r) => r.url.endsWith("/run.complete"));
+    assert.deepEqual(
+      completes.map((r) => r.body.run_id),
+      ["0a1b2c3d"],
+    );
+  });
+  withTmpdir(tmp, () => assert.deepEqual(readRunState("s4d"), { run_id: "0a1b2c3d" }));
+});
+
 test("a begin whose answer was lost is recovered, not duplicated, on the next prompt", async () => {
   // One server: the first begin commits but its answer arrives after the hook's
   // timeout; the retry gets the same id (the server's begin is idempotent).

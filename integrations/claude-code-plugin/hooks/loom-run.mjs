@@ -123,8 +123,9 @@ async function main() {
       const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
       if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
       // No answer: stamped anew, so one the prompt's own ask gets after this hook is
-      // dropped. It would mark begun a run that has no close to come.
-      else writeJsonFile(sp, { ...state, at: Date.now() });
+      // dropped. It would mark begun a run that has no close to come. An answer that
+      // ask got during this wait is on disk already and stays: begun, it is closed below.
+      else if (readRunState(sessionId).at === state.at) writeJsonFile(sp, { ...state, at: Date.now() });
       state = readRunState(sessionId);
     }
     if (!state.begun) {
