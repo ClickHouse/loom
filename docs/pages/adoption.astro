@@ -7,6 +7,7 @@ export const prerender = false;
 const result = await readAdoptionPage(Astro.request, Astro.url, "self-hosted");
 if (result instanceof Response) return result;
 for (const [name, value] of result.headers) Astro.response.headers.set(name, value);
-const directoryRefresh = Astro.request.method === "POST" && Astro.request.headers.get("X-Loom-Adoption-Fragment") === "domains";
+const directoryRefresh =
+  Astro.request.method === "POST" && Astro.request.headers.get("X-Loom-Adoption-Fragment") === "domains";
 ---
 <AdoptionPage {...result} {directoryRefresh} />
