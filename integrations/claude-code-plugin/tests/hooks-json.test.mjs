@@ -16,9 +16,9 @@ function wired(event) {
 }
 
 test("a recording script runs through the launcher, never beside it", () => {
-  // The launcher hands the event's payload to one detached process that runs
-  // these scripts; one wired directly as well would record twice and hold
-  // the host for its request.
+  // The launcher runs these scripts in one process (a detached one, or its
+  // own at SessionEnd); one wired directly as well would record twice and
+  // hold the host for its request.
   for (const [event, scripts] of Object.entries(RECORDERS)) {
     const names = wired(event);
     assert.equal(names.filter((n) => n === "loom-record").length, 1, `${event}: the launcher is wired once`);
@@ -35,10 +35,11 @@ test("the Stop gates are wired directly: the host reads what they print", () => 
 });
 
 test("the SessionEnd hook declares a timeout: Claude Code gives the event 1.5 s by default", () => {
-  // The launcher only writes a job file and starts a process, but a cold
-  // node start on a loaded machine can pass the default budget, and a hook
-  // killed there hands nothing off. A `timeout` raises the event budget to
-  // match (docs: hooks-guide, limitations), up to 60 s.
+  // The launcher runs the event's five recording scripts in its own process
+  // and waits for them: a slow server or a loaded machine passes the default
+  // budget, and a launcher killed there leaves their requests unsent. A
+  // `timeout` raises the event budget to match (docs: hooks-guide,
+  // limitations), up to 60 s.
   const hooks = manifest.hooks.SessionEnd.flatMap((g) => g.hooks);
   assert.equal(hooks.length, 1);
   for (const h of hooks) {

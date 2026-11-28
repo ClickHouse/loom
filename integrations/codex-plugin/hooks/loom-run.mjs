@@ -116,8 +116,8 @@ async function main() {
     // Awaited, then an exit at once: a host gives its SessionEnd hooks a
     // short shared budget (Codex one second), and a process that lingers
     // past its own request is reported as cancelled even after the row
-    // landed. loom-record runs this script beside others in one detached
-    // process, where scheduleExit leaves the exit to it.
+    // landed. loom-record runs this script beside others in one process,
+    // where scheduleExit leaves the exit to it.
     const recalled = readRecalledStash(sessionId);
     const body = completeBody(scope, payload, finalText, process.env, recalled);
     // No longer begun, so a resumed session's next prompt opens a new run. The

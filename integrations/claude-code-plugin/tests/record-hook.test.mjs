@@ -1,7 +1,8 @@
-// The recording launcher: the host waits for a hand-off, not for a request.
-// Each case runs hooks/loom-record.mjs as the host does against a fake Loom
-// that keeps every answer back until the test lets it go, so "the hook
-// returned" and "the record arrived" are observed apart.
+// The recording launcher: after a tool call and at Stop the host waits for a
+// hand-off, not for a request; at SessionEnd it waits for the records. Each
+// case runs hooks/loom-record.mjs as the host does against a fake Loom that
+// keeps every answer back until the test lets it go, so "the hook returned"
+// and "the record arrived" are observed apart.
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,7 +12,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hostEnv, withTmpdir } from "./host-env.mjs";
+import { assertMode, hostEnv, withTmpdir } from "./host-env.mjs";
 import { removeSandbox } from "./hook-sandbox.mjs";
 import { RECORDERS } from "../hooks/loom-record.mjs";
 import { writeRunBegun } from "../lib/run-hook.mjs";
@@ -74,6 +75,17 @@ function sandbox() {
     { type: "user", uuid: "u1", message: { role: "user", content: "fix the flaky parser test please" } },
     {
       type: "assistant",
+      uuid: "a0",
+      message: {
+        id: "m0",
+        model: "claude-test",
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t0", name: "Edit", input: { file_path: path.join(box.cwd, "parser.py") } }],
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    },
+    {
+      type: "assistant",
       uuid: "a1",
       message: {
         id: "m1",
@@ -88,7 +100,7 @@ function sandbox() {
   return box;
 }
 
-function env(box, url) {
+function env(box, url, extra = {}) {
   return hostEnv({
     PATH: process.env.PATH,
     HOME: box.home,
@@ -99,7 +111,21 @@ function env(box, url) {
     // Longer than loom-run's round trip to a local fake: the conversation
     // hook is still waiting when the run closes.
     LOOM_CONV_SETTLE_MS: "300",
+    ...extra,
   });
+}
+
+/** Environment in which a detached copy of the launcher ends before it runs
+ *  anything, as one killed at its start: whatever was handed to it stays. */
+function dyingCopy(box) {
+  const preload = path.join(box.dir, "die-as-copy.cjs");
+  fs.writeFileSync(preload, "if (process.argv[4] && /loom-record\\.mjs$/.test(process.argv[1])) process.exit(1);\n");
+  return { NODE_OPTIONS: `--require ${preload}` };
+}
+
+/** The payloads handed off and not yet recorded. */
+function handedOff(box) {
+  return fs.readdirSync(box.tmp).filter((name) => name.startsWith("loom-record-"));
 }
 
 function payload(event, box) {
@@ -115,24 +141,32 @@ function payload(event, box) {
   });
 }
 
-/** Run the launcher as the host does; resolves {code, stdout, stderr} when it exits. */
-function runHook(event, box, url) {
+/** Run the launcher with `args`; resolves {code, stdout, stderr} when it exits. */
+function runLauncher(args, hookEnv, stdin = "") {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [HOOK, event], { env: env(box, url), cwd: os.tmpdir() });
+    const child = spawn(process.execPath, [HOOK, ...args], { env: hookEnv, cwd: os.tmpdir() });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (c) => (stdout += c));
     child.stderr.on("data", (c) => (stderr += c));
     child.on("close", (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(payload(event, box));
+    child.stdin.end(stdin);
   });
 }
 
-async function arrived(loom, wanted, timeoutMs = 20000) {
+/** Run the launcher as the host does. */
+function runHook(event, box, url, extra) {
+  return runLauncher([event], env(box, url, extra), payload(event, box));
+}
+
+async function until(pred, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline && !wanted.every((op) => loom.ops.includes(op))) {
-    await new Promise((r) => setTimeout(r, 20));
-  }
+  while (Date.now() < deadline && !pred()) await new Promise((r) => setTimeout(r, 20));
+  return pred();
+}
+
+async function arrived(loom, wanted, timeoutMs = 20000) {
+  await until(() => wanted.every((op) => loom.ops.includes(op)), timeoutMs);
   assert.deepEqual(
     wanted.filter((op) => !loom.ops.includes(op)),
     [],
@@ -153,6 +187,49 @@ test("a tool call's hook returns while the server has answered nothing, and the 
     const r = await runHook("PostToolUse", box, loom.url);
     assert.deepEqual(r, { code: 0, stdout: "", stderr: "" });
     await arrived(loom, ["observe.record"]);
+    // The payload stays on disk only while the scripts are at work on it.
+    assert.ok(await until(() => handedOff(box).length === 0), `left behind: ${handedOff(box)}`);
+  } finally {
+    await loom.close();
+    await removeSandbox(box);
+  }
+});
+
+test("with no credential the launcher hands nothing off", async () => {
+  const box = sandbox();
+  const loom = await heldLoom();
+  try {
+    // A copy, had one been started, would die here and leave its job file.
+    const r = await runHook("PostToolUse", box, loom.url, { ...dyingCopy(box), LOOM_API_KEY: "" });
+    assert.deepEqual(r, { code: 0, stdout: "", stderr: "" });
+    assert.deepEqual(fs.readdirSync(box.tmp), []);
+  } finally {
+    await loom.close();
+    await removeSandbox(box);
+  }
+});
+
+test("a copy that dies before it records leaves its job file and no cursor, and the replay delivers it", async () => {
+  const box = sandbox();
+  const loom = await heldLoom();
+  loom.release();
+  try {
+    const r = await runHook("Stop", box, loom.url, dyingCopy(box));
+    assert.deepEqual(r, { code: 0, stdout: "", stderr: "" });
+    // The job file and nothing else: no cursor was written, so the next Stop
+    // starts from the same turns.
+    const left = fs.readdirSync(box.tmp);
+    assert.equal(left.length, 1, String(left));
+    assert.match(left[0], /^loom-record-Stop-\d{13}-\d+\.json$/);
+    const job = path.join(box.tmp, left[0]);
+    assertMode(job, 0o600);
+    assert.deepEqual(loom.ops, []);
+    // The replay skills/loom-status/reference.md names for such a file.
+    const replay = await runLauncher(["Stop", "-", job], env(box, loom.url));
+    assert.deepEqual(replay, { code: 0, stdout: "", stderr: "" });
+    await arrived(loom, ["observe.crystallize", "cost.record_turns", "working_memory.set", "conversation.append"]);
+    assert.equal(loom.ops.filter((op) => op === "observe.crystallize").length, 1, "the dead copy sent nothing");
+    assert.equal(fs.existsSync(job), false);
   } finally {
     await loom.close();
     await removeSandbox(box);
@@ -172,17 +249,49 @@ test("one Stop hand-off carries every recording script's write", async () => {
   }
 });
 
-test("at SessionEnd the run's close does not end the scripts still at work beside it", async () => {
+test("the SessionEnd hook returns with its records sent, and the run's close does not end the scripts beside it", async () => {
   const box = sandbox();
   const loom = await heldLoom();
   loom.release(); // run.complete is awaited: answer at once
   try {
     withTmpdir(box.tmp, () => writeRunBegun(SESSION, `cc-${SESSION}`));
-    const r = await runHook("SessionEnd", box, loom.url);
+    // A hand-off, had there been one, would stay: the copy dies at its start.
+    const r = await runHook("SessionEnd", box, loom.url, dyingCopy(box));
     assert.deepEqual(r, { code: 0, stdout: "", stderr: "" });
+    // Nothing is left to a process that a torn-down host would end first.
+    assert.deepEqual(handedOff(box), []);
+    for (const op of ["observe.crystallize", "run.complete"]) assert.ok(loom.ops.includes(op), `${op} not sent yet`);
     // The conversation hook reads the transcript only after its settle, which
-    // outlasts the run's close.
-    await arrived(loom, ["observe.crystallize", "run.complete", "memory.set_from_messages", "conversation.append"]);
+    // outlasts the run's close; it, session memory and the brief go through
+    // the flusher.
+    await arrived(loom, ["memory.set_from_messages", "conversation.append", "session.brief_save"]);
+  } finally {
+    await loom.close();
+    await removeSandbox(box);
+  }
+});
+
+test("scripts that share the launcher's process look the checkout up once", {
+  skip: process.platform === "win32",
+}, async () => {
+  const box = sandbox();
+  const loom = await heldLoom();
+  loom.release();
+  // A git first on PATH that notes each call and runs the real one.
+  const bin = path.join(box.dir, "bin");
+  const calls = path.join(box.dir, "git-calls");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "git"), '#!/bin/sh\necho "$*" >> "$GIT_CALLS"\nPATH="$REAL_PATH" exec git "$@"\n', {
+    mode: 0o755,
+  });
+  const shim = { PATH: `${bin}${path.delimiter}${process.env.PATH}`, REAL_PATH: process.env.PATH, GIT_CALLS: calls };
+  try {
+    const r = await runHook("SessionEnd", box, loom.url, shim);
+    assert.deepEqual(r, { code: 0, stdout: "", stderr: "" });
+    // Five scripts ask for the scope; asked one after the other, their git
+    // calls would keep the first script's request from leaving.
+    const lookups = fs.readFileSync(calls, "utf8").split("\n");
+    assert.equal(lookups.filter((line) => line === "rev-parse --show-toplevel").length, 1, lookups.join("; "));
   } finally {
     await loom.close();
     await removeSandbox(box);

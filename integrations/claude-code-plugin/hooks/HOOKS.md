@@ -28,20 +28,28 @@ is JSON on stdin.
   dropped unparsed.
 - **A recording script does not hold the session.** The scripts that only
   send data print nothing the host reads. Claude Code's wiring starts them
-  through `loom-record` after a tool call, at Stop and at SessionEnd: it
-  writes the payload to a job file (mode 0600), starts one detached process
-  that runs the event's recording scripts on it, and exits, so the host waits
-  for node to start, one file write and one spawn, whatever the server's
-  round trip. The job file is on disk before the hook returns and the
-  detached process has its own session and no inherited stdio, so the
-  hand-off outlives the hook and the host. When that process cannot be
-  started, the event's records are lost; no cursor has moved, so the next
-  Stop sends the conversation turns again. That process has no stderr: to
-  see a recording script's error under `LOOM_HOOK_DEBUG=on`, start the script
-  itself with the payload on stdin. The gates and the scripts that inject
-  context run as hooks of their own: the host reads their output.
-  PreCompact stays direct too, so the working-memory note is written before
-  the compaction's primer reads it.
+  through `loom-record`. After a tool call and at Stop it writes the payload
+  to a job file (`loom-record-<Event>-<ms>-<pid>.json`, mode 0600), starts
+  one detached process that runs the event's recording scripts on it, and
+  exits, so the host waits for node to start, one file write and one spawn,
+  whatever the server's round trip. With no credential it starts nothing.
+  The job file is on disk before the hook returns and the detached process
+  has its own session and no inherited stdio, so the hand-off outlives the
+  hook and the host process. It does not outlive a machine or container
+  that is torn down when the client exits: what the process had not sent by
+  then is lost. At SessionEnd `loom-record` therefore runs the scripts in
+  its own process and exits when they have returned (**SessionEnd budget**,
+  below). When the detached process cannot be started, the event's records
+  are lost; when it dies, its job file stays, the client status check counts
+  it, and `node loom-record.mjs <Event> - <job file>` replays it. Either
+  way no cursor has moved, so the next Stop sends the conversation turns
+  again. The job file holds the payload as the host sent it, tool input and
+  output included; what the scripts send is redacted. That process has no
+  stderr: to see a recording script's error under `LOOM_HOOK_DEBUG=on`,
+  start the script itself with the payload on stdin. The gates and the
+  scripts that inject context run as hooks of their own: the host reads
+  their output. PreCompact stays direct too, so the working-memory note is
+  written before the compaction's primer reads it.
 - **It is safe without Loom.** No credential means no request (the only
   exception is the first-session sign-up below). A server that is down,
   slow, or answers 401/403/404 degrades to "nothing injected, nothing sent".
@@ -82,7 +90,7 @@ receives on stdout.
 | PreToolUse Edit\|Write\|MultiEdit\|NotebookEdit                | loom-file-context     | tool_input, session_id             | JSON additionalContext   | memory.for_file                                                                                                                                                                                                       | `LOOM_FILE_CONTEXT=off`            |
 | PostToolUse loom tools                                         | loom-mentor-hint      | tool_name, tool_response           | JSON additionalContext   | none                                                                                                                                                                                                                  | `LOOM_MENTOR_HINTS=off`            |
 | PostToolUse Edit\|Write\|MultiEdit                             | loom-blast-radius     | tool_input, cwd                    | JSON additionalContext   | code.impact                                                                                                                                                                                                           | `LOOM_BLAST_RADIUS=off`            |
-| PostToolUse, PostToolUseFailure, Stop, SessionEnd (timeout 10) | loom-record           | the payload                        | none                     | starts one detached process, which runs the event's `detached` rows                                                                                                                                                   | each script's own                  |
+| PostToolUse, PostToolUseFailure, Stop, SessionEnd (timeout 10) | loom-record           | the payload                        | none                     | after a tool call and at Stop, starts one detached process, which runs the event's `detached` rows; at SessionEnd, runs the event's `in loom-record` rows itself                                                      | each script's own                  |
 | PostToolUse, PostToolUseFailure, detached                      | loom-capture          | tool_*, session_id, cwd            | none                     | observe.record; code.outcome; the recalled-keys stash                                                                                                                                                                 | no token                           |
 | PreCompact                                                     | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
 | PreCompact                                                     | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set                                                                                                                                                                                                    | `LOOM_WORKING_MEMORY=off`          |
@@ -94,14 +102,15 @@ receives on stdout.
 | Stop                                                           | loom-validate-gate    | transcript                         | JSON block once          | namespace.validate                                                                                                                                                                                                    | `LOOM_VALIDATE_GATE=off`           |
 | Stop                                                           | loom-namespace-health | cwd, session_id                    | JSON block once          | namespace.audit (first Stop only)                                                                                                                                                                                     | `LOOM_NAMESPACE_HEALTH=off`        |
 | Stop, detached                                                 | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set when the note changed                                                                                                                                                                              | `LOOM_WORKING_MEMORY=off`          |
-| SessionEnd, detached                                           | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
-| SessionEnd, detached                                           | loom-conversation     | transcript                         | none                     | the turns since the last Stop                                                                                                                                                                                         | as Stop                            |
-| SessionEnd, detached                                           | loom-run              | transcript, reason                 | none                     | run.complete, awaited                                                                                                                                                                                                 | `LOOM_RUN_LEDGER=off`              |
-| SessionEnd, detached                                           | loom-session-memory   | transcript                         | none                     | memory.set_from_messages via the flusher                                                                                                                                                                              | `LOOM_SESSION_MEMORY=off`          |
-| SessionEnd, detached                                           | loom-session-brief    | transcript, cwd                    | none                     | session.brief_save via the flusher                                                                                                                                                                                    | `LOOM_SESSION_BRIEF=off`           |
+| SessionEnd, in loom-record                                     | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
+| SessionEnd, in loom-record                                     | loom-conversation     | transcript                         | none                     | the turns since the last Stop                                                                                                                                                                                         | as Stop                            |
+| SessionEnd, in loom-record                                     | loom-run              | transcript, reason                 | none                     | run.complete, awaited                                                                                                                                                                                                 | `LOOM_RUN_LEDGER=off`              |
+| SessionEnd, in loom-record                                     | loom-session-memory   | transcript                         | none                     | memory.set_from_messages via the flusher                                                                                                                                                                              | `LOOM_SESSION_MEMORY=off`          |
+| SessionEnd, in loom-record                                     | loom-session-brief    | transcript, cwd                    | none                     | session.brief_save via the flusher                                                                                                                                                                                    | `LOOM_SESSION_BRIEF=off`           |
 
-A `detached` row runs in the process `loom-record` starts, not as a hook of
-its own; the Codex and generic wirings start those scripts directly.
+A `detached` row runs in the process `loom-record` starts and an
+`in loom-record` row in `loom-record` itself, not as a hook of its own; the
+Codex and generic wirings start those scripts directly.
 `hooks/loom-flush.mjs` is not wired to an event: the hooks above spawn it
 detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 
@@ -316,11 +325,18 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 ## SessionEnd budget
 
 Claude Code gives all SessionEnd hooks a shared 1.5 s budget by default.
-Loom registers one, `loom-record`, which exits once the payload is handed
-off. It declares `timeout: 10`, which raises the event budget to match: a
-cold node start on a loaded machine can pass 1.5 s, and a launcher killed
-there hands nothing off. Codex gives the event one second and starts each
-script itself, so `loom-run.mjs` awaits its `run.complete` and exits at once.
+Loom registers one, `loom-record`, which runs the event's five recording
+scripts in its own process and exits when they have returned: about half a
+second, most of it the conversation script's settle. It is not handed off,
+because nothing may be left of the host a moment later. By the time the hook
+returns `run.complete` is answered, `observe.crystallize` is sent, and the
+flushers that carry session memory and the brief have run beside it for most
+of that time; the last turns are handed to a flusher just before, and a host
+torn down in that instant can lose them. The entry declares `timeout: 10`,
+which raises the event budget to match: on the default budget a slow server
+or a loaded machine gets the launcher killed with its requests unsent. Codex
+gives the event one second and starts each script itself, so `loom-run.mjs`
+awaits its `run.complete` and exits at once.
 
 ## Local-first mode (off by default)
 

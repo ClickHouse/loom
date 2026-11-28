@@ -31,7 +31,6 @@ import { fileURLToPath } from "node:url";
 // than that, and a shorter grace would kill a fire-and-forget post before it
 // left a slow link.
 import { DEFAULT_BOUND_MS, boundMs, rttCachePath } from "./hook-bounds.mjs";
-import { readStdinText } from "./hook-stdin.mjs";
 import { readJsonFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
 
 let _rttCache;
@@ -523,6 +522,16 @@ export function resolveRelDir(cwd, { top } = {}) {
  * both modes; the `repo:<id>` tag joins the project tag in tag mode.
  */
 export function resolveScope(cwd) {
+  if (!shared) return scopeFor(cwd);
+  // Scripts sharing a process ask about one directory: its git lookups run
+  // once, not once per script with the others' requests waiting behind them.
+  const key = String(cwd ?? "");
+  if (!shared.scopes.has(key)) shared.scopes.set(key, scopeFor(cwd));
+  const scope = shared.scopes.get(key);
+  return { ...scope, tags: [...scope.tags] };
+}
+
+function scopeFor(cwd) {
   const top = gitToplevel(cwd); // once: project, remote and relDir all need it
   const project = resolveProject(cwd, { top });
   const repo = repoIdentity(resolveRemote(cwd, { top }));
@@ -1014,11 +1023,12 @@ export function diffHeaders(diff, max) {
 }
 
 // --- several hooks in one process --------------------------------------------
-// hooks/loom-record.mjs runs an event's recording scripts in one detached
-// process. While `shared` is set, a script's runHookMain keeps its main for
+// hooks/loom-record.mjs runs an event's recording scripts in one process.
+// While `shared` is set, a script's runHookMain keeps its main for
 // runHooksTogether to start, readStdinJson answers the payload that was
-// handed off, and scheduleExit does nothing: the process ends when every
-// main has returned, not when the first one is done.
+// handed off, resolveScope looks a directory up once for all of them, and
+// scheduleExit does nothing: the process ends when every main has returned,
+// not when the first one is done.
 let shared = null;
 
 /**
@@ -1029,7 +1039,7 @@ let shared = null;
 export async function runHooksTogether(raw, urls) {
   // Past any one hook's own bound: a settle of at most five seconds, then two requests.
   scheduleExit(0, 2 * requestTimeoutMs() + 10000);
-  shared = { raw, mains: [] };
+  shared = { raw, mains: [], scopes: new Map() };
   for (const url of urls) {
     try {
       await import(url);
@@ -1123,10 +1133,43 @@ export function normalizePayload(raw) {
   return out;
 }
 
+const MAX_STDIN_CHARS = 32 * 1024 * 1024;
+
+/** Stdin read to its end: "" when it is empty, cannot be read or holds more
+ *  than MAX_STDIN_CHARS (an oversized payload is dropped, not parsed). Gives
+ *  up waiting after a second with what arrived, so a host that never closes
+ *  stdin cannot hold a hook open. */
+export function readStdinText() {
+  return new Promise((resolve) => {
+    let raw = "";
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve(raw);
+    };
+    try {
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (c) => {
+        raw += c;
+        if (raw.length > MAX_STDIN_CHARS) {
+          raw = "";
+          done();
+          process.stdin.destroy();
+        }
+      });
+      process.stdin.on("end", done);
+      process.stdin.on("error", done);
+    } catch {
+      done();
+    }
+    setTimeout(done, 1000).unref();
+  });
+}
+
 /** Read the host's hook payload (JSON on stdin), normalized. Resolves to a
  *  plain object: {} on EOF, on malformed JSON, on any non-object value and
- *  on a payload over the stdin cap (lib/hook-stdin.mjs, which also bounds
- *  the wait for a host that never closes stdin). */
+ *  on a payload over MAX_STDIN_CHARS. */
 export function readStdinJson() {
   return (shared ? Promise.resolve(shared.raw) : readStdinText()).then((raw) => {
     try {
