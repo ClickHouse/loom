@@ -416,6 +416,7 @@ OPERATIONS: list[Operation] = [
     Operation(
         name="code.outline",
         maturity="experimental",
+        session_content=True,
         input_model=CodeOutlineInput,
         output_model=CodeOutlineOutput,
         handler=result_lessons.WithLessons(handle_code_outline, result_lessons.outline_paths),
