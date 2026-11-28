@@ -10,7 +10,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { completeBody, readRunState, sessionRunId, writeRunBegun } from "../lib/run-hook.mjs";
+import {
+  appendRecalledStash,
+  completeBody,
+  readRunState,
+  recalledStashPath,
+  sessionRunId,
+  writeRunBegun,
+} from "../lib/run-hook.mjs";
 import { STALE_STATE_MS, sessionStatePath, sweepStaleStateFiles, writeJsonFile } from "../lib/tmp-state.mjs";
 import { recallBody } from "../lib/prompt-recall.mjs";
 import { sessionMemoryBody } from "../lib/session-memory.mjs";
@@ -34,9 +41,10 @@ function runHook(event, payload, { tmp, url }) {
   });
 }
 
-// A fake server: run.begin answers `beginRunId` after `delayMs`; every request is recorded.
+// A fake server: run.begin answers `beginRunId` after `delayMs`, calling
+// `onBegin` when it arrives; every request is recorded.
 async function withServer(
-  { beginRunId, delayMs = 0, beginStatus = 200, firstBeginDelayMs = 0, completeDelayMs = 0 },
+  { beginRunId, delayMs = 0, beginStatus = 200, firstBeginDelayMs = 0, completeDelayMs = 0, onBegin },
   fn,
 ) {
   let begins = 0;
@@ -52,6 +60,7 @@ async function withServer(
       res.on("close", () => {
         entry.closedAt = Date.now();
       });
+      if (onBegin && req.url.endsWith("/run.begin")) onBegin();
       const answer = req.url.endsWith("/run.begin") ? { run_id: beginRunId } : {};
       const first = req.url.endsWith("/run.begin") && begins++ === 0;
       setTimeout(
@@ -215,6 +224,20 @@ test("a re-sent begin and the close fit Codex's one-second SessionEnd budget", a
     // without node's start-up. The server would answer the close at 1500 ms.
     const spent = close.closedAt - begin.at;
     assert.ok(spent < 1000, `begin and close took ${spent} ms`);
+  });
+});
+
+test("a run whose begin is asked again at SessionEnd closes with the keys the session was served", async () => {
+  const tmp = freshTmp();
+  withTmpdir(tmp, () => writeJsonFile(sessionStatePath("run", "s12"), { attempted: true, at: Date.now() }));
+  appendRecalledStash("s12", ["team/rule/lock-order"], tmp);
+  // loom-session-memory runs beside this hook and removes the stash while the begin is awaited.
+  const onBegin = () => fs.rmSync(recalledStashPath("s12", tmp));
+  await withServer({ beginRunId: "r5ess1on", onBegin }, async (url, seen) => {
+    await runHook("SessionEnd", { session_id: "s12", cwd: tmp, reason: "exit" }, { tmp, url });
+    const close = seen.find((r) => r.url.endsWith("/run.complete"));
+    assert.ok(close, "the close was sent");
+    assert.deepEqual(close.body.recalled_keys, ["team/rule/lock-order"]);
   });
 });
 

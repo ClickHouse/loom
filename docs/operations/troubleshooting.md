@@ -538,8 +538,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   namespaces and roles the server verified. A 403 on a namespace the token does not name,
   or `IDENTITY_INCOMPLETE` from a scoped token with no namespace in the body, is
   authorization, not a bug ([tokens and grants](../guides/tokens-and-grants.md#namespace-access)).
-  Stranded `loom-flush-*.json` files in the temp directory are plugin captures that never
-  reached the server ([headless bots](../guides/headless-bots.md#5-when-the-bot-is-quiet)).
+  Stranded `loom-flush-*.json` and `loom-record-*.json` files in the temp directory are
+  plugin captures that never reached the server ([headless bots](../guides/headless-bots.md#5-when-the-bot-is-quiet)).
 - **An MCP tool is missing from the listing.** Listings vary by the MCP URL's
   `?toolset=`, never by caller, with one exception: a `coding` connection that the
   `X-Loom-Code-Scope` header binds to a repository lists the code tools alone when its
