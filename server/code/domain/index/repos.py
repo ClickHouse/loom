@@ -644,8 +644,10 @@ def _clone_taken(
     """Whether an earlier entry holds `git_dir` with another `git_remote` (both after
     `_entry_clone_fields` applies the defaults); records the entry's config error when
     one does. The first entry claims a clone; branches share it by spelling the remote
-    the same way."""
-    held_remote, held_ns = holders.setdefault(git_dir, (git_remote, ns))
+    the same way. Only this check treats two spellings of a directory as one (symlinks
+    and `..` resolved); the mirror sweep, its lock files and `trunk_entry` compare
+    `git_dir` as written."""
+    held_remote, held_ns = holders.setdefault(os.path.realpath(git_dir), (git_remote, ns))
     if held_remote == git_remote:
         return False
     errors[f"git_dir:{ns}"] = (

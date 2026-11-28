@@ -94,3 +94,35 @@ def test_a_separate_git_dir_lets_both_in(cfg) -> None:
     )
     assert got["code-widgets-fork"].git_dir != got["code-widgets-upstream"].git_dir
     assert repos.config_error_count() == 0
+
+
+def _two_repositories(first_dir: str, second_dir: str) -> list[dict[str, str]]:
+    return [
+        {"namespace": "code-widgets-fork", "repo": "acme/widgets", "git_dir": first_dir},
+        {
+            "namespace": "code-widgets-upstream",
+            "repo": "widgets-org/widgets",
+            "git_dir": second_dir,
+        },
+    ]
+
+
+def test_two_spellings_of_one_clone_are_one_clone(
+    cfg, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    got = cfg(_two_repositories("var/widgets.git", str(tmp_path / "var" / "widgets.git")))
+    assert "code-widgets-fork" in got
+    assert "code-widgets-upstream" not in got
+    assert "code-widgets-fork" in repos._config_errors["git_dir:code-widgets-upstream"]
+
+
+def test_a_symlink_to_a_held_clone_is_the_same_clone(
+    cfg, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "widgets.git").mkdir()
+    (tmp_path / "alias.git").symlink_to(tmp_path / "widgets.git")
+    got = cfg(_two_repositories("widgets.git", "alias.git"))
+    assert "code-widgets-upstream" not in got
+    assert "git_dir:code-widgets-upstream" in repos._config_errors

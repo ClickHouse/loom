@@ -224,8 +224,9 @@ clean. While it is not 0 the mirror sweep removes nothing on any host, so the mi
 checkouts and lock files of removed repositories stay until the error is fixed. Entries
 that share a `git_dir` share its clone only when their `git_remote` values, after the
 defaults, are the same string: branches of one repository use one spelling of the
-remote, and a fork and its upstream each set their own `git_dir`. Validate the JSON
-before a restart with
+remote, and a fork beside its upstream sets its own `git_dir`. Name one clone with one
+spelling of its `git_dir` in every entry that shares it. Validate the JSON before a
+restart with
 `docker compose --env-file .env -f dev/docker-compose.cloud.yml config`.
 
 Who can read an index is governed by the namespace's join policy and grants
