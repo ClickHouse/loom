@@ -126,6 +126,84 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
   ]);
 });
 
+test("extends the star chart with dated GitHub history and keeps snapshot counts authoritative", async (t) => {
+  const requests = [];
+  let complete = true;
+  let currentCount = 10;
+  const recorded = [
+    { day: "2026-11-07", source: "github", metric: "stars", value: 7 },
+    { day: "2026-11-09", source: "github", metric: "stars", value: 11 },
+    { day: "2026-11-10", source: "github", metric: "stars", value: 9 },
+  ];
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    const url = new URL(input);
+    if (url.hostname === "queries.clickhouse.cloud") {
+      return Response.json({
+        data: [
+          { totals: [], versions: [], retention: [], activity: [], lifecycle: [], oss: recorded.map(JSON.stringify) },
+        ],
+      });
+    }
+    if (url.pathname === "/repos/ClickHouse/loom") {
+      return Response.json({ stargazers_count: currentCount, created_at: "2026-11-03T13:00:00Z" });
+    }
+    if (url.pathname === "/repos/ClickHouse/loom/stargazers/history") {
+      requests.push({ url: url.href, signal: init.signal, headers: init.headers });
+      if (url.searchParams.get("page") === "1") {
+        return Response.json([{ week: Date.parse("2026-11-08") / 1000, total: 4, days: [1, 2, 1, 0, 0, 0, 0] }], {
+          headers: { Link: '<https://untrusted.example/history?page=2>; rel="next"' },
+        });
+      }
+      if (!complete) return new Response(null, { status: 503 });
+      return Response.json([{ week: Date.parse("2026-11-01") / 1000, total: 6, days: [0, 0, 1, 1, 0, 2, 2] }]);
+    }
+    return new Response(null, { status: 503 });
+  });
+  const read = async () => {
+    const { openSource } = await createAdoptionReader(
+      {
+        LOOM_ADOPTION_QUERY_ENDPOINT_URL: "https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001",
+        LOOM_ADOPTION_QUERY_KEY_ID: "fixture-id",
+        LOOM_ADOPTION_QUERY_KEY_SECRET: "fixture-secret",
+      },
+      new Date("2026-11-10T08:00:00Z"),
+    )("oss");
+    return openSource.find(({ id }) => id === "stars");
+  };
+  const stars = await read();
+  assert.deepEqual(
+    requests.map(({ url }) => url),
+    [
+      "https://api.github.com/repos/ClickHouse/loom/stargazers/history?per_page=30&page=1",
+      "https://api.github.com/repos/ClickHouse/loom/stargazers/history?per_page=30&page=2",
+    ],
+  );
+  assert.equal(requests[0].signal, requests[1].signal);
+  assert.equal(requests[0].headers["X-GitHub-Api-Version"], "2026-03-10");
+  assert.equal(requests[0].headers.Authorization, undefined);
+  assert.equal(stars.value, 10);
+  assert.deepEqual(stars.history, [
+    { day: "2026-11-03", value: 1, reconstructed: true },
+    { day: "2026-11-04", value: 2, reconstructed: true },
+    { day: "2026-11-05", value: 2, reconstructed: true },
+    { day: "2026-11-06", value: 4, reconstructed: true },
+    { day: "2026-11-07", value: 7 },
+    { day: "2026-11-09", value: 11 },
+    { day: "2026-11-10", value: 10 },
+  ]);
+
+  const expectedSnapshots = [
+    { day: "2026-11-07", value: 7 },
+    { day: "2026-11-09", value: 11 },
+    { day: "2026-11-10", value: 10 },
+  ];
+  complete = false;
+  assert.deepEqual((await read()).history, expectedSnapshots);
+  complete = true;
+  currentCount = 12;
+  assert.deepEqual((await read()).history, [...expectedSnapshots.slice(0, -1), { day: "2026-11-10", value: 12 }]);
+});
+
 test("reads the names-only directory and retained deployment growth from the aggregate query", async (t) => {
   const start = { grain: "day", period: "2026-10-27", period_end: "2026-10-28", first_active: 1, cumulative_active: 1 };
   const latest = {
@@ -348,5 +426,5 @@ test("refreshes warehouse data within thirty seconds and reuses registry metrics
   assert.equal(older.warehouseAvailable, true);
   assert.deepEqual(older.selfHosted.domains, ["today.example"]);
   assert.deepEqual(warehouseTimeouts, [30_000, 30_000, 30_000, 30_000]);
-  assert.deepEqual(registryTimeouts, Array(7).fill(5_000));
+  assert.deepEqual(registryTimeouts, Array(8).fill(5_000));
 });

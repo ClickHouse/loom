@@ -1600,7 +1600,9 @@ async def test_validate_lists_the_edit_a_followed_rename_allows_and_an_update_ap
     text = "`fetch_rows` drops empty rows"
     mid = await _remember(MEM, "fetch-rows", text)
     # a word of the prose links inside the memory's files, and is never edited
-    await _remember(MEM, "fetch-rows-prose", "fetch_rows drops empty rows", files=[path])
+    await _remember(
+        MEM, "fetch-rows-prose", "fetch_rows reads a batch from the connection", files=[path]
+    )
     await _pass()
     c2 = repo.commit({path: src.replace("fetch_rows", "load_rows")})
     await _index(TRUNK, repo, c2, [path])
