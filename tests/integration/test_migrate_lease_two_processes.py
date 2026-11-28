@@ -4,9 +4,8 @@ containers of one colour — apply a NON-idempotent migration once.
 
 One applier, one ledger row: the throwaway migration creates a
 table and inserts one row into it; a double apply would leave two rows. The
-CI job applied every repo migration before the tests run. Either lock
-passes: the KeeperMap key where the server has a Keeper, the lease table
-otherwise.
+CI job applied every repo migration before the tests run. Both contenders
+reach the KeeperMap lease with the migration pending.
 
 Skips cleanly when LOOM_CH_HOST is unset."""
 
@@ -31,10 +30,17 @@ pytestmark = pytest.mark.skipif(
 def _run(mig_dir: str, log_path: str, barrier) -> None:
     from server.core.schema import migrate as mig
 
-    sys.stdout = open(log_path, "w")
-    barrier.wait(timeout=30)
-    rc = mig.main(["--migrations-dir", mig_dir])
-    sys.stdout.flush()
+    acquire_lease = mig._acquire_lease
+
+    def acquire_after_both_see_pending(ch):
+        barrier.wait(timeout=30)
+        return acquire_lease(ch)
+
+    # Synchronize after the initial ledger read so both processes take the lease.
+    with pytest.MonkeyPatch.context() as patch, open(log_path, "w") as log:
+        patch.setattr(mig, "_acquire_lease", acquire_after_both_see_pending)
+        patch.setattr(sys, "stdout", log)
+        rc = mig.main(["--migrations-dir", mig_dir])
     os._exit(rc)
 
 
@@ -67,10 +73,8 @@ def test_two_concurrent_runs_apply_a_non_idempotent_migration_once(ch_client, tm
         outs = [Path(log).read_text() for log in logs]
         assert [p.exitcode for p in procs] == [0, 0], outs
 
-        # One applier; the other applied nothing. It waited on the lock (and
-        # re-read the ledger under it), or, started after the applier had
-        # finished, found nothing pending: the barrier releases both, the
-        # imports and connects that follow are not timed.
+        # One applier; the other finds no pending work when it re-reads the ledger
+        # under the lease.
         appliers = [o for o in outs if f"→ {name}" in o and f"✓ {name}" in o]
         others = [o for o in outs if o not in appliers]
         assert len(appliers) == 1 and len(others) == 1, outs
