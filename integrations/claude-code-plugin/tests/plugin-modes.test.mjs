@@ -41,7 +41,8 @@ test("the mode is the option, else LOOM_MODE, else both; a plane runs in its mod
 
 test("every hook script names its plane, and HOOKS.md lists the same planes for it", () => {
   assert.ok(hookScripts.length >= 19, `found only ${hookScripts.length} hook scripts; the scan is broken`);
-  const doc = fs.readFileSync(path.join(root, "hooks", "HOOKS.md"), "utf8");
+  // A Windows checkout has CRLF.
+  const doc = fs.readFileSync(path.join(root, "hooks", "HOOKS.md"), "utf8").replace(/\r\n/g, "\n");
   const section = doc.slice(doc.indexOf("\n## Modes\n")).split(/\n## /)[1] || "";
   const listed = {};
   for (const row of section.matchAll(/^\| (loom-[a-z-]+) +\| ([^|]+)\|/gm)) {
