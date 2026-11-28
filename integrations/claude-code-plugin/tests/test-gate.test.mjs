@@ -511,7 +511,7 @@ test("checkoutPython runs no pytest.py planted in the checkout", () => {
 import http from "node:http";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { declinesTests, newestChange, oldestChange, runAnswered, testedSince } from "../lib/test-gate.mjs";
+import { declinesTests, lastCodeChange, newestChange, runAnswered, testedSince } from "../lib/test-gate.mjs";
 import { cachedUnindexed, cachePathFor } from "../lib/repo-scope.mjs";
 import { hostEnv } from "./host-env.mjs";
 
@@ -915,15 +915,31 @@ test("any test run that finished since the change counts, whatever it ran and ho
     "sed -i s/1/2/ src/a.py && .venv/bin/python -m unittest discover",
     "npx vitest run src/a.test.ts",
     "go test ./pkg/...",
+    "go test ./...",
     "make test-unit",
+    "npm run test",
+    "node --test",
     "node --test tests/a.test.mjs",
+    "gradle :app:test",
+    "cargo nextest run",
     "tests/clickhouse-test 01234_x",
   ]) {
     assert.equal(testedSince(bash(command, FAILED), since), true, command);
     assert.equal(testedSince(call("PowerShell", { command }), since), true, command);
   }
-  // A command that reads or writes a test, or installs a runner, runs none.
-  for (const command of [HEREDOC, "sed -n 1,40p tests/test_a.py", "cat pytest.ini", "pip install pytest", "git diff"]) {
+  // A command that reads or writes a test, or installs a runner, runs none;
+  // neither does a build tool whose argument holds `test` inside a word.
+  for (const command of [
+    HEREDOC,
+    "sed -n 1,40p tests/test_a.py",
+    "cat pytest.ini",
+    "pip install pytest",
+    "git diff",
+    "npm install x@latest",
+    "go install y@latest",
+    "make latest",
+    "node scripts/attest.js",
+  ]) {
     assert.equal(testedSince(bash(command, ""), since), false, command);
   }
   assert.equal(testedSince(call("Read", { command: SUITE }), since), false);
@@ -945,30 +961,55 @@ test("any test run that finished since the change counts, whatever it ran and ho
   ];
   assert.equal(testedSince(rollout, 1e12 + 500), true);
   assert.equal(testedSince(rollout, 1e12 + 1500), false);
+  // Its arguments hold an argv, a shell wrapper's script or one string.
+  const shell = (args) => [item({ type: "function_call", name: "shell", call_id: "c2", arguments: args }, 1e12)];
+  for (const args of [
+    '{"command":["go","test","./..."]}',
+    '{"command":["npm","test"]}',
+    '{"command":["bash","-lc","make test-unit"]}',
+    '{"cmd":"npm run test"}',
+    "go test ./...",
+  ]) {
+    assert.equal(testedSince(shell(args), 1e12), true, args);
+  }
+  assert.equal(testedSince(shell('{"command":["npm","install","x@latest"]}'), 1e12), false);
   assert.equal(testedSince([], 0), false);
 });
 
-test("the oldest change is the least recently written file that can be read", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-oldest-"));
+test("the last code change is the most recently written code file that can be read", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-last-code-"));
   try {
     for (const [file, at] of [
       ["a.py", 1e12],
       ["b.py", 1e12 + 5000],
+      ["CMakeLists.txt", 1e12 + 6000],
+      ["dev-requirements.txt", 1e12 + 7000],
+      ["README.md", 1e12 + 9000],
+      ["notes.txt", 1e12 + 9000],
+      ["guide.rst", 1e12 + 9000],
+      ["CHANGELOG", 1e12 + 9000],
     ]) {
       fs.writeFileSync(path.join(dir, file), "x\n");
       fs.utimesSync(path.join(dir, file), new Date(at), new Date(at));
     }
-    assert.equal(oldestChange(dir, ["b.py", "a.py", "deleted.py"]), 1e12);
-    assert.equal(oldestChange(dir, ["deleted.py"]), 0);
+    assert.equal(lastCodeChange(dir, ["b.py", "a.py", "deleted.py"]), 1e12 + 5000);
+    // Documentation and prose are left out, by extension or by a changelog's name.
+    assert.equal(
+      lastCodeChange(dir, ["a.py", "b.py", "README.md", "notes.txt", "guide.rst", "CHANGELOG"]),
+      1e12 + 5000,
+    );
+    assert.equal(lastCodeChange(dir, ["a.py", "CMakeLists.txt"]), 1e12 + 6000);
+    assert.equal(lastCodeChange(dir, ["a.py", "dev-requirements.txt"]), 1e12 + 7000);
+    assert.equal(lastCodeChange(dir, ["README.md", "deleted.py"]), 0);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("the hook holds the stop of a change with no test run; LOOM_TEST_GATE=block also holds one whose named tests did not run on the final tree", async () => {
+test("the hook holds the stop of a session that ran no test since its last code change; LOOM_TEST_GATE=block also holds one whose named tests did not run on the final tree", async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-hook-")));
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-hook-tmp-")));
-  for (const f of ["src/a.py", "src/b.py", "tests/test_a.py"]) {
+  for (const f of ["src/a.py", "src/b.py", "tests/test_a.py", "docs/guide.md"]) {
     fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true });
     fs.writeFileSync(path.join(dir, f), "def f():\n    return 1\n");
   }
@@ -1036,7 +1077,18 @@ test("the hook holds the stop of a change with no test run; LOOM_TEST_GATE=block
     assert.equal(await stop("d-ran", ran, ""), "");
     assert.equal(await stop("d-failed", [change, bash("pytest tests/test_b.py -x | grep FAILED", "")], ""), "");
     assert.equal(await stop("d-then-more", [...ran, bash("rm src/helper.py", ""), bash("git diff", "")], ""), "");
+    // A documentation file written after the run is not a code change.
+    const later = (file) => {
+      const edited = call("Edit", { file_path: path.join(dir, file) }, "updated");
+      fs.appendFileSync(path.join(dir, file), "def h():\n    return 3\n");
+      touch(file, new Date(edited[1].timestamp));
+      return edited;
+    };
+    assert.equal(await stop("d-doc-after-run", [...ran, later("docs/guide.md")], ""), "");
     assert.equal(requests.length, asked, "a stop that passes on a test run asks the server nothing");
+    // A second code file written after the run is: the run saw the first one only.
+    assert.match(await stop("d-run-between", [...ran, later("src/b.py")], ""), /"decision":"block"/);
+    execFileSync("git", ["checkout", "-q", "--", "src/b.py", "docs/guide.md"], { cwd: dir });
     assert.equal(await stop("d-ruled-out", no, ""), "");
     assert.match(await stop("never-ran", [change]), /"decision":"block".*pytest tests\/test_a\.py/);
     assert.equal(await stop("never-ran", [change]), "");

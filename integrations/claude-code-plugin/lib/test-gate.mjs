@@ -7,8 +7,9 @@
 // the index links no test to when it has no test to name; once per file per
 // session (`adviceFiles`, `adviceLines`).
 //
-// At Stop it holds a session that changed code and ran no test. When the agent
-// is about to stop with uncommitted changes in a loom-indexed repo, it asks
+// At Stop it holds a session that ran no test since its last code change.
+// When the agent is about to stop with uncommitted changes in a
+// loom-indexed repo, it asks
 // `code.test_gate` what the change obliges: the tests that reach
 // it (evidence-ordered, with a run command when derivable) and the touched
 // functions no test reaches. If either list is non-empty and this exact
@@ -18,8 +19,9 @@
 // same change passes: the agent has seen the obligation and either ran the
 // tests or chose not to, and a gate that nags is a gate that gets disabled.
 // A block costs the session one more model request, so by default any test
-// run since the change lets the stop pass before anything is asked
-// (`testedSince`): which tests it ran and how they went is the agent's to
+// run since the last write to a changed code file lets the stop pass before
+// anything is asked (`testedSince`, `lastCodeChange`): which tests it ran
+// and how they went is the agent's to
 // judge, and a hook that reads shell text to decide it blocks sessions that
 // ran them. With LOOM_TEST_GATE=block nothing is named at edit time and the
 // stop passes only when the transcript shows the named tests ran on the tree
@@ -55,7 +57,7 @@ const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "str_r
 
 /** What the gate does, from LOOM_TEST_GATE: "advise" names an edited file's
  *  tests on the tool call that edited it and holds the stop of a session that
- *  ran no test since its change (unset, or any on-word); "block" names
+ *  ran no test since its last code change (unset, or any on-word); "block" names
  *  nothing and holds the stop until the named tests ran; "off" does neither. */
 export function gateMode(env = process.env) {
   if (
@@ -628,12 +630,27 @@ function runsHere(command, run) {
 
 // A shell command that starts a test runner, wrapped or piped in any way: a
 // program `code.test_gate` names a run with or a common other one, or a
-// build tool with `test` among its arguments (`make test-unit`, `npm run
-// test`, `node --test`). `import pytest`, `pip install pytest` and
-// `pytest.raises` are not runs. A command that only mentions a runner counts:
-// what is read is whether the session ran a test at all.
+// build tool with an argument in which `test` follows no letter (`make
+// test-unit`, `npm run test`, `node --test`, `gradle :app:test`). `import
+// pytest`, `pip install pytest`, `pytest.raises`, `npm install x@latest` and
+// `node scripts/attest.js` are not runs. A command that only mentions a
+// runner counts: what is read is whether the session ran a test at all.
 const RUNNER =
-  /(?<![\w.-])(?:(?<!(?:import|install)\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*test)/;
+  /(?<![\w.-])(?:(?<!(?:import|install)\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|nextest|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*(?<![A-Za-z])test)/;
+
+/** The command text of a Codex rollout's shell call: its `arguments` JSON
+ *  holds a string or an argv (`["go","test"]`), whose words no space joins. */
+function rolloutCommand(call) {
+  let input = call.input ?? call.arguments;
+  if (typeof input === "string") {
+    try {
+      input = JSON.parse(input);
+    } catch {
+      return input;
+    }
+  }
+  return commandText(input) || (typeof input === "string" ? input : "");
+}
 
 /**
  * True when the transcript holds a shell command that starts a test runner
@@ -650,7 +667,7 @@ export function testedSince(objs, since) {
     if (o?.type === "response_item") {
       const call = o.payload || {};
       if (/_output$/.test(call.type)) done.set(call.call_id, at);
-      else if (["exec", "exec_command", "shell"].includes(call.name) && RUNNER.test(call.input ?? call.arguments)) {
+      else if (["exec", "exec_command", "shell"].includes(call.name) && RUNNER.test(rolloutCommand(call))) {
         runs.push(call.call_id);
       }
       continue;
@@ -671,18 +688,29 @@ export function testedSince(objs, since) {
   return runs.some((id) => !(done.get(id) < since));
 }
 
-/** The oldest modification time, in epoch ms, among `files` under `root`: a
- *  test run that finished since then saw at least one of them as it stands.
- *  0 when none can be read (each one deleted). */
-export function oldestChange(root, files) {
-  const times = files.flatMap((file) => {
+// Documentation and prose by name: a test run answers no change to one.
+// `CMakeLists.txt` and a requirements file are code.
+const PROSE = /\.(?:md|mdx|rst|txt|adoc)$/i;
+const CHANGELOG = /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|NEWS)$/;
+const CODE_TXT = /(?:^|\/)(?:CMakeLists|[^/]*requirements[^/]*)\.txt$/i;
+const isProse = (file) => CHANGELOG.test(file) || (PROSE.test(file) && !CODE_TXT.test(file));
+
+/** The newest modification time, in epoch ms, among the code files of
+ *  `files` under `root`: a test run that finished since then saw each of
+ *  them as it stands. A documentation or prose file (`isProse`) is left out,
+ *  so an edit to one after the run holds no stop, and so is a file that
+ *  cannot be read (a deleted one). 0 when none is left. */
+export function lastCodeChange(root, files) {
+  let last = 0;
+  for (const file of files) {
+    if (isProse(file)) continue;
     try {
-      return [fs.statSync(path.join(root, file)).mtimeMs];
+      last = Math.max(last, fs.statSync(path.join(root, file)).mtimeMs);
     } catch {
-      return [];
+      // A deleted file has no time of its own.
     }
-  });
-  return times.length ? Math.min(...times) : 0;
+  }
+  return last;
 }
 
 // pytest's last line, whose order is fixed: failed, passed, skipped,

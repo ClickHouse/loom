@@ -99,7 +99,7 @@ receives on stdout.
 | Stop, detached                                                 | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
 | Stop, detached                                                 | loom-conversation     | transcript, last_assistant_message | none                     | conversation.append via the flusher                                                                                                                                                                                   | `LOOM_CAPTURE_CONVERSATIONS=false` |
 | Stop, detached                                                 | loom-usage            | transcript                         | none                     | cost.record_turns                                                                                                                                                                                                     | `LOOM_USAGE=off`                   |
-| Stop                                                           | loom-test-gate        | transcript, cwd                    | JSON block once          | code.test_gate, when the transcript shows no test run since the change (`testedSince`); with LOOM_TEST_GATE=block, unless the named tests ran                                                                         | `LOOM_TEST_GATE=off`               |
+| Stop                                                           | loom-test-gate        | transcript, cwd                    | JSON block once          | code.test_gate, when the transcript shows no test run since the last code change (`testedSince`); with LOOM_TEST_GATE=block, unless the named tests ran                                                               | `LOOM_TEST_GATE=off`               |
 | Stop                                                           | loom-validate-gate    | transcript                         | JSON block once          | namespace.validate                                                                                                                                                                                                    | `LOOM_VALIDATE_GATE=off`           |
 | Stop                                                           | loom-namespace-health | cwd, session_id                    | JSON block once          | namespace.audit (first Stop only)                                                                                                                                                                                     | `LOOM_NAMESPACE_HEALTH=off`        |
 | Stop, detached                                                 | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set when the note changed                                                                                                                                                                              | `LOOM_WORKING_MEMORY=off`          |
@@ -283,7 +283,7 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   gives the agent one line naming the codes and /loom-optimize, as a
   block-once reason. Later stops make no call.
 - **loom-test-gate.** Names the tests of a changed file, and holds the
-  stop of a session that changed code and ran no test. By default it names
+  stop of a session that ran no test since its last code change. By default it names
   them when the file changes: after a Bash or
   PowerShell command (and, through loom-blast-radius, after an edit tool)
   it takes the dirty paths the call named or targeted that were written
@@ -309,8 +309,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   obligations and blocks the stop once per distinct change with a reason
   naming them. By default a stop passes, and asks the server nothing, when
   the transcript holds a shell command that starts a test runner and
-  finished no earlier than the oldest write among the changed files
-  (`testedSince`, `oldestChange`): the command's text is read for a
+  finished no earlier than the newest write among the changed code files,
+  documentation and prose left out by name
+  (`testedSince`, `lastCodeChange`): the command's text is read for a
   runner's name only, not for which tests ran or how they went, so a run
   that failed, was piped or ran between `git stash` and `git stash pop`
   passes, in a Claude Code transcript or a Codex rollout. With no

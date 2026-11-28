@@ -18,10 +18,12 @@
 // from the transcript: dirty paths an edit tool targeted or a shell command
 // named, written since the session began (by the file's modification time);
 // a tree left dirty before the session does not gate a turn that changed
-// nothing. By default any test run since the change lets the stop pass,
-// whatever it ran and however it went (`testedSince` in lib/test-gate.mjs):
-// the stop is held for a session that changed code and ran no test, and
-// nothing is asked of the server for one that ran some.
+// nothing. By default any test run since the session's last code change
+// lets the stop pass, whatever it ran and however it went (`testedSince`,
+// `lastCodeChange` in lib/test-gate.mjs): the stop is held for a session
+// that ran no test since its last code change, and nothing is asked of the
+// server for one that ran some. A documentation file changed after the run
+// holds nothing.
 //
 // With LOOM_TEST_GATE=block nothing is named at edit time, and the stop
 // passes only when a Claude Code transcript shows the named tests ran on the
@@ -62,8 +64,8 @@ import {
   gateMode,
   gatePayload,
   gateSignature,
+  lastCodeChange,
   newestChange,
-  oldestChange,
   renderGate,
   runAnswered,
   sessionScope,
@@ -137,8 +139,8 @@ async function main() {
     scheduleExit(0);
     return;
   }
-  // The default holds the stop of a session whose transcript shows no test run since its change.
-  if (MODE === "advise" && (!transcript || testedSince(rows, oldestChange(root, changed)))) {
+  // The default holds the stop of a session whose transcript shows no test run since its last code change.
+  if (MODE === "advise" && (!transcript || testedSince(rows, lastCodeChange(root, changed)))) {
     scheduleExit(0);
     return;
   }
