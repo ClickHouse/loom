@@ -8,6 +8,10 @@ module ClickHouse
     class Configuration
       # The server and the token; nil falls back to LOOM_BASE_URL / LOOM_API_KEY.
       attr_accessor :base_url, :api_key
+      # An object with token(refused), or a Proc, that hands over the token for each
+      # request instead of a static api_key (see Credentials). A client given an api_key
+      # argument does not use it.
+      attr_accessor :token_provider
       # The identity every call is sent as; a call can override each one.
       attr_accessor :org, :namespace, :agent
       # Seconds to wait for the connection and for each answer.

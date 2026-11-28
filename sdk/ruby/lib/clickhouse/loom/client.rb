@@ -9,6 +9,7 @@ require "uri"
 require_relative "errors"
 require_relative "version"
 require_relative "configuration"
+require_relative "credentials"
 require_relative "logging"
 require_relative "retry_policy"
 require_relative "operations"
@@ -69,20 +70,25 @@ module ClickHouse
 
       # Each argument left nil takes ClickHouse::Loom.configure's value, then the environment
       # (LOOM_BASE_URL, LOOM_API_KEY), then the default: http://localhost:7777 and no
-      # Authorization header, which a server with auth off accepts. +retry_policy+ is a
+      # Authorization header, which a server with auth off accepts.
+      #
+      # The credential, first found wins: +token_provider+, +api_key+, the configured
+      # token_provider, the configured api_key, LOOM_API_KEY, then the first line of
+      # ~/.loom/token (see Credentials). Passing both +api_key+ and +token_provider+ raises
+      # ArgumentError. A provider is asked for a token on every request, and once more
+      # after a 401. +retry_policy+ is a
       # Hash of RetryPolicy fields set over the configured policy ({ max_attempts: 1 }
       # disables retries); +rate_limit_max_wait+ is the seconds one call may spend waiting
       # out 429 answers (default 15, 0 raises the first). +logger+ and +log_level+ turn on
       # logging (see Logging; off unless a logger is given). +sleeper+ is called with the
       # seconds to wait between attempts (a test seam; default Kernel#sleep).
-      def initialize(base_url: nil, api_key: nil, org: nil, namespace: nil, agent: nil, open_timeout: nil,
-                     read_timeout: nil, retry_policy: nil, rate_limit_max_wait: nil, logger: nil, log_level: nil,
-                     sleeper: nil)
+      def initialize(base_url: nil, api_key: nil, token_provider: nil, org: nil, namespace: nil, agent: nil,
+                     open_timeout: nil, read_timeout: nil, retry_policy: nil, rate_limit_max_wait: nil, logger: nil,
+                     log_level: nil, sleeper: nil)
         config = Loom.configuration
         @base_url = first_non_blank(base_url, config.base_url, ENV.fetch("LOOM_BASE_URL", nil),
                                     DEFAULT_BASE_URL).sub(%r{/+\z}, "")
-        # An exported but empty LOOM_API_KEY must not send "Bearer " and turn a clear 401 into a puzzle.
-        @api_key = first_non_blank(api_key, config.api_key, ENV.fetch("LOOM_API_KEY", nil))
+        resolve_credential(config, api_key, token_provider)
         @identity = { "org" => first_non_blank(org, config.org),
                       "namespace" => first_non_blank(namespace, config.namespace),
                       "agent" => first_non_blank(agent, config.agent) }.compact.freeze
@@ -184,6 +190,7 @@ module ClickHouse
                   request_id: headers["X-Request-Id"] }
         loop do
           headers["X-Loom-Retry-Count"] = state[:sent].to_s
+          provider_bearer(headers, state) if @token_provider
           state[:sent] += 1
           response = attempt(op, spec, body, headers, policy, state)
           next if response.nil?
@@ -193,6 +200,7 @@ module ClickHouse
           request_id = response["X-Request-Id"] || headers["X-Request-Id"]
           error = Error.from_response(op, response.code.to_i, response.body, request_id,
                                       response["Retry-After"], idempotent: spec&.idempotent == true)
+          next if reauthenticate?(response, error, state)
           next if resend_after_answer?(response, error, spec, policy, state)
 
           raise error
@@ -200,6 +208,54 @@ module ClickHouse
       rescue Error => e
         @log.error("#{op} failed after #{elapsed_ms(state)} ms: #{describe(e)} (rid=#{state[:request_id]})")
         raise
+      end
+
+      # The credential, first found wins: the token_provider: argument, the api_key:
+      # argument, the configured token_provider, the configured api_key, LOOM_API_KEY, then
+      # ~/.loom/token. Blank keys count as unset.
+      def resolve_credential(config, api_key, token_provider)
+        if token_provider && !api_key.to_s.strip.empty?
+          raise ArgumentError, "Client: pass api_key or token_provider, not both"
+        end
+
+        @token_provider = token_provider
+        # An exported but empty LOOM_API_KEY must not send "Bearer " and turn a clear 401 into a puzzle.
+        @api_key = first_non_blank(api_key) unless @token_provider
+        @token_provider ||= config.token_provider unless @api_key
+        unless @api_key || @token_provider
+          @api_key = first_non_blank(config.api_key, ENV.fetch("LOOM_API_KEY", nil)) || Credentials.token_from_file
+        end
+        Credentials.check_origin!(@token_provider, @base_url) if @token_provider
+      end
+
+      # Sets the Authorization header from the provider before an attempt: a fresh token
+      # after a 401, and none when the provider has nothing to send. A provider with no
+      # fresh token (it returns the refused one) leaves the 401 standing.
+      def provider_bearer(headers, state)
+        refused = state.delete(:refused)
+        bearer = Credentials.provider_token(@token_provider, refused)
+        raise state[:refusal] if refused && bearer == refused
+
+        state[:bearer] = bearer
+        if bearer.empty?
+          headers.delete("Authorization")
+        else
+          headers["Authorization"] = "Bearer #{bearer}"
+        end
+      end
+
+      # A 401 to a provider's token is sent once more with a fresh one: the token may have
+      # expired, been revoked or rotated. The server refused before running the op, so this
+      # is no policy retry and spends no attempt.
+      def reauthenticate?(response, error, state)
+        return false unless @token_provider && response.code.to_i == 401
+        return false if state[:bearer].to_s.empty? || state[:reauthed]
+
+        state[:reauthed] = true
+        state[:refused] = state[:bearer]
+        state[:refusal] = error
+        @log.info("#{state[:op]} 401; retrying once with a fresh token (rid=#{state[:request_id]})")
+        true
       end
 
       # The decoded answer of a 2xx, and its summary line.
