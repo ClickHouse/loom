@@ -14,7 +14,9 @@ import asyncio
 import contextlib
 import signal
 import socket
-from collections.abc import Awaitable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
+from contextvars import ContextVar
+from types import FrameType
 from typing import Any
 
 TERMINATED_EXIT = 128 + signal.SIGTERM
@@ -23,6 +25,17 @@ TERMINATED_EXIT = 128 + signal.SIGTERM
 
 class Terminated(Exception):
     """The command was cancelled because the process received SIGTERM."""
+
+
+_request_stop: ContextVar[Callable[[asyncio.Task[object]], bool] | None] = ContextVar(
+    "cli_request_stop", default=None
+)
+
+
+def cancel_for_shutdown(task: asyncio.Task[object]) -> bool:
+    """Cancel a task for shutdown, once for a command sharing the signal handler."""
+    request = _request_stop.get()
+    return task.cancel() if request is None else request(task)
 
 
 async def cancel_on_sigterm[T](aw: Awaitable[T]) -> T:
@@ -34,25 +47,54 @@ async def cancel_on_sigterm[T](aw: Awaitable[T]) -> T:
     loop = asyncio.get_running_loop()
     task = asyncio.current_task()
     got_term = False
+    stopping = False
+
+    def _stop(target: asyncio.Task[object]) -> bool:
+        nonlocal stopping
+        if target is not task:
+            return target.cancel()
+        # A second shutdown request would interrupt cleanup in progress.
+        if stopping:
+            return False
+        stopping = task.cancel()
+        return stopping
 
     def _on_term() -> None:
         nonlocal got_term
-        if task is not None and task.cancelling() == 0:
+        if task is not None and _stop(task):
             got_term = True
-            task.cancel()
+
+    previous_int = signal.getsignal(signal.SIGINT)
+
+    def _on_int(signum: int, frame: FrameType | None) -> None:
+        nonlocal stopping
+        if task is not None and callable(previous_int):
+            # asyncio.run handles Ctrl-C itself, including a second interrupt.
+            pending = task.cancelling()
+            previous_int(signum, frame)
+            stopping = stopping or task.cancelling() > pending
 
     installed = False
     with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
         loop.add_signal_handler(signal.SIGTERM, _on_term)
         installed = True
+    token = _request_stop.set(_stop)
     try:
+        if installed and callable(previous_int):
+            signal.signal(signal.SIGINT, _on_int)
+        # Ctrl-C during handler setup reaches the runner before our wrapper does.
+        if task is not None and task.cancelling():
+            stopping = True
         return await aw
     except asyncio.CancelledError:
         if got_term:
             raise Terminated("terminated by SIGTERM") from None
         raise
     finally:
+        _request_stop.reset(token)
         if installed:
+            if signal.getsignal(signal.SIGINT) is _on_int and callable(previous_int):
+                signal.signal(signal.SIGINT, previous_int)
             loop.remove_signal_handler(signal.SIGTERM)
 
 
