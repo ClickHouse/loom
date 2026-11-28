@@ -1168,7 +1168,7 @@
         "code_fusion_signals": {
           "default": true,
           "type": "boolean",
-          "description": "Rank priors in code.search (the test-path and prose penalties, query↔path stem affinity, file coherence), applied after RRF and before the outcome boost. The lexical leg also picks its candidates on the two path penalties, before RRF, so they can move `retrieval_confidence` and `abstain`. Kill switch for both."
+          "description": "Rank priors in code.search (the test-path and prose penalties, query↔path stem affinity, file coherence), applied after RRF and before the outcome boost. The lexical leg also picks its candidates on the two path penalties, before RRF. Kill switch for both."
         },
         "code_gh_items_backfill_days": {
           "default": 730,
@@ -2227,7 +2227,7 @@
         "code_search_prose_penalty": {
           "default": 0.25,
           "type": "number",
-          "description": "Multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths. The ranking multiplies the fused score by it, and the lexical leg picks its candidates on each row's vote times it, before RRF, so it can move `retrieval_confidence` and `abstain`. A smaller value makes the lexical leg read deeper. 1.0 = off."
+          "description": "Multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths. The ranking multiplies the fused score by it, and the lexical leg picks its candidates on each row's vote times it, before RRF. A smaller value makes the lexical leg read deeper. 1.0 = off."
         },
         "code_search_query_max_tokens": {
           "default": 48,

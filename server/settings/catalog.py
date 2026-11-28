@@ -1636,8 +1636,7 @@ class CodeSettings(BaseModel):
     # Rank priors in code.search (the test-path and prose penalties, query↔path
     # stem affinity, file coherence), applied after RRF and before the outcome
     # boost. The lexical leg also picks its candidates on the two path penalties,
-    # before RRF, so they can move `retrieval_confidence` and `abstain`. Kill
-    # switch for both.
+    # before RRF. Kill switch for both.
     code_fusion_signals: bool = True
     # Long-question trim: past this many lexemes the question is treated as an
     # issue body (template headings stripped, the rarest 32 tokens gate, the
@@ -1742,9 +1741,8 @@ class CodeSettings(BaseModel):
     # Multiplier for prose files (documentation, release notes, changelogs) unless
     # the query asks for documentation or the search is constrained to paths. The
     # ranking multiplies the fused score by it, and the lexical leg picks its
-    # candidates on each row's vote times it, before RRF, so it can move
-    # `retrieval_confidence` and `abstain`. A smaller value makes the lexical leg
-    # read deeper. 1.0 = off.
+    # candidates on each row's vote times it, before RRF. A smaller value makes
+    # the lexical leg read deeper. 1.0 = off.
     code_search_prose_penalty: float = 0.25
     # Chunk-kind ranking prior when the request names none: structural boosts the
     # kind named by the question; flat/default apply fixed tables; off disables it.
