@@ -96,6 +96,10 @@ class RoundReads:
         self._pending_paths: set[str] = set()
         self._pending_rows = 0
         self.flushes = 0
+        # table -> rows a failed flush did not write: the INSERT that raised and every
+        # table queued behind it. The flush raises in whichever file's read or write
+        # started it, so only this count says how much the round lost.
+        self.unwritten: dict[str, int] = {}
         # A flush in progress still counts as buffered: its paths are not yet
         # durable, so a concurrent reader (the dependents' tasks) waits on the
         # lock rather than read around it.
@@ -158,16 +162,21 @@ class RoundReads:
 
     async def flush(self) -> None:
         """Write the buffered rows, one INSERT per table in first-write order;
-        returns once every earlier flush is durable too."""
+        returns once every earlier flush is durable too. An INSERT that raises ends the
+        flush: its rows and the tables behind it are dropped and counted in `unwritten`."""
         async with self._flush_lock:
             pending, self._pending = self._pending, {}
             self._inflight_paths, self._pending_paths = self._pending_paths, set()
             self._pending_rows = 0
+            written = 0
             try:
                 for table, rows in pending.items():
                     await self._repo.insert_rows(table, rows)
+                    written += 1
             finally:
                 self._inflight_paths = set()
+                for table, rows in list(pending.items())[written:]:
+                    self.unwritten[table] = self.unwritten.get(table, 0) + len(rows)
             if pending:
                 self.flushes += 1
 

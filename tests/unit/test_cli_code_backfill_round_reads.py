@@ -67,6 +67,7 @@ def _drive(monkeypatch: pytest.MonkeyPatch, size: int, paths: list[str]) -> tupl
             denylist=None,
             git_dir="repo.git",
             head="a" * 40,
+            counters={},
         )
     )
     assert _GIT_TEXT_SOURCE.get() is None
