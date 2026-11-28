@@ -92,6 +92,8 @@ class CodeEmbedRecoveryResult:
     poisoned: int = 0
     # Stubs left as they are: their org was switched off during the pass.
     switched_off: int = 0
+    # Vectors copied from the namespace's `embed_reuse_from` instead of embedded.
+    reused: int = 0
     rows_written: int = 0
     scans: int = 0
     keys_seen: int = 0
@@ -377,23 +379,14 @@ async def _embed_rows(
         set_worker_identity("code_embed_recovery", org=org, namespace=ns)
         pass_context.set_namespace(ns)
         batch = _batch()
+        source = _reuse_source(table, org, ns)
         for start in range(0, len(whole), batch):
             group = whole[start : start + batch]
             texts = [clip_for_embedding(text_of(r), count_tokens=counter) for r in group]
-            vectors: dict[int, list[float]]
-            try:
-                with customer.for_org(org, namespace=ns):
-                    if not customer.names_one():
-                        vectors = {}
-                        failures = dict.fromkeys(range(len(group)), customer.NO_CUSTOMER)
-                    else:
-                        vectors, failures = await _vectors_for(embedder, texts)
-            except customer.GROUP_HOLDS:
-                # Switched off since the pass began, or the identity refused, asked to
-                # wait or unread: its stubs stay as they are, no attempt spent, and
-                # are embedded later; the other groups' vectors are written.
-                result.switched_off += len(group)
+            staged = await _group_vectors(repo, org, ns, source, group, texts, embedder, result)
+            if staged is None:
                 continue
+            group, vectors, failures = staged
             embedded += _stage_replacements(
                 repo, table, group, vectors, failures, max_attempts, result, replacements
             )
@@ -405,6 +398,91 @@ async def _embed_rows(
         _unpublished.update(landed)
         result.chunks_landed.update(landed)
     return embedded
+
+
+def _reuse_source(table: str, org: str, ns: str) -> str:
+    """The namespace a code namespace copies identical chunk vectors from
+    (`embed_reuse_from`), or "" when none applies."""
+    if table != "code_chunks":
+        return ""
+    from server.code.domain.index.repos import repo_for_namespace
+
+    try:
+        cfg = repo_for_namespace(org, ns)
+    except Exception:  # noqa: BLE001 - no readable repo config means nothing to reuse
+        return ""
+    src = cfg.embed_reuse_from.strip() if cfg else ""
+    return src if src and src != ns else ""
+
+
+async def _reused_vectors(
+    repo: Any, org: str, source: str, group: list[dict[str, Any]]
+) -> dict[int, list[float]]:
+    """`{index -> vector}` for the group's stubs whose path, content hash and stored
+    context text match a live, embedded chunk in `source`, one lookup per path."""
+    from server.code.app.index.embed_reuse import reusable_vectors
+
+    by_path: dict[tuple[str, str], list[int]] = {}
+    for i, r in enumerate(group):
+        if (
+            r.get("path")
+            and r.get("content_hash")
+            and r.get("context_text")
+            and r.get("embedding_model")
+        ):
+            by_path.setdefault((str(r["path"]), str(r["embedding_model"])), []).append(i)
+    out: dict[int, list[float]] = {}
+    for (path, model), idx in by_path.items():
+        found = await reusable_vectors(
+            repo,
+            org,
+            source,
+            embedding_model=model,
+            path=path,
+            content_hashes=[str(group[i]["content_hash"]) for i in idx],
+            context_texts=[str(group[i]["context_text"]) for i in idx],
+        )
+        out.update({idx[j]: vec for j, vec in found.items()})
+    return out
+
+
+async def _group_vectors(
+    repo: Any,
+    org: str,
+    ns: str,
+    source: str,
+    group: list[dict[str, Any]],
+    texts: list[str],
+    embedder: Any,
+    result: CodeEmbedRecoveryResult,
+) -> tuple[list[dict[str, Any]], dict[int, list[float]], dict[int, str]] | None:
+    """The rows of one embed call to write, with their vectors and failures: vectors
+    copied from `source` first, the rest embedded. None when the org is switched off
+    and nothing was copied, so its stubs stay as they are."""
+    reused = await _reused_vectors(repo, org, source, group) if source else {}
+    result.reused += len(reused)
+    todo = [i for i in range(len(group)) if i not in reused]
+    vectors: dict[int, list[float]] = dict(reused)
+    failures: dict[int, str] = {}
+    if not todo:
+        return group, vectors, failures
+    try:
+        with customer.for_org(org, namespace=ns):
+            if not customer.names_one():
+                failures = dict.fromkeys(todo, customer.NO_CUSTOMER)
+            else:
+                got, bad = await _vectors_for(embedder, [texts[i] for i in todo])
+                vectors.update({todo[j]: vec for j, vec in got.items()})
+                failures = {todo[j]: err for j, err in bad.items()}
+    except customer.GROUP_HOLDS:
+        # Switched off since the pass began, or the identity refused, asked to wait or
+        # unread: the stubs it would embed stay as they are, no attempt spent.
+        result.switched_off += len(todo)
+        if not reused:
+            return None
+        kept = sorted(reused)
+        return [group[i] for i in kept], {j: reused[i] for j, i in enumerate(kept)}, {}
+    return group, vectors, failures
 
 
 def _stage_replacements(
