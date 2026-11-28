@@ -9,8 +9,9 @@ memory whose text names nothing old is not listed.
 
 The link pass applies a plan's edits as one revision (memory.update_by_id's write, on
 the planned text's hash) where nobody stands behind the text as it is and no other
-branch may still have the old name (`_revisable`). Every other memory keeps its text,
-and a principal applies its listed edits with memory.update and `if_match_sha256`.
+branch may still have the old name (`_revisable`), and the write lets it change that
+memory alone (`update.revise_as_pipeline`). Every other memory keeps its text, and a
+principal applies its listed edits with memory.update and `if_match_sha256`.
 """
 
 from __future__ import annotations
@@ -42,7 +43,8 @@ OFFERED = "edits"
 # Who the audit row of a revision `revise` makes names. The version stays its writer's.
 ACTOR = "process:code_rename"
 # The statuses memory.update_by_id's write refuses a revision with: the memory moved
-# since it was planned, expired, is locked, or the new value is refused. Its text stays.
+# since it was planned, expired, is locked, or the new value is refused or is close to
+# another memory's. Its text stays.
 _REFUSED = (404, 409, 422, 423)
 
 # A memory to plan: its head and the links made from it as it is now.
@@ -90,18 +92,20 @@ async def revise(org: str, head: dict[str, Any], links: Sequence[LinkRow]) -> bo
     write, on the hash of the text the edits were planned for. True when it was
     written. The write is the reviser's own in the audit log (`ACTOR`), and the model
     calls it makes (the embedding) are for the memory's writer. A revision the write
-    refuses (`_REFUSED`) leaves the text; any other failure raises."""
+    refuses (`_REFUSED`) leaves the text; any other failure raises, a model call held
+    for the writer (`customer.HOLDS`) among them."""
     from server.memory.app import update
 
     current = code_link_reads.current(org, head, list(links))
     if not any(a["state"] == "moved" for a in current) or not _revisable(org, head, current):
         return False
-    memory: _Linked = (head, current)
-    index = await _index(org, [memory])
     text = link_pass.claim_of(head["value"])
+    if text is None:
+        return False
+    memory: _Linked = (head, current)
     # planning is CPU work: off the loop
-    plan = await asyncio.to_thread(_plan, memory, index)
-    if text is None or not plan.edits:
+    plan = await asyncio.to_thread(_plan, memory, await _index(org, [memory]))
+    if not plan.edits:
         return False
     namespace, writer = str(head["namespace"]), subject_of(str(head.get("actor") or ""))
     attribution = customer.for_org(

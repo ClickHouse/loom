@@ -1209,9 +1209,14 @@ verified the memory, no principal attested its text, and the repository is index
 one branch. The revision goes through `memory.update_by_id`'s write
 (`update.revise_as_pipeline`) on the hash of the text it was planned for, with that
 write's blacklist check, conflict check, embedding, audit row and `memory.revised`
-event, and it closes the facts the old value stated, as any revision does. `memory.history`
-keeps the text it replaced ([memories linked to
-code](../concepts/memory.md#memories-linked-to-code)).
+event, and it closes the facts the old value stated, as any revision does. Nobody asked
+for it, so it changes that row alone: it is written only when the conflict check is
+`clear` and owes the conflict resolver no judgement, and it runs no same-key
+supersession. A revision that would mark the row a duplicate, or flag, supersede or
+queue a peer, is refused and the text stays. A revision that fails, or whose model call
+is held for the memory's writer, leaves the memory due and stamps its links as checked,
+so the pass reads the other due memories first. `memory.history` keeps the text it
+replaced ([memories linked to code](../concepts/memory.md#memories-linked-to-code)).
 
 A worker leg that catches its own failure calls `pass_context.note_failure`, so the
 supervisor counts it. A worker that declares `owned_tables` runs its first pass at boot
@@ -1679,8 +1684,10 @@ writes no outbox rows ([rule 22](rolling-upgrades.md#the-rules)).
   cannot forge a served profile or mark a user current.
 - The link pass's revision of a memory's text after a rename keeps the row's `actor`
   (the row stays its writer's: a code-namespace member may still revise and delete the
-  rule they wrote) and writes `source_class` `derived`, since the text is no longer what
-  the writer stated. Its audit row names `process:code_rename`.
+  rule they wrote) and never raises its `source_class`: an `asserted` row becomes
+  `derived`, since the text is no longer what the writer stated, and every other class
+  is kept, so an unattested `external` row stays out of `memory.ask` synthesis. Its
+  audit row names `process:code_rename`.
 - A `high`-sensitivity row and a non-searchable type have no embedding row.
 - Every vector leg filters `embedding_dim > 0`.
 - Merge, duplicate and pinned rejection are decided before the insert; only the LLM

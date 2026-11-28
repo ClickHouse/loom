@@ -170,8 +170,10 @@ reads `moved`. A lesson that wrote the old name, module or path still says it. T
 pass revises the text itself when the edits are certain, no person pinned, locked or
 verified the lesson, no service account attested its text, and the repository is indexed
 on one branch ([what it writes](../concepts/memory.md#a-memorys-text-after-a-rename)).
-The revision keeps the lesson's writer, is marked `derived`, and `memory.history` shows
-the text it replaced. To keep a lesson's wording as written, pin or lock it.
+The revision keeps the lesson's writer, and `memory.history` shows the text it replaced.
+A lesson its writer asserted is marked `derived`; any other keeps its `source_class`.
+A lesson whose revised text would duplicate or contradict another memory keeps its text.
+To keep a lesson's wording as written, pin or lock it.
 
 For every other lesson, `namespace.validate` lists what a rewrite would be:
 

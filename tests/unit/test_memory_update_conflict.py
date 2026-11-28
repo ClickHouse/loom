@@ -10,13 +10,14 @@ off skips the check; the row's own key is excluded by the check itself.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from fastapi import HTTPException
 
+from server.core.errors import PreconditionFailedError
 from server.memory.api.models_crud import MemoryUpdateInput
 from server.memory.app import conflicts as cf
 from server.memory.app import handlers as mem_handlers
@@ -315,15 +316,9 @@ async def test_an_update_is_judged_against_its_rows_user(wired, monkeypatch) -> 
     assert calls.check[0]["new_user_id"] == "alice"
 
 
-@pytest.mark.asyncio
-async def test_a_pipelines_revision_keeps_the_rows_writer_and_is_derived(
-    wired, monkeypatch
-) -> None:
-    """Loom's own revision of a row: the version stays its writer's (a member's right to
-    their own row goes with `actor`) under the row's cap, its class is `derived` on the
-    row and its search document, the audit row names the pipeline, and it lands only
-    over the head it was planned for."""
-    from server.core.hashing import served_content_sha256
+@pytest.fixture
+def pipeline(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict[str, Any]]]:
+    """A pipeline of Loom's own writes, the key's lease free: the audit rows it leaves."""
     from server.memory.domain.provenance import pipeline_actor
     from server.observability import audit
 
@@ -338,30 +333,105 @@ async def test_a_pipelines_revision_keeps_the_rows_writer_and_is_derived(
 
     monkeypatch.setattr(audit, "emit", emit)
     monkeypatch.setattr(key_write_lock.key_write_locks, "hold", no_lease)
+    with pipeline_actor("process:code_rename"):
+        yield audited
+
+
+async def _revise_as_pipeline(row: MemoryRow) -> Any:
+    from server.core.hashing import served_content_sha256
+
+    return await update_mod.revise_as_pipeline(
+        "test",
+        "personal",
+        _ID_A,
+        "Deploys happen on Thursday",
+        if_match_sha256=served_content_sha256(row.value),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_pipelines_revision_keeps_the_rows_writer_and_is_derived(wired, pipeline) -> None:
+    """Loom's own revision of a row: the version stays its writer's (a member's right to
+    their own row goes with `actor`) under the row's cap, what its writer asserted is
+    `derived` on the row and its search document, the audit row names the pipeline, it
+    lands only over the head it was planned for, and it retires no same-key row."""
+    from server.core.hashing import served_content_sha256
+
     row = _row(actor="human:alice", source_class="asserted", status="active", char_limit=400)
     ch, calls = wired(ConflictResult(verdict="clear", peers=[]), row=row)
     planned_on = served_content_sha256(row.value)
-    with pipeline_actor("process:code_rename"):
-        out = await update_mod.revise_as_pipeline(
-            "test", "personal", _ID_A, "Deploys happen on Thursday", if_match_sha256=planned_on
+    out = await _revise_as_pipeline(row)
+    ((_, rows),) = ch.inserts
+    with pytest.raises(HTTPException) as refused:
+        await update_mod.revise_as_pipeline(
+            "test", "personal", _ID_A, "Deploys happen on Friday", if_match_sha256="0" * 64
         )
-        ((_, rows),) = ch.inserts
-        with pytest.raises(HTTPException) as refused:
-            await update_mod.revise_as_pipeline(
-                "test", "personal", _ID_A, "Deploys happen on Friday", if_match_sha256="0" * 64
-            )
-        missing = await update_mod.revise_as_pipeline(
-            "test", "personal", _ID_P, "Deploys happen on Friday", if_match_sha256=planned_on
-        )
+    missing = await update_mod.revise_as_pipeline(
+        "test", "personal", _ID_P, "Deploys happen on Friday", if_match_sha256=planned_on
+    )
     assert out.updated and rows[0]["value"] == '"Deploys happen on Thursday"'
     assert (rows[0]["actor"], rows[0]["source_class"]) == ("human:alice", "derived")
     assert rows[0]["char_limit"] == 400
     assert calls.embedding_rows[0]["source_class"] == "derived"
-    (event,) = audited
+    (event,) = pipeline
     assert (event["event_type"], event["actor"]) == ("memory.update_by_id", "process:code_rename")
     assert event["subject"]["source_class"] == "derived"
     assert refused.value.status_code == 409 and len(ch.inserts) == 1
     assert not missing.updated
+    assert calls.superseded == []  # a caller's revision retires its key's older rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_class", ["external", "imported", "extracted", "observed", ""])
+async def test_a_pipelines_revision_never_promotes_the_row(
+    wired, pipeline, source_class: str
+) -> None:
+    """Only a downgrade: an `external` row is on probation until someone attests it and
+    an `imported` one ranks below a statement, and a rename nobody read lifts neither.
+    Every class but `asserted` is the row's own on the version, its search document and
+    the audit row."""
+    row = _row(actor="process:fetcher", source_class=source_class, status="active")
+    ch, calls = wired(ConflictResult(verdict="clear", peers=[]), row=row)
+    assert (await _revise_as_pipeline(row)).updated
+    ((_, rows),) = ch.inserts
+    assert (rows[0]["actor"], rows[0]["source_class"]) == ("process:fetcher", source_class)
+    assert calls.embedding_rows[0]["source_class"] == source_class
+    assert pipeline[0]["subject"]["source_class"] == source_class
+
+
+_OWED = ConflictResult(verdict="clear", peers=[], review=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        ConflictResult(verdict="duplicate", peers=[_peer()], duplicate_of_id=_ID_P),
+        ConflictResult(verdict="merge", peers=[_peer()], existing_memory_id=_ID_P),
+        ConflictResult(verdict="refines", peers=[_peer()], refined_peers=[_peer()]),
+        ConflictResult(verdict="conflict", peers=[_peer()], review=True),
+        ConflictResult(verdict="rejected", peers=[_peer(pinned=True)], pinned_blocker_id=_ID_P),
+        _OWED,  # a peer the conflict resolver would judge the revision against
+    ],
+    ids=lambda v: "owed" if v is _OWED else v.verdict,
+)
+async def test_a_pipelines_revision_close_to_another_memory_is_refused(
+    wired, pipeline, monkeypatch, verdict: ConflictResult
+) -> None:
+    """Nobody asked for the revision, so it does nothing a writer's own does to another
+    row or to its own standing: not written as a duplicate, no peer flagged, superseded
+    or queued for the resolver. Refused (409) with nothing written; the text stays."""
+    from server.settings import settings
+
+    # the resolver's queue is read only where the resolver runs
+    monkeypatch.setattr(settings, "memory_conflict_resolver_enabled", verdict is _OWED)
+    row = _row(actor="human:alice", source_class="asserted", status="active")
+    ch, calls = wired(verdict, row=row)
+    with pytest.raises((PreconditionFailedError, HTTPException)) as refused:
+        await _revise_as_pipeline(row)
+    assert refused.value.status_code == 409
+    assert ch.inserts == [] and calls.embedding_rows == [] and pipeline == []
+    assert not calls.marked and not calls.refined and not calls.superseded
 
 
 def test_own_key_is_excluded_by_the_check_itself() -> None:

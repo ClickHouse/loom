@@ -512,10 +512,11 @@ _CODE_RENAME_EDITS = (
     "with the `content_sha256` they are of, or the `reason` no edit is offered; `totals` "
     "counts the memories by `edits` and by reason. The link worker applies the edits "
     "itself to a memory nobody pinned, locked or verified whose repository is indexed on "
-    "one branch, so a sample with `edits` is one it leaves or has not reached. The "
-    "report writes nothing: to apply, read the edited sentence, then memory.update the "
-    "key with the revised text and `if_match_sha256` set to the sample's "
-    "`content_sha256`. Only repositories you may read are counted.",
+    "one branch and whose revised text is close to no other memory's, so a sample with "
+    "`edits` is one it leaves or has not reached. The report writes nothing: to apply, "
+    "read the edited sentence, then memory.update the key with the revised text and "
+    "`if_match_sha256` set to the sample's `content_sha256`. Only repositories you may "
+    "read are counted.",
 )
 
 

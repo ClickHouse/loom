@@ -16,6 +16,7 @@ from server.code.app.member_writes import assert_own_row
 from server.core import pg, pg_lease
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import PreconditionFailedError
 from server.core.hashing import served_content_sha256
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.naming import named
@@ -56,7 +57,8 @@ from server.memory.store.rows import identity_key, version_over
 from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import Awaitable, Callable
+    from datetime import datetime
 
     from server.memory.store import MemoryRow
 
@@ -173,10 +175,12 @@ async def revise_as_pipeline(
 ) -> MemoryUpdateByIdOutput:
     """memory.update_by_id's write for a pipeline of Loom's own that read the row and its
     namespace itself, so no caller is authorized: `value` over the head that hashes
-    `if_match_sha256` (409 PRECONDITION_FAILED once it moved), the row's cap kept. The
-    version stays its writer's row (`actor` carried: a member still revises and deletes
-    the rule they wrote) and is `derived`, since its text is no longer what the writer
-    stated; the audit row names the enclosing `pipeline_actor`."""
+    `if_match_sha256` (409 PRECONDITION_FAILED once it moved), the row's cap kept.
+    Nobody asked for the revision, so it changes this row alone: it is refused (409)
+    where a caller's would mark the row a duplicate, flag or retire a peer, or queue
+    the pair for the conflict resolver (`_refuse_unsettled`), and it retires no same-key
+    row. The version stays its writer's row and is never promoted (`_authorship`); the
+    audit row names the enclosing `pipeline_actor`."""
     import server.memory.store as memory_repo
 
     existing = await memory_repo.get_by_id(
@@ -191,9 +195,8 @@ async def revise_as_pipeline(
         if_match_sha256=if_match_sha256,
         char_limit=existing.char_limit,  # None would drop the row's cap
     )
-    stamp = {"actor": str(existing.actor or ""), "source_class": "derived"}
     return await _update_live_row(
-        input, existing, get_client(), op="memory.update_by_id", stamp=stamp
+        input, existing, get_client(), op="memory.update_by_id", pipeline=True
     )
 
 
@@ -578,6 +581,30 @@ def _status_columns(conflict_result: Any) -> tuple[str, dict[str, Any]]:
     return duplicate_of_id, status_cols
 
 
+def _authorship(existing: MemoryRow, pipeline: bool) -> dict[str, str]:
+    """The `actor` of a revision of `existing`, and the `source_class` of a pipeline's.
+
+    A caller's version is the reviser's, not the original writer's, and keeps the row's
+    class. A pipeline's stays its writer's row (a member still revises and deletes the
+    rule they wrote) and is never promoted: what its writer asserted becomes `derived`,
+    since the text is no longer what they stated, and every other class is kept, so an
+    `external` row stays on probation."""
+    if not pipeline:
+        return {"actor": app_provenance.writer_actor(fallback=existing.actor)}
+    source_class = "derived" if existing.source_class == "asserted" else existing.source_class
+    return {"actor": str(existing.actor or ""), "source_class": str(source_class or "")}
+
+
+def _refuse_unsettled(conflict_result: Any, mark: datetime | None) -> None:
+    """A pipeline's revision changes its own row alone. Refused before anything is
+    written where a caller's would do more: a verdict other than `clear` marks the row
+    a duplicate or flags or retires a peer, and `mark` queues the pair for the conflict
+    resolver, which may retire the older of the two. No check ran: nothing to settle."""
+    clear = conflict_result is None or conflict_result.verdict == "clear"
+    if not clear or mark is not None:
+        raise PreconditionFailedError("the revised text is close to another memory's")
+
+
 def _revision_run_id(input: Any, existing: MemoryRow) -> str:
     """A revision made under a run carries that run on its version row (the `acted` fold joins
     the run's writes to what the run was shown); a caller naming no run keeps the row's own."""
@@ -633,11 +660,11 @@ async def _update_post_write(
 
 
 async def _update_live_row(
-    input: Any, existing: MemoryRow, ch: Any, *, op: str, stamp: Mapping[str, str] | None = None
+    input: Any, existing: MemoryRow, ch: Any, *, op: str, pipeline: bool = False
 ) -> MemoryUpdateByIdOutput:
     """A conditional update re-reads the head under the key's write lock."""
     if not input.if_match_sha256:
-        return await _write_revision(input, existing, ch, op=op, stamp=stamp)
+        return await _write_revision(input, existing, ch, op=op, pipeline=pipeline)
     import server.memory.store as memory_repo
 
     async with key_write_lock.key_write_locks.hold(
@@ -658,7 +685,7 @@ async def _update_live_row(
         )
         if head is None:
             return MemoryUpdateByIdOutput(updated=False)
-        return await _write_revision(input, head, ch, op=op, stamp=stamp)
+        return await _write_revision(input, head, ch, op=op, pipeline=pipeline)
 
 
 # Its own function: _write_revision is at the function-length gate's 50 statements.
@@ -903,14 +930,13 @@ async def _refuse_blacklisted(
 
 
 async def _write_revision(
-    input: Any, existing: MemoryRow, ch: Any, *, op: str, stamp: Mapping[str, str] | None = None
+    input: Any, existing: MemoryRow, ch: Any, *, op: str, pipeline: bool = False
 ) -> MemoryUpdateByIdOutput:
     """The write half shared by memory.update_by_id and memory.update:
     lock, expiry/revive, hash precondition, char cap, blacklist, one new
     version row, its audit row, embedding refresh. `input` carries value / tags / concepts /
-    if_match_sha256 / char_limit / revive (and, for memory.update, confidence). `stamp` is
-    the version's `actor` and `source_class` where a pipeline decides them
-    (`revise_as_pipeline`); else the reviser is its actor and the row keeps its class."""
+    if_match_sha256 / char_limit / revive (and, for memory.update, confidence). `pipeline`:
+    the revision is one nobody asked for (`revise_as_pipeline`)."""
     import server.memory.store as memory_repo
 
     _lock.assert_unlocked(existing, "value", op=op)
@@ -921,8 +947,7 @@ async def _write_revision(
     new_version = version_over(existing)
     new_confidence = getattr(input, "confidence", None)
     new_value, serialized_value, new_sha, new_tags, new_concepts = _revised_fields(input, existing)
-    effective_char_limit = input.char_limit
-    _enforce_char_limit(effective_char_limit, serialized_value)
+    _enforce_char_limit(input.char_limit, serialized_value)
 
     # Blacklist enforcement ("Refuse") — parity with memory.set, else an
     # edit could smuggle a blacklisted value past the write-time gate.
@@ -947,6 +972,7 @@ async def _write_revision(
     embedding: list[float] = []
     key_embedding: list[float] = []
     key_text = ""
+    conflict_result = None
     if embedder is not None:
         # Same embed text as memory.set (topic-keying aside). Recompute the
         # key embedding too (its vector lives only on the embeddings table)
@@ -959,8 +985,6 @@ async def _write_revision(
             _build_embed_text(serialized_value, memory_key=existing.memory_key),
             key_text,
         )
-    conflict_result = None
-    if embedder is not None:
         conflict_result = await _update_conflict_check(
             input,
             existing,
@@ -970,7 +994,6 @@ async def _write_revision(
             op=op,
         )
     duplicate_of_id, status_cols = _status_columns(conflict_result)
-    revision_run_id = _revision_run_id(input, existing)
     # value_json only for dict-shaped values (CH JSON rejects primitives).
     # memory_id is preserved (carried from `existing`) — usage events and
     # peers' conflict_with arrays key on it, so rotating it would dangle them.
@@ -980,11 +1003,10 @@ async def _write_revision(
         value_json=(serialized_value if isinstance(new_value, dict) else "{}"),
         version=new_version,
         updated_at=memory_repo.written_now(),
-        run_id=revision_run_id,
-        # This version's author is the reviser, not the original writer.
-        **({"actor": app_provenance.writer_actor(fallback=existing.actor)} | dict(stamp or {})),
+        run_id=_revision_run_id(input, existing),
+        **_authorship(existing, pipeline),
         tombstoned_at=None,
-        char_limit=effective_char_limit,
+        char_limit=input.char_limit,
         content_sha256=new_sha,
         tags=new_tags,
         concepts=new_concepts,
@@ -1002,6 +1024,8 @@ async def _write_revision(
         memory_row=memory_row,
         policy=(await cfg_task).policy,
     )
+    if pipeline:
+        _refuse_unsettled(conflict_result, mark)
     # If searchable, prepare the embedding row too. The authority commits the
     # memory row before publishing its embedding, as memory.set does.
     emb_rows = (
@@ -1056,8 +1080,12 @@ async def _write_revision(
         cfg = await cfg_task
         conflict_result = await _update_post_write(input, existing, conflict_result, ch, follows)
 
-        # Same-key supersession, exactly as memory.set runs it after its insert.
-        await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy, follows)
+        # Same-key supersession, exactly as memory.set runs it after its insert: a writer's
+        # own revision retires the older rows of its key, one nobody asked for retires none.
+        if not pipeline:
+            await _revision_supersession(
+                input.org, existing, serialized_value, ch, cfg.policy, follows
+            )
         await _revised_edges(existing, memory_row, new_value, new_sha, sensitivity, op=op, ch=ch)
         await project_stated_relations(
             memory_row, new_value, input.relations, revised=True, op=op, ch=ch

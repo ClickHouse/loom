@@ -58,9 +58,9 @@ async def apply_policies(
     """Run the policy of each memory a change in `cns` left due and clear the marks it
     settled; what fails or is past the judgement budget stays due. A memory due for a
     link that followed a rename has its text revised first (`code_renames.revise`): once
-    written, its links are of its old text and the link pass makes them again. An org
-    whose model calls are switched off is left as it is: its links stay due, nothing
-    written."""
+    written, its links are of its old text and the link pass makes them again; a
+    revision that fails or is held stays due behind the rest (`_behind`). An org whose
+    model calls are switched off is left as it is: its links stay due, nothing written."""
     if await customer.switched_off(org):
         return
     # a page a few times the budget: what is left over is read by the next pass
@@ -93,7 +93,16 @@ async def apply_policies(
                     continue  # the link worker's: every mark of the memory stays
                 # planned over every link made from the memory as it is, waiting names too
                 made = [a for a in links[mid] + pending[mid] if a["inputs_hash"] == want]
-                result.renamed += await code_renames.revise(org, row, made)
+                try:
+                    written = await code_renames.revise(org, row, made)
+                except Exception as e:  # noqa: BLE001 — a failed revision leaves its memory due
+                    if not isinstance(e, customer.HOLDS):  # held is not failed
+                        result.errors.append(f"policy {org}/{mid}: {e}")
+                    rows += _behind(mine)
+                    continue
+                if written:
+                    result.renamed += 1
+                    continue  # its links are of its old text: the link pass makes them again
             if mine:
                 policy = code_change.policy_of(policies.get(str(row["namespace"]), ""))
                 spent = budget.judgements
@@ -107,6 +116,15 @@ async def apply_policies(
         except Exception as e:  # noqa: BLE001 — one memory's failure never stops the pass
             result.errors.append(f"policy {org}/{mid}: {e}")
     await store.insert(rows)
+
+
+def _behind(links: list[LinkRow]) -> list[LinkRow]:
+    """The new version of each of `links` still due, stamped as checked now, so the
+    next passes read the memories still due before this one."""
+    now = naive_utc_now()
+    return [
+        store.link_row(a, follows=a["version"], checked_at=now) for a in links if a["policy_due"]
+    ]
 
 
 def _policy_rows(links: list[LinkRow], out: _Revised) -> list[LinkRow]:

@@ -279,8 +279,10 @@ async def test_a_memory_due_for_a_followed_rename_has_its_text_revised_under_eve
         ("flagged", ["fresh", "moved"]),
     ]
     assert result.renamed == 2 and result.as_dict()["renamed"] == 2
-    # written or withheld, the mark goes: a withheld text is the report's to list
-    assert _cleared(world) == ["flagged", "prose", "renamed", "still"]
+    # withheld, the mark goes: its text is the report's to list. Written, the links are
+    # of the text it replaced: none is written again, the link pass makes them anew
+    assert _cleared(world) == ["prose", "still"]
+    assert {r["memory_id"] for r in world.cleared} == {"prose", "still", "older"}
     assert all(r["state"] != "pending" for r in world.cleared)  # no link of the policy's
     assert world.judged == []
 
@@ -307,18 +309,34 @@ async def test_a_recheck_in_a_callers_request_revises_no_text_and_leaves_it_due(
 async def test_a_revision_that_fails_leaves_its_memory_due_and_the_pass_goes_on(
     world, monkeypatch
 ) -> None:
+    from server.core.errors import ModelCallRefused
+
+    failures = {
+        "a": RuntimeError("the embedder is away"),
+        "held": ModelCallRefused("the writer's model calls are refused"),
+    }
+
     async def revise(org, head, links):
-        if head["mid"] == "a":
-            raise RuntimeError("the embedder is away")
-        return True
+        if head["mid"] in failures:
+            raise failures[head["mid"]]
+        return head["mid"] == "b"
 
     monkeypatch.setattr(code_link_policy.code_renames, "revise", revise)
-    for m in ("a", "b"):
+    then = _checked_long_ago(monkeypatch)
+    for m in ("a", "held", "b", "prose"):
         world.rows[m] = _row(m)
-        world.states[m] = ["moved"]
+        world.states[m] = ["moved", "changed"]
     result = await _apply()
-    assert _cleared(world) == ["b"] and result.renamed == 1
+    assert _cleared(world) == ["prose"] and result.renamed == 1
+    # a held model call is no error: the writer's calls are refused, nothing failed
     assert result.errors == ["policy o/a: the embedder is away"]
+    # failed or held, every mark stays, stamped now: `policy_due` reads the memories
+    # still due before these, so they never fill the head of its page
+    for m in ("a", "held"):
+        stamped = [r for r in world.cleared if r["memory_id"] == m]
+        assert [(r["state"], r["policy_due"]) for r in stamped] == [("moved", 1), ("changed", 1)]
+        assert all(r["checked_at"] > then and r["version"] == 2 for r in stamped)
+    assert all(r["checked_at"] == then for r in world.cleared if r["memory_id"] == "prose")
 
 
 @pytest.mark.asyncio

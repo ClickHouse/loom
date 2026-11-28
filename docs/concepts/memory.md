@@ -674,11 +674,18 @@ and applies them itself when all of these hold:
 The revision is one `memory.update_by_id` write on the hash of the text the edits were
 planned for, so a memory rewritten in the meantime is left alone. It runs that write's
 blacklist and conflict checks, embeds the new text and closes the facts the old value
-stated, as any revision does. The new version stays its writer's row (`actor` is
-kept), carries `source_class` `derived`, and leaves an audit row by `process:code_rename`
-and a `memory.revised` event; `memory.history` keeps the text it replaced. A row its
-writer asserted is `derived` from then on, so search no longer prefers it in a near-tie
-(`memory_search_asserted_boost_scale`). The next pass
+stated, as any revision does. Nobody asked for it, so it changes that memory alone. It is
+not written where a caller's revision would do more: the conflict check finds the revised
+text a duplicate, a restatement, a refinement or a contradiction of another memory, or
+the conflict resolver would judge it against one. It also retires no other row of the
+same key. Such a memory keeps its text and is listed with its `edits`.
+
+The new version stays its writer's row (`actor` is kept) and leaves an audit row by
+`process:code_rename` and a `memory.revised` event; `memory.history` keeps the text it
+replaced. Its `source_class` is never raised. A row its writer asserted is `derived` from
+then on, since the text is no longer what they stated, so search no longer prefers it in
+a near-tie (`memory_search_asserted_boost_scale`). Every other class is kept: an
+unattested `external` row stays out of `memory.ask` synthesis. The next pass
 links the revised memory where the code is, and it reads `fresh`. The `memory_code_links`
 pass outcome counts the memories revised as `renamed`. A link followed with an edit to
 its code reads `changed` and its memory's text is never revised: whether the claim still
@@ -691,8 +698,8 @@ with either the `edits` its text allows (replace `old` with `new` from `start` t
 counted in Unicode code points of the text, where the text reads `old`) and the
 `content_sha256` they are of, or the one `reason` no edit is offered. The finding's
 `totals` count the memories by `edits` and by reason. A memory listed with `edits` is one
-the link pass leaves (held, attested, or in a repository indexed on more than one
-branch) or has not reached yet. The report writes nothing: to apply an edit, read the
+the link pass leaves (held, attested, in a repository indexed on more than one branch,
+or close to another memory once revised) or has not reached yet. The report writes nothing: to apply an edit, read the
 sentence it changes, then call `memory.update` on the key with the revised text and
 `if_match_sha256` set to the listed hash. That is a revision by the caller, with its
 conflict check, and it is refused when the memory changed after the report read it. The

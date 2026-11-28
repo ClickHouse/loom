@@ -13,7 +13,7 @@ import pytest
 from fastapi import HTTPException
 
 from server.code.domain.anchor import Definition
-from server.core.errors import BackendUnavailableError, PreconditionFailedError
+from server.core.errors import BackendUnavailableError, ModelCallRefused, PreconditionFailedError
 from server.core.hashing import served_content_sha256
 from server.llm import customer
 from server.memory.api.models_crud import MemoryUpdateByIdOutput
@@ -758,6 +758,8 @@ async def test_the_link_pass_writes_the_edits_a_plan_offers(writer: dict) -> Non
 async def test_a_text_its_plan_withholds_is_left_as_it_is(writer: dict, text: Any) -> None:
     assert not await _revise(writer, text)
     assert writer["written"] == []
+    # a value that is not text is planned for nothing: the index is not read
+    assert ("names" in writer) == isinstance(text, str)
 
 
 @pytest.mark.asyncio
@@ -821,7 +823,13 @@ async def test_a_revision_the_write_refuses_leaves_the_text(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "failure", [HTTPException(status_code=503), BackendUnavailableError("clickhouse is away")]
+    "failure",
+    [
+        HTTPException(status_code=503),
+        BackendUnavailableError("clickhouse is away"),
+        # held for the memory's writer: the policy step leaves it due without an error
+        ModelCallRefused("the writer's model calls are refused"),
+    ],
 )
 async def test_a_revision_that_fails_raises_so_the_memory_stays_due(
     writer: dict, failure: Exception
