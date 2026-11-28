@@ -62,6 +62,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.domain.anchor import bare_name, mentions
+from server.memory.domain import code_change
 
 logger = logging.getLogger(__name__)
 
@@ -665,7 +666,8 @@ def rationale_section(
     (0 is unlimited). The verdict reads every row: check | unknown | clear | none (no row has
     anything to check). It is `clear` or `none` only when every changed path and every
     matching row was checked; otherwise `unknown`, each flag and count naming its cause
-    (the causes are listed under `rationale` in docs/features/code-index/history-and-prs.md)."""
+    (the causes are listed under `rationale` in docs/features/code-index/history-and-prs.md).
+    `note` says what a served row's code state was compared with (`code_change.compared`)."""
     added, malformed = added_text(diff) if diff is not None else (None, False)
     malformed = malformed and not diff_cut  # a cut diff ends inside a hunk anyway
     unsure = added is None or diff_cut or malformed
@@ -707,7 +709,14 @@ def rationale_section(
         if budget_tokens and estimate_tokens([*kept, r]) > budget_tokens:
             break
         kept.append(r)
-    out = section(SERVED, verdict=verdict, epistemic="lower_bound", causes=causes, rows=kept)
+    out = section(
+        SERVED,
+        verdict=verdict,
+        epistemic="lower_bound",
+        causes=causes,
+        rows=kept,
+        note=code_change.compared(r["code_state"] for r in kept),
+    )
     out["rows_total"] = len(rows)
     out["truncated"] = len(kept) < len(rows)
     return out

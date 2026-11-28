@@ -9,12 +9,12 @@ import assert from "node:assert/strict";
 import {
   classifyGrep,
   classifyRead,
+  declarationsInSpan,
   denySymbolGrepWithAnswer,
   denyGhSearchWithAnswer,
   otherSearchRepo,
   trackerAnswerText,
   TRACKER_SEARCH_DENIALS_PER_QUERY,
-  estimateOutlineTokens,
   localFirstOn,
   localGrepText,
   runLocalGrep,
@@ -22,6 +22,7 @@ import {
   symbolAnswerText,
   symbolInPattern,
   underPrefixes,
+  wholeSymbolAnswer,
 } from "../lib/code-shunt.mjs";
 import { recalledDataBlock } from "../lib/prompt-recall.mjs";
 import {
@@ -31,6 +32,7 @@ import {
   patternSearchShape,
   parseBashBulk,
   gitBashPath,
+  isCompoundCommand,
   parseBashBulkSegments,
   splitOutsideQuotes,
 } from "../lib/shell-command.mjs";
@@ -63,21 +65,32 @@ test("Read: only bulk, unmodified, indexed files are shunted", () => {
     modified: false,
     asOf: "abc123def456",
   };
-  assert.match(decideRead(base), /code\.symbol/);
-  // The redirect leads with the op that answers "what is in this file?"
-  const reason = decideRead(base);
-  const lead = reason.slice(reason.indexOf("ask the index instead: ") + "ask the index instead: ".length);
+  // The refusal carries what the read was after: each declaration's lines, name and header.
+  const declarations = [
+    { qualified_name: "DB::MergeTreeData", signature: "class MergeTreeData", start_line: 12, end_line: 8990 },
+    {
+      qualified_name: "DB::MergeTreeData::renameTempPartAndAdd",
+      signature: "bool renameTempPartAndAdd(\n    MutableDataPartPtr & part)",
+      start_line: 7327,
+      end_line: 7344,
+    },
+    { qualified_name: "DB::helper", signature: "", start_line: 8995, end_line: 0 },
+  ];
+  const reason = decideRead({ ...base, declarations });
+  assert.match(reason, /^loom-code-shunt: src\/Storages\/MergeTree\/MergeTreeData\.cpp is 9000 lines and is in loom's/);
   assert.match(
-    lead,
-    /^loom code\.outline path=src\/Storages\/MergeTree\/MergeTreeData\.cpp \(declarations with line spans, ~1500 tokens\)/,
+    reason,
+    /\(as of abc123def456\)\. The index's outline of it \(lines, qualified name, header; it lists functions, methods, classes and structs, not interfaces, type aliases, enums or constants\):\n/,
   );
-  assert.match(
-    decideRead({ ...base, lineCount: 900 }),
-    /~522 tokens\)/,
-    "estimate scales with the file until the budget caps it",
+  assert.ok(
+    reason.includes(
+      "\n12-8990 DB::MergeTreeData class MergeTreeData\n" +
+        "7327-7344 DB::MergeTreeData::renameTempPartAndAdd bool renameTempPartAndAdd( MutableDataPartPtr & part)\n" +
+        "8995-8995 DB::helper\nRead the lines you need (a ranged read passes this hook), or call loom_code_symbol",
+    ),
+    reason,
   );
-  assert.match(decideRead({ ...base, outlineTokens: 512 }), /~512 tokens\)/, "a known price overrides the estimate");
-  assert.match(reason, /Whole-file reads are/, "the cat variant rewrites this phrase");
+  assert.doesNotMatch(reason, /code\.outline/, "the outline is in the refusal, not one more call away");
   assert.equal(decideRead({ ...base, offset: 100, limit: 40 }), null, "targeted span passes");
   assert.equal(decideRead({ ...base, lineCount: 200 }), null, "small file passes");
   assert.equal(decideRead({ ...base, modified: true }), null, "working-copy edits pass");
@@ -479,12 +492,25 @@ test("codeResponsePaths covers every code op response shape", async () => {
   assert.deepEqual(codeResponsePaths({ context: "pack" }), []);
 });
 
-test("estimateOutlineTokens: measured per-line rate, floored and capped by the op budget", () => {
-  assert.equal(estimateOutlineTokens(0), 0);
-  assert.equal(estimateOutlineTokens(10), 50, "floor: a header's worth");
-  assert.equal(estimateOutlineTokens(400), 232);
-  assert.equal(estimateOutlineTokens(9000), 1500, "capped by DEFAULT_OUTLINE_BUDGET");
-  assert.equal(estimateOutlineTokens(9000, 4000), 4000);
+test("declarationsInSpan: the declarations a read would show, or none when the outline is cut short", () => {
+  const entries = [
+    { qualified_name: "A", start_line: 10, end_line: 400 },
+    { qualified_name: "A::f", start_line: 20, end_line: 60 },
+    { qualified_name: "A::g", start_line: 70, end_line: 120 },
+    { qualified_name: "h", start_line: 410, end_line: 430 },
+  ];
+  const names = (outline, span) => declarationsInSpan(outline, span).map((e) => e.qualified_name);
+  assert.deepEqual(names({ entries, elided: 0 }, { start: 1, end: 500 }), ["A", "A::f", "A::g", "h"]);
+  assert.deepEqual(names({ entries, elided: 0 }, { start: 65, end: 100 }), ["A", "A::g"], "the enclosing class too");
+  assert.deepEqual(names({ entries, elided: 0 }, { start: 401, end: 405 }), [], "lines inside no declaration");
+  // A list its budget cut is whole for a span that ends before the last entry starts.
+  assert.deepEqual(names({ entries, elided: 3 }, { start: 65, end: 100 }), ["A", "A::g"]);
+  assert.deepEqual(names({ entries, elided: 3 }, { start: 65, end: 410 }), [], "the cut may hide a declaration");
+  assert.deepEqual(names({ entries, elided: 3 }, { start: 1, end: 500 }), [], "a whole file needs the whole list");
+  for (const none of [null, {}, { entries: [] }, { entries: [{ start_line: 3 }] }, { indexed: false, entries: [] }]) {
+    assert.deepEqual(declarationsInSpan(none, { start: 1, end: 9 }), []);
+  }
+  assert.deepEqual(declarationsInSpan({ entries }, { start: 0, end: 0 }), [], "unknown span");
 });
 
 // ---- a ranged read has a window, and the window has a budget --
@@ -581,8 +607,9 @@ test("read cap: two denials per file per session, then cap_spent", () => {
   assert.equal(spendCapBudget({ other: 5 }, over.rel).other, 5, "other files' counts survive");
 });
 
-test("read cap: the deny text names the path, the start line, the ops and the window", () => {
-  const v = classifyRead({ ...CAP_BASE, offset: 4321, limit: 900 });
+test("read cap: the deny text names the path, the lines, their declarations and the window", () => {
+  const declarations = [{ qualified_name: "DB::f", signature: "void f()", start_line: 4300, end_line: 4400 }];
+  const v = classifyRead({ ...CAP_BASE, offset: 4321, limit: 900, declarations });
   assert.match(
     v.deny,
     /^loom-code-shunt: Read of src\/Storages\/MergeTree\/MergeTreeData\.cpp lines 4321-5220 is 900 lines/,
@@ -590,15 +617,12 @@ test("read cap: the deny text names the path, the start line, the ops and the wi
   assert.match(v.deny, /\(as of abc123def456\)/);
   assert.match(
     v.deny,
-    /loom code\.enclosing locations=src\/Storages\/MergeTree\/MergeTreeData\.cpp:4321 neighbours=true/,
+    /The index's outline of those lines \(lines, qualified name, header; [^)]*\):\n4300-4400 DB::f void f\(\)\n/,
   );
-  assert.match(v.deny, /code\.symbol name=/);
-  assert.match(
-    v.deny,
-    /code\.outline path=src\/Storages\/MergeTree\/MergeTreeData\.cpp \(declarations with line spans, ~1500 tokens\)/,
-  );
-  assert.match(v.deny, /Read at most 200 lines at a time \(offset\/limit\) if you must read directly\./);
+  assert.match(v.deny, /loom_code_symbol name=<qualified name>/);
+  assert.match(v.deny, /Read the ones you need, at most 200 lines at a time/);
   assert.match(v.deny, /Uncommitted edits are invisible to the index/);
+  assert.doesNotMatch(v.deny, /code\.enclosing|code\.outline/, "the scope is in the refusal, not one more call away");
 });
 
 test("deny texts never name the off switch", () => {
@@ -814,7 +838,7 @@ test("symbolInPattern names a symbol, not a string", () => {
   assert.equal(symbolInPattern("renameTemp.*Add"), "", "a regex is a grep");
 });
 
-test("a single-file grep for a symbol is denied once with the loom_code_symbol call, then passes", () => {
+test("a single-file grep for a symbol is a hit once, carrying the index's answer, then passes", () => {
   const ctx = {
     rel: "src/Storages/MergeTree/MergeTreeData.cpp",
     isFile: true,
@@ -822,11 +846,11 @@ test("a single-file grep for a symbol is denied once with the loom_code_symbol c
     pattern: "MergeTreeData::renameTempPartAndAdd\\b",
     symbol: "MergeTreeData::renameTempPartAndAdd",
   };
-  const first = classifyGrep({ ...ctx, symbolBudgetSpent: false });
+  const first = classifyGrep({ ...ctx, symbolBudgetSpent: false, answer: "Index answer: it is defined at a.cpp:3." });
   assert.equal(first.reason, "hit");
   assert.equal(first.symbol, "MergeTreeData::renameTempPartAndAdd");
+  assert.match(first.deny, /names a symbol\. Index answer: it is defined at a\.cpp:3\. For its callers call/);
   assert.match(first.deny, /loom_code_symbol name="MergeTreeData::renameTempPartAndAdd"/);
-  assert.match(first.deny, /passes on the next try/);
   assert.equal(classifyGrep({ ...ctx, symbolBudgetSpent: true }).reason, "symbol_grep_spent");
   assert.equal(classifyGrep({ ...ctx, symbol: "" }).reason, "single_file_grep", "a string grep is targeted");
   assert.equal(
@@ -882,10 +906,18 @@ test("a symbol-grep denial carries the index's answer, the indexed commit as inf
     symbolAnswerText({ definitions: [{ path: "a.cpp", start_line: 3 }] }, {}),
     "Index answer: the symbol is defined at a.cpp:3 (index).",
   );
-  assert.equal(symbolAnswerText({ definitions: [] }, {}), "", "no definition: the plain redirect stands");
+  assert.equal(symbolAnswerText({ definitions: [] }, {}), "", "no definition: no answer");
   assert.equal(symbolAnswerText(null, {}), "");
-  const two = symbolAnswerText({ definitions: [res.definitions[0], { ...res.definitions[0], start_line: 10 }] }, {});
-  assert.match(two, /1 more definition\(s\)/);
+  const several = { definitions: [res.definitions[0], { ...res.definitions[0], start_line: 10 }] };
+  assert.match(symbolAnswerText(several, {}), /1 more definition\(s\)/);
+  // A refusal carries only a whole answer: one definition, and every local line.
+  const opts = { asOf: "40acec0102bc77fb", namespace: "code-example-private" };
+  assert.equal(wholeSymbolAnswer(res, opts), same);
+  assert.equal(wholeSymbolAnswer(several, opts), "", "several definitions: the grep settles which");
+  assert.equal(wholeSymbolAnswer({ definitions: [] }, opts), "", "a local variable has no definition");
+  assert.equal(wholeSymbolAnswer(null, opts), "", "no answer in time");
+  assert.equal(wholeSymbolAnswer(res, { ...opts, localGrep: null }), "", "local lines that did not fit");
+  assert.match(wholeSymbolAnswer(res, { ...opts, localGrep: "grep -n x a.h:\n1:x" }), /your lines from there follow/);
   const deny = denySymbolGrepWithAnswer(
     {
       pattern: "renameTempPartAndAdd",
@@ -934,7 +966,8 @@ test("when the checkout differs, the denial carries the model's own grep lines f
   assert.doesNotMatch(symbolAnswerText(res, { asOf: "2f97e7397", localGrep: "" }), /local changes/);
   assert.equal(localGrepText("", {}), "");
   const many = Array.from({ length: 20 }, (_, i) => `a.cpp:${i + 1}:x`).join("\n");
-  assert.match(localGrepText(many, { maxLines: 12 }), /… 8 more line\(s\)$/);
+  assert.equal(localGrepText(many, { maxLines: 12 }), null, "a cut list is not the grep's answer");
+  assert.equal(localGrepText("a.cpp:1:" + "x".repeat(40), { maxChars: 20 }), null);
   const deny = denySymbolGrepWithAnswer(
     { pattern: "renameTempPartAndAdd", symbol: "renameTempPartAndAdd", rel: "src/a.cpp" },
     text,
@@ -1076,18 +1109,46 @@ test("local-first is off by default; the option or the env turns it on", () => {
   assert.equal(localFirstOn({ CLAUDE_PLUGIN_OPTION_LOCAL_FIRST: "true" }), true);
 });
 
-test("a gh issue search is the tracker_search shape, chains and escapes included", () => {
-  const codex = `git remote get-url origin && gh auth status && gh issue list --repo ClickHouse/example-private --state all --limit 100 --search '"Added part" "covers" "existing part"' --json number,title,state,url,updatedAt`;
-  assert.deepEqual(
-    ghIssueSearchInCommand(codex),
-    {
-      kind: "tracker_search",
-      query: "Added part covers existing part",
-      frames: [],
-      repo: "clickhouse/example-private",
-    },
-    "the operator's Codex command, third segment of a && chain",
-  );
+test("isCompoundCommand: a list or a pipeline outside quotes", () => {
+  for (const compound of [
+    "sed -n 188,198p a.py; grep -n self_name a.py",
+    "cd /repo && cat a.py",
+    "make test || cat log.txt",
+    "cat a.py | head -50",
+    "git status\ngit diff",
+    "cat a.py & cat b.py | wc -l",
+  ]) {
+    assert.equal(isCompoundCommand(compound), true, compound);
+  }
+  for (const single of [
+    "cat a.py",
+    "cat a.py;",
+    "  grep -n 'a|b; c && d' a.py\n",
+    'grep -n "def test_dotted_name\\|def test_.*dot" tests/test_blueprints.py',
+    "awk 'NR>=1 && NR<=9' a.py",
+    "grep -rn foo src 2>/dev/null",
+    "",
+  ]) {
+    assert.equal(isCompoundCommand(single), false, single);
+  }
+});
+
+test("a gh issue search is the tracker_search shape, escapes included; a chain is not judged", () => {
+  const search = `gh issue list --repo ClickHouse/example-private --state all --limit 100 --search '"Added part" "covers" "existing part"' --json number,title,state,url,updatedAt`;
+  assert.deepEqual(ghIssueSearchInCommand(`${search};`), {
+    kind: "tracker_search",
+    query: "Added part covers existing part",
+    frames: [],
+    repo: "clickhouse/example-private",
+  });
+  for (const chain of [
+    `git remote get-url origin && gh auth status && ${search}`,
+    `cd /repo; ${search}`,
+    `${search} & sleep 1`,
+    "gh search issues crash & gh pr list",
+  ]) {
+    assert.equal(ghIssueSearchInCommand(chain), null, "a refusal would withhold the other parts");
+  }
   assert.deepEqual(
     ghIssueSearchInCommand(`gh issue list --repo a/b --state all --search "\\"part covers parts\\"" --json number`),
     { kind: "tracker_search", query: "part covers parts", frames: [], repo: "a/b" },
@@ -1129,7 +1190,8 @@ test("a gh issue search is the tracker_search shape, chains and escapes included
     null,
     "PR searches are not the tracker record's question",
   );
-  assert.equal(ghIssueSearchInCommand("gh search issues foo | head -3"), null, "a pipeline segment is not judged");
+  assert.equal(ghIssueSearchInCommand("gh search issues foo | head -3"), null, "a pipeline is not judged");
+  assert.equal(ghIssueSearchInCommand("gh search issues foo > out.txt"), null, "nor a redirect");
   assert.equal(
     ghIssueSearchInCommand("gh issue list --search 'is:open label:bug'"),
     null,

@@ -89,8 +89,8 @@ async function main() {
   const sp = sessionStatePath("prompt-recall", payload.session_id);
   const { text, seen: nextSeen } = renderRecall(res, readJsonFile(sp, []), { cap: 3, maxChars: MAX_CHARS });
   writeJsonFile(sp, nextSeen);
-  if (text) process.stdout.write(JSON.stringify(recallPayload(text)));
   scheduleExit(0);
+  return text ? recallPayload(text) : undefined;
 }
 
 if (process.env.LOOM_HOOK_NO_MAIN !== "1") runHookMain(main);

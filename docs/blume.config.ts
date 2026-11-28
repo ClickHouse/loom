@@ -38,6 +38,7 @@ export default defineConfig({
     },
   },
   lastModified: "frontmatter",
+  export: { pdf: true },
   agents: {
     llmsTxt: {
       details:

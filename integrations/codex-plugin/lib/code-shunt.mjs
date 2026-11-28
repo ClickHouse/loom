@@ -10,6 +10,14 @@ import { recalledDataBlock } from "./prompt-recall.mjs";
 // with its path, line span, callers and as-of commit, so the shunt redirects
 // the BULK reflex to it; anything targeted passes.
 //
+// A refusal costs the agent a request, so it must hand over what the call was
+// after: a read is refused only with the declarations of the lines it asked
+// for, a symbol grep only with the one definition the index holds. When the
+// index did not answer in full, the call runs. The declarations are the kinds
+// code.outline lists by default: functions, methods, classes, structs and the
+// units of tests, build files and SQL. An interface, type alias, enum or
+// constant is not among them, and the refusal says so.
+//
 // The index describes merged code at its as-of commit. A file the checkout
 // modified or git does not track always passes: only the working tree can
 // answer for it (blast radius covers the diff after an edit).
@@ -20,29 +28,23 @@ import { recalledDataBlock } from "./prompt-recall.mjs";
 export const DEFAULT_MAX_LINES = 800;
 
 // Read-window cap. A RANGED read (offset/limit given) of an indexed,
-// unmodified file whose span is longer than this many lines is redirected to
-// the enclosing unit; 0 = off, the default until a bench sets one. The cap
-// has a per-session, per-file budget so a model that insists is never denied
-// the same file forever.
+// unmodified file whose span is longer than this many lines is refused with
+// the declarations in its lines; 0 = off, the default until a bench sets one.
+// The cap has a per-session, per-file budget so a model that insists is never
+// denied the same file forever.
 export const DEFAULT_READ_CAP = 0;
 export const READ_CAP_DENIALS_PER_FILE = 2;
 
-// code.outline's default budget, and the outline's measured price per file
-// line (147 indexed files changed by 30 recent PRs of a large C++ repository):
-// 0.581 tokens of whole-row budgeted entries per file line.
-// The deny text quotes the estimate so the model can weigh it against the
-// file it was about to read; ctx.outlineTokens overrides when a caller knows.
-export const DEFAULT_OUTLINE_BUDGET = 1500;
-export const OUTLINE_TOKENS_PER_LINE = 0.58;
-
-/** Rough token price of `loom code.outline` for a file of `lineCount` lines:
- *  the measured per-line rate, floored at a small header and capped by the
- *  op's default budget (whole-row budgeting never exceeds it). */
-export function estimateOutlineTokens(lineCount, budget = DEFAULT_OUTLINE_BUDGET) {
-  const n = Number(lineCount);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.min(budget, Math.max(50, Math.round(n * OUTLINE_TOKENS_PER_LINE)));
-}
+// The token budget of the code.outline call behind a read refusal: the
+// refusal carries every declaration of the lines asked for, so a file whose
+// outline does not fit is read, not refused. Measured on 301 files over 800
+// lines of a large C++ repository, an outline costs a median 2.2 budgeted
+// tokens per file line and its lines in the refusal 1.9 characters per
+// budgeted token: 4000 held the outline of 62% of those files, and the
+// longest refusal was 8,400 characters. That is a measurement, not a limit:
+// the server counts an entry at a quarter of its JSON length, so long
+// signatures make a longer refusal.
+export const DEFAULT_OUTLINE_BUDGET = 4000;
 
 const BINARY_EXT = new Set([
   ".png",
@@ -112,10 +114,12 @@ export const PASS_REASONS = Object.freeze([
   "cap_spent", // ranged read over the read-window cap, but this file's denial budget is spent
   "symbol_grep_spent", // single-file grep for a symbol, but this symbol's denial budget is spent
   "budget_unrecorded", // a denial whose budget spend could not be written: passed rather than lock the agent out
+  "compound_command", // a Bash command of several parts: a refusal would withhold every part
+  "index_unanswered", // the index did not answer the lookup in full: nothing to refuse with
 ]);
 
-// A grep whose pattern names one symbol is a symbol lookup —
-// denied once per symbol per session with the exact loom_code_symbol call.
+// A grep whose pattern names one symbol is a symbol lookup: the index is
+// asked once per symbol per session, and the grep is denied with its answer.
 export const SYMBOL_GREP_DENIALS_PER_SYMBOL = 1;
 
 /** The symbol a grep pattern names, or "": a `Class::method` path, or a
@@ -171,7 +175,10 @@ function classifyRangedRead(ctx) {
 
 /**
  * Classify a Read call. `ctx` = {rel, prefixes, lineCount, modified, offset, limit,
- * readCap, capCounts}. `modified` may be a boolean or the git
+ * readCap, capCounts, declarations}. `declarations` are the index's, for the
+ * lines asked for (declarationsInSpan); the denial text lists them. The hook
+ * asks for them once the verdict is a hit and refuses only when it holds them.
+ * `modified` may be a boolean or the git
  * status class ("modified" | "untracked"). Returns {deny, reason}: deny is the
  * denial text (null on a pass), reason is "hit" for a deny and one of
  * PASS_REASONS for a pass; a hit under the read-window cap also carries
@@ -203,45 +210,71 @@ function scopeSentence(ctx) {
   return ` Pass namespace: "${ctx.namespace}" on that call — this checkout's index.`;
 }
 
+/** The outline entries a read of `span` would show: the declarations that
+ *  overlap it, in source order. [] when `outline` (a code.outline answer) does
+ *  not hold them all: nothing indexed for the file, or a list its budget cut
+ *  at or before the span's last line. */
+export function declarationsInSpan(outline, span) {
+  const entries = (Array.isArray(outline?.entries) ? outline.entries : []).filter(
+    (e) => e && e.qualified_name && e.start_line > 0,
+  );
+  if (!entries.length || !span?.start) return [];
+  if (Number(outline.elided) > 0 && entries[entries.length - 1].start_line <= span.end) return [];
+  return entries.filter((e) => e.start_line <= span.end && Math.max(e.end_line || 0, e.start_line) >= span.start);
+}
+
+/** One line per declaration: its lines, its qualified name, its header. */
+function declarationLines(declarations) {
+  return (Array.isArray(declarations) ? declarations : [])
+    .map((e) => {
+      const header = String(e.signature || "")
+        .replace(/\s+/g, " ")
+        .trim();
+      return `${e.start_line}-${e.end_line || e.start_line} ${e.qualified_name}${header ? ` ${header}` : ""}`;
+    })
+    .join("\n");
+}
+
+// What a read refusal's list holds, said in the refusal: code.outline's default kinds.
+const OUTLINE_COLUMNS =
+  "(lines, qualified name, header; it lists functions, methods, classes and structs, " +
+  "not interfaces, type aliases, enums or constants)";
+
+const READ_DIRECTLY = "Uncommitted edits are invisible to the index: if you changed this file, read it directly.";
+
 function denyCapText(ctx, span, cap) {
-  const { rel, lineCount } = ctx;
+  const { rel } = ctx;
   const n = span.end - span.start + 1;
-  const outlineTokens = ctx.outlineTokens ?? estimateOutlineTokens(lineCount);
   return (
     `loom-code-shunt: Read of ${rel} lines ${span.start}-${span.end} is ${n} lines, over the ` +
     `${cap}-line read window, and the file is in loom's code index` +
-    `${ctx.asOf ? ` (as of ${ctx.asOf.slice(0, 12)})` : ""}. Ask for the unit instead of the ` +
-    `window: loom code.enclosing locations=${rel}:${span.start} neighbours=true (the symbol ` +
-    `enclosing line ${span.start}, with its callers, callees and tests), then code.symbol ` +
-    `name=<its qualified name> for the definition with its path:line span, or ` +
-    `code.outline path=${rel} (declarations with line spans, ~${outlineTokens} tokens) to pick ` +
-    `a smaller span. Read at most ${cap} lines at a time (offset/limit) if you must read directly. ` +
-    `Uncommitted edits are invisible to the index: if you changed this file, read the span directly.` +
+    `${ctx.asOf ? ` (as of ${ctx.asOf.slice(0, 12)})` : ""}. The index's outline of those lines ` +
+    `${OUTLINE_COLUMNS}:\n${declarationLines(ctx.declarations)}\n` +
+    `Read the ones you need, at most ${cap} lines at a time, or call loom_code_symbol ` +
+    `name=<qualified name> for one definition with its callers. ${READ_DIRECTLY}` +
     scopeSentence(ctx)
   );
 }
 
 function denyReadText(ctx) {
   const { rel, lineCount } = ctx;
-  const outlineTokens = ctx.outlineTokens ?? estimateOutlineTokens(lineCount);
   return (
     `loom-code-shunt: ${rel} is ${lineCount} lines and is in loom's code index` +
-    `${ctx.asOf ? ` (as of ${ctx.asOf.slice(0, 12)})` : ""}. Whole-file reads are the ` +
-    `expensive reflex — ask the index instead: loom code.outline path=${rel} ` +
-    `(declarations with line spans, ~${outlineTokens} tokens) to see what is in the file, ` +
-    `then Read only the span you need with offset/limit (targeted reads pass this hook) ` +
-    `or code.symbol (name → definition with path:line span). For a question use ` +
-    `code.search (question or path → ranked units); for an exact string code.grep ` +
-    `(hits arrive with their enclosing symbol). ` +
-    `Uncommitted edits are invisible to the index: if you changed this file, read the span directly.` +
+    `${ctx.asOf ? ` (as of ${ctx.asOf.slice(0, 12)})` : ""}. The index's outline of it ` +
+    `${OUTLINE_COLUMNS}:\n${declarationLines(ctx.declarations)}\n` +
+    `Read the lines you need (a ranged read passes this hook), or call loom_code_symbol ` +
+    `name=<qualified name> for one definition with its callers. ${READ_DIRECTLY}` +
     scopeSentence(ctx)
   );
 }
 
 /**
- * Classify a Grep call. `ctx` = {rel (of the search root), isFile, prefixes, pattern}.
- * Returns {deny, reason} like classifyRead; a root outside the repo is
- * `not_indexed` (the hook does not log it — nothing indexed was in play).
+ * Classify a Grep call. `ctx` = {rel (of the search root), isFile, prefixes, pattern,
+ * symbol, symbolBudgetSpent, answer}. Returns {deny, reason} like classifyRead; a
+ * root outside the repo is `not_indexed` (the hook does not log it — nothing
+ * indexed was in play). A symbol hit names `symbol`; its text carries `answer`,
+ * the index's definition (wholeSymbolAnswer), which the hook asks for and
+ * without which it lets the grep run.
  */
 /** A Grep call with no output_mode that passes a line-only flag (`-n`,
  *  `-A`, `-B`, `-C`, `context`): the caller wants matching lines. */
@@ -259,7 +292,7 @@ export function classifyGrep(ctx) {
     // A single-file grep for one symbol is a symbol lookup.
     if (ctx.symbol && underPrefixes(rel, prefixes)) {
       if (ctx.symbolBudgetSpent) return pass("symbol_grep_spent");
-      return { deny: denySymbolGrepText(ctx), reason: "hit", symbol: ctx.symbol };
+      return { deny: denySymbolGrepWithAnswer(ctx, ctx.answer || ""), reason: "hit", symbol: ctx.symbol };
     }
     return pass("single_file_grep");
   }
@@ -284,10 +317,10 @@ export function localFirstOn(env = process.env) {
   return v === "on" || v === "true" || v === "1" || v === "yes";
 }
 
-/** The denial carries the index's answer.
+/** The index's answer to "where is this symbol defined".
  *  `result` is a code.symbol response; `asOf` the indexed commit the
  *  session-start cache recorded (information, never a condition). "" when
- *  the index has no definition — the caller keeps the plain redirect.
+ *  the index has no definition.
  *  `localGrep` / `dirtyFiles`: the caller's own lines from named files it has
  *  modified, the one thing the index cannot know. */
 export function symbolAnswerText(result, { asOf = "", namespace = "", localGrep = "", dirtyFiles = [] } = {}) {
@@ -307,6 +340,15 @@ export function symbolAnswerText(result, { asOf = "", namespace = "", localGrep 
     text += ` You have local changes in ${changed}; your lines from there follow, so no grep is needed:\n${localGrep}`;
   }
   return text;
+}
+
+/** The symbol answer a refusal may carry, or "" when it is not whole: the
+ *  index holds exactly one definition (several are a choice the caller's own
+ *  grep settles), and the caller's lines from modified files all fit
+ *  (`localGrep` is null when they do not). */
+export function wholeSymbolAnswer(result, opts = {}) {
+  const defs = Array.isArray(result?.definitions) ? result.definitions : [];
+  return defs.length === 1 && opts.localGrep !== null ? symbolAnswerText(result, opts) : "";
 }
 
 /** The grep the model asked for, run by the hook over the named files the
@@ -330,43 +372,31 @@ export function runLocalGrep(cwd, pattern, files, { exec = execFileSync, timeout
       }) || "",
     );
   } catch {
-    return ""; // exit 1 = no match; anything else = the plain wording stands
+    return ""; // exit 1 = no match; anything else reads as no lines
   }
 }
 
-/** The local grep's lines, capped, with the command and HEAD named. */
+/** The local grep's lines with the command and HEAD named; "" for no lines,
+ *  null when they exceed `maxLines` or `maxChars`: a cut list is not the
+ *  grep's answer, so the caller lets the grep run. */
 export function localGrepText(output, { pattern = "", files = [], head = "", maxLines = 12, maxChars = 1500 } = {}) {
   const lines = String(output || "")
     .split("\n")
     .filter(Boolean);
   if (!lines.length) return "";
-  const shown = lines.slice(0, maxLines);
-  let body = shown.join("\n");
-  if (body.length > maxChars) body = body.slice(0, maxChars) + "…";
-  const more = lines.length > shown.length ? `\n… ${lines.length - shown.length} more line(s)` : "";
+  const body = lines.join("\n");
+  if (lines.length > maxLines || body.length > maxChars) return null;
   const cmd = `grep -n ${JSON.stringify(String(pattern))} ${files.join(" ")}`.trim();
-  return `${cmd}${head ? ` (HEAD ${String(head).slice(0, 9)})` : ""}:\n${body}${more}`;
+  return `${cmd}${head ? ` (HEAD ${String(head).slice(0, 9)})` : ""}:\n${body}`;
 }
 
-/** The symbol-grep denial when the index answered: the answer first, the
- *  callers pointer, the scope — no round trip left for the model to make. */
+/** The symbol-grep denial: the index's answer first, the callers pointer,
+ *  the scope — no round trip left for the model to make. */
 export function denySymbolGrepWithAnswer(ctx, answer) {
   const { pattern, symbol } = ctx;
   return (
     `loom-code-shunt: ${JSON.stringify(String(pattern))} names a symbol. ${answer}${answer.includes("\n") ? "\n" : " "}` +
     `For its callers call loom_code_symbol name=${JSON.stringify(String(symbol))} uses_brief: true.` +
-    scopeSentence(ctx)
-  );
-}
-
-function denySymbolGrepText(ctx) {
-  const { rel, pattern, symbol } = ctx;
-  return (
-    `loom-code-shunt: ${JSON.stringify(String(pattern))} names a symbol — call ` +
-    `loom_code_symbol name=${JSON.stringify(String(symbol))} (the exact definition with path:line, ` +
-    `compiler tier where indexed; add uses_brief: true for its callers) instead of grepping ` +
-    `${rel}: a grep shows matching lines, not the definition. This grep passes on the next try; ` +
-    `grep for strings, or in your own uncommitted files, directly.` +
     scopeSentence(ctx)
   );
 }

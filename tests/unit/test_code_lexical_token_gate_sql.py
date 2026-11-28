@@ -67,7 +67,8 @@ async def test_identifier_gate_keeps_identity_model_prefix_and_pool() -> None:
     rows = await repo.lexical_search_chunks(
         "o", "n", "m", ["__init__"], [1.0], path_prefix="src/", pool=1
     )
-    assert len(rows) == 1 and rows[0]["path"] in {"src/one.py", "src/two.py"}
+    # both match; the pool of one takes the first in path order
+    assert [r["path"] for r in rows] == ["src/one.py"]
 
 
 @pytest.mark.asyncio
@@ -166,3 +167,64 @@ async def test_rows_of_one_score_fill_the_pool_with_demoted_rows_after_the_sourc
     )
     assert [r["lex_rank"] for r in found] == list(range(1, 101))
     assert [r["path"].startswith("src/") for r in found] == [True] * 40 + [False] * 60
+
+
+@pytest.mark.asyncio
+async def test_of_two_equal_votes_at_the_pools_last_slot_the_better_rank_is_kept() -> None:
+    """The test row matches one more term and is the leg's first row. At half weight it
+    votes 0.5 / 61, the same number as the 1 / 122 of the source row at rank 62, and the
+    60 source rows between them vote more. A pool of 61 has one slot for the two: the
+    row at rank 1 takes it, so the pool is the leg's first 61 rows."""
+    repo = _repo(_row("tests/test_merge.py", "merge tree select"), _rows("src/m", 300))
+    found = await repo.lexical_search_chunks(
+        "o", "n", "m", ["merge", "tree", "select"], [1.0, 1.0, 1.0], pool=61, noise_penalty=0.5
+    )
+    assert [(r["lex_rank"], bool(r["in_pool"])) for r in found] == [
+        (rank, True) for rank in range(1, 62)
+    ]
+    assert found[0]["path"] == "tests/test_merge.py"
+
+
+def _chunk(path: str, line: int, tag: str = "") -> str:
+    """One chunk of `path` that starts at `line` and holds the lexeme `merge`."""
+    cid = uuid.uuid5(uuid.NAMESPACE_URL, f"{path}:{line}:{tag}")
+    return (
+        "INSERT INTO loom.code_chunks (org, namespace, embedding_model, path, chunk_id, "
+        "start_line, content, lexemes, embedding) VALUES "
+        f"('o', 'n', 'm', '{path}', '{cid}', {line}, '', 'merge', arrayResize([0.1], 3072, 0.1))"
+    )
+
+
+@pytest.mark.parametrize("penalties", [{}, {"noise_penalty": 0.35}])
+@pytest.mark.asyncio
+async def test_rows_of_one_score_come_in_file_order_whatever_part_holds_them(
+    penalties: dict[str, float],
+) -> None:
+    """Six chunks hold the one term and tie. Each insert is a part, and the table is
+    written in two orders: the rows come back by path and then by start line both
+    times, and the two chunks that start on one line in the same order."""
+    chunks = [
+        _chunk("src/b.py", 40),
+        _chunk("src/a.py", 90),
+        _chunk("src/b.py", 1),
+        _chunk("src/a.py", 7, "first"),
+        _chunk("src/a.py", 7, "second"),
+        _chunk("lib/z.py", 300),
+    ]
+
+    async def leg(rows: list[str]) -> list[tuple[str, int, str]]:
+        found = await _repo(*rows).lexical_search_chunks(
+            "o", "n", "m", ["merge"], [1.0], **penalties
+        )
+        return [(r["path"], r["start_line"], r["chunk_id"]) for r in found]
+
+    written, reversed_ = await leg(chunks), await leg(chunks[::-1])
+    assert written == reversed_
+    assert [(path, line) for path, line, _ in written] == [
+        ("lib/z.py", 300),
+        ("src/a.py", 7),
+        ("src/a.py", 7),
+        ("src/a.py", 90),
+        ("src/b.py", 1),
+        ("src/b.py", 40),
+    ]

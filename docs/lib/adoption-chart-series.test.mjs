@@ -32,6 +32,30 @@ test("source intervals sum observed events or use the last observed gauge", () =
   );
 });
 
+test("published counters plot today's snapshot without counting it as completed activity", () => {
+  const today = "2026-11-28";
+  const options = { start: "2026-11-01", end: today, kind: "gauge", includeCurrent: true };
+  for (const value of [1325, 2161]) {
+    const points = groupDailySeries([{ day: today, value }], "day", options);
+    assert.deepEqual(points, [{ day: today, value, days: 1, current: true, partial: false }]);
+    assert.deepEqual(metricGrowth(points, "day", "gauge"), []);
+  }
+
+  const points = groupDailySeries(
+    [
+      { day: "2026-11-26", value: 1200 },
+      { day: "2026-11-27", value: 1220 },
+      { day: today, value: 1325 },
+    ],
+    "day",
+    options,
+  );
+  assert.deepEqual(
+    metricGrowth(points, "day", "gauge").map(({ value }) => value),
+    [20],
+  );
+});
+
 test("cumulative observed counts preserve gaps and reported zeros", () => {
   const rows = [
     { day: "2026-01-04", value: 5, partial: true },

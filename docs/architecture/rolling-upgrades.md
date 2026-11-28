@@ -978,6 +978,17 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     number in the `memory_code_links` pass outcome, which every build serves as stored.
     No gate holds the rollout.
 
+67. **A memory's text revised after a rename** (`server/memory/app/code_renames.py::revise`):
+    N's link pass marks a link that reads `moved` as due (`policy_due`, an existing
+    column) and its policy step revises the memory's text where the swap is certain. N-1
+    never marks a `moved` link, and its policy step clears a mark N wrote without
+    revising, so a rename followed during the rollout can leave its memory's text as
+    written: `namespace.validate` lists the edit, as before. A link that read `moved`
+    before N served is never marked, so its memory's text also stays as written and
+    listed: no backfill marks it. The revision is a `memory.update_by_id` write, which
+    N-1 reads as any other version. `renamed` is one more number in the pass outcome. No
+    gate holds the rollout.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

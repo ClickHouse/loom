@@ -20,6 +20,7 @@ import logging
 import time
 from collections import defaultdict
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, NamedTuple
 
 from server.code.domain.anchor import local_name
@@ -29,6 +30,7 @@ from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
 from server.memory.domain import code_change
 from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
+from server.memory.domain.files import names_file
 from server.memory.domain.lemmatize import snowball_stem_tokens
 from server.memory.domain.recall import query_tokens
 from server.memory.store import code_links
@@ -69,13 +71,20 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
     excerpt = _excerpt(hit)
     if excerpt is None:
         return None
+    state = str(hit.get("code_state") or "")
+    if not state and names_file(excerpt):
+        state = code_change.UNLINKED  # it says where code is, with no comparison to show
     lesson: dict[str, Any] = {
         "path": path,
         "memory_key": str(hit["memory_key"]),
         "namespace": str(hit["namespace"]),
         "excerpt": excerpt,
-        "code_state": str(hit.get("code_state") or ""),
+        "code_state": state,
     }
+    if hit.get("code_rev"):
+        lesson["rev"] = str(hit["code_rev"])[:12]
+    if state and isinstance(first := hit.get("created_at"), datetime):
+        lesson["first_written"] = first.date().isoformat()
     if hit.get("code_changed_since"):
         lesson["changed_since"] = str(hit["code_changed_since"])
     if hit.get("code_moved"):
@@ -282,7 +291,10 @@ async def lessons_for_paths(
     `supersedes_key`, and `memory.for_file` shows them. Each row: `path`, `memory_key`,
     `namespace`, `excerpt`, `code_state`: the worst state of its links to code in the file
     (`fresh`, `moved`, or `changed`, `unresolved` or `missing` when that code differs from
-    what the memory was written against), '' for a row that names the file only;
+    what the memory was written against), `unlinked` for a row with no link whose text
+    names a file by its path, '' for one that names the file only in `files`; `rev`, the
+    first 12 characters of the commit that link was anchored at, for a linked row;
+    `first_written`, the day a row with a code state was first written;
     `changed_since`, the commit that put its code in a `changed`, `unresolved` or `missing`
     state, when one is known; `code_moved`, its links to code in the file that is now at
     another path or symbol than the row was written against, when there are any; and
@@ -381,13 +393,21 @@ def _source_lesson(
             | {
                 "code_state": code_change.worst([link["state"] for link in matching]),
                 "code_changed_since": code_change.worst_commit(matching),
+                "code_rev": code_change.anchored_commit(matching),
                 "code_moved": [link.model_dump() for link in relocated(matching)],
             },
             path,
         )
     if hit.get("pinned") or is_whole_row(hit.get("memory_type", ""), hit.get("tags") or []):
         return _lesson(
-            hit | {"code_state": "unresolved", "code_changed_since": "", "code_moved": []}, path
+            hit
+            | {
+                "code_state": "unresolved",
+                "code_changed_since": "",
+                "code_rev": "",
+                "code_moved": [],
+            },
+            path,
         )
     return None
 

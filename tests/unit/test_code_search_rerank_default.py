@@ -126,7 +126,7 @@ def test_code_ask_hands_the_request_rerank_to_the_search_unchanged() -> None:
 
     def kw(rerank: str) -> Any:
         inp = CodeAskInput(org="o", namespace="n", question="q", rerank=rerank)
-        return _ask_search_kwargs(inp, 0.3, 0.2)["rerank_endpoint"]
+        return _ask_search_kwargs(inp, 0.3, 0.2, 0.62)["rerank_endpoint"]
 
     assert kw("") == "" and kw("none") == "none" and kw("builtin:cohere") == "builtin:cohere"
 

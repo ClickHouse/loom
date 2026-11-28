@@ -212,7 +212,7 @@ async fn pacing_has_its_own_budget_and_resets_retry_attempts() {
 }
 
 #[tokio::test]
-async fn pacing_zero_and_exhausted_budget_return_429() {
+async fn pacing_zero_and_over_budget_hints_return_429_without_resending() {
     for hint in ["0", "0.01"] {
         let server = Server::new(vec![
             response(429, "", &format!("Retry-After: {hint}\r\n"));
@@ -224,11 +224,18 @@ async fn pacing_zero_and_exhausted_budget_return_429() {
             .ratelimit_max_wait(Duration::from_millis(1))
             .build()
             .unwrap();
-        assert!(matches!(client.get("key").await, Err(Error::Api(e)) if e.status == 429));
+        let failure = client
+            .get_with_options("key", clickhouse_loom::CallOptions::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(failure.error, Error::Api(e) if e.status == 429));
+        assert_eq!(failure.metadata.unwrap().attempts, 1);
         server.request().await;
-        if hint != "0" {
-            assert_eq!(server.request().await.headers["x-loom-retry-count"], "1");
-        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), server.request())
+                .await
+                .is_err()
+        );
     }
 }
 

@@ -42,6 +42,15 @@ test("renderBlast names callers, tests and untouched partners in one line", () =
   assert.ok(text.length < 520, `line stays short: ${text.length}`);
 });
 
+test("beside the test gate's line the radius counts no tests, and tests alone are then no radius", () => {
+  const text = renderBlast("src/Storages/MergeTree/MergeTreeData.cpp", IMPACT, { tests: false });
+  assert.match(text, /3 callers in 2 files/);
+  assert.doesNotMatch(text, /tests reaching it/);
+  const onlyTests = { touched_symbols: IMPACT.touched_symbols, impacted_tests: IMPACT.impacted_tests };
+  assert.match(renderBlast("a.cpp", onlyTests), /tests reaching it: 1/);
+  assert.equal(renderBlast("a.cpp", onlyTests, { tests: false }), "");
+});
+
 test("partners the session already touched are not reported as missing", () => {
   const text = renderBlast("src/Storages/MergeTree/MergeTreeData.cpp", IMPACT, {
     touchedPaths: ["src/Storages/MergeTree/MergeTreeData.h"],

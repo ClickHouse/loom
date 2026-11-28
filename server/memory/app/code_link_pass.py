@@ -36,6 +36,8 @@ class PassResult:
     unlinked: int = 0
     rechecked: int = 0
     suggested: int = 0
+    # memories whose text was brought up to a rename their links followed
+    renamed: int = 0
     # ranges that changed too many files to read whole for a definition renamed as it
     # moved: it is looked for in the files that hold its lines
     wide_ranges: int = 0
@@ -48,6 +50,7 @@ class PassResult:
             "unlinked": self.unlinked,
             "rechecked": self.rechecked,
             "suggested": self.suggested,
+            "renamed": self.renamed,
             "wide_ranges": self.wide_ranges,
             "errors": len(self.errors),
         }
@@ -63,6 +66,9 @@ class PassResult:
 @dataclass
 class Budget:
     judgements: int
+    # False for a recheck made in a caller's request: a memory's text is revised by the
+    # link worker, as itself, and stays due until then
+    revises: bool = True
 
 
 @dataclass(frozen=True)

@@ -3,7 +3,10 @@
 //
 //   UserPromptSubmit  → on the FIRST prompt of a session, run.begin with the
 //                       prompt as the goal (run_id = cc-<session_id>, or
-//                       the id the server answers instead).
+//                       the id the server answers instead). Under Claude
+//                       Code loom-record's hook keeps the begin in the run
+//                       state and its detached process asks it here, so the
+//                       prompt does not wait for the answer.
 //   SessionEnd        → run.complete with the transcript's last assistant
 //                       text as final_response. outcome:"none" — the hook
 //                       knows the run ended, not whether it succeeded, and
@@ -19,7 +22,6 @@
 // recorded. LOOM_RUN_LEDGER=off disables.
 
 import {
-  envSwitch,
   postBounded,
   postBoundedResult,
   readStdinJson,
@@ -34,15 +36,17 @@ import { parseLines, readTail } from "../lib/transcript.mjs";
 import {
   beginBody,
   completeBody,
+  keepRunBegin,
   lastAssistantText,
   readRecalledStash,
   readRunState,
+  runLedgerEnabled,
   writeRunBegun,
 } from "../lib/run-hook.mjs";
 import { sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 import { appendTurn, lastAssistant, readJournal } from "../lib/turn-journal.mjs";
 
-const ENABLED = envSwitch("LOOM_RUN_LEDGER", true);
+const ENABLED = runLedgerEnabled();
 
 async function main() {
   const event = process.argv[2] || "";
@@ -70,22 +74,33 @@ async function main() {
     // Every prompt goes to the turn journal: the consumers
     // read it when the client hands them no parseable transcript.
     appendTurn(sessionId, "user", prompt);
-    const prior = readRunState(sessionId);
-    if (prior.begun || prior.refused) {
+    // On disk before it is asked, with the body every retry re-sends (the README's
+    // hooks table has the retry rules): a SessionEnd or a second prompt that comes
+    // before the answer finds a begin to ask again. loom-record keeps it in the hook
+    // and starts this script in a detached process on a job file. That process asks
+    // only what it finds kept: a begin sent after a SessionEnd has asked it and closed
+    // the run would open the run again.
+    const kept = process.argv[4] ? readRunState(sessionId) : keepRunBegin(payload, () => scope);
+    if (!kept?.attempted || !kept.body || kept.refused) {
       scheduleExit(0);
       return;
     }
-    // Awaited: the server may answer another id than the derived one, and later hooks
-    // use it. A begin may commit before its answer arrives, so every retry re-sends
-    // the first redacted body (the README's hooks table has the retry rules).
-    const body = prior.attempted && prior.body ? prior.body : beginBody(scope, payload, prompt);
+    // Awaited: the server may answer another id than the derived one, and later hooks use it.
+    const { body, at } = kept;
     const res = await postBoundedResult("run.begin", body, opts);
+    // A SessionEnd or a later prompt that came before the answer has written its own
+    // state: marked begun now, a run SessionEnd closed would keep a resumed session's
+    // next prompt from opening one.
+    if (readRunState(sessionId).at !== at) {
+      scheduleExit(0);
+      return;
+    }
     const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
     // 408, 429 and a 2xx with no usable id may still have opened the run.
     const transient = res.status === 408 || res.status === 429 || res.status >= 500 || res.status < 300;
     if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
     else if (transient) writeJsonFile(sp, { attempted: true, body, at: Date.now() });
-    else if (prior.attempted) writeJsonFile(sp, { refused: true, attempted: true, body, at: Date.now() });
+    else if (kept.retry) writeJsonFile(sp, { refused: true, attempted: true, body, at: Date.now() });
     else writeJsonFile(sp, { refused: true, at: Date.now() });
     scheduleExit(0);
     return;
@@ -107,6 +122,10 @@ async function main() {
       const res = await postBoundedResult("run.begin", state.body || beginBody(scope, payload, ""), beginOpts);
       const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
       if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
+      // No answer: stamped anew, so one the prompt's own ask gets after this hook is
+      // dropped. It would mark begun a run that has no close to come. An answer that
+      // ask got during this wait is on disk already and stays: begun, it is closed below.
+      else if (readRunState(sessionId).at === state.at) writeJsonFile(sp, { ...state, at: Date.now() });
       state = readRunState(sessionId);
     }
     if (!state.begun) {

@@ -619,11 +619,11 @@ with the largest `penalty / (60 + rank)` instead:
 - **A test or prose row leaves the pool only when 200 rows count for more.** The leg's
   first-ranked test row votes `0.35 / 61`, as much as a source row at rank 114, and
   stays.
-- **Rows with one score rank by their penalty, the undemoted first.** The score is a
-  sum of idfs over the query words a chunk holds, so the rows of a one-word or
-  two-word query tie by the thousand, and ClickHouse returns equal rows in no fixed
-  order. Without the second key the order the table holds them in would decide which
-  of them are ranked first, and with them the pool.
+- **Rows with one score rank by their penalty, the undemoted first, and then in file
+  order.** The score is a sum of idfs over the query words a chunk holds, so the rows
+  of a one-word or two-word query tie by the thousand, and ClickHouse returns equal
+  rows in the order it read them. Without the penalty key the order the table holds
+  them in would decide which of them are ranked first, and with them the pool.
 - **The scan reads a bounded depth.** No row past rank `260 / f - 60` can be in the
   pool, where `f` is the smallest factor a path can get: 2,912 rows for the default
   penalties together, 980 for the prose penalty alone, at most 10,000.
@@ -633,6 +633,66 @@ with the largest `penalty / (60 + rank)` instead:
   with one score.
 
 The vector leg and the concept leg are not cut.
+
+ClickHouse returns rows that are equal in a sort in the order it read them, which
+changes with the parts of the table and the threads of the read. So that the same
+request gets the same answer, every ranked read of the search ends its order in keys
+that identify the row:
+
+- **Chunks:** the path, the start line and the chunk id, so the earlier lines of a file
+  come first. The lexical leg, the definition leg, the chunks a history or card vote
+  brings, the exact rescore of a shortlist and `track_path` close their order this way.
+- **Equal votes in the pool cut:** the better rank in the leg first.
+- **Pull requests:** the newer merge, then the higher number.
+- **Symbols:** the path, the start line and the symbol id after the ranking keys.
+- **The vector leg and the card leg:** the statement sorts on the distance alone, the
+  one sort the codes-first read takes, and the rows it returns are put in the chunk
+  order (the path, for a card) afterwards. Chunks with one text have one vector, so
+  equal distances are common. Which of the rows at the read's last distance come back
+  is still ClickHouse's choice, as is the shortlist the codes-first read rescores.
+
+Fusion and the stages after it sort stably, so they keep the legs' order among equal
+scores.
+
+`retrieval_confidence` says whether the index holds an answer at all. It is the vector
+leg's best cosine, read on the embedder's calibrated scale before any prior reorders
+the rows (`code/domain/index/search_confidence.py`, `code/app/search/calibrate.py`):
+
+- **The scale.** 0 at the midpoint between the abstain threshold and the cosine of a
+  confident hit (`rerank_skip_above` in the namespace's calibration, else in the
+  embedder's boot calibration, else `LOOM_LLM_RERANK_SKIP_ABOVE`), 1 at that cosine.
+  An absolute cosine is not comparable across embedding models: one scores unrelated
+  text 0.2, another 0.7. The boot calibration's probes are prose, so a namespace
+  `code.calibrate` has not seeded reads its code on a prose scale: where the model
+  scores a right code hit lower than a right prose answer, an answerable search reads
+  `medium` or `high`
+  ([seed each code namespace](../operations/code-index-operations.md#first-index)).
+- **What it separates.** A question the index can answer usually scores near 1, and
+  one about another repository or another subject usually scores lower. It is a
+  tendency, not a rule: measured on issue prompts with one embedding model, the median
+  prompt sent to another repository's index scored 0.30 and about one in five still
+  read `low`.
+- **What it does not separate.** Among questions the index can answer, a result that
+  holds the file to change and one that does not score alike. A high confidence is
+  not evidence that the first result is the right one.
+- **No cosine.** A search with no vector leg (no embedder, a lexical-only request, a
+  failed leg), or one whose vector leg returned no row, reads 0.5, which never bands
+  `low`.
+- **No scale.** A confident-hit cosine that is not above the abstain threshold leaves
+  no range to read a cosine on: a calibration whose question-to-answer cosines fall
+  into its distractor range, or, with no calibration,
+  `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD` set at or over `LOOM_LLM_RERANK_SKIP_ABOVE`.
+  The search reads 0.5 then too, and `calibration_explanation` says so.
+- **Not abstention.** Abstention is decided apart from the confidence, on the fused
+  list: its top cosine under the abstain threshold (`below_threshold`), or a
+  route-aware score (that cosine, its margin over the second hit, route agreement and
+  the pool size) under `LOOM_CODE_SEARCH_ABSTAIN_CONFIDENCE_BELOW`
+  (`low_calibrated_confidence`).
+
+`retrieval_risk` bands the confidence of a result the search does not abstain on:
+`high` below `LOOM_CODE_SEARCH_MEDIUM_RISK_FROM` (0.35), `medium` from it, `low` from
+`LOOM_CODE_SEARCH_LOW_RISK_FROM` (0.70). It reads `abstain` when the search abstains.
+`route_agreement` is reported beside the confidence and is not part of it.
 
 After relevance ranking, per-file saturation spreads broad search results across
 files. It is skipped for an explicit path, a symbol route, test intent, or a
