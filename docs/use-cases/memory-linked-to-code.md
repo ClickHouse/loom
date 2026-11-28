@@ -33,9 +33,22 @@ reported commit](#check-a-lesson-after-a-code-edit).
 - **Links that follow refactors.** On every indexed commit, each link reads `fresh`,
   `moved`, `changed` (naming the commit that changed it), `unresolved` or `missing`. A link
   records the definition's tokens, so whitespace, comments and most formatter changes leave
-  it `fresh`. A link to a file follows the lines that hold a name the memory cites, and
-  is replaced by a link to a definition the memory names once the file defines it.
+  it `fresh`. A definition renamed as it moves to another file or class is followed
+  when one new definition there is it: `moved` with the same tokens, `changed` with an
+  edit or outside its class. A link to a file follows the lines that hold a name the
+  memory cites, and is replaced by a link to a definition the memory names once the
+  file defines it.
   [Link states](../concepts/memory.md#memories-linked-to-code)
+- **The current name beside a memory written against the old one.** A rename leaves the
+  memory's text as it was written. These reads name where the code is now:
+  `memory.get`, `memory.search` and the `loom_search` text, `memory.for_file` and the
+  pre-edit block, `lessons` on code answers, `context.pack` and the dashboard, and the
+  note `memory.ask` gives its synthesis (where the deployment sets
+  `memory_ask_code_namespace` to a code namespace the caller may read and leaves
+  `memory_ask_code_staleness` on). A line reads
+  ``(code moved: `reader::fetch_rows` is now `reader::load_rows` at src/reader.py:12-40)``,
+  and the structured answer carries the same as `code_moved`.
+  [What reads name](../concepts/memory.md#memories-linked-to-code)
 - **Stale memories handled the way you choose.** The namespace's
   [`code_change_policy`](../reference/operations/namespace.md#namespaceregister) decides:
   `retire_removed` (the default) leaves a memory whose code is all gone out of search and
@@ -76,6 +89,9 @@ reported commit](#check-a-lesson-after-a-code-edit).
   [`namespace.validate`](../reference/operations/namespace.md#namespacevalidate) lists the
   memories whose code changed, was not found again or is gone, and the dashboard shows each
   memory's links and their state.
+- **The edit a rename allows.** After a rename or a move the link follows, the same report
+  lists the exact token edits that bring the memory's text up to date, or the reason it
+  offers none. [Bring a lesson's text up to a rename](#bring-a-lessons-text-up-to-a-rename)
 
 ![A memory's detail in the dashboard: its linked code, one definition current and one changed since a commit](../assets/screenshots/memory-linked-code.webp)
 
@@ -121,6 +137,12 @@ The existing `test_memories_follow_their_code`
 checks these states across commits. It also checks a pure move (`moved`), removed code
 (`missing`) and a release branch whose unchanged definition still reads `fresh`.
 
+To see a rename, change only the function's name on trunk and push. After the index and
+link worker process the commit, `memory.get` on the lesson lists the link under `code`
+with the new `symbol`, its `start_line` and `end_line`, and `was_symbol`, the name the
+lesson's text still uses. A search that serves the lesson carries the same link in
+`code_moved`, and its line in the `loom_search` text names both.
+
 The packaged [MCP smoke](https://github.com/ClickHouse/loom/blob/main/scripts/gates/docker_code_smoke.py)
 saves a lesson, verifies `fresh`, commits a body edit and waits for the indexing and link
 workers to return `changed` with that exact commit. The
@@ -133,6 +155,44 @@ tool selection are not tested.
 
 For removal, held-memory exceptions and model-backed revision, see the
 [link policies](../concepts/memory.md#memories-linked-to-code).
+
+## Bring a lesson's text up to a rename
+
+When a definition is renamed or moved with nothing else changed, its link follows it and
+reads `moved`. A lesson that wrote the old name, module or path still says it. Loom does
+not rewrite it; `namespace.validate` lists what a rewrite would be:
+
+1. Call `namespace.validate` on the memory namespace (with `keys` to check the lessons
+   one session wrote) and read the `code_rename_edits` finding. Each sample is one lesson
+   with either `edits` and a `content_sha256`, or a `reason`.
+2. For a lesson with `edits`, `start` and `end` count Unicode code points of its text (a
+   Python string index; not the UTF-16 units of a JavaScript string, nor bytes). Check
+   that the text from `start` to `end` reads `old`, and apply nothing when it does not:
+   the positions were counted in another unit. Then replace it with `new`, applying the
+   last edit first so the earlier positions hold. Read the edited sentence: an edit is
+   offered on the spelling and the index, and whether the claim survives the swap is
+   yours to judge.
+3. Call `memory.update` on the key with the revised text and `if_match_sha256` set to the
+   sample's `content_sha256`. A lesson that changed since the report returns `409`; run
+   the report again.
+4. After the next link pass the lesson is linked at the new name and reads `fresh`, and
+   the finding lists it no more.
+
+A lesson with a `reason` gets no edit: the old name is a word of the prose, sits in a
+quoted snippet, still names another definition, or the sentence is about the name itself
+([every reason](../concepts/memory.md#memories-linked-to-code)). Check it against the code
+and rewrite it by hand.
+
+The finding's `totals` count a namespace's lessons by `edits` and by reason: how often a
+mechanical edit is offered there, and what stops the rest. Applying the edits without a
+person reading them is worth considering only for a namespace whose `totals` come from its
+own lessons and where at least 100 listed edits were checked by hand against the lesson
+text with none wrong.
+
+The `test_validate_lists_the_edit_a_followed_rename_allows_and_an_update_applies_it`
+[integration regression](https://github.com/ClickHouse/loom/blob/main/tests/integration/test_memory_code_links.py)
+renames a function, reads the listed edit, applies it with `memory.update` and checks the
+link at the new name.
 
 ## Compare a code-linked lesson across branches
 

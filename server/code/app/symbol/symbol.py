@@ -356,6 +356,34 @@ async def _no_enrichment() -> None:
     return None
 
 
+def _member_lessons(
+    names: list[str], groups: list[list[dict[str, Any]] | None], unread: list[str]
+) -> list[dict[str, Any]]:
+    """The lessons of the matched members `names`, one read each (`groups`), as one
+    list: a memory linked to several members in the same state is one lesson that names
+    them in `linked_symbols` and carries each member's relocated link in `code_moved`.
+    A member whose read was cut off or failed (None) is added to `unread`."""
+    notes: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    for name, group in zip(names, groups, strict=True):
+        if group is None:
+            unread.append(name)
+            continue
+        for note in group:
+            key = (
+                note["namespace"],
+                note["memory_key"],
+                note.get("code_state") or "",
+                note.get("changed_since") or "",
+                note.get("suggestion") or "",
+            )
+            linked = notes.setdefault(key, {**note, "linked_symbols": []})
+            linked["linked_symbols"].append(name)
+            listed = linked.get("code_moved", [])
+            if more := [m for m in note.get("code_moved", []) if m not in listed]:
+                linked["code_moved"] = [*listed, *more]
+    return list(notes.values())
+
+
 async def _enrichment(
     repo: CodeRepo,
     org: str,
@@ -395,22 +423,7 @@ async def _enrichment(
             return await read(symbol)
         names = list(dict.fromkeys(row["qualified_name"] for row in head))
         groups = await asyncio.gather(*(read(name) for name in names))
-        notes: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
-        for name, group in zip(names, groups, strict=True):
-            if group is None:
-                unread.append(name)
-                continue
-            for note in group:
-                key = (
-                    note["namespace"],
-                    note["memory_key"],
-                    note.get("code_state") or "",
-                    note.get("changed_since") or "",
-                    note.get("suggestion") or "",
-                )
-                linked = notes.setdefault(key, {**note, "linked_symbols": []})
-                linked["linked_symbols"].append(name)
-        return list(notes.values())
+        return _member_lessons(names, groups, unread)
 
     ready_examples: list[dict[str, Any]] = []
 

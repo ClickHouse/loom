@@ -383,6 +383,62 @@ async def test_a_branch_without_the_move_still_gets_the_lesson(
     assert {o["memory_key"]: o["code_state"] for o in out} == {"k1": "fresh"}
 
 
+def _renamed(mid: str, state: str = "moved", **kw: Any) -> dict:
+    """A link written against `src.a::Reader::fetch`, now `src.a::Reader::read`."""
+    was = {"path": "src/a.py", "name": "src.a::Reader::fetch", "hash": "h1"}
+    link = _link(mid, state=state, former=[was], **kw)
+    return link | {"start_line": 12, "end_line": 40, "code_namespace": "code-a"}
+
+
+_RENAMED = {
+    "code_namespace": "code-a",
+    "path": "src/a.py",
+    "symbol": "src.a::Reader::read",
+    "start_line": 12,
+    "end_line": 40,
+    "state": "moved",
+    "was_path": "src/a.py",
+    "was_symbol": "src.a::Reader::fetch",
+}
+
+
+@pytest.mark.asyncio
+async def test_a_lesson_names_what_the_memory_was_written_as_when_the_code_was_renamed(
+    monkeypatch,
+) -> None:
+    from server.code.domain.anchor import Definition
+
+    links = [_renamed("m1"), _renamed("m2", "changed", body="h0", since="c2"), _link("m3")]
+    excerpts = [_excerpt("m1", "k1"), _excerpt("m2", "k2"), _excerpt("m3", "k3")]
+    # where the branch's files cannot be read, the lesson is as trunk's last check left it
+    out = await _lessons(monkeypatch, links, excerpts, [], has_mirror=False, ns="code-a-26-8")
+    assert {o["memory_key"]: o.get("code_moved") for o in out} == {
+        "k1": [_RENAMED],
+        "k2": [_RENAMED | {"state": "changed", "changed_since": "c2"}],
+        "k3": None,
+    }
+    # a read that parsed the file names the lines it found the definition at
+    here = {("src/a.py", "src.a::Reader::read"): Definition("src/a.py", "q", "read", "", 30, 58)}
+    assert code_plane_reads._moved_here(links[0], "moved", here) == [
+        _RENAMED | {"start_line": 30, "end_line": 58}
+    ]
+    # a branch that still has the code under the old name is told nothing: its text is right
+    old = {("src/a.py", "src.a::Reader::fetch"): Definition("src/a.py", "q", "fetch")}
+    assert code_plane_reads._moved_here(links[0], "fresh", old) == []
+
+
+@pytest.mark.asyncio
+async def test_a_lesson_names_no_place_in_a_trunk_the_caller_may_not_read(monkeypatch) -> None:
+    async def readable(org: str, nss: set[str]) -> set[str]:
+        return set()
+
+    monkeypatch.setattr("server.memory.app.code_link_reads.readable_namespaces", readable)
+    (lesson,) = await _lessons(
+        monkeypatch, [_renamed("m1")], [_excerpt("m1", "k1")], [], has_mirror=False
+    )
+    assert (lesson["code_state"], "code_moved" in lesson) == ("moved", False)
+
+
 @pytest.mark.asyncio
 async def test_the_lesson_scope_is_the_callers_own_the_teams_and_the_readable_extras(
     monkeypatch,

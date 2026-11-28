@@ -99,6 +99,44 @@ def _code_hits() -> list[Any]:
     ]
 
 
+_MOVED = {
+    "code_namespace": "code-a",
+    "path": "src/reader.py",
+    "symbol": "reader::load_rows",
+    "start_line": 12,
+    "end_line": 40,
+    "state": "moved",
+    "was_path": "src/reader.py",
+    "was_symbol": "reader::fetch_rows",
+}
+_MOVED_NOW = "`reader::fetch_rows` is now `reader::load_rows` at src/reader.py:12-40"
+
+
+def _moved_hits() -> list[Any]:
+    """Search hits as the code annotation leaves them: one whose code was renamed, one
+    renamed and edited, one whose code is where it was written."""
+    from server.memory.api.models_search import _MemorySearchHit
+
+    def hit(key: str, **code: Any) -> Any:
+        return _MemorySearchHit(
+            memory_key=key,
+            memory_type="semantic",
+            content_excerpt=f"text of {key}",
+            distance=0.2,
+            similarity=0.8,
+            rank_score=0.8,
+            valid_at="2026-03-02T00:00:00",
+            **code,
+        )
+
+    edited = _MOVED | {"state": "changed", "changed_since": _COMMIT}
+    return [
+        hit("renamed_rule", code_state="moved", code_moved=[_MOVED]),
+        hit("edited_rule", code_state="changed", code_changed_since=_COMMIT, code_moved=[edited]),
+        hit("fresh_rule", code_state="fresh"),
+    ]
+
+
 def _payload(kind: str) -> dict[str, Any]:
     base: dict[str, Any] = {
         "memory": copy.deepcopy(_SEARCH["memory"]),
@@ -131,6 +169,14 @@ def _payload(kind: str) -> dict[str, Any]:
             "results": [h.model_dump() for h in hits],
             "reader_block": render_reader_block(hits, "q"),
         }
+        return base
+    if kind in ("moved_code", "moved_code_no_block"):
+        from server.memory.app.ask.reader_render import render_reader_block
+
+        hits = _moved_hits()
+        base["memory"] = {"results": [h.model_dump() for h in hits]}
+        if kind == "moved_code":
+            base["memory"]["reader_block"] = render_reader_block(hits, "q")
         return base
     if kind == "no_block":
         base["memory"].pop("reader_block")
@@ -322,6 +368,35 @@ def test_a_hit_whose_code_changed_names_its_state_and_commit_on_both_channels(
         "content_excerpt": "text of fresh_rule",
         "code_state": "fresh",
     }
+
+
+def test_a_hit_whose_code_moved_names_where_it_is_now_on_both_channels(harness: Any) -> None:
+    call, _ = harness
+    result = call("s-moved", {"query": "q"}, "moved_code")
+    block = result["content"][0]["text"].split("Memory hits:\n")[1].split("\n\nKnowledge hits:")[0]
+    assert block.split("\n\n") == [
+        f"[2026-03-02] [renamed_rule] (semantic) (code moved: {_MOVED_NOW}) text of renamed_rule",
+        "[2026-03-02] [edited_rule] (semantic) (its code changed since it was written,"
+        f" commit c0ffeec0ffee: check before relying on it; {_MOVED_NOW}) text of edited_rule",
+        "[2026-03-02] [fresh_rule] (semantic) text of fresh_rule",
+    ]
+    renamed, edited, fresh = result["structuredContent"]["memory"]["results"]
+    # the lean result drops a link's empty fields, and the field itself from a hit with none
+    assert renamed["code_moved"] == [_MOVED]
+    assert edited["code_moved"] == [_MOVED | {"state": "changed", "changed_since": _COMMIT}]
+    assert "code_moved" not in fresh
+
+
+def test_a_later_page_names_where_moved_code_is_now_on_its_plain_lines(harness: Any) -> None:
+    call, _ = harness
+    result = call("s-moved-page", {"query": "q"}, "moved_code_no_block")
+    lines = result["content"][0]["text"].split("Memory hits:\n")[1].split("\n\n")[0].splitlines()
+    assert lines == [
+        f"  - [renamed_rule] (ns=-) (code moved: {_MOVED_NOW}) text of renamed_rule",
+        "  - [edited_rule] (ns=-) (its code changed since it was written, commit c0ffeec0ffee:"
+        f" check before relying on it; {_MOVED_NOW}) text of edited_rule",
+        "  - [fresh_rule] (ns=-) text of fresh_rule",
+    ]
 
 
 def _knowledge_text(bodies: str) -> str:
