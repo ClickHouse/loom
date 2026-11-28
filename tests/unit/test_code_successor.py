@@ -831,6 +831,37 @@ def test_a_small_method_goes_to_its_name_in_another_class_only_with_its_class(
     assert got.state == state
 
 
+_CLEAR = "    def clear(self):\n        self.data.clear()\n"
+_OWN = (
+    "    def get(self, key):\n        return self.data[key]\n\n"
+    "    def put(self, key, value):\n        self.data[key] = value\n\n"
+    "    def pop(self, key):\n        return self.data.pop(key)\n\n"
+    "    def keys(self):\n        return list(self.data)\n\n"
+) + _CLEAR
+
+
+@pytest.mark.parametrize(
+    ("own", "state"),
+    [
+        # five members of its own beside the four it took in: mostly another class
+        (_OWN, "missing"),
+        # one of its own: it keeps the removed class's
+        (_CLEAR, "changed"),
+    ],
+    ids=["mostly-its-own", "mostly-the-removed-class"],
+)
+def test_a_class_that_was_already_there_is_weighed_with_the_members_it_had(
+    own: str, state: str
+) -> None:
+    # Store was in b.py and takes Multi's members in as Multi goes
+    multi = _KEEP + "\n\n" + _DICT.format("Multi", "iter(self.data)")
+    after = {"a.py": _KEEP, "b.py": _DICT.format("Store", "iter(self.data)") + "\n" + own}
+    before = {"a.py": multi, "b.py": "class Store:\n" + own}
+    assert _elsewhere(before, after, "Multi.__iter__").state == state
+    # as the same class is when the range brings it in whole
+    assert _elsewhere({"a.py": multi}, after, "Multi.__iter__").state == state
+
+
 def test_a_small_method_follows_its_class_renamed_with_an_alias_left_behind() -> None:
     # the old name stays as an alias of the class: no member is left under it
     before = {"a.py": _DICT.format("Multi", "iter(self.data)")}

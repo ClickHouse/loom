@@ -166,11 +166,12 @@ def elsewhere(
     become, are uncertain."""
     small = len(_TOKEN.findall(before.text(was))) < _SMALL
     vacated = small and _vacated(_scope_of(was), before, gone)
+    had = {side.path: side for side in kept}
     arrived = [
         (d, side)
         for side in new
         for d in side.defs
-        if not small or _may_be(was, before, d, side, vacated)
+        if not small or _may_be(was, before, d, side, had.get(side.path), vacated)
     ]
     rivals = [
         (r, side)
@@ -185,15 +186,18 @@ def elsewhere(
     return _same_name(was, before, arrived, rivals, stayed)
 
 
-def _may_be(was: Definition, before: Side, d: Definition, now: Side, vacated: bool) -> bool:
+def _may_be(
+    was: Definition, before: Side, d: Definition, now: Side, had: Side | None, vacated: bool
+) -> bool:
     """Whether a small `was` may be `d` in another file or scope. Under `_SMALL` tokens
     a text is mostly its signature, and its own name is one any class may define
     (`__iter__`, `close`): it goes only with its scope, module level to module level or
     into the successor of its class. A class has one only once no member of it is left
-    in its file (`vacated`): that class renamed alone, or the new one keeping its
-    members. And only under a name of its own words (`_read_rows`, `read_rows_v2`): one
-    shared word is no kinship among every changed file, where two stubs have one shape
-    (`class ReadError(Exception): pass`, `RetryError`)."""
+    in its file (`vacated`): that class renamed alone, or the one keeping its members,
+    weighed with those it already had (`had`: what `now`'s file kept), so a class that
+    took two methods in is not it. And only under a name of its own words (`_read_rows`,
+    `read_rows_v2`): one shared word is no kinship among every changed file, where two
+    stubs have one shape (`class ReadError(Exception): pass`, `RetryError`)."""
     a, b = _words(was.name), _words(d.name)
     if not a or _unversioned(a) != _unversioned(b):
         return False
@@ -205,8 +209,9 @@ def _may_be(was: Definition, before: Side, d: Definition, now: Side, vacated: bo
     if _renamed_alone(scope, target, before, now):
         return True
     old, kept = _layout(before)[0][scope], _layout(now)[0][target]
+    own = _layout(had)[0][target] if had is not None else set()
     shared = len(old & kept)
-    return shared >= _MIN_SHARED and shared / len(old | kept) >= _KEPT_MEMBERS
+    return shared >= _MIN_SHARED and shared / len(old | kept | own) >= _KEPT_MEMBERS
 
 
 def _vacated(scope: str, before: Side, gone: Sequence[Side]) -> bool:
