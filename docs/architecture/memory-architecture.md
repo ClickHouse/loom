@@ -1205,8 +1205,12 @@ one worker that revises a memory's text unasked: when a link follows a definitio
 renamed or moved with its code unchanged, the pass swaps the old name or path for the
 new one in the memory's text, where the plan of
 `server/memory/domain/code_rename.py` offers the edit, the row is `active`, no person
-pinned, locked or verified the memory, no principal attested its text, and the
-repository is indexed on one branch. The revision goes through `memory.update_by_id`'s
+pinned, locked or verified the memory, no principal attested its text, the row is held
+in the repository's own code namespace, and the repository is indexed on one branch. A
+row of any other namespace is linked by its `repo:` tag, which its writer set and which
+grants nothing, so its text is never revised: the new name would be served to readers
+who may hold no role on the repository, while every read of a link checks that role.
+The revision goes through `memory.update_by_id`'s
 write (`update.revise_as_pipeline`) on the hash of the text it was planned for. A pin,
 an attestation and a status change leave that hash as it was, so the write checks them
 again on the head it reads under the key's lock and refuses a row someone stands behind

@@ -20,8 +20,9 @@ A memory a person pinned, locked or verified is only flagged.
 A link that sits at another name or path than the memory was written against is named
 on the reads that serve its links (`relocation`, `note`) while the text still says the
 old name. Under every policy the link pass brings that text up to a rename or move a
-link followed with its code unchanged, where the swap is certain
-(`server.memory.app.code_renames.revise`); every other text stays as written.
+link followed with its code unchanged, where the swap is certain and the memory is held
+in the repository's code namespace (`server.memory.app.code_renames.revise`); every
+other text stays as written.
 """
 
 from __future__ import annotations

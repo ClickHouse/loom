@@ -665,6 +665,10 @@ path. The link pass that follows the rename plans the edits that bring the text 
 and applies them itself when all of these hold:
 
 - the plan offers edits: none of the reasons in the table below applies;
+- the memory is held in the repository's code namespace, as a team rule or decision
+  is. A memory of any other namespace is linked through its `repo:` tag, which its
+  writer set and which grants nothing: its readers may hold no role on the repository,
+  so the new name or path is not written into it;
 - no person holds the memory (pinned, locked or verified), and no service account
   attested the text as it is, which a revision would leave stale;
 - the memory is `active` and not labelled `high`. One flagged `conflicted` keeps its
@@ -704,8 +708,9 @@ with either the `edits` its text allows (replace `old` with `new` from `start` t
 counted in Unicode code points of the text, where the text reads `old`) and the
 `content_sha256` they are of, or the one `reason` no edit is offered. The finding's
 `totals` count the memories by `edits` and by reason. A memory listed with `edits` is one
-the link pass left (held, attested, flagged `conflicted`, in a repository indexed on more
-than one branch, or close to another memory once revised) or has not reached yet. The
+the link pass left (held outside the repository's code namespace, held by a person,
+attested, flagged `conflicted`, in a repository indexed on more than one branch, or
+close to another memory once revised) or has not reached yet. The
 pass decides once, when its link follows the rename: a memory it left then is not
 revised later, and neither is one whose link already read `moved` under a build that
 revises no text ([rule 67](../architecture/rolling-upgrades.md#the-rules)). Those stay

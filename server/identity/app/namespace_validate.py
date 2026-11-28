@@ -416,8 +416,9 @@ _CONTRACT: dict[str, RuleContract] = {
         uncertainty=(
             "An edit is offered on the spelling and the index alone: whether the sentence "
             "still holds once the name is swapped is for whoever applies it to read, and "
-            "the link worker applies it unread where nobody holds the memory. The words "
-            "that mark a sentence as being about the name are English."
+            "the link worker applies it unread to a memory of the repository's code "
+            "namespace that nobody holds. The words that mark a sentence as being about "
+            "the name are English."
         ),
     ),
     "code_unlinked_no_repository": RuleContract(
@@ -511,12 +512,12 @@ _CODE_RENAME_EDITS = (
     "counted in Unicode code points; apply none unless that slice reads `old`) "
     "with the `content_sha256` they are of, or the `reason` no edit is offered; `totals` "
     "counts the memories by `edits` and by reason. The link worker applies the edits "
-    "itself to a memory nobody pinned, locked or verified whose repository is indexed on "
-    "one branch and whose revised text is close to no other memory's, so a sample with "
-    "`edits` is one it leaves or has not reached. The report writes nothing: to apply, "
-    "read the edited sentence, then memory.update the key with the revised text and "
-    "`if_match_sha256` set to the sample's `content_sha256`. Only repositories you may "
-    "read are counted.",
+    "itself to a memory held in its repository's code namespace that nobody pinned, "
+    "locked or verified, where the repository is indexed on one branch and the revised "
+    "text is close to no other memory's, so a sample with `edits` is one it leaves or "
+    "has not reached. The report writes nothing: to apply, read the edited sentence, "
+    "then memory.update the key with the revised text and `if_match_sha256` set to the "
+    "sample's `content_sha256`. Only repositories you may read are counted.",
 )
 
 

@@ -8,10 +8,11 @@ positions and the hash to apply them against, or the one reason none is offered.
 memory whose text names nothing old is not listed.
 
 The link pass applies a plan's edits as one revision (memory.update_by_id's write, on
-the planned text's hash) where nobody stands behind the text as it is and no other
-branch may still have the old name (`_revisable`), and the write lets it change that
-memory alone (`update.revise_as_pipeline`). Every other memory keeps its text, and a
-principal applies its listed edits with memory.update and `if_match_sha256`.
+the planned text's hash) where the memory is held in the repository's own code
+namespace, nobody stands behind the text as it is and no other branch may still have
+the old name (`_revisable`), and the write lets it change that memory alone
+(`update.revise_as_pipeline`). Every other memory keeps its text, and a principal
+applies its listed edits with memory.update and `if_match_sha256`.
 """
 
 from __future__ import annotations
@@ -131,15 +132,20 @@ def _revisable(org: str, head: dict[str, Any], links: Sequence[LinkRow]) -> bool
     """Loom may revise the memory's text itself: a report may quote it, it is `active`
     (a `conflicted` one is already close to another memory), no person holds it (pinned,
     locked, verified), no principal attested the text as it is (a revision would leave
-    the attestation stale), and its repository is indexed on one branch. Another branch
-    may still have the old name, and a memory linked again from its revised text keeps
-    no link to it. The write checks the hold and the status again on the head it reads
+    the attestation stale), it is held in its repository's own code namespace, and that
+    repository is indexed on one branch. A memory of any other namespace is linked by
+    its `repo:` tag, which its writer set and which grants nothing: the new name would
+    be served to readers who may hold no role on the repository. Another branch may
+    still have the old name, and a memory linked again from its revised text keeps no
+    link to it. The write checks the hold and the status again on the head it reads
     under the key's lock (`update.revise_as_pipeline`)."""
     attested = attests(head.get("verified_by"), head.get("verified_sha256"), head.get("sha"))
     active = _quotable(head) and head["status"] == "active"
     if not active or code_change.held(head) or attested:
         return False
     cns = links[0]["code_namespace"]
+    if code.trunk_namespace(org, str(head["namespace"])) != cns:
+        return False
     cfg = repo_for_namespace(org, cns)
     return cfg is not None and not any(
         c.org == org and c.repo == cfg.repo and c.namespace != cns for c in configured_repos()

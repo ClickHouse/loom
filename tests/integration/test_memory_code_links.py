@@ -5,7 +5,8 @@ out of search (and serves it again when the code comes back), honours the namesp
 policy and the person's holds, resolves a name once it is merged, and serves the links
 on code.symbol, memory.for_file, memory.get and memory.search, branch by branch. Loom
 writes a memory's text only to bring it up to a rename its link followed, where the
-repository is indexed on one branch.
+memory is held in the repository's code namespace and the repository is indexed on one
+branch.
 
 Handlers run in-process; skips without LOOM_CH_HOST (house rule).
 """
@@ -1676,11 +1677,15 @@ async def test_the_link_pass_revises_a_memorys_text_after_a_rename_on_a_one_bran
     env,
 ) -> None:
     """With the repository indexed on trunk alone, the pass that follows a rename brings
-    the text of a memory nobody holds up to it: one revision through memory.update_by_id's
-    write, still its writer's row, `derived`, the text it replaced in the history. A
-    pinned memory and one that writes the name as a word of the prose keep their text.
-    The next pass links the revised memory where the code is and revises nothing."""
+    the text of a memory of its code namespace that nobody holds up to it: one revision
+    through memory.update_by_id's write, still its writer's row, `derived`, the text it
+    replaced in the history. A pinned memory and one that writes the name as a word of
+    the prose keep their text. So does a memory of another namespace, linked by its
+    `repo:` tag, whose readers may hold no role on the repository: the report lists its
+    edit. The next pass links the revised memory where the code is and revises nothing."""
     from server.code.domain.index.repos import configured_repos, set_registry_repos
+    from server.identity.api.models_namespace_catalog import NamespaceValidateInput
+    from server.identity.app.namespace_validate import handle_namespace_validate
     from server.memory.api.models_temporal import MemoryHistoryInput
     from server.memory.app.curation import handle_memory_history
 
@@ -1692,9 +1697,11 @@ async def test_the_link_pass_revises_a_memorys_text_after_a_rename_on_a_one_bran
     await _index(TRUNK, repo, c1, [path])
     text, pinned_text = "`fetch_rows` drops empty rows", "`fetch_rows` needs an open connection"
     prose_text = "fetch_rows reads a batch from the connection"
-    mid = await _remember(MEM, "fetch-rows", text)
-    pinned = await _remember(MEM, "fetch-rows-pinned", pinned_text, pinned=True)
-    prose = await _remember(MEM, "fetch-rows-prose", prose_text, files=[path])
+    tagged_text = "`fetch_rows` is called once per page"
+    mid = await _remember(TRUNK, "fetch-rows", text)
+    pinned = await _remember(TRUNK, "fetch-rows-pinned", pinned_text, pinned=True)
+    prose = await _remember(TRUNK, "fetch-rows-prose", prose_text, files=[path])
+    tagged = await _remember(MEM, "fetch-rows-tagged", tagged_text)
     await _pass()
     before = await _row(mid)
     c2 = repo.commit({path: src.replace("fetch_rows", "load_rows")})
@@ -1706,8 +1713,15 @@ async def test_the_link_pass_revises_a_memorys_text_after_a_rename_on_a_one_bran
     assert (after.actor, after.source_class) == (before.actor, "derived")
     assert (await _row(pinned)).value == pinned_text
     assert (await _row(prose)).value == prose_text
+    assert (await _row(tagged)).value == tagged_text
+    report = await handle_namespace_validate(NamespaceValidateInput(org=ORG, namespace=MEM))
+    listed = next(f for f in report.findings if f.check == "code_rename_edits")
+    assert listed.totals == {"edits": 1}
+    (sample,) = listed.samples
+    assert (sample["memory_key"], sample["memory_id"]) == ("fetch-rows-tagged", tagged)
+    assert sample["edits"] == [{"start": 1, "end": 11, "old": "fetch_rows", "new": "load_rows"}]
     history = await handle_memory_history(
-        MemoryHistoryInput(org=ORG, namespace=MEM, agent="claude-code", memory_key="fetch-rows")
+        MemoryHistoryInput(org=ORG, namespace=TRUNK, agent="claude-code", memory_key="fetch-rows")
     )
     versions = {str(r.value): r.source_class for r in history.rows}
     assert history.rows[0].value == after.value
@@ -1715,6 +1729,7 @@ async def test_the_link_pass_revises_a_memorys_text_after_a_rename_on_a_one_bran
 
     again = await _pass()
     assert again.renamed == 0 and (await _row(mid)).version == after.version
+    assert (await _row(tagged)).value == tagged_text
     (link,) = await _links(mid)
     assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "fresh")
 

@@ -90,10 +90,10 @@ reported commit](#check-a-lesson-after-a-code-edit).
   memories whose code changed, was not found again or is gone, and the dashboard shows each
   memory's links and their state.
 - **Text that follows a rename.** After a rename or a move the link follows with the code
-  unchanged, the link pass swaps the old name or path for the new one in the lesson's
-  text where the swap is certain, nobody holds the lesson and the repository is indexed
-  on one branch. The same report lists the exact token edits for every other lesson, or
-  the reason it offers none.
+  unchanged, the link pass swaps the old name or path for the new one in the text of a
+  lesson written in the repository's code namespace, where the swap is certain, nobody
+  holds the lesson and the repository is indexed on one branch. The same report lists
+  the exact token edits for every other lesson, or the reason it offers none.
   [Bring a lesson's text up to a rename](#bring-a-lessons-text-up-to-a-rename)
 
 ![A memory's detail in the dashboard: its linked code, one definition current and one changed since a commit](../assets/screenshots/memory-linked-code.webp)
@@ -141,10 +141,11 @@ checks these states across commits. It also checks a pure move (`moved`), remove
 (`missing`) and a release branch whose unchanged definition still reads `fresh`.
 
 To see a rename, change only the function's name on trunk and push. With the repository
-indexed on one branch and a lesson that writes the name in backticks or as a call, the
-link worker rewrites the name in the lesson's text in the pass that follows the commit,
-and after the next pass `memory.get` lists the link under `code` at the new `symbol`,
-`fresh`. Where the lesson keeps its text (it is pinned, the repository has a second
+indexed on one branch and a lesson written in its code namespace that writes the name in
+backticks or as a call, the link worker rewrites the name in the lesson's text in the
+pass that follows the commit, and after the next pass `memory.get` lists the link under
+`code` at the new `symbol`, `fresh`. Where the lesson keeps its text (it is written in
+another namespace with the repository tag, it is pinned, the repository has a second
 indexed branch, or the name is written as a word of the prose), `memory.get` lists the
 link with the new `symbol`, its `start_line` and `end_line`, and `was_symbol`, the name
 the lesson's text still uses. A search that serves the lesson carries the same link in
@@ -167,9 +168,12 @@ For removal, held-memory exceptions and model-backed revision, see the
 
 When a definition is renamed or moved with nothing else changed, its link follows it and
 reads `moved`. A lesson that wrote the old name, module or path still says it. The link
-pass revises the text itself when the edits are certain, no person pinned, locked or
-verified the lesson, no service account attested its text, and the repository is indexed
-on one branch ([what it writes](../concepts/memory.md#a-memorys-text-after-a-rename)).
+pass revises the text itself when the lesson is written in the repository's code
+namespace, the edits are certain, no person pinned, locked or verified the lesson, no
+service account attested its text, and the repository is indexed on one branch
+([what it writes](../concepts/memory.md#a-memorys-text-after-a-rename)). A lesson
+written in another namespace with the repository tag keeps its text: the tag grants
+nothing, and that namespace's readers may hold no role on the repository.
 The revision keeps the lesson's writer, and `memory.history` shows the text it replaced.
 A lesson its writer asserted is marked `derived`; any other keeps its `source_class`.
 A lesson whose revised text would duplicate or contradict another memory keeps its text,
@@ -211,8 +215,9 @@ The `test_validate_lists_the_edit_a_followed_rename_allows_and_an_update_applies
 renames a function in a repository indexed on two branches, reads the listed edit,
 applies it with `memory.update` and checks the link at the new name.
 `test_the_link_pass_revises_a_memorys_text_after_a_rename_on_a_one_branch_repository`
-does the same on one branch and checks the text the pass wrote, its history, and that a
-pinned lesson keeps its text.
+does the same on one branch for a lesson of the code namespace and checks the text the
+pass wrote, its history, that a pinned lesson keeps its text, and that a lesson of
+another namespace keeps its text and is listed with its edit.
 
 ## Compare a code-linked lesson across branches
 

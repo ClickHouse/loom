@@ -8,9 +8,9 @@ as a full dotted name, ambiguous as a bare word another definition also bears, a
 wrong in any spelling when the sentence is about the name, the place or a past state.
 `plan` offers an edit only for a name written as code (`anchor.code_spans`) or a whole
 path, and withholds the whole memory for the first of `REASONS` that applies. Nothing
-here writes: the link pass applies the edits of a memory nobody holds
-(`server.memory.app.code_renames.revise`), and a principal applies any other's with
-memory.update and `if_match_sha256`.
+here writes: the link pass applies the edits of a memory of the repository's code
+namespace that nobody holds (`server.memory.app.code_renames.revise`), and a principal
+applies any other's with memory.update and `if_match_sha256`.
 """
 
 from __future__ import annotations

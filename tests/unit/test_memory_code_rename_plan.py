@@ -692,8 +692,8 @@ TEXT = "`read_rows` retries twice."
 
 @pytest.fixture
 def writer(listing: dict, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """`listing` with its repository indexed on one branch and memory.update_by_id's
-    write captured: what it was called with, as whom and for whom."""
+    """`listing` with its repository indexed on one branch, `code`, and
+    memory.update_by_id's write captured: what it was called with, as whom and for whom."""
     listing |= {"written": [], "branches": ["code"], "refusal": None}
 
     async def revise_as_pipeline(
@@ -722,26 +722,32 @@ def writer(listing: dict, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "repo_for_namespace",
         lambda org, ns: next((c for c in repos() if c.namespace == ns), None),
     )
+    monkeypatch.setattr(
+        code_renames.code,
+        "trunk_namespace",
+        lambda org, ns: "code" if ns in listing["branches"] else "",
+    )
     return listing
 
 
 async def _revise(world: dict[str, Any], text: Any = TEXT, **head: Any) -> bool:
-    """The link pass's revision of one memory holding `text`, linked by `RENAMED`."""
+    """The link pass's revision of one memory holding `text` in the repository's code
+    namespace, linked by `RENAMED`."""
     link = head.pop("link", RENAMED) | {"memory_id": "m1", "inputs_hash": "inputs"}
-    return await code_renames.revise("o", _head("m1", text, **head), [link])
+    return await code_renames.revise("o", _head("m1", text, **{"namespace": "code"} | head), [link])
 
 
 @pytest.mark.asyncio
 async def test_the_link_pass_writes_the_edits_a_plan_offers(writer: dict) -> None:
     assert await _revise(writer, actor="human:alice", user_id="u1")
     (written,) = writer["written"]
-    assert written["at"] == ("o", "ns", "m1")
+    assert written["at"] == ("o", "code", "m1")
     assert written["value"] == "`fetch_rows` retries twice."
     # over the text it was planned for: refused once the memory moved on
     assert written["if_match"] == served_content_sha256(TEXT)
     # the audit row names the pipeline; the embedding is made for the memory's writer
     assert written["actor"] == code_renames.ACTOR
-    assert (written["for"].org, written["for"].namespace) == ("o", "ns")
+    assert (written["for"].org, written["for"].namespace) == ("o", "code")
     assert (written["for"].subject, written["for"].user_id) == ("alice", "u1")
 
 
@@ -785,6 +791,24 @@ async def test_a_memory_someone_stands_behind_or_no_read_serves_is_left(
     assert writer["written"] == []
     # an attestation of an earlier text binds nothing: the memory is revised
     assert await _revise(writer, verified_by="process:ci", verified_sha256="older")
+
+
+@pytest.mark.asyncio
+async def test_a_memory_of_another_namespace_keeps_its_text_and_stays_listed(writer: dict) -> None:
+    """A `repo:` tag links a memory of any namespace to the repository and grants nothing:
+    the new name is not written where the namespace's readers may hold no role on it."""
+    _stored(writer, "m1", TEXT)  # held in `ns`, linked to `code` by its `repo:x` tag
+    (head,), links = writer["heads"], writer["links"]
+    assert head["namespace"] == "ns" and head["tags"] == ["repo:x"]
+    assert not await code_renames.revise("o", head, links)
+    # decided before the index is read
+    assert writer["written"] == [] and "names" not in writer
+    # a caller who may read the repository is still offered the edit
+    (row,) = await code_renames.planned("o", "ns")
+    assert row["edits"] == [{"start": 1, "end": 10, "old": "read_rows", "new": "fetch_rows"}]
+    # the same memory held in the repository's code namespace is revised
+    assert await code_renames.revise("o", head | {"namespace": "code"}, links)
+    assert [w["at"] for w in writer["written"]] == [("o", "code", "m1")]
 
 
 @pytest.mark.asyncio
