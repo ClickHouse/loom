@@ -179,7 +179,9 @@ async def _seen_hits(
 ) -> dict[int, str]:
     """The hits whose memories hold no link stamped after the catch-up began reading."""
     try:
-        unseen = await store.unchecked_memories(org, cns, [mid for _, _, mid in hits], head, read)
+        unseen = await store.unchecked_memories(
+            org, cns, [mid for _, _, mid in hits], head, max(0, read - link_pass.STAMP_LAG_MS)
+        )
     except Exception as error:  # noqa: BLE001 — unread stamps leave guidance uncertain
         log.debug("Guidance link stamps unavailable: %s", type(error).__name__)
         return {}
@@ -245,7 +247,7 @@ async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> l
     for link in links:
         key = (link["memory_id"], link["namespace"], link["code_namespace"], link["inputs_hash"])
         by_revision[key].append(link)
-    positive: dict[tuple[str, str], list[tuple[int, str]]] = defaultdict(list)
+    positive: dict[tuple[str, str], list[tuple[int, str, str]]] = defaultdict(list)
     for index, key in candidates.items():
         rows_for_hit = by_revision.get(key, [])
         state = guidance_link_state(rows_for_hit, readable)

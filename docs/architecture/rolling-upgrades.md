@@ -1065,12 +1065,13 @@ separate mirror-content cleanup before serving; this account procedure does not 
 ### Memory links written during a recheck
 
 A build that takes the repository's recheck lease to insert a memory's links adds the
-column `inserted_at`, which ClickHouse fills when a replica of the
-previous build omits it, and no setting. Those replicas insert without the lease, so
-while they run the link worker a link can be inserted just after a pass read the table.
-The next pass rechecks every link stamped since the previous pass began reading, and
-guidance trusts no link stamped after that start, so such a link reads as unknown until
-a pass covers it, whether or not a previous-build replica is still running.
+column `inserted_at` and no setting. The column has a ClickHouse default, so an insert
+from the previous build that omits it is still stamped. Those replicas insert without
+the lease, so while they run the link worker a link can be inserted just after a pass
+read the table. The next pass rechecks every link stamped since shortly before the
+previous pass began reading, and guidance trusts no link stamped after that point, so
+such a link reads as unknown until a pass covers it, whether or not a previous-build
+replica is still running.
 
 ## Independent proposal approval
 

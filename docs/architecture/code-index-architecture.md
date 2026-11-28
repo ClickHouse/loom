@@ -705,20 +705,21 @@ insert a link built at an older commit after a pass read the table. A pass at an
 unchanged head follows nothing, so ClickHouse stamps every link row with `inserted_at`
 as it is inserted, and each pass takes ClickHouse's time before it reads any link. Its
 catch-up (`_catch_up`) rechecks every live link not checked at the head that was stamped
-since the previous pass's start, from each link's own checked commit. That covers a
-link inserted at any point after the previous pass began reading, including one that
-arrives while the pass itself runs. It reads a page of `memory_code_links_batch` links
+since two seconds before the previous pass's start, from each link's own checked commit.
+That covers a link inserted at any point after the previous pass began reading,
+including one that arrives while the pass itself runs. It reads a page of `memory_code_links_batch` links
 in key order per pass and keeps its place in the `seen/` cursor. The cursor's `read`
 moves to the start of the pass only after the last page. With no cursor, as on the first
 pass after an upgrade, every link not at the head is rechecked once. A link a recheck
 leaves unchanged writes nothing, so a lost link is rechecked once and then stays out.
 
 The read side trusts a link only if it is checked at the checked head or was stamped
-before `read`. A link stamped later may be one no pass has seen, and without a `read`
-no link qualifies, so guidance on it is unknown until the catch-up finishes. A skew
-margin of two seconds on a pass's start covers a replica whose clock runs behind. This
-needs ClickHouse to assign `inserted_at` on replicas with synchronised clocks; a larger
-skew than the margin needs a larger margin.
+more than two seconds before `read`. A link stamped later may be one no pass has seen,
+and without a `read` no link qualifies, so guidance on it is unknown until the catch-up
+finishes. The two seconds (`STAMP_LAG_MS`) cover a replica whose clock runs behind and
+the time a write takes to commit: the stamp is set before the row is visible. This
+needs ClickHouse to assign `inserted_at` on replicas with synchronised clocks. A commit
+or clock gap longer than the margin is not covered and needs a larger margin.
 
 ## Invariants
 

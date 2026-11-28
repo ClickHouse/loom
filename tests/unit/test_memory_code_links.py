@@ -6376,7 +6376,7 @@ class _Stamped:
 
     async def pass_at(self, head: str = "h1", *, between=None) -> None:
         """One pass: it takes its start first, as `_recheck_repository` does."""
-        started = await code_links.store.clock() - code_link_recheck._SKEW_MS
+        started = await code_links.store.clock()
         self.now += 1000
         await code_link_recheck._catch_up(
             "o",
@@ -6414,6 +6414,24 @@ async def test_a_link_an_older_build_inserted_after_a_pass_read_is_rechecked_at_
     assert w.rechecked[-1] == ["late"]  # the next pass rechecks it at the same head
     assert late["checked_commit"] == "h1"
     assert w.read() > read
+
+
+@pytest.mark.asyncio
+async def test_a_link_stamped_just_before_the_last_read_but_committed_after_it_is_rechecked(
+    monkeypatch,
+) -> None:
+    w = _Stamped(monkeypatch)
+    await w.pass_at()
+    read = w.read()
+    assert read is not None
+    lag = code_link_pass.STAMP_LAG_MS
+    # an insert stamped inside the margin before the read that committed after it
+    w.add("slow", "h0", ins=read - lag + 500)
+    w.add("beyond", "h0", ins=read - lag - 500)  # a gap past the margin is the ceiling
+    # guidance trusts a link only if stamped below `read - lag`
+    assert next(a for a in w.table if a["memory_id"] == "slow")["ins"] >= read - lag
+    await w.pass_at()
+    assert w.rechecked[-1] == ["slow"]
 
 
 @pytest.mark.asyncio

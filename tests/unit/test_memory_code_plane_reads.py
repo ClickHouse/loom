@@ -328,7 +328,7 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
     checked = indexed
     fetched = "b" * 40
     unparsed = ""
-    seen = '{"read": 500}'
+    seen = '{"read": 5000}'
     stamped: set[str] = set()
     complete_during_read = False
 
@@ -358,7 +358,7 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
         return seen if name.startswith("seen/") else unparsed
 
     async def unchecked_memories(org, cns, ids, head, since):
-        assert (cns, head, since) == ("code-a", checked, 500)
+        assert (cns, head, since) == ("code-a", checked, 3000)  # the read less the margin
         return stamped & set(ids)
 
     monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda *_: "code-a")
@@ -388,7 +388,7 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
     stamped = set()
     seen = ""
     assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
-    seen = '{"read": 500}'
+    seen = '{"read": 5000}'
     # a link the writer parked behind a running pass is unknown even at the checked head
     expected = "unknown" if state == "pending" else state
     assert await code_link_reads.guidance_code_states("o", [row]) == [expected]

@@ -24,6 +24,12 @@ from server.memory.store.key_write_lock import KeyWriteLocks
 from server.settings import settings
 from server.workers import pass_context
 
+# ponytail: ClickHouse stamps `inserted_at` on whichever replica takes the write, before the
+# row commits. A link can carry a stamp this far before a pass's read and still miss it,
+# from a slow clock or a slow commit. NTP-synced clocks are a precondition; a gap longer
+# than this needs a larger margin.
+STAMP_LAG_MS = 2000  # not a setting: a margin on the stamp-to-commit gap
+
 log = logging.getLogger(__name__)
 
 # One host rechecks a repository at a time; the lease outlives the worker's pass budget.

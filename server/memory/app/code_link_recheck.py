@@ -125,7 +125,7 @@ async def _recheck_repository(
     files = link_pass.RepoReads(org, cns)
     head = await code.indexed_head(org, cns)
     checked = await code.checked_head(org, cns)
-    started = await store.clock() - _SKEW_MS  # before any link read
+    started = await store.clock()  # before any link read
     await _recheck_pending(org, cns, head, files, result)
     await rehash.refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
@@ -308,12 +308,6 @@ async def _recheck_rows(
     return still, failed
 
 
-# ponytail: ClickHouse stamps `inserted_at` on whichever replica takes the write, so a
-# slow clock can stamp a link just before a pass's start. The margin covers a replica
-# this far behind; NTP-synced clocks are a precondition, a larger skew needs a larger one.
-_SKEW_MS = 2000
-
-
 async def _catch_up(
     org: str,
     cns: str,
@@ -325,10 +319,12 @@ async def _catch_up(
     """Recheck the links an older build inserted after the last pass read the table. A
     pass at an unchanged head follows nothing, so a link built at another commit would
     keep its state. ClickHouse stamps each link as it is inserted, and `started` is its
-    time (less a skew margin) before this pass read any link: every link stamped since
+    time before this pass read any link: every link stamped since `STAMP_LAG_MS` before
     the previous pass's `read` that is not checked at `head` is rechecked from its own
     commit, a page of the batch size per pass in key order. `read` moves to this pass's
-    start only after the last page, and guidance trusts no link stamped after it. With
+    start only after the last page, and guidance trusts no link stamped after `STAMP_LAG_MS`
+    before it, so a link stamped up to that much before a pass read but committed after
+    it is rechecked, and meanwhile not trusted. With
     no cursor (the first pass, or links an older build had stored) every link not at
     `head` is rechecked once."""
     seen = link_pass.Cursor[dict[str, Any]](f"seen/{org}/{cns}", {})
@@ -339,7 +335,7 @@ async def _catch_up(
         org,
         cns,
         head,
-        cursor.get("read", 0),
+        max(0, cursor.get("read", 0) - link_pass.STAMP_LAG_MS),
         after=after,
         limit=int(settings.memory_code_links_batch),
     )
