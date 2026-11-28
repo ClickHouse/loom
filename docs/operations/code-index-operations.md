@@ -375,8 +375,8 @@ initializes a missing or empty working tree directory as a Git repository and fe
 each commit into it from the entry's mirror, so a new leader starts from nothing.
 With `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS` on (off by default; turn it on once no
 older build serves, [upgrades](upgrades.md) step 8), the checkout's packs are hard links
-of the mirror's (each marked by a `.keep` file; an operator's own `.keep` stays),
-so a tier costs its working tree rather than a second copy of the repository; a
+of the mirror's (each marked by a `.keep` file; an operator's own `.keep` stays;
+the mirror's fetches always write a pack, never loose objects), so a tier costs its working tree rather than a second copy of the repository; a
 checkout that already holds its own copy, from an earlier version or an operator,
 drops it in the checkout gc of the tier's next pass with a new commit (for C/C++, the
 full-index worker's), which keeps the shared packs. That gc runs only with room for
