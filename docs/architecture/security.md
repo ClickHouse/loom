@@ -1511,8 +1511,9 @@ pods, and the upload never replaces an object.
 is enabled by default and reads 12-hour windows from the ordinary request ledger.
 It sends deployment-wide counts and a reporting UUID derived from the storage
 authority's deployment ID to the Loom HTTPS collector. Reports include eligible
-namespace contact domains, which can come from self-reported addresses. Completed
-daily reports include aggregate activity for those domains in the public directory.
+namespace contact domains, which can come from self-reported addresses. The public
+directory uses aggregate activity for those domains from snapshots sent every five
+minutes and from completed daily reports.
 Set `LOOM_ADOPTION_TELEMETRY_ENABLED=false` to stop all adoption reporting. The
 collector is outside Loom's erasure boundary. Verified company attribution uses
 a separate warehouse enrollment record.

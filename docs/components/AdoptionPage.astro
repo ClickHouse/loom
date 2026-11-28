@@ -6,7 +6,7 @@ import { Panel } from "@clickhouse/click-ui/Panel";
 import { Table } from "@clickhouse/click-ui/Table";
 import { Text } from "@clickhouse/click-ui/Text";
 import { Title } from "@clickhouse/click-ui/Title";
-import { groupDailySeries, periodEnd, periodStart } from "../lib/adoption-chart-series.mjs";
+import { groupDailySeries, periodStart } from "../lib/adoption-chart-series.mjs";
 import type { readAdoptionPage } from "../lib/adoption-request.mjs";
 import {
   adoptionGrowthForRange,
@@ -25,15 +25,16 @@ import AdoptionFilterForm from "./AdoptionFilterForm.astro";
 import AdoptionGrowth from "./AdoptionGrowth.astro";
 import AdoptionLifecycle from "./AdoptionLifecycle.astro";
 import AdoptionMetricPair from "./AdoptionMetricPair.astro";
+import AdoptionOverviewStat from "./AdoptionOverviewStat.astro";
 import AdoptionPicker from "./AdoptionPicker.astro";
 import AdoptionTrend from "./AdoptionTrend.astro";
 import AdoptionState from "./AdoptionState.astro";
 import AdoptionUsageTrends from "./AdoptionUsageTrends.astro";
 import SiteFrame from "./SiteFrame.astro";
 
-type Props = Exclude<Awaited<ReturnType<typeof readAdoptionPage>>, Response>;
+type Props = Exclude<Awaited<ReturnType<typeof readAdoptionPage>>, Response> & { directoryRefresh?: boolean };
 
-const { tab, path, params, filters, today, selfHosted, events, lifecycle, oss } = Astro.props;
+const { tab, path, params, filters, today, selfHosted, events, lifecycle, oss, directoryRefresh } = Astro.props;
 const { days, grain } = filters;
 const cutoff = daysBefore(today, days);
 const lastDay = daysBefore(today, 1);
@@ -64,17 +65,19 @@ const accountReports = dailyActivityForRange(selfHosted.activity, "active_accoun
 const firstAccounts = accountReports[0];
 const latestAccounts = accountReports.at(-1);
 const latestInstances = dailyActivityForRange(selfHosted.activity, "serving_processes", cutoff, today).at(-1);
+const activeDomains = {
+  id: "adoption-active-domains",
+  label: "Active domains",
+  value: directoryNames?.length,
+  note:
+    directoryNames == null
+      ? "Directory unavailable"
+      : directoryDays === days
+        ? "With successful requests"
+        : `${directoryDays}-day directory`,
+};
 const overview = [
-  {
-    label: "Active domains",
-    value: directoryNames?.length,
-    note:
-      directoryNames == null
-        ? "Directory unavailable"
-        : directoryDays === days
-          ? "With successful requests"
-          : `${directoryDays}-day directory`,
-  },
+  activeDomains,
   {
     label: "Active users",
     value: latestAccounts?.active_accounts,
@@ -126,44 +129,10 @@ const selectedUsage =
   usageOptions[0];
 
 const versionRows = selfHosted.versions ?? [];
-const versionHistory = (selfHosted.versionTrends ?? []).filter(
-  ({ grain: periodGrain, period, period_end }) => grain === periodGrain && period_end > cutoff && period < today,
-);
-const versionOptions = [
-  ...new Map(
-    (selfHosted.versionTrends ?? []).map(({ product, version }) => {
-      const value = product + "/" + version;
-      return [value, { value, label: version, group: product === "loom" ? "Loom" : "ClickHouse" }];
-    }),
-  ).values(),
-].sort((a, b) => b.group.localeCompare(a.group) || b.label.localeCompare(a.label, "en", { numeric: true }));
-const selectedVersion = versionOptions.find(({ value }) => value === input("version")) ?? versionOptions[0];
-const versionPeriods = Map.groupBy(versionHistory, ({ period }) => period);
-const eventPeriods = new Map(events.map((row) => [row.period, row]));
-const versionDates = new Set([...versionPeriods.keys(), ...eventPeriods.keys()]);
-const versionSeries = Array.from(versionDates, (day) => {
-  const rows = versionPeriods.get(day) ?? [];
-  const activity = eventPeriods.get(day);
-  const end = periodEnd(day, grain);
-  return {
-    day,
-    value:
-      rows.find(({ product, version }) => product + "/" + version === selectedVersion?.value)?.active_installations ??
-      0,
-    days: activity?.days_reported,
-    current: end > today,
-    partial:
-      day < cutoff ||
-      activity?.complete_days_reported == null ||
-      activity.complete_days_reported < periodOffset(day, end, "day"),
-  };
-});
-
 const hasOpeningPeriod =
   events.some(({ opening }) => opening) ||
   growth.some(({ period }) => period < cutoff) ||
-  domainSeries.some(({ day }) => day < cutoff) ||
-  versionSeries.some(({ day }) => day < cutoff);
+  domainSeries.some(({ day }) => day < cutoff);
 
 const lifecycleGrain = filters.cohort;
 const lifecycleThresholds = Object.entries(thresholds).map(([value, label]) => ({
@@ -217,7 +186,6 @@ const state = Object.fromEntries(
     domain: filters.domain,
     growth: selectedGrowth,
     usage: selectedUsage?.value,
-    version: selectedVersion?.value,
     sdk: selectedSdk?.id,
     distribution: selectedDistribution?.id,
     domain_q: input("domain_q").trim().slice(0, 253),
@@ -225,8 +193,21 @@ const state = Object.fromEntries(
     domain_page: Math.min(Number.MAX_SAFE_INTEGER, Math.max(1, Math.floor(Number(input("domain_page"))) || 1)),
   }).filter((entry): entry is [string, string | number] => entry[1] !== undefined),
 );
+const directory = {
+  names: directoryNames,
+  ranked: directoryIsRanked,
+  metrics: directoryMetrics,
+  days: directoryDays,
+  fallback: directoryFallback,
+  path,
+  state,
+};
 ---
 
+{directoryRefresh ? <>
+  <AdoptionOverviewStat {...activeDomains} value={showCount(activeDomains.value)} />
+  <AdoptionDomainDirectory {...directory} />
+</> : (
 <SiteFrame
   title={tab === "oss" ? "Open Source Adoption | ClickHouse Loom" : "Self-hosted Adoption | ClickHouse Loom"}
   description={tab === "oss" ? "Follow Loom SDK downloads, repository activity, and release distribution." : "Explore self-hosted Loom adoption, active domains, and feature usage."}
@@ -256,12 +237,7 @@ const state = Object.fromEntries(
     {tab === "self-hosted" ? <>
       <section aria-label="Self-hosted adoption overview" class="overview">
         <div class="metrics">
-          {overview.map(({ label, value, note }) => (
-            <Panel className="adoption-stat" orientation="vertical" alignItems="start" padding="md" gap="xs" hasBorder fillWidth>
-              <BigStat className="metric-value" height="auto" order="titleBottom" size="lg" {label} title={showCount(value)} />
-              <Text size="sm" color="muted">{note}</Text>
-            </Panel>
-          ))}
+          {overview.map((stat) => <AdoptionOverviewStat {...stat} value={showCount(stat.value)} />)}
         </div>
         <div class="coverage">
           {summary?.last_reported === today && <Text size="sm" color="muted">Totals include completed reporting windows today.</Text>}
@@ -297,15 +273,7 @@ const state = Object.fromEntries(
             />}
       </section>
 
-      <AdoptionDomainDirectory
-        names={directoryNames}
-        ranked={directoryIsRanked}
-        metrics={directoryMetrics}
-        days={directoryDays}
-        fallback={directoryFallback}
-        {path}
-        {state}
-      />
+      <AdoptionDomainDirectory {...directory} />
 
       <section class="adoption-section" aria-labelledby="activity-title" id="activity">
         <div class="section-heading">
@@ -372,36 +340,20 @@ const state = Object.fromEntries(
         </section>
       )}
 
-      {(versionRows.length > 0 || selectedVersion) && (
+      {versionRows.length > 0 && (
         <section class="adoption-section" aria-labelledby="versions-title" id="versions">
           <div class="section-heading"><Title type="h2" size="lg" id="versions-title">Software versions</Title></div>
-          {selectedVersion && <>
-            <div class="section-controls">
-              <AdoptionPicker {path} {state} anchor="versions" name="version" label="Version trend" value={selectedVersion.value} options={versionOptions} />
-            </div>
-            <AdoptionMetricPair
-              label={selectedVersion.group + " " + selectedVersion.label}
-              rows={versionSeries}
-              {grain}
-              kind="gauge"
-              observedLabel="Active installations"
-              axisStart={cutoff}
-              axisEnd={lastDay}
-            />
-          </>}
-          {versionRows.length > 0 && <details class="version-detail" open={!selectedVersion}>
-            <summary>Versions in use · last 30 complete days</summary>
-            <Table
-              size="sm"
-              aria-label="Versions in use by active installations"
-              mobileLayout="scroll"
-              headers={[{ label: "Loom" }, { label: "ClickHouse" }, { label: "Active installations" }]}
-              rows={versionRows.map(({ loom_version, clickhouse_version, active_installations }) => ({
-                id: loom_version + "/" + clickhouse_version,
-                items: [{ label: loom_version }, { label: clickhouse_version }, { label: showCount(active_installations) }],
-              }))}
-            />
-          </details>}
+          <Text size="sm" color="muted">Active installations in the last 30 complete UTC days.</Text>
+          <Table
+            size="sm"
+            aria-label="Versions in use by active installations"
+            mobileLayout="scroll"
+            headers={[{ label: "Loom" }, { label: "ClickHouse" }, { label: "Active installations" }]}
+            rows={versionRows.map(({ loom_version, clickhouse_version, active_installations }) => ({
+              id: loom_version + "/" + clickhouse_version,
+              items: [{ label: loom_version }, { label: clickhouse_version }, { label: showCount(active_installations) }],
+            }))}
+          />
         </section>
       )}
     </> : <>
@@ -498,6 +450,7 @@ const state = Object.fromEntries(
     </div>
   </div>
 </SiteFrame>
+)}
 
 <style>
   :global(#content):has(> .adoption) { padding-block-start: clamp(1.5rem, 3.8vw, 3.5rem); }

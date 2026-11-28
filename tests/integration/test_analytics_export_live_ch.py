@@ -24,7 +24,7 @@ from server import __version__
 from server.core.ch import CHClient, get_client
 from server.core.paths import REPO_ROOT
 from server.insights.app.analytics_export import name_hash_key
-from server.insights.store.adoption_telemetry import window_report
+from server.insights.store.adoption_telemetry import domain_snapshot, window_report
 from server.insights.store.analytics_export import (
     ENTITIES,
     NAME_COLUMNS,
@@ -403,6 +403,23 @@ async def test_adoption_report_deduplicates_daily_activity(ch: CHClient) -> None
         "successful_requests": 5,
         "serving_processes": 2,
     } in daily["domain_activity"]
+
+    observed_at = noon + timedelta(minutes=5)
+    snapshot = await domain_snapshot(observed_at, installation_id, restricted=restricted, ch=ch)
+    assert snapshot is not None
+    assert snapshot["schema_version"] == 4
+    assert snapshot["observed_at"] == observed_at.isoformat()
+    assert snapshot["day"] == start.date().isoformat()
+    assert snapshot["installation_id"] == str(installation_id)
+    assert snapshot["clickhouse_version"]
+    assert snapshot["domain_activity"] == [
+        {
+            "domain": company,
+            "active_accounts": 3,
+            "successful_requests": 5,
+            "serving_processes": 2,
+        }
+    ]
 
     unstamped = await window_report(
         noon + timedelta(days=1),

@@ -6,8 +6,11 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from clickhouse_connect.driver.exceptions import DatabaseError
+
 from server import __version__
 from server.core.ch import CHClient, sequential_reads
+from server.core.ch_errors import error_code
 from server.core.naming import not_mirror_sql
 
 _REQUEST_SCOPE = f"""
@@ -101,6 +104,9 @@ SETTINGS optimize_move_to_prewhere_if_final = 0
 """
 
 DAILY_DOMAIN_ACTIVITY_SQL = f"""
+WITH eligible_contacts AS (
+    SELECT * FROM ({_CONTACTS_SQL}) AS contacts WHERE {_VALID_CONTACT_DOMAIN}
+)
 SELECT
     contacts.domain,
     uniqExact(contacts.email) AS user_count,
@@ -108,7 +114,7 @@ SELECT
     sum(activity.requests) AS successful_requests,
     if(successful_requests = 0, 0,
        nullIf(uniqExactIf(activity.instance, activity.known_process), 0)) AS serving_processes
-FROM ({_CONTACTS_SQL}) AS contacts
+FROM eligible_contacts AS contacts
 LEFT JOIN (
     SELECT
         org, namespace, subject, instance,
@@ -117,14 +123,60 @@ LEFT JOIN (
         count() AS requests
     FROM loom.agent_events
     WHERE {_REQUEST_SCOPE} AND status_class = 'ok'
+        AND (org, namespace) IN (SELECT org, namespace FROM eligible_contacts)
     GROUP BY org, namespace, subject, instance
 ) AS activity USING (org, namespace)
-WHERE {_VALID_CONTACT_DOMAIN}
 GROUP BY contacts.domain
 HAVING successful_requests > 0
 ORDER BY contacts.domain
 SETTINGS optimize_move_to_prewhere_if_final = 0
 """
+
+
+_DOMAIN_ACTIVITY_FIELDS = ("domain", "active_accounts", "successful_requests", "serving_processes")
+_SNAPSHOT_READ_LIMITS = {
+    "max_rows_to_read": 5_000_000,
+    "max_bytes_to_read": 512 * 1024**2,
+    "read_overflow_mode": "throw",
+}
+_READ_LIMIT_CODES = (158, 307, 396)  # TOO_MANY_ROWS, TOO_MANY_BYTES, TOO_MANY_ROWS_OR_BYTES
+# not a setting: the collector accepts at most 2,000 domains per snapshot.
+_MAX_SNAPSHOT_DOMAINS = 2000
+_LIVE_DOMAINS_SQL = f"""
+SELECT * FROM ({DAILY_DOMAIN_ACTIVITY_SQL})
+ORDER BY successful_requests DESC, domain
+LIMIT {_MAX_SNAPSHOT_DOMAINS}
+"""
+
+
+async def domain_snapshot(
+    end: datetime,
+    installation_id: UUID,
+    *,
+    restricted: set[tuple[str, str]],
+    ch: CHClient,
+) -> dict[str, Any] | None:
+    start = end.replace(hour=0, minute=0, second=0, microsecond=0)
+    params = {"start": start, "end": end, "restricted": sorted(restricted)}
+    with sequential_reads():
+        try:
+            rows = await ch.query_all(_LIVE_DOMAINS_SQL, params, settings=_SNAPSHOT_READ_LIMITS)
+        except DatabaseError as exc:
+            if error_code(exc) in _READ_LIMIT_CODES:
+                return None
+            raise
+        version = await ch.query_one("SELECT version() AS clickhouse_version")
+    if version is None:
+        raise RuntimeError("adoption ClickHouse version is unavailable")
+    return {
+        "schema_version": 4,
+        "installation_id": str(installation_id),
+        "day": start.date().isoformat(),
+        "observed_at": end.isoformat(),
+        "loom_version": __version__,
+        "clickhouse_version": version["clickhouse_version"],
+        "domain_activity": [{name: row[name] for name in _DOMAIN_ACTIVITY_FIELDS} for row in rows],
+    }
 
 
 async def window_report(
@@ -154,16 +206,7 @@ async def window_report(
                 for row in activity
             ]
             domain_activity = [
-                {
-                    name: row[name]
-                    for name in (
-                        "domain",
-                        "active_accounts",
-                        "successful_requests",
-                        "serving_processes",
-                    )
-                }
-                for row in activity
+                {name: row[name] for name in _DOMAIN_ACTIVITY_FIELDS} for row in activity
             ]
         else:
             domains = await ch.query_all(DOMAINS_SQL, domain_params)

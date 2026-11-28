@@ -86,7 +86,6 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
   assert.equal(selfHosted.selfHosted.domainDirectories, null);
   assert.equal(selfHosted.selfHosted.domainAccounts, null);
   assert.equal(selfHosted.selfHosted.firstObservation, null);
-  assert.equal(selfHosted.selfHosted.versionTrends, null);
   assert.equal(selfHosted.selfHosted.companyTrends, null);
   assert.equal(selfHosted.selfHosted.growth, null);
   assert.equal(selfHosted.selfHosted.growthCoverage, null);
@@ -259,7 +258,6 @@ test("reads measured company activity and excludes smoke versions and private fi
   const total = { range_days: 30, comparison: "current", reporting: 6 };
   const versions = { loom_version: "1.2.3", clickhouse_version: "26.1", active_installations: 4 };
   const firstObservation = { day: "2026-09-11", loom_version: "1.0.0", clickhouse_version: "25.12" };
-  const versionTrend = { ...period, product: "loom", version: "1.2.3", active_installations: 4 };
   const companyTrend = { ...period, companies: 0, days_reported: 1, complete_days_reported: 1 };
   const measurements = {
     day,
@@ -295,7 +293,6 @@ test("reads measured company activity and excludes smoke versions and private fi
       { range_days: 90, domain: "private.example", ...measurements },
     ],
     first_observation: [{ ...firstObservation, installation_id: "private" }],
-    version_trends: [versionTrend, { ...versionTrend, version: "0.0.0-smoke" }],
     company_trends: [{ ...companyTrend, domains: ["private.example"] }],
   };
   t.mock.method(globalThis, "fetch", async () =>
@@ -321,7 +318,6 @@ test("reads measured company activity and excludes smoke versions and private fi
     90: { "earlier.example": measurements },
   });
   assert.deepEqual(selfHosted.firstObservation, firstObservation);
-  assert.deepEqual(selfHosted.versionTrends, [versionTrend]);
   assert.deepEqual(selfHosted.companyTrends, [companyTrend]);
 
   rows.domain_accounts[0].active_accounts = null;
