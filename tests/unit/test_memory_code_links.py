@@ -4968,6 +4968,28 @@ async def test_a_link_built_before_a_pass_and_inserted_after_it_is_unknown_until
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cursor", "checked"),
+    [('{"head": "c2", "after": ""}', "c1"), ("", "c2")],  # a pass began / finished at c2
+)
+async def test_a_pass_that_moves_in_after_the_fence_reads_parks_the_promoted_link_again(
+    monkeypatch, cursor, checked
+) -> None:
+    table = _LinkStore(monkeypatch, checked="c1")  # the fence reads clear at the build head
+    insert, writes = table.insert, []
+
+    async def moved_after_promotion(rows):
+        await insert(rows)
+        writes.append(rows)
+        if len(writes) == 2:  # the promotion landed; the pass skipped the pending row
+            table.cursor, table.checked = cursor, checked
+
+    monkeypatch.setattr(code_links.store, "insert", moved_after_promotion)
+    await code_links._insert_unseen([_made()])
+    assert table.states() == [("pending", 8)]
+
+
+@pytest.mark.asyncio
 async def test_a_crash_between_the_pending_insert_and_the_fresh_one_leaves_the_link_pending(
     monkeypatch,
 ) -> None:

@@ -152,8 +152,9 @@ async def _link_org(
 
 
 async def _insert_unseen(inserted: list[LinkRow]) -> None:
-    """Insert `inserted`, a link a recheck pass may have missed parked as `pending` first and
-    promoted if the fence reads clear it (docs/architecture/code-index-architecture.md)."""
+    """Insert `inserted`, a link a recheck pass may have missed parked as `pending` first,
+    promoted if the fence reads clear it and parked again if they change after
+    (docs/architecture/code-index-architecture.md)."""
     guard = [
         r for r in inserted if r["path"] and r["state"] != "pending" and r["tombstoned_at"] is None
     ]
@@ -162,18 +163,34 @@ async def _insert_unseen(inserted: list[LinkRow]) -> None:
     by_repo: dict[tuple[str, str], list[LinkRow]] = defaultdict(list)
     for r in guard:
         by_repo[r["org"], r["code_namespace"]].append(r)
-    clear: list[LinkRow] = []
+    promoted: list[tuple[LinkRow, tuple[str, str], str]] = []
     with sequential_reads():
-        for (org, cns), rows in by_repo.items():
-            running = bool(await link_pass.recheck_cursor(org, cns).read())
-            checked = await code.checked_head(org, cns)
-            clear += [
-                store.link_row(r, follows=parked[id(r)]["version"])
+        fences = {k: await _fence(*k) for k in by_repo}
+        for key, rows in by_repo.items():
+            running, checked = fences[key]
+            promoted += [
+                (store.link_row(r, follows=parked[id(r)]["version"]), key, checked)
                 for r in rows
                 if not running and checked in ("", r["checked_commit"])
             ]
-    if clear:
-        await store.insert(clear)
+        if not promoted:
+            return
+        await store.insert([row for row, _, _ in promoted])
+        # a pass skips pending rows: one that began between the fence reads and the promotion
+        # left these fresh at the old head, so read again and park what moved
+        after = {k: await _fence(*k) for k in {key for _, key, _ in promoted}}
+        back = [
+            store.link_row(row, follows=row["version"], state="pending")
+            for row, key, checked in promoted
+            if after[key] != (False, checked)
+        ]
+    if back:
+        await store.insert(back)
+
+
+async def _fence(org: str, cns: str) -> tuple[bool, str]:
+    """Whether a recheck pass is in flight, and the head its last pass checked."""
+    return bool(await link_pass.recheck_cursor(org, cns).read()), await code.checked_head(org, cns)
 
 
 async def _relink_rewritten(

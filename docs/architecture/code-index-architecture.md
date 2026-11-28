@@ -655,14 +655,18 @@ A recheck pass writes its `recheck` cursor before it snapshots the links it foll
 clears the cursor only after it moves the checked head. A writer that links a memory
 inserts each link as `pending` first. It then reads the cursor and the checked head, and
 inserts the link again as fresh only when no pass is running and the checked head is
-unset or is the commit the link was built at. A link inserted before the snapshot is in
-the pass. A link inserted after it was inserted after the cursor, so the read that
-follows the insert sees the cursor, or sees a head that differs from the build head, and
-the link stays `pending`. `pending` reads as unknown. The next recheck re-anchors a
-pending link that keeps its path at the current head, from the commit it was built at.
-A path that never parses expires after `memory_code_links_pending_days`, as a pathless
-pending link does. A crash between the two inserts leaves the link pending, never fresh;
-a crash between the checked head and the cursor clear is cleared by the next pass.
+unset or is the commit the link was built at. The pass follows no pending link, so the
+writer reads both again after the promotion and parks the link once more if a pass has
+begun or the head has moved. A pass that snapshotted before the promotion wrote its
+cursor before it, and clears it only after it moves the head, so that read sees the
+cursor or the new head; a pass that snapshots after the promotion follows the fresh
+link. `pending` reads as unknown. The next recheck re-anchors a pending link that keeps
+its path at the current head, from the commit it was built at. A path that never parses
+expires after `memory_code_links_pending_days`, as a pathless pending link does. A crash
+between the inserts leaves the link pending, never fresh; a crash between the checked
+head and the cursor clear is cleared by the next pass. Each link is written two or three
+times, in batches per call; that cost is accepted because it is bounded by the links a
+write creates and keeps a crash or a racing pass from ever leaving a link fresh.
 
 The fence reads run under `sequential_reads()`, so a cursor or checked head another
 replica wrote is seen. That holds when the state writes are visible to a
