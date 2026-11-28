@@ -14,7 +14,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { cachePathFor } from "../lib/repo-scope.mjs";
 import { batchKind } from "../lib/shunt-ledger.mjs";
-import { sessionStatePath, tmpStatePath } from "../lib/tmp-state.mjs";
+import { readSessionState, sessionStatePath, tmpStatePath, writeSessionState } from "../lib/tmp-state.mjs";
 import { hostEnv } from "./host-env.mjs";
 
 // The hook's per-user decision log.
@@ -107,7 +107,8 @@ async function withServer(answers, fn) {
     req.on("end", () => {
       seen.push({ url: req.url, body: raw ? JSON.parse(raw) : {} });
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify(answers[req.url] || {}));
+      const answer = answers[req.url];
+      res.end(JSON.stringify((typeof answer === "function" ? answer() : answer) || {}));
     });
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -160,7 +161,7 @@ test("a checkout far behind the index is still shunted, with the file's declarat
     const r = await runHook(readOf(dir, "src/a.cpp"), { tmp: seed(dir), url });
     assert.match(
       r.deny,
-      /^loom-code-shunt: src\/a\.cpp is 900 lines and is in loom's code index \(as of 0123456789ab\)\. Its declarations \(lines, qualified name, header\):\n1-1 f0 int f0\(\)\n451-451 f450 int f450\(\)\n900-900 f899 int f899\(\)\nRead the lines you need/,
+      /^loom-code-shunt: src\/a\.cpp is 900 lines and is in loom's code index \(as of 0123456789ab\)\. The index's outline of it \(lines, qualified name, header; it lists functions, methods, classes and structs, not interfaces, type aliases, enums or constants\):\n1-1 f0 int f0\(\)\n451-451 f450 int f450\(\)\n900-900 f899 int f899\(\)\nRead the lines you need/,
     );
     // The file's tokens, less the refusal's own text.
     const kept = Math.floor(BIG.length / 4) - Math.floor(r.deny.length / 4);
@@ -186,9 +187,15 @@ test("a whole-file read the index cannot outline in full runs", async () => {
       assert.match(r.log, /\tpass\tRead\t\d+\t\tindex_unanswered\tsrc\/a\.cpp\t/, name);
     });
   }
-  const down = await runHook(readOf(dir, "src/a.cpp"), { tmp: seed(dir) });
+  const downTmp = seed(dir);
+  const down = await runHook(readOf(dir, "src/a.cpp"), { tmp: downTmp });
   assert.equal(down.deny, null, "an unreachable server");
   assert.match(down.log, /\tpass\tRead\t\d+\t\tindex_unanswered\t/);
+  // A lookup nothing answered counts too: the file is read for the rest of the session.
+  await withServer(OUTLINE, async (url, seen) => {
+    assert.equal((await runHook(readOf(dir, "src/a.cpp"), { tmp: downTmp, url })).deny, null);
+    assert.deepEqual(lookups(seen), []);
+  });
   // The index is asked about the file once per session.
   await withServer(cut, async (url, seen) => {
     const tmp = seed(dir);
@@ -365,12 +372,15 @@ test("a Bash command of several parts is never refused: its reads are counted, t
     assert.deepEqual(lookups(seen), [], "a pass costs no lookup");
     // The same reads and the same grep, each as the whole command, are refused with the index's answer.
     const cat = await runHook(bashOf(dir, "cat src/a.cpp"), { tmp: seed(dir), url });
-    assert.match(cat.deny, /^loom-code-shunt: src\/a\.cpp is 900 lines.*Its declarations.*:\n1-1 f0 int f0\(\)\n/);
+    assert.match(
+      cat.deny,
+      /^loom-code-shunt: src\/a\.cpp is 900 lines.*The index's outline of it.*:\n1-1 f0 int f0\(\)\n/,
+    );
     assert.match(cat.log, /\thit\tBash:cat\t/);
     const sed = await runHook(bashOf(dir, "sed -n '400,899p' src/a.cpp"), { tmp: seed(dir), url, env });
     assert.match(
       sed.deny,
-      /^loom-code-shunt: `sed` of src\/a\.cpp lines 400-899 is 500 lines, over the 200-line read window.*The declarations in those lines \(lines, qualified name, header\):\n451-451 f450 int f450\(\)\nRead the ones you need/,
+      /^loom-code-shunt: `sed` of src\/a\.cpp lines 400-899 is 500 lines, over the 200-line read window.*The index's outline of those lines \(lines, qualified name, header; [^)]*\):\n451-451 f450 int f450\(\)\nRead the ones you need/,
     );
     const grep = await runHook(bashOf(dir, "grep -n renameTempPartAndAdd src/a.h"), { tmp: seed(dir), url });
     assert.match(grep.deny, /Index answer: DB::renameTempPartAndAdd is defined at src\/a\.cpp:7327-7344/);
@@ -496,6 +506,40 @@ test("the read cap denies a file twice per session, then passes it as cap_spent"
   await withServer(OUTLINE, async (url) => {
     assert.ok((await runHook(rangedRead(dir), { tmp: quiet, url, env })).deny, "the budget is still whole");
   });
+});
+
+test("a tail slice over the read cap is refused with the declarations of the file's last lines", async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const cmd = { tool_name: "Bash", tool_input: { command: "tail -n 300 src/a.cpp" }, cwd: dir, session_id: "e2e" };
+  await withServer(OUTLINE, async (url) => {
+    const r = await runHook(cmd, { tmp: seed(dir), url, env: { LOOM_SHUNT_READ_CAP: "200" } });
+    assert.match(
+      r.deny,
+      /^loom-code-shunt: `tail` of src\/a\.cpp lines 601-900 is 300 lines, over the 200-line read window.*:\n900-900 f899 int f899\(\)\nRead the ones/,
+    );
+    assert.match(r.log, /\thit\tBash:tail\t\d+\t[^\t]*\t\tsrc\/a\.cpp\t601\t900\n$/);
+  });
+});
+
+test("a budget another hook spends during a lookup is kept", async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  const counts = () => readSessionState("shunt-cap", "e2e", { tmp });
+  // The stand-in server spends a symbol budget while it answers, as a parallel hook would.
+  const spending = (key, answer) => ({
+    "/v1/code.outline": () => {
+      writeSessionState("shunt-cap", "e2e", { ...counts(), [key]: 1 }, { tmp });
+      return answer;
+    },
+  });
+  await withServer(spending("sym:one", { entries: [] }), (url) => runHook(readOf(dir, "src/a.cpp"), { tmp, url }));
+  assert.deepEqual(counts(), { "sym:one": 1, "miss:src/a.cpp": 1 });
+  const env = { LOOM_SHUNT_READ_CAP: "200" };
+  const ranged = await withServer(spending("sym:two", OUTLINE["/v1/code.outline"]), (url) =>
+    runHook(rangedRead(dir), { tmp, url, env }),
+  );
+  assert.ok(ranged.deny);
+  assert.deepEqual(counts(), { "sym:one": 1, "miss:src/a.cpp": 1, "sym:two": 1, "src/a.cpp": 1 });
 });
 
 test("symlinks planted at the shunt's tmp files are not followed and cannot lock the agent out", {

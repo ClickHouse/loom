@@ -13,7 +13,10 @@ import { recalledDataBlock } from "./prompt-recall.mjs";
 // A refusal costs the agent a request, so it must hand over what the call was
 // after: a read is refused only with the declarations of the lines it asked
 // for, a symbol grep only with the one definition the index holds. When the
-// index did not answer in full, the call runs.
+// index did not answer in full, the call runs. The declarations are the kinds
+// code.outline lists by default: functions, methods, classes, structs and the
+// units of tests, build files and SQL. An interface, type alias, enum or
+// constant is not among them, and the refusal says so.
 //
 // The index describes merged code at its as-of commit. A file the checkout
 // modified or git does not track always passes: only the working tree can
@@ -34,12 +37,13 @@ export const READ_CAP_DENIALS_PER_FILE = 2;
 
 // The token budget of the code.outline call behind a read refusal: the
 // refusal carries every declaration of the lines asked for, so a file whose
-// outline does not fit is read, not refused. The budget bounds the refusal's
-// length. Measured on 301 files over 800 lines of a large C++ repository, an
-// outline costs a median 2.2 budgeted tokens per file line and its lines in
-// the refusal 1.9 characters per budgeted token: 4000 holds the outline of
-// 62% of those files in at most 8,400 characters, under the 10,000 the host
-// shows whole of a hook's other strings.
+// outline does not fit is read, not refused. Measured on 301 files over 800
+// lines of a large C++ repository, an outline costs a median 2.2 budgeted
+// tokens per file line and its lines in the refusal 1.9 characters per
+// budgeted token: 4000 held the outline of 62% of those files, and the
+// longest refusal was 8,400 characters. That is a measurement, not a limit:
+// the server counts an entry at a quarter of its JSON length, so long
+// signatures make a longer refusal.
 export const DEFAULT_OUTLINE_BUDGET = 4000;
 
 const BINARY_EXT = new Set([
@@ -231,6 +235,11 @@ function declarationLines(declarations) {
     .join("\n");
 }
 
+// What a read refusal's list holds, said in the refusal: code.outline's default kinds.
+const OUTLINE_COLUMNS =
+  "(lines, qualified name, header; it lists functions, methods, classes and structs, " +
+  "not interfaces, type aliases, enums or constants)";
+
 const READ_DIRECTLY = "Uncommitted edits are invisible to the index: if you changed this file, read it directly.";
 
 function denyCapText(ctx, span, cap) {
@@ -239,8 +248,8 @@ function denyCapText(ctx, span, cap) {
   return (
     `loom-code-shunt: Read of ${rel} lines ${span.start}-${span.end} is ${n} lines, over the ` +
     `${cap}-line read window, and the file is in loom's code index` +
-    `${ctx.asOf ? ` (as of ${ctx.asOf.slice(0, 12)})` : ""}. The declarations in those lines ` +
-    `(lines, qualified name, header):\n${declarationLines(ctx.declarations)}\n` +
+    `${ctx.asOf ? ` (as of ${ctx.asOf.slice(0, 12)})` : ""}. The index's outline of those lines ` +
+    `${OUTLINE_COLUMNS}:\n${declarationLines(ctx.declarations)}\n` +
     `Read the ones you need, at most ${cap} lines at a time, or call loom_code_symbol ` +
     `name=<qualified name> for one definition with its callers. ${READ_DIRECTLY}` +
     scopeSentence(ctx)
@@ -251,8 +260,8 @@ function denyReadText(ctx) {
   const { rel, lineCount } = ctx;
   return (
     `loom-code-shunt: ${rel} is ${lineCount} lines and is in loom's code index` +
-    `${ctx.asOf ? ` (as of ${ctx.asOf.slice(0, 12)})` : ""}. Its declarations ` +
-    `(lines, qualified name, header):\n${declarationLines(ctx.declarations)}\n` +
+    `${ctx.asOf ? ` (as of ${ctx.asOf.slice(0, 12)})` : ""}. The index's outline of it ` +
+    `${OUTLINE_COLUMNS}:\n${declarationLines(ctx.declarations)}\n` +
     `Read the lines you need (a ranged read passes this hook), or call loom_code_symbol ` +
     `name=<qualified name> for one definition with its callers. ${READ_DIRECTLY}` +
     scopeSentence(ctx)

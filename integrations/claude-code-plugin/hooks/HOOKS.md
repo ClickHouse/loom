@@ -203,11 +203,14 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 - **loom-code-shunt.** In a loom-indexed repo, a whole-file Read or `cat` of
   a file longer than LOOM_SHUNT_MAX_LINES (default 800) is denied with the
   file's declarations (lines, qualified name, header) from one code.outline
-  call, and a one-file grep for a symbol with its definition from one
+  call (its default kinds: functions, methods, classes, structs and the like,
+  not interfaces, type aliases, enums or constants, which the denial says),
+  and a one-file grep for a symbol with its definition from one
   code.symbol call, once per symbol per session. A denial needs that answer
   in full: an outline its 4,000-token budget cut short, no single definition,
   or no reply within 2.5 s lets the call run (pass reason index_unanswered),
-  and a whole file the index did not outline is asked about once per session.
+  and a whole file whose lookup gave no declarations, answered or not, is
+  asked about once per session.
   A Bash command of several parts (`;`, `&&`, `||`, a newline or a pipe) is
   never denied, since a denial withholds every part; its reads and greps are
   counted as passes, under compound_command where the same call alone would
@@ -223,7 +226,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   (LOOM_SHUNT_RESOLVE_TIMEOUT_MS, default 8000) and, when it does not answer,
   is recorded as unresolved and retried within a minute, never cached as
   not-indexed. A sed -n 'A,Bp' / head -n N / tail -n +A / awk NR-range slice
-  of one indexed file in Bash is a ranged read under the same cap.
+  of one indexed file in Bash is a ranged read under the same cap;
+  tail -n N is judged as the file's last N lines.
   LOOM_CODE_SHUNT=off disables.
 - **loom-mentor-hint.** On a loom tool result, lifts the store's one `hint`
   (and `hint_code`) out of the result and hands it back as

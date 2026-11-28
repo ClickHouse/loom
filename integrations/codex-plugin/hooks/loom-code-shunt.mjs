@@ -20,8 +20,8 @@
 //
 // Side effects, all in $TMPDIR: the shared repository cache
 // (lib/repo-scope.mjs); per-session denial budgets for the read-window cap,
-// symbol greps and tracker searches, and the whole files the index did not
-// outline (sessionStatePath "shunt-cap"); the
+// symbol greps and tracker searches, and the whole files whose lookup gave no
+// declarations (sessionStatePath "shunt-cap"); the
 // user's decision log (tmpStatePath "shunt-log") and its unflushed copy, one
 // batch per reporting scope and session (repo.pending, named by batchKind in
 // lib/shunt-ledger.mjs), all through lib/tmp-state.mjs's private-file helpers,
@@ -168,7 +168,8 @@ function deny(reason) {
 
 /** Per-session counts, {key: n}: three denial budgets, over-cap reads (the
  *  file's path), symbol greps (`sym:`) and answered tracker searches (`qa:`),
- *  and the whole files the index did not outline (`miss:`), asked about once.
+ *  and the whole files whose lookup gave no declarations (`miss:`), asked
+ *  about once.
  *  {} when the file is missing or refused. A denial is given only when its
  *  spend was written: when the file cannot be kept (tmp not writable, or a file
  *  planted there) the call passes as if its budget were spent, so a planted
@@ -327,22 +328,28 @@ async function indexedDeclarations(repo, rel, span) {
 }
 
 /** The declarations a refusal of this read would list, [] when the index does
- *  not hold them all. A whole file (`missKey` set) it did not outline is asked
- *  about once per session: the miss is kept in the counts file under that key. */
+ *  not hold them all. A whole file (`missKey` set) is asked about once per
+ *  session: a lookup that gave none, whether the index answered with an empty
+ *  or cut outline or did not answer, is kept in the counts file under that
+ *  key, so an unreachable server costs each file one wait. The counts are read
+ *  again for the write: another hook of the session may have spent a budget
+ *  during the lookup. */
 async function readDeclarations(repo, rel, span, sessionId, missKey) {
-  const counts = missKey ? readCapCounts(sessionId) : {};
-  if (missKey && capBudgetSpent(counts, missKey, 1)) return [];
+  if (missKey && capBudgetSpent(readCapCounts(sessionId), missKey, 1)) return [];
   const declarations = await indexedDeclarations(repo, rel, span);
-  if (missKey && !declarations.length) writeCapCounts(sessionId, spendCapBudget(counts, missKey));
+  if (missKey && !declarations.length) writeCapCounts(sessionId, spendCapBudget(readCapCounts(sessionId), missKey));
   return declarations;
 }
 
 /** Read-shaped decision (Read tool or `cat`): classify, price, span. A
  *  ranged read consults the session's cap budget first; a cap denial spends
  *  one of the file's denials. A denial carries the declarations of the lines
- *  asked for; without them, or inside a `compound` command, the read passes. */
-async function settleRead(repo, { tool, rel, abs, offset, limit, sessionId, ctxBase, denyRewrite, compound }) {
+ *  asked for; without them, or inside a `compound` command, the read passes.
+ *  `fromEnd`: the slice is the file's last `limit` lines (`tail -n N`). */
+async function settleRead(repo, opts) {
+  const { tool, rel, abs, limit, fromEnd, sessionId, ctxBase, denyRewrite, compound } = opts;
   const lineCount = countLines(abs);
+  const offset = fromEnd ? Math.max(1, lineCount - limit + 1) : opts.offset;
   const bytes = fileBytes(abs);
   const ranged = offset != null || limit != null;
   const capCounts = READ_CAP > 0 && ranged ? readCapCounts(sessionId) : {};
@@ -364,7 +371,7 @@ async function settleRead(repo, { tool, rel, abs, offset, limit, sessionId, ctxB
     const declarations = await readDeclarations(repo, rel, asked, sessionId, ranged ? "" : `miss:${rel}`);
     verdict = declarations.length ? classifyRead({ ...readCtx, declarations }, MAX_LINES) : INDEX_UNANSWERED;
   }
-  if (verdict.capped && !writeCapCounts(sessionId, spendCapBudget(capCounts, rel)))
+  if (verdict.capped && !writeCapCounts(sessionId, spendCapBudget(readCapCounts(sessionId), rel)))
     verdict = { deny: null, reason: BUDGET_UNRECORDED };
   if (verdict.deny && denyRewrite) verdict.deny = denyRewrite(verdict.deny);
   // What the read lets into the context: the whole file, or the span of a
@@ -590,8 +597,9 @@ async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase, compound })
     if (rel == null) return;
     // A `sed -n 'A,Bp'` / `head -n N` / `tail -n +A` /
     // `awk 'NR>=A && NR<=B'` slice carries its span, so the read-window
-    // cap judges it exactly as Read(offset, limit); a whole-file `cat`,
-    // `nl`, `tac`, `sed -n p` keeps the whole-file rule.
+    // cap judges it exactly as Read(offset, limit); `tail -n N` carries a
+    // length alone, counted back from the file's last line; a whole-file
+    // `cat`, `nl`, `tac`, `sed -n p` keeps the whole-file rule.
     const cmdName = bulk.cmd || "cat";
     await settleRead(repo, {
       tool: `Bash:${cmdName}`,
@@ -602,6 +610,7 @@ async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase, compound })
       compound,
       offset: bulk.offset,
       limit: bulk.limit,
+      fromEnd: bulk.offset == null && bulk.limit != null,
       denyRewrite: (t) => t.replace(/^loom-code-shunt: Read of /, `loom-code-shunt: \`${cmdName}\` of `),
     });
     return;

@@ -581,21 +581,21 @@ Beyond the off switches in the table:
 ## The code shunt
 
 Inside an indexed checkout, `loom-code-shunt.mjs` denies a bulk read and puts the
-index's answer in the denial: a file's declarations with their lines and headers, a
-symbol's definition, the tracker's verdict. A denial costs the agent a request, so the
-hook gives one only when it holds that answer in full.
+index's answer in the denial: a file's functions, methods, classes and structs with their
+lines and headers, a symbol's definition, the tracker's verdict. A denial costs the agent a
+request, so the hook gives one only when it holds that answer in full.
 
 | Tool call                                                                     | Denied when                                                                                                  |
 | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `Read` of a whole file                                                        | the file is indexed, unmodified, longer than `LOOM_SHUNT_MAX_LINES` (800), and outlined in full by the index |
 | `Read` with `offset` / `limit`, or a `sed -n` / `head` / `tail` / `awk` slice | the span exceeds `LOOM_SHUNT_READ_CAP` (0 = off); at most twice per file per session                         |
-| `Grep` over a directory; `rg`, `grep -r`, `cat` in Bash                       | the scope is inside the indexed tree                                                                         |
+| `cat`, `bat`, `nl` or `tac` of a whole file in Bash                           | the whole-file rule, when the read is the whole command                                                      |
 | a grep for one symbol name in one file                                        | once per symbol per session, when the index holds exactly one definition                                     |
 | `gh issue list --search`, `gh search issues`                                  | once per query, answered by `tracker.duplicate_check` with the closest reported items                        |
 
-Everything else passes: targeted reads, single-file greps, files you modified or have
-not committed, unindexed repositories, and any call the index does not answer in full
-within 2.5 s. A Bash command of several parts (`;`, `&&`, `||`, a newline or a pipe) is
+Everything else passes: targeted reads, greps over a directory, single-file greps, files
+you modified or have not committed, unindexed repositories, and any call the index does
+not answer in full within 2.5 s. A Bash command of several parts (`;`, `&&`, `||`, a newline or a pipe) is
 never denied, because a denial withholds every part; its reads and greps are still
 counted. The same command passes on the next try after a symbol or tracker-shunt denial.
 

@@ -78,7 +78,10 @@ test("Read: only bulk, unmodified, indexed files are shunted", () => {
   ];
   const reason = decideRead({ ...base, declarations });
   assert.match(reason, /^loom-code-shunt: src\/Storages\/MergeTree\/MergeTreeData\.cpp is 9000 lines and is in loom's/);
-  assert.match(reason, /\(as of abc123def456\)\. Its declarations \(lines, qualified name, header\):\n/);
+  assert.match(
+    reason,
+    /\(as of abc123def456\)\. The index's outline of it \(lines, qualified name, header; it lists functions, methods, classes and structs, not interfaces, type aliases, enums or constants\):\n/,
+  );
   assert.ok(
     reason.includes(
       "\n12-8990 DB::MergeTreeData class MergeTreeData\n" +
@@ -614,7 +617,7 @@ test("read cap: the deny text names the path, the lines, their declarations and 
   assert.match(v.deny, /\(as of abc123def456\)/);
   assert.match(
     v.deny,
-    /The declarations in those lines \(lines, qualified name, header\):\n4300-4400 DB::f void f\(\)\n/,
+    /The index's outline of those lines \(lines, qualified name, header; [^)]*\):\n4300-4400 DB::f void f\(\)\n/,
   );
   assert.match(v.deny, /loom_code_symbol name=<qualified name>/);
   assert.match(v.deny, /Read the ones you need, at most 200 lines at a time/);

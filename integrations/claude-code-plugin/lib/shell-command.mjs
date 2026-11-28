@@ -215,7 +215,8 @@ export function patternSearchShape(cmd, t) {
 
 /** The span a shell read asks for: {kind:"read", file, offset, limit} — the
  *  same shape Read(offset, limit) carries, so classifyRead judges both alike
- *  (limit null = to the end of the file). null when the command is not a
+ *  (limit null = to the end of the file; a limit with no offset = the file's
+ *  last `limit` lines, `tail -n N`). null when the command is not a
  *  line-range read of one file (pattern-driven sed/awk, -c bytes, several
  *  files, unknown flags with values). */
 export function parseRangedShellRead(cmd, argv) {

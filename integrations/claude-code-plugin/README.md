@@ -394,23 +394,29 @@ What is shunted, and what passes:
 | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `Read file`                                                                                  | file is under the indexed prefixes, unmodified in the working tree, longer than `LOOM_SHUNT_MAX_LINES` (800), and outlined in full by the index: the deny lists its declarations                                                                                               | `offset`/`limit` given; small, binary, unindexed or locally modified files; a file whose outline is cut short or unanswered (`index_unanswered`)                                                                         |
 | `Read file offset/limit`                                                                     | `LOOM_SHUNT_READ_CAP` > 0 and the span (limit defaults to Claude Code's 2000, clipped to the file) is longer than the cap, on an indexed, unmodified file — until the file's two denials this session are spent; the deny lists the declarations in the span                   | spans within the cap; modified, untracked, binary or unindexed files (`targeted_span`); the third and later over-cap reads of the same file (`cap_spent`); a span the index cannot describe in full (`index_unanswered`) |
-| `Grep pattern [dir]`                                                                         | the scope is a directory inside the indexed tree                                                                                                                                                                                                                               | a single file as scope                                                                                                                                                                                                   |
+| `Grep pattern [dir]`                                                                         | never: a grep over a directory runs                                                                                                                                                                                                                                            | matching lines (`tree_content_grep`); a file list or counts (`file_list_grep`); a single file as scope (`single_file_grep`)                                                                                              |
 | `Grep "Class::method" file`, `Bash: grep -n "Class::method" file`                            | the pattern names one symbol — a `::` path, or a mixed-case / snake_case identifier of 8+ characters with a lowercase letter — the file is under the indexed prefixes, and the index holds exactly one definition: denied **once per symbol per session** with that definition | the second grep for the same symbol (`symbol_grep_spent`); a symbol with no definition or several, or no answer in 2.5 s (`index_unanswered`); ALL_CAPS constants, short words, regexes, strings (`single_file_grep`)    |
-| `Bash: cat/bat/nl/tac file`, `rg pat [dir]`, `grep -r pat [dir]`                             | same rules as above, when the read or grep is the whole command                                                                                                                                                                                                                | a command of several parts (`;`, `&&`, `\|\|`, a newline or a pipe: `compound_command`), redirects, pattern-driven `sed`/`awk`, non-recursive grep                                                                       |
-| `Bash: sed -n 'A,Bp' file`, `head -n N file`, `tail -n +A file`, `awk 'NR>=A && NR<=B' file` | the ranged-Read rule: `LOOM_SHUNT_READ_CAP` > 0 and the slice is longer than the cap, on an indexed, unmodified file, when the slice is the whole command                                                                                                                      | slices within the cap; no cap configured; several files; a command of several parts; `-c` bytes                                                                                                                          |
+| `Bash: cat/bat/nl/tac file`, `rg pat [dir]`, `grep -r pat [dir]`                             | the whole-file `Read` rule for `cat`/`bat`/`nl`/`tac` and the symbol rule for a one-file `grep`, when the read or grep is the whole command; never `rg` or `grep -r` over a directory                                                                                          | a command of several parts (`;`, `&&`, `\|\|`, a newline or a pipe: `compound_command`), redirects, pattern-driven `sed`/`awk`, non-recursive grep                                                                       |
+| `Bash: sed -n 'A,Bp' file`, `head -n N file`, `tail -n +A file`, `awk 'NR>=A && NR<=B' file` | the ranged-Read rule: `LOOM_SHUNT_READ_CAP` > 0 and the slice is longer than the cap, on an indexed, unmodified file, when the slice is the whole command; `tail -n N file` is judged as the file's last N lines                                                               | slices within the cap; no cap configured; several files; a command of several parts; `-c` bytes                                                                                                                          |
 | `Bash: gh issue list … --search q`, `gh search issues q …` (as the whole command)            | the checkout is indexed and the tracker record answers one bounded `tracker.duplicate_check` on the search words and any `Ns::Class::method` frames in them: the deny carries the verdict and the closest reported items                                                       | the same command on the next try, `gh issue view N`, `gh pr …`, a listing without `--search`, a command of several parts, an unbound or unauthorized tracker namespace, a timeout, `LOOM_TRACKER_SHUNT=off`              |
 
 A deny carries the index's answer (a file's declarations with their lines and
 headers, a symbol's definition, the tracker's verdict) and says how to pass
-through (a ranged read). A refusal costs the agent a request, so the hook
+through (a ranged read). The declarations are the kinds `code.outline` lists by
+default: functions, methods, classes, structs and the units of tests, build
+files and SQL. An interface, type alias, enum or constant is not among them,
+and the deny says so. A refusal costs the agent a request, so the hook
 gives one only with that answer in full: when the index does not hold it or
 does not reply in 2.5 s, the call runs. A Bash command of several parts is
 never refused, because a refusal withholds every part and only one of them is
 the read the hook judged; its reads and greps are still counted as passes,
 under `compound_command` where the same call alone would have asked the index.
-A whole file's outline is asked for with a budget of 4,000 tokens, which
-bounds the deny at about 8,000 characters; a file with more declarations than
-that is read, and the index is asked about it once per session. The
+A whole file's outline is asked for with a budget of 4,000 tokens, and a file
+whose outline does not fit is read. With that budget the longest deny measured
+over 301 large files of a C++ repository was 8,400 characters; the server
+counts an entry at a quarter of its JSON length, so long signatures make a
+longer one. A whole file whose lookup gave no declarations (no reply, an empty
+outline or a cut one) is not asked about again in that session. The
 deny never names the
 `LOOM_CODE_SHUNT=off` switch: a deny that names its own bypass gets
 `LOOM_CODE_SHUNT=off grep -r …` as the agent's next command, which measures
@@ -437,7 +443,7 @@ read of that file passes with reason `cap_spent`, so a model that insists is nev
 denied the same file forever. The count is kept in
 `$TMPDIR/loom-shunt-cap-<hash of the session id>.json` as `{"<path>": n}`, beside
 the symbol-grep (`sym:`) and tracker-search (`qa:`) budgets and the whole files
-the index did not outline (`miss:`). A denial is given
+whose lookup gave no declarations (`miss:`). A denial is given
 only when its spend was written: while that file cannot be kept (tmp not
 writable, or a file planted there), every over-cap read, symbol grep and answered
 tracker search passes as if its budget were spent. A
