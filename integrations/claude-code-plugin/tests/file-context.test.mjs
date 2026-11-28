@@ -2,6 +2,7 @@ import "./temp-home.mjs";
 import { noIds } from "./recalled-block.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import {
   FILE_READ_HEADING,
   FILE_RULES_HEADING,
@@ -60,14 +61,16 @@ test("decideInject: a read never asks again about a seen file, and the session's
 });
 
 test("readPaths: Read's file, Grep's path, and the files a shell command reads or searches by name", () => {
-  assert.deepEqual(readPaths("Read", { file_path: "/r/src/a.py", offset: 5, limit: 10 }, "/r"), ["/r/src/a.py"]);
-  assert.deepEqual(readPaths("Grep", { pattern: "x", path: "src/a.py" }, "/r"), ["/r/src/a.py"]);
+  // The paths as this platform spells them: Windows adds a drive and backslashes.
+  const at = (...names) => names.map((name) => path.resolve(name));
+  assert.deepEqual(readPaths("Read", { file_path: "/r/src/a.py", offset: 5, limit: 10 }, "/r"), at("/r/src/a.py"));
+  assert.deepEqual(readPaths("Grep", { pattern: "x", path: "src/a.py" }, "/r"), at("/r/src/a.py"));
   assert.deepEqual(readPaths("Grep", { pattern: "x" }, "/r"), []);
-  assert.deepEqual(readPaths("Bash", { command: "cat src/a.py" }, "/r"), ["/r/src/a.py"]);
-  assert.deepEqual(readPaths("Bash", { command: "sed -n '10,40p' src/a.py; head -20 CHANGES.rst" }, "/r"), [
-    "/r/src/a.py",
-    "/r/CHANGES.rst",
-  ]);
+  assert.deepEqual(readPaths("Bash", { command: "cat src/a.py" }, "/r"), at("/r/src/a.py"));
+  assert.deepEqual(
+    readPaths("Bash", { command: "sed -n '10,40p' src/a.py; head -20 CHANGES.rst" }, "/r"),
+    at("/r/src/a.py", "/r/CHANGES.rst"),
+  );
   // The shape the recorded sessions open with: one-file greps, piped, two files in one call.
   assert.deepEqual(
     readPaths(
@@ -77,16 +80,16 @@ test("readPaths: Read's file, Grep's path, and the files a shell command reads o
       },
       "/r",
     ),
-    ["/r/src/a.py", "/r/tests/t.py"],
+    at("/r/src/a.py", "/r/tests/t.py"),
   );
-  assert.deepEqual(readPaths("Bash", { command: "cd /r/src; grep -n x a.py b.py; sed -n 1,5p a.py" }, "/w"), [
-    "/r/src/a.py",
-    "/r/src/b.py",
-  ]);
+  assert.deepEqual(
+    readPaths("Bash", { command: "cd /r/src; grep -n x a.py b.py; sed -n 1,5p a.py" }, "/w"),
+    at("/r/src/a.py", "/r/src/b.py"),
+  );
   // A tree-wide search names a directory: the hook keeps regular files only.
-  assert.deepEqual(readPaths("Bash", { command: "grep -rn x src" }, "/r"), ["/r/src"]);
+  assert.deepEqual(readPaths("Bash", { command: "grep -rn x src" }, "/r"), at("/r/src"));
   // Codex's shell tool, its command an argv array.
-  assert.deepEqual(readPaths("shell", { command: ["bash", "-lc", "cat src/a.py"] }, "/r"), ["/r/src/a.py"]);
+  assert.deepEqual(readPaths("shell", { command: ["bash", "-lc", "cat src/a.py"] }, "/r"), at("/r/src/a.py"));
   // Not a read: a write, a read piped onward, a heredoc, a test run, an edit tool.
   for (const command of [
     "cat > src/a.py",
