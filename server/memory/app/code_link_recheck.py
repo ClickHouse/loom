@@ -113,6 +113,8 @@ async def _recheck_repository(
     await _recheck_pending(org, cns, head, files, result)
     await rehash.refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
+    if head and head == checked and await link_pass.recheck_cursor(org, cns).read():
+        await link_pass.recheck_cursor(org, cns).clear()  # a crash left it after the checkpoint
     if head and head != checked:
         cut_at = (await link_pass.recheck_cursor(org, cns).read()).get("head", "")
         if cut_at and cut_at != head and not await files.has(cut_at):
@@ -599,7 +601,8 @@ async def _reanchor(
     """The links a writer parked as pending because a recheck pass may not have seen them
     (they keep their path). Each is rechecked at `head` from the commit it was built at,
     as the fresh link it was, and written whatever the result: unchanged is fresh at the
-    head, a deleted path is `missing`. A path that does not parse stays pending."""
+    head, a deleted path is `missing`. A path that does not parse stays pending until the
+    pending days pass, then the row is dropped as a pathless one is."""
     if not head or not rows:
         return []
     by_commit: dict[str, list[LinkRow]] = defaultdict(list)
@@ -617,6 +620,15 @@ async def _reanchor(
         )
         moved = {id(m.row) for m in found}
         moves += found
+        await store.insert(
+            store.tombstones(
+                [
+                    r
+                    for r in rows
+                    if r["checked_commit"] == commit and r["expired"] and r["path"] in unparsed
+                ]
+            )
+        )
         moves += [
             Move(a, link_pass.link_of(a))
             for a in group

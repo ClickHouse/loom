@@ -4891,40 +4891,95 @@ def _made(**kw: Any) -> dict[str, Any]:
     )
 
 
+class _LinkStore:
+    """An in-memory link table that keeps the highest version of a row, as the engine does,
+    with the recheck state the fence reads."""
+
+    def __init__(self, monkeypatch, *, cursor: str = "", checked: str = "") -> None:
+        self.cursor, self.checked, self.rows = cursor, checked, {}
+        self.fail_on_insert = 0
+        monkeypatch.setattr(code_links.store, "insert", self.insert)
+        monkeypatch.setattr(code_links.code, "link_cursor", self.read_cursor)
+        monkeypatch.setattr(code_links.code, "checked_head", self.read_checked)
+
+    async def insert(self, rows):
+        if self.fail_on_insert:
+            self.fail_on_insert -= 1
+            if not self.fail_on_insert:
+                raise RuntimeError("replica died")
+        for r in rows:
+            key = (r["memory_id"], r["path"], r["qualified_name"])
+            if key not in self.rows or self.rows[key]["version"] < r["version"]:
+                self.rows[key] = r
+
+    async def read_cursor(self, name):
+        return self.cursor
+
+    async def read_checked(self, org, cns):
+        return self.checked
+
+    def states(self) -> list[tuple[str, int]]:
+        return [(r["state"], r["version"]) for r in self.rows.values()]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("cursor", "checked", "parked"),
+    ("cursor", "checked", "state"),
     [
-        ('{"head": "c1", "after": ""}', "c0", True),  # a pass started before this insert
-        ("", "c2", True),  # a pass finished at another head after its snapshot
-        ("", "c1", False),  # no pass running, the checkpoint is the head it was built at
-        ("", "", False),  # no pass has finished: the next one snapshots after this insert
+        ('{"head": "c1", "after": ""}', "c0", ("pending", 6)),  # a pass started before this insert
+        ("", "c2", ("pending", 6)),  # a pass finished at another head after its snapshot
+        ("", "c1", ("fresh", 7)),  # no pass running, the checkpoint is the head it was built at
+        ("", "", ("fresh", 7)),  # no pass has finished: the next one snapshots after this insert
     ],
 )
 async def test_a_link_inserted_while_a_recheck_may_have_missed_it_is_parked(
-    monkeypatch, cursor, checked, parked
+    monkeypatch, cursor, checked, state
 ) -> None:
-    written: list[dict[str, Any]] = []
-
-    async def insert(rows):
-        written.extend(rows)
-
-    async def link_cursor(name):
-        assert name == "recheck/o/code-a"
-        return cursor
-
-    async def checked_head(org, cns):
-        return checked
-
-    monkeypatch.setattr(code_links.store, "insert", insert)
-    monkeypatch.setattr(code_links.code, "link_cursor", link_cursor)
-    monkeypatch.setattr(code_links.code, "checked_head", checked_head)
+    table = _LinkStore(monkeypatch, cursor=cursor, checked=checked)
     await code_links._insert_unseen([_made()])
-    assert [(r["state"], r["version"]) for r in written][1:] == ([("pending", 6)] if parked else [])
+    assert table.states() == [state]
+
+
+@pytest.mark.asyncio
+async def test_a_link_built_before_a_pass_and_inserted_after_it_is_unknown_until_rechecked(
+    monkeypatch,
+) -> None:
+    # the writer built at c1 and paused; a pass to c2 snapshotted without the link and
+    # moved the checked head; the writer then inserts
+    table = _LinkStore(monkeypatch, cursor="", checked="c2")
+    built = _made()
+    await code_links._insert_unseen([built])
+    ((state, _),) = table.states()
+    assert state == "pending"  # what the read side serves as unknown
+    # the next pending scan re-anchors it at the head the pass checked
+    files = code_link_pass.RepoReads("o", "code-a")
+
+    async def at(commit, path):
+        return _file(path, "def f():" + chr(10) + "    return 1" + chr(10))
+
+    async def range_(base, head):
+        return code_link_pass.Range(base, {})
+
+    _reads(monkeypatch, files, at)
+    monkeypatch.setattr(files, "range", range_)
+    (parked,) = [{**r, "expired": 0} for r in table.rows.values()]
+    (move,) = await code_link_recheck._reanchor("o", "code-a", "c2", files, [parked])
+    assert move.link.state == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_a_crash_between_the_pending_insert_and_the_fresh_one_leaves_the_link_pending(
+    monkeypatch,
+) -> None:
+    table = _LinkStore(monkeypatch)
+    table.fail_on_insert = 2  # the pending insert lands; the promotion dies
+    with pytest.raises(RuntimeError):
+        await code_links._insert_unseen([_made()])
+    assert table.states() == [("pending", 6)]
 
 
 def _parked(path: str, qualified_name: str, **kw: Any) -> dict[str, Any]:
-    return _made(path=path, qualified_name=qualified_name, state="pending", **kw)
+    return _made(path=path, qualified_name=qualified_name, state="pending", **({"expired": 0} | kw))
 
 
 @pytest.mark.asyncio
@@ -5053,3 +5108,65 @@ async def test_a_pass_sets_its_cursor_before_reading_links_and_clears_it_after_t
         "checked c2",
         "cursor cleared",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("expired", "tombstoned"), [(0, 0), (1, 1)])
+async def test_a_parked_link_whose_path_never_parses_expires_with_the_pending_days(
+    monkeypatch, expired, tombstoned
+) -> None:
+    written: list[dict[str, Any]] = []
+    files = code_link_pass.RepoReads("o", "code-a")
+
+    async def at(commit, path):
+        raise code_links.code.ParseFailed(path, "bad")
+
+    async def range_(base, head):
+        return code_link_pass.Range(base, {"a.py": "a.py"})
+
+    async def insert(rows):
+        written.extend(rows)
+
+    _reads(monkeypatch, files, at)
+    monkeypatch.setattr(files, "range", range_)
+
+    async def candidates(org, cns, **kw):
+        return []
+
+    monkeypatch.setattr(code_links.code, "candidates", candidates)
+    monkeypatch.setattr(code_links.store, "insert", insert)
+    row = _parked("a.py", "a::f", expired=expired)
+    assert await code_link_recheck._reanchor("o", "code-a", "c2", files, [row]) == []
+    assert len(written) == tombstoned
+    assert all(r["tombstoned_at"] is not None for r in written)
+
+
+@pytest.mark.asyncio
+async def test_a_cursor_left_after_the_checkpoint_is_cleared_by_the_next_pass(monkeypatch) -> None:
+    cursors = {"recheck/o/code-a": '{"head": "c2", "after": ""}'}
+
+    async def get(name):
+        return cursors.get(name, "")
+
+    async def put(name, value):
+        cursors[name] = value
+
+    async def head(org, cns):
+        return "c2"
+
+    async def nothing(*a, **k):
+        pass
+
+    for name, fn in (("link_cursor", get), ("set_link_cursor", put)):
+        monkeypatch.setattr(code_links.code, name, fn)
+    for name in ("indexed_head", "checked_head"):
+        monkeypatch.setattr(code_links.code, name, head)
+    monkeypatch.setattr(code_link_recheck, "_recheck_pending", nothing)
+    monkeypatch.setattr(code_link_recheck, "_retry_unparsed", nothing)
+    monkeypatch.setattr(code_link_rehash, "refingerprint", nothing)
+    monkeypatch.setattr(code_link_policy, "apply_policies", nothing)
+    result = code_link_pass.PassResult()
+    await code_link_recheck._recheck_repository(
+        "o", "code-a", code_link_pass.Budget(judgements=0), result
+    )
+    assert cursors["recheck/o/code-a"] == ""

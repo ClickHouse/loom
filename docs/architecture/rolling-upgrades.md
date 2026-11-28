@@ -1045,6 +1045,15 @@ remaps a scratch restore target into the deployment client. Both paths fence all
 historical connection keys and verify physical owner-history deletion. Complete the
 separate mirror-content cleanup before serving; this account procedure does not replace it.
 
+### Memory links written during a recheck
+
+A build that parks late-inserted links writes the recheck cursor before it reads links
+and clears it after the checked head moves. While replicas of the previous build still
+run the recheck pass, they write the cursor late, clear it early and never park, so the
+write-side check can miss a link inserted then. Such a link is served as fresh until the
+next pass of the new build rechecks it. The window ends when the last previous-build
+replica is replaced; the new build carries no code for it.
+
 ## Independent proposal approval
 
 Stop and drain every older API, worker and command-line writer **before** applying

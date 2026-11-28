@@ -31,6 +31,7 @@ from server.code.domain.anchor import (
     resolve,
 )
 from server.code.domain.declaration import fingerprint_version
+from server.core.ch import sequential_reads
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app.code_link_reads import (
     SERVED,
@@ -151,26 +152,28 @@ async def _link_org(
 
 
 async def _insert_unseen(inserted: list[LinkRow]) -> None:
-    """Insert `inserted`, then park as `pending` the links a recheck pass may not have seen.
-
-    A pass writes its `recheck` cursor before it snapshots its links and clears it only
-    after it moves the checked head. A link inserted before the snapshot is in the pass;
-    one inserted after it was inserted after the cursor, so this read, which follows the
-    insert, sees the cursor, or sees the head the pass checked, which differs from the
-    head the link was built at. Either way `_recheck_pending` rechecks it at the head. An
-    empty checked head means no pass has finished: the next one snapshots after this."""
-    await store.insert(inserted)
+    """Insert `inserted`, a link a recheck pass may have missed parked as `pending` first and
+    promoted if the fence reads clear it (docs/architecture/code-index-architecture.md)."""
+    guard = [
+        r for r in inserted if r["path"] and r["state"] != "pending" and r["tombstoned_at"] is None
+    ]
+    parked = {id(r): store.link_row(r, follows=r["version"], state="pending") for r in guard}
+    await store.insert([parked.get(id(r), r) for r in inserted])
     by_repo: dict[tuple[str, str], list[LinkRow]] = defaultdict(list)
-    for r in inserted:
-        if r["path"] and r["state"] != "pending" and r["tombstoned_at"] is None:
-            by_repo[r["org"], r["code_namespace"]].append(r)
-    late: list[LinkRow] = []
-    for (org, cns), rows in by_repo.items():
-        running = bool(await link_pass.recheck_cursor(org, cns).read())
-        checked = await code.checked_head(org, cns)
-        late += [r for r in rows if running or checked not in ("", r["checked_commit"])]
-    if late:
-        await store.insert([store.link_row(r, follows=r["version"], state="pending") for r in late])
+    for r in guard:
+        by_repo[r["org"], r["code_namespace"]].append(r)
+    clear: list[LinkRow] = []
+    with sequential_reads():
+        for (org, cns), rows in by_repo.items():
+            running = bool(await link_pass.recheck_cursor(org, cns).read())
+            checked = await code.checked_head(org, cns)
+            clear += [
+                store.link_row(r, follows=parked[id(r)]["version"])
+                for r in rows
+                if not running and checked in ("", r["checked_commit"])
+            ]
+    if clear:
+        await store.insert(clear)
 
 
 async def _relink_rewritten(
