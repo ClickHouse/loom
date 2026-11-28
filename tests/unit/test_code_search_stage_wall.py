@@ -92,6 +92,7 @@ def test_stage_of_maps_span_suffixes_to_the_stage_vocabulary() -> None:
     assert (
         spans.stage_of("search.history_leg") == spans.stage_of("search.history_route") == "history"
     )
+    assert spans.stage_of("search.definition_leg") == "definition"
     assert spans.stage_of("search.rerank") == "rerank"
     assert spans.stage_of("search.risk_annotate") == "risk_annotate"
     assert spans.stage_of("search.memo_probe") == "memo_probe"

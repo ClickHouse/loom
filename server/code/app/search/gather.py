@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.code.app import history as code_history
+from server.code.app.search.definitions import _definition_leg
 from server.code.app.search.history import _history_leg, _history_route_units
 from server.code.app.search.hyde import _hyde_config
 from server.code.app.search.lexical import _lexical_leg
@@ -122,6 +123,7 @@ async def _gather_legs(
         st.fuzzy_hit,
         (st.card_rows, st.concept_rows),
         st.hyde_rows,
+        st.definition_rows,
     ) = await _run_legs_releasing(
         _query_vec,
         {
@@ -188,6 +190,21 @@ async def _gather_legs(
             "symbol_vote": (_fuzzy_symbol_vote(repo, org, ns, query, work), False),
             "card": (card_legs, ([], [])),
             "hyde": (hyde_leg, []),
+            # exact name matches, as the lexical leg's are: off in a vector-only run
+            "definition": (
+                _definition_leg(
+                    repo,
+                    org,
+                    ns,
+                    model,
+                    query=query,
+                    run=run_lexical,
+                    work=work,
+                    path_prefix=path_prefix,
+                    scope=scope if constrained else None,
+                ),
+                [],
+            ),
         },
         result=st.result,
         work=work,
