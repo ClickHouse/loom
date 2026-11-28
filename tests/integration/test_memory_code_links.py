@@ -769,6 +769,36 @@ async def test_a_rename_alone_moves_the_link(env) -> None:
     assert "code moved" not in hook.rendered
 
 
+async def test_a_function_moved_with_an_edit_is_followed_past_a_new_export_list(env) -> None:
+    repo = env
+    keep = "def keep():\n    return 0\n"
+    rows = "def fetch_rows(n):\n    out = []\n    for i in range(n):\n        out.append(i)\n    return out\n"
+    count = "def count_rows(rows):\n    total = 0\n    for _ in rows:\n        total += 1\n    return total\n"
+    c1 = repo.commit({"src/mv/a.py": rows + "\n\n" + keep, "src/mv/c.py": count + "\n\n" + keep})
+    await _index(TRUNK, repo, c1, ["src/mv/a.py", "src/mv/c.py"])
+    moved = await _remember(MEM, "fetch-rows-moved", "`fetch_rows` returns the first n integers")
+    gone = await _remember(MEM, "count-rows-gone", "`count_rows` counts the rows it is given")
+    await _pass()
+    exports = keep + '\n\n__all__ = ["keep"]\n'
+    c2 = repo.commit(
+        {
+            "src/mv/a.py": exports,
+            "src/mv/b.py": rows.replace("append(i)", "append(i * 2)"),
+            "src/mv/c.py": exports,
+        }
+    )
+    await _index(TRUNK, repo, c2, ["src/mv/a.py", "src/mv/b.py", "src/mv/c.py"])
+    await _pass()
+    (link,) = await _links(moved)
+    assert (link["path"], link["symbol"].rsplit("::", 1)[-1], link["state"]) == (
+        "src/mv/b.py",
+        "fetch_rows",
+        "changed",
+    )
+    # deleted beside the same export list, its name nowhere else: not called gone
+    assert [(x["path"], x["state"]) for x in await _links(gone)] == [("src/mv/c.py", "unresolved")]
+
+
 async def test_a_file_link_follows_its_cited_lines_and_the_definition_its_memory_names(
     env,
 ) -> None:
