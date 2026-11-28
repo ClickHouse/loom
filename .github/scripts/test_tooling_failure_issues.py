@@ -1,0 +1,328 @@
+import os
+import tempfile
+import unittest
+from http.client import IncompleteRead
+from pathlib import Path
+from unittest.mock import Mock, patch
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
+
+from tooling_failure_issues import (
+    BOT,
+    REPO,
+    collect_failures,
+    collect_scanning_findings,
+    main,
+    report,
+    select_workflows,
+    shared_results,
+)
+
+
+def run(
+    number: int,
+    *,
+    conclusion: str | None = "failure",
+    status: str = "completed",
+    event: str = "push",
+    repository: str = REPO,
+    branch: str = "main",
+) -> dict:
+    return {
+        "id": number,
+        "created_at": f"2026-01-{number:02d}T00:00:00Z",
+        "head_repository": {"full_name": repository},
+        "head_branch": branch,
+        "event": event,
+        "conclusion": conclusion,
+        "status": status,
+        "path": ".github/workflows/external-links.yml",
+        "raw_error": "information from the check output",
+    }
+
+
+def fake_api(
+    runs: list[dict],
+    issues: list[dict] | None = None,
+    alerts: list[dict] | None = None,
+    jobs: list[dict] | dict[int, list[dict]] | None = None,
+) -> Mock:
+    def request(path: str, *, payload: dict | None = None) -> dict | list:
+        if payload is not None:
+            assert path == "issues"
+            assert issues is not None
+            issues.append({**payload, "state": "open", "user": {"login": BOT}})
+            return {"number": 1}
+        if path.startswith("code-scanning/alerts?"):
+            params = parse_qs(urlsplit(path).query)
+            assert params["ref"] == ["refs/heads/main"] and params["state"] == ["open"]
+            return alerts or []
+        if "/jobs?" in path:
+            if isinstance(jobs, dict):
+                return {"jobs": jobs.get(int(path.split("/")[2]), [])}
+            return {"jobs": jobs or []}
+        if path.startswith("issues?"):
+            return issues or []
+        if "missing.yml" in path:
+            raise HTTPError(path, 404, "Not found", None, None)
+        params = parse_qs(urlsplit(path).query)
+        assert params["branch"] == ["main"] and params["status"] == ["completed"]
+        return {
+            "workflow_runs": [
+                row
+                for row in runs
+                if row["event"] == params["event"][0] and row["status"] == params["status"][0]
+            ]
+        }
+
+    return Mock(side_effect=request)
+
+
+def report_failures(api: Mock, workflows: list[str]) -> int:
+    created, failed = report(api, collect_failures(api, workflows))
+    assert not failed
+    return created
+
+
+class ToolingIssuesTests(unittest.TestCase):
+    def test_workflow_run_requires_an_eligible_main_failure(self) -> None:
+        event = {"workflow_run": run(2, event="schedule")}
+        self.assertEqual(select_workflows("workflow_run", event), ["external-links.yml"])
+        for ignored in (
+            run(2, repository="fork/loom"),
+            run(2, branch="another"),
+            run(2, event="pull_request"),
+            run(2, conclusion="success"),
+            {**run(2), "path": ".github/workflows/unlisted.yml"},
+        ):
+            self.assertEqual(select_workflows("workflow_run", {"workflow_run": ignored}), [])
+        self.assertEqual(select_workflows("pull_request", event), [])
+
+    def test_does_not_create_an_issue_for_an_old_failure(self) -> None:
+        api = fake_api([run(2), run(3, event="schedule", conclusion="success")])
+        self.assertEqual(report_failures(api, ["external-links.yml"]), 0)
+        self.assertFalse(any("payload" in call.kwargs for call in api.call_args_list))
+
+    def test_running_workflow_does_not_hide_a_completed_failure(self) -> None:
+        issues: list[dict] = []
+        api = fake_api([run(2), run(3, status="in_progress", conclusion=None)], issues)
+        self.assertEqual(report_failures(api, ["external-links.yml"]), 1)
+        self.assertIn("/actions/runs/2", issues[0]["body"])
+
+    def test_sweep_reports_other_findings_after_a_workflow_lookup_failure(self) -> None:
+        issues: list[dict] = []
+        alerts = [{"number": 4, "state": "open", "tool": {"name": "CodeQL"}}]
+        api = fake_api([run(2)], issues, alerts)
+
+        def request(path: str, *, payload: dict | None = None) -> dict | list:
+            if "/jobs?" in path:
+                raise HTTPError(path, 503, "Service unavailable", None, None)
+            return api(path, payload=payload)
+
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / "event.json"
+            event.write_text("{}")
+            env = {
+                "GITHUB_REPOSITORY": REPO,
+                "GITHUB_REF": "refs/heads/main",
+                "GITHUB_EVENT_PATH": str(event),
+                "GITHUB_EVENT_NAME": "schedule",
+            }
+            with (
+                patch.dict(os.environ, env),
+                patch("tooling_failure_issues.github_api", request),
+                patch(
+                    "tooling_failure_issues.select_workflows",
+                    return_value=["external-links.yml", "http-contract.yml"],
+                ),
+                self.assertRaisesRegex(SystemExit, r"http-contract[.]yml"),
+            ):
+                main()
+
+        self.assertEqual(len(issues), 2)
+        self.assertTrue(any("external-links" in issue["title"] for issue in issues))
+        self.assertTrue(any("codeql-alerts" in issue["title"] for issue in issues))
+
+    def test_one_failed_issue_create_does_not_skip_other_findings(self) -> None:
+        issues: list[dict] = []
+        alerts = [{"number": 4, "state": "open", "tool": {"name": "CodeQL"}}]
+        api = fake_api([run(2)], issues, alerts)
+        findings = collect_scanning_findings(api)
+        findings.update(collect_failures(api, ["external-links.yml"]))
+
+        def request(path: str, *, payload: dict | None = None) -> dict | list:
+            if payload is not None and payload["title"].startswith("[tooling-ci:codeql-alerts]"):
+                raise IncompleteRead(b"")
+            return api(path, payload=payload)
+
+        self.assertEqual(
+            report(request, findings), (1, ["codeql-alerts issue creation (IncompleteRead)"])
+        )
+        self.assertEqual(len(issues), 1)
+        self.assertTrue(issues[0]["title"].startswith("[tooling-ci:external-links]"))
+
+    def test_lookup_budget_leaves_time_to_report_collected_findings(self) -> None:
+        issues: list[dict] = []
+        api = fake_api([run(2)], issues)
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / "event.json"
+            event.write_text("{}")
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "GITHUB_REPOSITORY": REPO,
+                        "GITHUB_REF": "refs/heads/main",
+                        "GITHUB_EVENT_PATH": str(event),
+                        "GITHUB_EVENT_NAME": "schedule",
+                    },
+                ),
+                patch("tooling_failure_issues.github_api", api),
+                patch(
+                    "tooling_failure_issues.select_workflows",
+                    return_value=["external-links.yml", "http-contract.yml"],
+                ),
+                patch("tooling_failure_issues.time.time", return_value=0),
+                patch("tooling_failure_issues.time.monotonic", side_effect=[0, 1, 2, 3, 120, 121]),
+                self.assertRaisesRegex(SystemExit, r"http-contract[.]yml [(]TimeoutError[)]"),
+            ):
+                main()
+        self.assertEqual(len(issues), 1)
+        self.assertTrue(issues[0]["title"].startswith("[tooling-ci:external-links]"))
+        self.assertFalse(any("http-contract.yml" in call.args[0] for call in api.call_args_list))
+
+    def test_report_creates_one_issue_and_never_copies_run_content(self) -> None:
+        issues: list[dict] = []
+        api = fake_api([run(2), run(3, repository="fork/loom")], issues)
+        self.assertEqual(report_failures(api, ["external-links.yml"]), 1)
+        self.assertEqual(report_failures(api, ["external-links.yml"]), 0)
+        self.assertEqual(len(issues), 1)
+        body = issues[0]["body"]
+        self.assertIn("https://github.com/ClickHouse/loom/actions/runs/2", body)
+        self.assertNotIn("information from the check output", body)
+
+    def test_same_run_does_not_recreate_a_closed_decision(self) -> None:
+        issues = [
+            {
+                "body": "<!-- loom-tooling-failure:v1 external-links 2 -->",
+                "state": "closed",
+                "user": {"login": BOT},
+            }
+        ]
+        api = fake_api([run(2)], issues)
+        self.assertEqual(report_failures(api, ["external-links.yml"]), 0)
+        self.assertEqual(report_failures(fake_api([run(3)], issues), ["external-links.yml"]), 1)
+
+    def test_the_default_branch_can_be_missing_an_unmerged_workflow(self) -> None:
+        api = fake_api([])
+        self.assertEqual(report_failures(api, ["missing.yml"]), 0)
+
+    def test_scanner_alerts_create_one_issue_per_tool_without_alert_details(self) -> None:
+        issues: list[dict] = []
+        alerts = [
+            {
+                "number": number,
+                "state": state,
+                "tool": {"name": tool},
+                "rule": {"description": "private finding text"},
+                "html_url": "https://example.test/private-alert",
+            }
+            for number, state, tool in (
+                (2, "open", "CodeQL"),
+                (3, "open", "CodeQL"),
+                (4, "open", "Scorecard"),
+                (5, "fixed", "CodeQL"),
+                (6, "open", "Zizmor"),
+            )
+        ]
+        api = fake_api([], issues, alerts)
+        self.assertEqual(report(api, collect_scanning_findings(api)), (2, []))
+        self.assertEqual(report(api, collect_scanning_findings(api)), (0, []))
+        self.assertEqual(
+            [issue["title"] for issue in issues],
+            [
+                "[tooling-ci:codeql-alerts] Review open CodeQL alerts on main",
+                "[tooling-ci:scorecard-alerts] Review open Scorecard alerts on main",
+            ],
+        )
+        for issue in issues:
+            self.assertIn(
+                "https://github.com/ClickHouse/loom/security/code-scanning", issue["body"]
+            )
+            self.assertNotIn("private", issue["body"])
+        self.assertIn("codeql-alerts 3 -->", issues[0]["body"])
+
+    def test_closed_scanner_issue_stays_closed_when_only_older_alerts_remain(self) -> None:
+        issues = [
+            {
+                "body": "<!-- loom-tooling-failure:v1 codeql-alerts 3 -->",
+                "state": "closed",
+                "user": {"login": BOT},
+            }
+        ]
+        alerts = [{"number": 2, "state": "open", "tool": {"name": "CodeQL"}}]
+        api = fake_api([], issues, alerts)
+        self.assertEqual(report(api, collect_scanning_findings(api)), (0, []))
+        alerts.append({"number": 4, "state": "open", "tool": {"name": "CodeQL"}})
+        self.assertEqual(report(api, collect_scanning_findings(api)), (1, []))
+        self.assertEqual(issues[0]["state"], "closed")
+
+    def test_contributor_and_contract_workflows_can_report_failures(self) -> None:
+        workflows = select_workflows("schedule", {})
+        for path in ("contributor-lab", "http-contract", "identity-testing", "zizmor"):
+            with self.subTest(path=path):
+                event = {"workflow_run": {**run(2), "path": f".github/workflows/{path}.yml"}}
+                self.assertEqual(select_workflows("workflow_run", event), [f"{path}.yml"])
+                self.assertIn(f"{path}.yml", workflows)
+
+    def test_dedicated_publisher_owns_the_issue_when_it_succeeds(self) -> None:
+        issues: list[dict] = []
+        publisher = {"name": "Record trusted HTTP contract failures", "conclusion": "success"}
+        api = fake_api([run(2)], issues, jobs=[publisher])
+        self.assertEqual(report_failures(api, ["http-contract.yml"]), 0)
+        self.assertEqual(issues, [])
+        publisher["conclusion"] = "skipped"
+        self.assertEqual(report_failures(api, ["http-contract.yml"]), 1)
+        self.assertEqual(
+            issues[0]["title"], "[tooling-ci:http-contract] HTTP schema contract failed on main"
+        )
+
+    def test_a_skipped_shared_job_does_not_hide_its_last_result(self) -> None:
+        runs = [run(2), run(3, conclusion="success")]
+        name = "typescript sdk (generated types)"
+        outcomes = {
+            2: [{"name": name, "conclusion": "failure"}],
+            3: [{"name": name, "conclusion": "skipped"}],
+        }
+        findings = collect_failures(fake_api(runs, jobs=outcomes), ["ci.yml"])
+        self.assertEqual(findings["typescript-sdk"].source_id, 2)
+        outcomes[3][0]["conclusion"] = "success"
+        self.assertNotIn(
+            "typescript-sdk", collect_failures(fake_api(runs, jobs=outcomes), ["ci.yml"])
+        )
+
+    def test_shared_ci_only_reports_targeted_jobs_and_steps(self) -> None:
+        jobs = [
+            {"name": "pytest integration part 3 of 4", "conclusion": "failure"},
+            {"name": "pytest unit part 1", "conclusion": "failure"},
+            {"name": "pytest unit part 2", "conclusion": "failure"},
+            {"name": "typescript sdk (generated types)", "conclusion": "timed_out"},
+            {
+                "name": "python sdk wheel (py 3.12)",
+                "conclusion": "failure",
+                "steps": [
+                    {
+                        "name": "Report public types from the installed wheel",
+                        "conclusion": "skipped",
+                    },
+                    {
+                        "name": "Validate the PyPI description in both distributions",
+                        "conclusion": "failure",
+                    },
+                ],
+            },
+        ]
+        self.assertEqual(
+            {key for (key, _), failed in shared_results("ci.yml", iter(jobs)).items() if failed},
+            {"python-unit", "typescript-sdk", "twine"},
+        )
