@@ -74,7 +74,7 @@ def test_explicit_unlimited_ask_overrides_the_deployment_cap(monkeypatch):
 
     assert (
         _ask_search_kwargs(
-            CodeAskInput(question="Where is the handler?", token_budget=0), 0.5, 0.1
+            CodeAskInput(question="Where is the handler?", token_budget=0), 0.5, 0.1, 0.62
         )["token_budget"]
         == 0
     )

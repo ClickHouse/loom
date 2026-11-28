@@ -101,7 +101,7 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
             return page
         return await _page_by_research(input, offset=offset, reason=fallback)
 
-    abstain_threshold, noise_floor = await resolve_code_thresholds(org, ns)
+    abstain_threshold, noise_floor, confident_similarity = await resolve_code_thresholds(org, ns)
 
     embedder, embedding_model = _search_embedder(input)
 
@@ -190,6 +190,7 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         pr_leg_before=input.pr_leg_before,
         embedding_model=embedding_model,
         noise_floor=noise_floor,
+        confident_similarity=confident_similarity,
         bodies=bodies,
         min_fan_in=input.min_fan_in,
         sort_by=input.sort_by,

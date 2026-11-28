@@ -42,7 +42,7 @@ Ask a QUESTION about this codebase and get a grounded answer with [file:line] ci
 | `cache_saved_usd` | `float` | Upstream LLM cost in USD the served cache entry recorded; 0.0 when nothing was served. |
 | `abstain` | `bool` | true when no grounded answer is returned; `abstain_reason` says why. |
 | `abstain_reason` | `str` | Why it abstained (no strong match, off-repository question, ...); "" otherwise. |
-| `retrieval_confidence` | `float` | The underlying code.search's calibrated confidence (0-1); 0.0 when it did not run. |
+| `retrieval_confidence` | `float` | The underlying code.search's `retrieval_confidence` (0-1): whether the index holds an answer, not whether this one is right; 0.0 when the search did not run. |
 | `tokens_returned` | `int` | Estimated tokens of the answer text (characters / 4); 0 when there is no answer. |
 | `context_tokens` | `int` | Retrieval context (tokens) the synthesis was grounded on; 0 for cached hits and abstains. |
 | `trace_run_id` | `str` | Id of the loom.code_search_trace row the server writes for this call. |
@@ -240,7 +240,7 @@ Which merged PRs last touched these lines, between release A and B?
 
 ## `code.calibrate`
 
-Derive code-specific abstention thresholds from the authored probe corpus (query/positive/hard-distractor triples over the indexed repo) and persist them as this namespace's calibration.
+Derive this namespace's calibration from the authored probe corpus and persist it: the code-specific abstention thresholds and the confident-hit cosine at the top of the `retrieval_confidence` scale.
 
 `POST /v1/code.calibrate` · MCP `loom_code_calibrate` · role `admin` · write · audited · not listed under the MCP `all` toolset
 
@@ -256,6 +256,7 @@ Derive code-specific abstention thresholds from the authored probe corpus (query
 | --- | --- | --- |
 | `noise_floor` | `float` | Cosine below which a hit is noise: the distractors' 90th percentile plus 0.02. |
 | `abstain_threshold` | `float` | Cosine below which the search abstains: `noise_floor` plus 0.05. |
+| `rerank_skip_above` | `float` | Cosine of a confident hit, the probes' 75th-percentile question-to-answer cosine: where `code.search`'s `retrieval_confidence` reads 1.0. |
 | `embedder_model` | `str` | The embedding model the probes ran against; the calibration applies to it. |
 | `positives` | `int` | Query/positive pairs read from the probe corpus. |
 | `distractors` | `int` | Query/distractor pairs read from the probe corpus. |
@@ -1577,10 +1578,10 @@ Find implementations by question, behavior or identifier using `query`.
 | `abstain` | `bool` | true = the server does not stand behind these results (they may still be listed); `abstain_code` says why. |
 | `abstain_code` | `Literal['', 'no_match', 'below_threshold', 'low_calibrated_confidence', 'not_covered', 'pattern_too_broad', 'identifier_absent', 'off_domain']` | Why it abstained: no_match (nothing survived) \| below_threshold (top cosine under the abstain threshold) \| low_calibrated_confidence \| not_covered (path outside the index) \| pattern_too_broad \| identifier_absent (no file names it) \|… |
 | `abstain_reason` | `str` | Human-readable reason for the abstain, with what to do instead; "" when not abstaining. |
-| `retrieval_risk` | `Literal['low', 'medium', 'high', 'abstain']` | Calibrated risk band from `retrieval_confidence`: low (>= 0.75), medium (>= 0.55), high, or abstain (below the abstain cut-off or the top cosine under its threshold). |
-| `retrieval_confidence` | `float` | Calibrated confidence 0-1 from the top similarity, its margin over the second hit, `route_agreement` and the pool size; 0.0 on an abstain with no results. |
+| `retrieval_risk` | `Literal['low', 'medium', 'high', 'abstain']` | Risk band of `retrieval_confidence` at the deployment's cut-offs: low, medium or high; abstain when the search abstains, which is decided apart from the confidence. |
+| `retrieval_confidence` | `float` | Confidence 0-1 that the index holds an answer, not that the first result is the right one: the vector leg's best cosine on the embedder's calibrated scale, or a fixed 0.95 on an exact symbol match and 0.5 on the history route. |
 | `route_agreement` | `float` | Share (0-1) of the retrieval routes that ran and agreed: the primary hit, lexical and vector legs sharing a top-10 chunk, a fuzzy-symbol hit; 1.0 on an exact symbol hit. |
-| `calibration_explanation` | `str` | The calibration inputs as text (top_similarity, margin, route_agreement, ...), plus the legs the answer ranked without past the deadline. |
+| `calibration_explanation` | `str` | The inputs of `retrieval_confidence` as text (best_cosine and the two calibrated cosines it is read between), plus the legs the answer ranked without past the deadline. |
 | `tokens_returned` | `int` | Estimated tokens of the served page (results, history section and annotations). |
 | `constrained` | `bool` | Constrained search: true when a pattern / path filter narrowed the pool; `matched_files` is the pre-count of files the constraint admits (0 when unconstrained or not counted). |
 | `matched_files` | `int` | How many files the pattern / path constraint admits; 0 when unconstrained or not counted. |

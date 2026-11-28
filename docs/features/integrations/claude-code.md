@@ -276,7 +276,14 @@ local-only changes and self-contained requests. Ambiguous or empty typed answers
 not trigger another automatic lookup. Search pointers are sent only when
 the index labels its own answer low-risk (or, with `LOOM_PROMPT_PACK_MIN_CONF`
 set, from that confidence) and never when it abstains; they are candidates, and
-the text does not tell the model to stop searching. Supply a task inside `<issue>...</issue>` when a harness adds instructions;
+the text does not tell the model to stop searching. A search with no semantic leg
+reads `medium` (confidence 0.5), so it sends no search pointers: a server with no
+embedding model, or a vector leg that failed or missed its deadline.
+`LOOM_PROMPT_PACK_MIN_CONF=0.5` sends them there too, and then also for every
+indexed-code prompt whose confidence is 0.5 or more. A code namespace an
+administrator has not calibrated can read answerable prompts `medium` or `high` and
+send none
+([`code.calibrate`](../../operations/code-index-operations.md#first-index)). Supply a task inside `<issue>...</issue>` when a harness adds instructions;
 the existing query helper extracts that block.
 
 Memory recall's default `first` mode makes one attempt on the first qualifying prompt,
@@ -574,7 +581,7 @@ Beyond the off switches in the table:
 | `LOOM_PROMPT_RECALL_MIN_CONF`  | `0.5`                     | minimum `retrieval_confidence` before the prompt recall injects anything                   |
 | `LOOM_PROMPT_RECALL_MAX_CHARS` | `1200`                    | cap on the injected recall                                                                 |
 | `LOOM_PROMPT_PACK_TOP_K`       | `3`                       | pointers per prompt (`LOOM_PROMPT_PACK=off` turns the pack off)                            |
-| `LOOM_PROMPT_PACK_MIN_CONF`    | unset                     | a `retrieval_confidence` gate for search pointers; unset, the index's low-risk label       |
+| `LOOM_PROMPT_PACK_MIN_CONF`    | unset                     | a `retrieval_confidence` gate for search pointers (low risk is 0.7 up); unset, that label  |
 | `LOOM_FILE_CONTEXT_TTL_MIN`    | `30`                      | minutes before the same file's context is fetched again                                    |
 | `LOOM_BLAST_DEPTH`             | `1`                       | `code.impact` depth for the blast-radius line                                              |
 | `LOOM_TEST_GATE_DEPTH`         | `2`                       | hops the test gate follows (1–3)                                                           |

@@ -307,7 +307,9 @@ def test_pattern_skips_the_symbol_route_and_constrains_both_legs() -> None:
     assert "constrained=pattern" in res.score_explanation
     assert "matched_files=12" in res.score_explanation
     assert res.retrieval_work["scope_count_queries"] == 1
-    assert "constrained=true" in res.calibration_explanation
+    assert res.calibration_explanation == (
+        "best_cosine=0.80, abstain_threshold=0.30, confident_similarity=0.62, constrained=true"
+    )
 
 
 def test_too_broad_pattern_is_refused_before_any_scan() -> None:

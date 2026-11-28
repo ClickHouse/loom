@@ -294,8 +294,15 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
 
 Then:
 
-- `POST /v1/code.calibrate` (`ADMIN`) derives the code index's abstention thresholds from
-  `bench/fixtures/code_calibration_probes.jsonl` (shipped in the image).
+- `POST /v1/code.calibrate` (`ADMIN`) derives the code index's abstention thresholds, and
+  the confident-hit cosine at which `retrieval_confidence` reads 1.0, from
+  `bench/fixtures/code_calibration_probes.jsonl` (shipped in the image). Run it for
+  every code namespace, and again after a change of embedding model. A namespace
+  without its own calibration (`calibration.get` reads `source: cluster`) reads code
+  on the embedder's boot calibration, which is derived from prose. On an embedding
+  model that scores a right code hit lower than a right prose answer, answerable
+  searches then read `medium` or `high`, and the coding-agent plugins send no search
+  pointers for them.
 - `loom code describe --top-pct 20` (optional, LLM cost) writes one-line descriptions for
   the most central chunks.
 - `loom code stats` prints the watermarks (`git_head`, `scip_commit`, …) and live row

@@ -486,7 +486,7 @@ no GitHub call; a title alone never reads as a duplicate.
 | `code.refresh`          | writer | trigger an ingest pass now ([freshness.md](freshness.md#pushing-freshness-from-ci))                                                                    |
 | `code.scip_ingest`      | writer | upload a compiler-tier delta from an external producer (applied by `code_scip_apply`)                                                                  |
 | `code.reindex`          | admin  | move the ingest watermark to a commit                                                                                                                  |
-| `code.calibrate`        | admin  | refit the search's noise floor and abstain threshold                                                                                                   |
+| `code.calibrate`        | admin  | refit the search's noise floor, abstain threshold and confident-hit cosine, the top of the `retrieval_confidence` scale                                |
 
 Adding, branching, restricting and removing repositories (`code.repo.add`,
 `code.repo.remote_branches`, `code.repo.add_branch`, `code.repo.set_access`,

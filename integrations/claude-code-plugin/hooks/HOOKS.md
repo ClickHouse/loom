@@ -265,7 +265,10 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   only when the index is not abstaining and labels its own answer low-risk
   (`retrieval_risk`, banded by the deployment's settings); with
   `LOOM_PROMPT_PACK_MIN_CONF` set, when retrieval_confidence is at least that
-  value instead. The pointers are candidates: the text never tells the
+  value instead. A search with no semantic leg (a server with no embedding
+  model, a vector leg that failed or missed its deadline) reads `medium` at
+  confidence 0.5 and sends no pointers; `LOOM_PROMPT_PACK_MIN_CONF=0.5` sends
+  them there too. The pointers are candidates: the text never tells the
   model to stop searching.
 - **loom-run.** The run ledger. The first prompt opens a run (goal = the
   prompt, run_id = cc-<session_id>, cx- for Codex; when run.begin answers
