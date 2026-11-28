@@ -14,6 +14,7 @@ import pytest
 
 from server.memory.api.models_context import ContextPackInput
 from server.memory.app.context_pack import handle_context_pack
+from server.memory.domain import code_change
 from tests.unit.checked_pack_fakes import install_pack_target
 
 _FACT = NS(
@@ -260,8 +261,9 @@ def test_a_line_whose_code_changed_says_so_with_the_commit(
         handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
     )
     memories = out.sections["memories"]
+    assert memories.splitlines()[0] == code_change.UNCHECKED
     assert "code_state=changed@c0ffeec0ffee] deploys are Tue/Thu" in memories
-    assert memories.count("code_state=") == 1  # a moved memory needs no label
+    assert "code_state=moved] deploys are Tue/Thu" in memories
     assert (
         "(the code it is about is gone, commit deaddeaddead: check before relying on it) "
         "we chose clickhouse"
@@ -300,17 +302,53 @@ def test_a_line_whose_code_moved_names_where_it_is_now(monkeypatch: pytest.Monke
     out = asyncio.run(
         handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
     )
-    lines = out.sections["memories"].splitlines()
+    said, *lines = out.sections["memories"].splitlines()
+    assert said == code_change.UNCHECKED
     assert [ln.split("] ", 1)[1] for ln in lines] == [
         f"(code moved: {now}) deploys are Tue/Thu",
         f"(code moved: {now}) deploys are Tue/Thu",
         "deploys are Tue/Thu",
     ]
-    assert ["code_state=" in ln for ln in lines] == [False, True, False]
+    assert [ln.split("] ", 1)[0].rsplit(" ", 1)[1] for ln in lines] == [
+        "code_state=moved",
+        "code_state=changed@c0ffeec0ffee",
+        "code_state=moved",
+    ]
+    assert out.sections["decisions"].splitlines()[0] == code_change.UNCHECKED
     assert (
         "(its code changed since it was written, commit c0ffeec0ffee: check before relying "
         f"on it; {now}) we chose clickhouse"
     ) in out.sections["decisions"]
+
+
+def test_a_line_that_names_code_says_its_state_revision_and_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unlinked memory says so with the day it was written and without the line numbers
+    of its text; a fresh one names the commit its link was anchored at, and alone needs
+    no sentence."""
+    _dead_other_sections(monkeypatch)
+    cause = "the cause is in src/core/print_helpers.py:8"
+    written = {"content_excerpt": cause, "created_at": "2026-03-02T10:00:00"}
+    unlinked = NS(**{**vars(_FACT), **written, "code_state": "unlinked"})
+    anchored = {"memory_key": "m2", "code_state": "fresh", "code_rev": "ba5e" * 10}
+    fresh = NS(**{**vars(_FACT), **written, **anchored})
+    plain = NS(**{**vars(_FACT), "memory_key": "m3", "created_at": "2026-03-02T10:00:00"})
+
+    def _memories(hits: list[Any]) -> list[str]:
+        monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search_stub(hits))
+        pack = ContextPackInput(org="o", namespace="ns", agent="a", query="q")
+        return asyncio.run(handle_context_pack(pack)).sections["memories"].splitlines()
+
+    assert _memories([unlinked, fresh, plain]) == [
+        code_change.UNCHECKED,
+        "- [memory:ns/m1 source=fact by=unknown date=2026-03-02 code_state=unlinked]"
+        " the cause is in src/core/print_helpers.py",
+        "- [memory:ns/m2 source=fact by=unknown date=2026-03-02 code_state=fresh"
+        f" rev=ba5eba5eba5e] {cause}",
+        "- [memory:ns/m3 source=fact by=unknown] deploys are Tue/Thu",
+    ]
+    assert code_change.UNCHECKED not in _memories([fresh, plain])
 
 
 def test_every_governed_definition_leads_the_memories_block(

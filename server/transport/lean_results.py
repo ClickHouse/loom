@@ -19,6 +19,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from server.memory.domain import code_change
 from server.transport.assistant_call import assistant_call
 
 # Ranking and accounting detail the model never acts on. `explanation` is
@@ -394,9 +395,10 @@ def lean_search_result(
     `similarity` (rank_score carries the order), `status` (always active on a
     served row), `source_class`, `version` (a write receipt, not a read),
     `created_at` when the row carries a `valid_at` or `temporal_anchor`, and
-    `namespace` when it is the caller's home namespace; the memory section
-    drops its zero counters. `explain=true` adds a `why` per hit to that shape
-    when `why` is given."""
+    `namespace` when it is the caller's home namespace; a hit that names code
+    whose links are not fresh shows its excerpt without line numbers
+    (`code_change.shown`); the memory section drops its zero counters.
+    `explain=true` adds a `why` per hit to that shape when `why` is given."""
     explain = bool(arguments and arguments.get("explain"))
     if explain and why is not None and isinstance(payload, dict):
         out: Any = _explained_search(payload, why)
@@ -419,6 +421,8 @@ def lean_search_result(
             h.pop("created_at", None)
         if home_ns and str(h.get("namespace") or "") == home_ns:
             h.pop("namespace", None)
+        if isinstance(excerpt := h.get("content_excerpt"), str):
+            h["content_excerpt"] = code_change.shown(excerpt, str(h.get("code_state") or ""))
     for k in ("bodies_returned", "bodies_elided", "tokens_returned", "scratchpad_blocks"):
         if k in mem and not mem[k]:
             mem.pop(k, None)

@@ -425,7 +425,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
     evidence = [
         EvidenceItem(
             citation=f"memory:{input.namespace}/{r.memory_key}",
-            text=_code_now(h) + _vtext(r.value),
+            text=_code_now(h) + _shown(h, _vtext(r.value)),
             source="fact",
             group=f"fact:{input.namespace}",
             score=float(r.confidence or 0.0),
@@ -438,7 +438,8 @@ async def _pack_startup_recall(st: _PackState) -> None:
             ),
             conflict=(r.status == "conflicted"),
             author=author_label([getattr(r, "actor", "")]),
-            code_state=code_change.label(*_code_state_and_commit(h)),
+            code_state=_code_label(h),
+            code_rev=str(getattr(h, "code_rev", "") or ""),
         )
         for h in hits
         for r in [h.row]
@@ -516,12 +517,25 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
         return {}
 
 
+def _code_label(hit: Any) -> str:
+    """The hit's code state as a line's label: `<state>@<commit>` when a commit put it
+    there (`code_change.label`), the state alone otherwise; '' when it names no code."""
+    state, commit = _code_state_and_commit(hit)
+    return code_change.label(state, commit) or state
+
+
 def _code_state_and_commit(hit: Any) -> tuple[str, str]:
     """The hit's `code_state` and `code_changed_since`."""
     return (
         str(getattr(hit, "code_state", "") or ""),
         str(getattr(hit, "code_changed_since", "") or ""),
     )
+
+
+def _shown(hit: Any, text: str) -> str:
+    """`text` of the hit as a line shows it: without its line numbers unless the hit
+    names no code or its links are fresh (`code_change.shown`)."""
+    return code_change.shown(text, str(getattr(hit, "code_state", "") or ""))
 
 
 def _code_now(hit: Any) -> str:
@@ -562,9 +576,10 @@ async def _pack_decisions_from_hits(
     for h in decision_hits:
         ns = getattr(h, "namespace", "") or input.namespace
         rec = records.get(str(h.memory_key)) or {}
-        scenario = (
+        scenario = _shown(
+            h,
             str(rec.get("scenario") or "").strip()
-            or str(getattr(h, "content_excerpt", "") or "").strip()
+            or str(getattr(h, "content_excerpt", "") or "").strip(),
         )
         outcome = str(rec.get("outcome") or "").strip()
         realized = str(rec.get("realized_outcome") or "").strip()
@@ -572,9 +587,8 @@ async def _pack_decisions_from_hits(
         made = str(rec.get("made_at") or "")[:10]
         author = _hit_author(actors, input, h)
         line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
-        line += (f" {made}" if made else "") + code_change.note(
-            *_code_state_and_commit(h), getattr(h, "code_moved", None) or []
-        )
+        # the line carries the decision's own date when its record has one
+        line += (f" {made}" if made else "") + code_change.hit_note(h, dated=not made)
         line += f" {scenario}"
         if outcome:
             line += f" → {rec['stage']}: {outcome}"
@@ -586,6 +600,8 @@ async def _pack_decisions_from_hits(
             line += f"; realized: {realized}{verdict}"
         lines.append(one_item(line))
         citations.append(f"decision:{ns}/{h.memory_key}")
+    if unchecked := code_change.unchecked(_code_state_and_commit(h)[0] for h in decision_hits):
+        lines.insert(0, unchecked)
     st.put(
         "decisions",
         "\n".join(lines),
@@ -676,22 +692,26 @@ async def _pack_memories(st: _PackState) -> None:
             evidence.append(
                 EvidenceItem(
                     citation=cite,
-                    text=_code_now(h) + h.content_excerpt,
+                    text=_code_now(h) + _shown(h, h.content_excerpt),
                     source=source,
                     group=group,
                     score=float(getattr(h, "rank_score", 0.0) or 0.0),
                     # Prefer the in-text event date (temporal_anchor)
                     # over the session date (valid_at): the rendered date
                     # is when the event happened, falling back to when it
-                    # was discussed.
+                    # was discussed, and for a hit that names code to when
+                    # it was written, so its line always carries a date.
                     temporal_anchor=(
-                        getattr(h, "temporal_anchor", "") or getattr(h, "valid_at", "") or ""
+                        getattr(h, "temporal_anchor", "")
+                        or getattr(h, "valid_at", "")
+                        or (getattr(h, "created_at", "") if _code_state_and_commit(h)[0] else "")
                     ),
                     # the row state rides `status`; `memory_type` is never "conflicted"
                     conflict=getattr(h, "status", "") == "conflicted",
                     author=_hit_author(actors, input, h),
                     derived_from=tuple(getattr(h, "derived_from", None) or ()),
-                    code_state=code_change.label(*_code_state_and_commit(h)),
+                    code_state=_code_label(h),
+                    code_rev=str(getattr(h, "code_rev", "") or ""),
                 )
             )
         packed = pack_evidence(

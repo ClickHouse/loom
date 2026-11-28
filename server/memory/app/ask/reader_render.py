@@ -62,9 +62,12 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
     """One paragraph per hit: `[date] [memory_key] (type) excerpt`, in the
     order `memory.ask` would read them for this question (chronological for
     temporal questions, rank order otherwise). A hit from `label_namespace`
-    names it beside its type: `(decision, code-acme)`. A hit whose linked code
-    changed, was not found again or went says so before its excerpt, and one whose
-    code is now at another name or path says where (`code_change.note`)."""
+    names it beside its type: `(decision, code-acme)`. A hit that names code says
+    before its excerpt which state its code is in and the commit its link was
+    anchored at, and one whose code is now at another name or path says where
+    (`code_change.hit_note`); its excerpt is shown without line numbers unless its
+    links are fresh (`code_change.shown`). When a hit is unlinked or changed the
+    block opens with `code_change.UNCHECKED`."""
     if not hits:
         return ""
     from server.memory.app.ask.rendering import evidence_order
@@ -80,14 +83,12 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
         mtype = str(_get(h, "memory_type") or "memory")
         if label_namespace and _get(h, "namespace") == label_namespace:
             mtype = f"{mtype}, {label_namespace}"
-        text = str(_get(h, "content_excerpt") or "")[:_EXCERPT_CHARS]
-        code = code_change.note(
-            str(_get(h, "code_state") or ""),
-            str(_get(h, "code_changed_since") or ""),
-            _get(h, "code_moved") or [],
-        )
+        state = str(_get(h, "code_state") or "")
+        text = code_change.shown(str(_get(h, "content_excerpt") or ""), state)[:_EXCERPT_CHARS]
+        code = code_change.hit_note(h, dated=False)  # the line opens with the date
         parts.append(f"[{_date_of(h)}] [{key}] ({mtype}){code} {text}{_restatement_note(h, keys)}")
-    return "\n\n".join(parts)
+    unchecked = code_change.unchecked(str(_get(h, "code_state") or "") for h in ordered)
+    return "\n\n".join([unchecked, *parts] if unchecked else parts)
 
 
 def _restatement_note(h: Any, keys_in_block: set[str]) -> str:

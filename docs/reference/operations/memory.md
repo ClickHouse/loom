@@ -1956,6 +1956,7 @@ Semantic search over the agent's own memory.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `results` | `list[_MemorySearchHit]` | The ranked hits, best first; empty when nothing passed the noise floor. |
+| `code_note` | `str` | One sentence when a hit's `code_state` is `unlinked` or `changed`: those hits were not checked against the caller's checkout. '' otherwise. |
 | `reader_block` | `str` | render="reader" only: the results as one prompt block ("[date] [key] (type) excerpt", ordered as memory.ask would read them) and the synthesizer's instructions, so an external reader scores what the ask reader scores on the same hits. |
 | `reader_instructions` | `str` | render="reader" only: the synthesizer instructions memory.ask pairs with `reader_block`; empty otherwise. |
 | `bodies_returned` | `int` | bodies="unit" accounting: whole values served / withheld for budget, and the estimated tokens those bodies added (len/4). |

@@ -175,13 +175,15 @@ def _is_whole(hit: dict[str, Any]) -> bool:
 
 
 def _body(hit: dict[str, Any], *, decision: bool, whole: bool = True) -> str:
-    """The value on one line, capped unless the row prints whole (`whole` lets a decision
+    """The value on one line, without its line numbers unless the row's links are fresh
+    (`code_change.shown`), capped unless the row prints whole (`whole` lets a decision
     or constraint do so); a decision's source follows it whole, so the citation still
     resolves through knowledge.get."""
+    value = code_change.shown(value_text(hit), str(hit.get("code_state") or ""))
     if whole and _is_whole(hit):
-        text = " ".join(value_text(hit).split())
+        text = " ".join(value.split())
     else:
-        text = _one_line(value_text(hit), _LINE_CHARS)
+        text = _one_line(value, _LINE_CHARS)
     # Only a line break would break the one-line-per-row layout; spaces stay as cited.
     source = " ".join(str(hit.get("source_resource_id") or "").splitlines())
     if decision and source:
@@ -192,7 +194,9 @@ def _body(hit: dict[str, Any], *, decision: bool, whole: bool = True) -> str:
 def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     """`(pinned)` for a pinned row, `(source changed)` for a decision tagged
     `source-changed`, `(outcome: failed)` for a decision whose recorded outcome failed,
-    and a note when its linked code changed or went, or is now at another name or path.
+    and, for a row with a code state, that state with the commit its link was anchored
+    at and the day it was last written (`code_change.lead`), then a note when its linked
+    code changed or went, or is now at another name or path.
     An extracted decision nobody pinned is the normal case and carries no pin mark."""
     tags = hit.get("tags") or []
     out = " (pinned)" if hit.get("pinned") else ""
@@ -201,6 +205,9 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     if decision and FAILURE_TAG in tags:
         out += " (outcome: failed)"
     state, commit = str(hit.get("code_state") or ""), str(hit.get("code_changed_since") or "")
+    written = hit.get("updated_at")
+    day = written.isoformat() if isinstance(written, datetime) else ""
+    out += code_change.lead(state, str(hit.get("code_rev") or ""), day)
     return out + code_change.note(state, commit, hit.get("code_moved") or [])
 
 
@@ -311,6 +318,13 @@ def _ceiling_hides(hits: list[dict[str, Any]], rows: list[str], whole_chars: int
     return False
 
 
+def _unchecked_line(rows: list[dict[str, Any]]) -> list[str]:
+    """`code_change.UNCHECKED` as the block's second line when one of `rows` is unlinked
+    or changed; no line otherwise."""
+    said = code_change.unchecked(str(h.get("code_state") or "") for h in rows)
+    return [said] if said else []
+
+
 def render_block(
     path: str,
     hits: list[dict[str, Any]],
@@ -330,17 +344,20 @@ def render_block(
     removal footer always print, and the "… more" line whenever a row is counted on it, so
     a budget smaller than those can be exceeded. `home` is the caller's namespace; a row
     from any other is a team row (rule or decision), rendered with its author and age, and
-    the block ends with how to remove one."""
+    the block ends with how to remove one. When a row is unlinked or changed,
+    `code_change.UNCHECKED` follows the header, inside the budget."""
     if not hits:
         return "", 0, False
-    now = now or naive_utc_now()
+    now, printed = now or naive_utc_now(), [] if shown is None else shown
     budget_chars = token_budget * CHARS_PER_TOKEN
     whole_chars = settings.memory_for_file_whole_tokens * CHARS_PER_TOKEN
     n = len(hits)
     lines = [f"Loom: {n} memor{'y' if n == 1 else 'ies'} anchored to {path} — read before editing:"]
     footer = _removal_footer(hits, home)
-    # Each line after the header adds its length and the newline before it.
+    # Each line after the header adds its length and the newline before it; room for the
+    # sentence is kept whenever a row would need it.
     used = len(lines[0]) + (len(footer) + 1 if footer else 0)
+    used += sum(len(said) + 1 for said in _unchecked_line(hits))
     rows = [_row_line(h, now, home) for h in hits]
     budgeted = [not _is_whole(h) for h in hits]
     # No "… more" line can appear when every budgeted row fits and no decision or constraint
@@ -375,12 +392,12 @@ def render_block(
             hidden.update(h.get("supersedes_ids") or [])
             continue
         lines.append(row)
-        if shown is not None:
-            shown.append(h)
+        printed.append(h)  # `shown` when given: the rows the block prints
         if budgeted[i]:
             used += len(row) + 1
         else:
             whole_used += len(row) + 1
+    lines[1:1] = _unchecked_line(printed)
     if left_out:
         lines.append(_more_line(path, left_out))
     if whole_left:
@@ -536,6 +553,7 @@ async def _rows_for(
                 "namespace": namespace,
                 "code_state": code_change.worst([a["state"] for a in links]),
                 "code_changed_since": code_change.worst_commit(links),
+                "code_rev": code_change.anchored_commit(links),
                 "links": links,
                 "source_links": source_links,
             }
@@ -755,14 +773,25 @@ def _located_names(links: list[LinkRow]) -> list[str]:
 
 def _with_ids(hit: _MemoryForFileHit, row: dict[str, Any]) -> dict[str, Any]:
     """The hit with the row fields a reader needs that are not on the wire: `memory_id` and
-    `supersedes_ids` (to leave a superseded row out with its superseder) and
+    `supersedes_ids` (to leave a superseded row out with its superseder),
     `code_changed_since` (the commit that put its worst link in a changed, unresolved or
-    missing state)."""
+    missing state) and `code_rev` (the commit that link was anchored at)."""
     return hit.model_dump() | {
         "memory_id": str(row.get("memory_id") or ""),
         "supersedes_ids": row.get("supersedes_ids") or [],
         "code_changed_since": row.get("code_changed_since", ""),
+        "code_rev": row.get("code_rev", ""),
     }
+
+
+def _as_printed(row: dict[str, Any]) -> dict[str, Any]:
+    """The row as the block prints it: `unlinked` when it holds no link to code in the
+    file and its text names a file by its path (`code_change.names_file`), so nothing
+    compared what it says of that code. A rule that names the file only in `files`
+    prints as it is."""
+    if row.get("code_state") or not code_change.names_file(value_text(row)):
+        return row
+    return row | {"code_state": code_change.UNLINKED}
 
 
 async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutput:
@@ -775,7 +804,7 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
     for r in rows:
         hit = _hit(r, input)
         hits.append(hit)
-        to_render.append(_with_ids(hit, r))
+        to_render.append(_as_printed(_with_ids(hit, r)))
 
     shown: list[dict[str, Any]] = []
     rendered, tokens, truncated = render_block(

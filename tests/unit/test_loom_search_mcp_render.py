@@ -22,6 +22,7 @@ import pytest
 
 from server.auth.fanout import Fanout
 from server.auth.jwt import AuthInfo
+from server.memory.domain import code_change
 from server.operations.base import Role
 from tests.unit.test_mcp_lean_results import PAYLOAD as _SEARCH
 
@@ -346,14 +347,15 @@ def test_a_hit_whose_code_changed_names_its_state_and_commit_on_both_channels(
     result = call("s-code", {"query": "q"}, "stale_code")
     block = result["content"][0]["text"].split("Memory hits:\n")[1].split("\n\nKnowledge hits:")[0]
     assert block.split("\n\n") == [
-        "[2026-03-02] [evict_rule] (semantic) (its code changed since it was written,"
-        " commit c0ffeec0ffee: check before relying on it) text of evict_rule",
-        "[2026-03-02] [fresh_rule] (semantic) text of fresh_rule",
+        code_change.UNCHECKED,
+        "[2026-03-02] [evict_rule] (semantic) (code_state=changed) (its code changed since it"
+        " was written, commit c0ffeec0ffee: check before relying on it) text of evict_rule",
+        "[2026-03-02] [fresh_rule] (semantic) (code_state=fresh) text of fresh_rule",
         "[2026-03-02] [plain_fact] (semantic) text of plain_fact",
     ]
     stale, fresh, plain = result["structuredContent"]["memory"]["results"]
     assert (stale["code_state"], stale["code_changed_since"]) == ("changed", _COMMIT)
-    # a hit whose code is as it was, or that names none, reads as it did without the field
+    # a hit that names no code reads as it did, without the fields
     unlinked = {
         "memory_key": "plain_fact",
         "memory_type": "semantic",
@@ -375,10 +377,13 @@ def test_a_hit_whose_code_moved_names_where_it_is_now_on_both_channels(harness: 
     result = call("s-moved", {"query": "q"}, "moved_code")
     block = result["content"][0]["text"].split("Memory hits:\n")[1].split("\n\nKnowledge hits:")[0]
     assert block.split("\n\n") == [
-        f"[2026-03-02] [renamed_rule] (semantic) (code moved: {_MOVED_NOW}) text of renamed_rule",
-        "[2026-03-02] [edited_rule] (semantic) (its code changed since it was written,"
-        f" commit c0ffeec0ffee: check before relying on it; {_MOVED_NOW}) text of edited_rule",
-        "[2026-03-02] [fresh_rule] (semantic) text of fresh_rule",
+        code_change.UNCHECKED,
+        "[2026-03-02] [renamed_rule] (semantic) (code_state=moved)"
+        f" (code moved: {_MOVED_NOW}) text of renamed_rule",
+        "[2026-03-02] [edited_rule] (semantic) (code_state=changed) (its code changed since it"
+        " was written, commit c0ffeec0ffee: check before relying on it;"
+        f" {_MOVED_NOW}) text of edited_rule",
+        "[2026-03-02] [fresh_rule] (semantic) (code_state=fresh) text of fresh_rule",
     ]
     renamed, edited, fresh = result["structuredContent"]["memory"]["results"]
     # the lean result drops a link's empty fields, and the field itself from a hit with none
@@ -391,12 +396,63 @@ def test_a_later_page_names_where_moved_code_is_now_on_its_plain_lines(harness: 
     call, _ = harness
     result = call("s-moved-page", {"query": "q"}, "moved_code_no_block")
     lines = result["content"][0]["text"].split("Memory hits:\n")[1].split("\n\n")[0].splitlines()
+    # a plain line shows no date of its own, so its code state carries the hit's
     assert lines == [
-        f"  - [renamed_rule] (ns=-) (code moved: {_MOVED_NOW}) text of renamed_rule",
-        "  - [edited_rule] (ns=-) (its code changed since it was written, commit c0ffeec0ffee:"
-        f" check before relying on it; {_MOVED_NOW}) text of edited_rule",
-        "  - [fresh_rule] (ns=-) text of fresh_rule",
+        code_change.UNCHECKED,
+        "  - [renamed_rule] (ns=-) (code_state=moved date=2026-03-02)"
+        f" (code moved: {_MOVED_NOW}) text of renamed_rule",
+        "  - [edited_rule] (ns=-) (code_state=changed date=2026-03-02) (its code changed since"
+        " it was written, commit c0ffeec0ffee: check before relying on it;"
+        f" {_MOVED_NOW}) text of edited_rule",
+        "  - [fresh_rule] (ns=-) (code_state=fresh date=2026-03-02) text of fresh_rule",
     ]
+
+
+def test_an_unlinked_hit_says_so_once_on_both_channels_without_its_line_numbers() -> None:
+    from server.memory.api.models_search import MemorySearchOutput, _MemorySearchHit
+    from server.transport.mcp_tools import search_answer
+
+    def hit(key: str, text: str, **code: Any) -> Any:
+        return _MemorySearchHit(
+            memory_key=key,
+            memory_type="semantic",
+            content_excerpt=text,
+            distance=0.2,
+            similarity=0.8,
+            created_at="2026-03-02T10:00:00",
+            **code,
+        )
+
+    cause = "The cause is in Printable (src/core/print_helpers.py:8)."
+    hits = [
+        hit("past_fix", cause, code_state="unlinked"),
+        hit("anchored", cause, code_state="fresh", code_rev="ba5e" * 10),
+        hit("plain_fact", "Lives in Berlin."),
+    ]
+    memory = MemorySearchOutput(results=hits, embedding_model="test").model_dump()
+    payload = {"memory": memory, "knowledge": {}, "profile": {}, "conversations": {}}
+    out = search_answer(payload, {"query": "q"}, "team", "")
+    assert out["content"][0]["text"].split("Memory hits:\n")[1].splitlines() == [
+        code_change.UNCHECKED,
+        "  - [past_fix] (ns=-) (code_state=unlinked date=2026-03-02)"
+        " The cause is in Printable (src/core/print_helpers.py).",
+        f"  - [anchored] (ns=-) (code_state=fresh rev=ba5eba5eba5e date=2026-03-02) {cause}",
+        "  - [plain_fact] (ns=-) Lives in Berlin.",
+    ]
+    structured = out["structuredContent"]["memory"]
+    assert structured["code_note"] == code_change.UNCHECKED
+    past, anchored, plain = structured["results"]
+    assert (past["code_state"], past["content_excerpt"]) == (
+        "unlinked",
+        "The cause is in Printable (src/core/print_helpers.py).",
+    )
+    assert (anchored["code_rev"], anchored["content_excerpt"]) == ("ba5e" * 10, cause)
+    assert not {"code_state", "code_rev"} & set(plain)
+    # nothing is said when every hit that names code is fresh
+    memory = MemorySearchOutput(results=hits[1:], embedding_model="test").model_dump()
+    out = search_answer({**payload, "memory": memory}, {"query": "q"}, "team", "")
+    assert code_change.UNCHECKED not in out["content"][0]["text"]
+    assert "code_note" not in out["structuredContent"]["memory"]
 
 
 def _knowledge_text(bodies: str) -> str:

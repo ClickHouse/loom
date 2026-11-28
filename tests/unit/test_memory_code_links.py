@@ -1191,7 +1191,7 @@ async def test_a_startup_pack_names_where_a_memorys_moved_code_is_now(served, mo
     lines = await _startup_lines(monkeypatch, served, recent=["m", "edited", "other"], top_k=3)
     by_key = {ln.split()[1]: ln.split("] ", 1) for ln in lines}
     label, text = by_key["[memory:agent-a/m"]
-    assert "code_state" not in label and text == f"(code moved: {_NOW}) claim"
+    assert label.endswith(" code_state=moved") and text == f"(code moved: {_NOW}) claim"
     label, text = by_key["[memory:agent-a/edited"]
     assert "code_state=changed@c0ffeec0ffee" in label and text == f"(code moved: {_NOW}) claim"
     assert by_key["[memory:agent-a/other"][1] == "claim"

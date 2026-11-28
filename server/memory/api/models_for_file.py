@@ -97,9 +97,10 @@ class _MemoryForFileHit(BaseModel):
     # The row's attestation (`memory.verify`), as on memory.get; an attested row whose value
     # was cut and has no stored hash reads stale.
     verification: VerificationState = "none"
-    # The worst state of the row's links to code in the file ('' when it only names the
-    # file in `files`): `fresh`, `moved`, `changed` (that code changed since the row was
-    # written), `unresolved` (renamed or removed and not followed) or `missing` (gone).
+    # The worst state of the row's links to code in the file: `fresh`, `moved`, `changed`
+    # (that code changed since the row was written), `unresolved` (renamed or removed and
+    # not followed) or `missing` (gone). '' when it holds no such link; `rendered` marks
+    # its line `unlinked` when its text names a file by its path.
     code_state: CodeState | Literal[""] = ""
     # The row's links to code in the file that are now at another path or symbol than it
     # was written against, each with where the code is and what the row's text still calls
@@ -117,6 +118,9 @@ class MemoryForFileOutput(BaseModel):
     # placed above it (two typed decisions keep their order).
     hits: list[_MemoryForFileHit]
     # Prompt-ready block: decisions and constraints whole, the other rows cut at token_budget.
+    # Each row's line names its code state, the commit its link was anchored at and the day
+    # it was last written, and leaves out the row's line numbers unless its links are
+    # fresh; one sentence follows the header when a row is unlinked or changed.
     # Empty when total == 0.
     rendered: str = ""
     # Size of `rendered` at 4 chars per token; 0 when it is empty.

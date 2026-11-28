@@ -13041,9 +13041,12 @@ class MemorySearchHit(TypedDict, total=False):
     created_at: NotRequired[str]
     namespace: NotRequired[str]
     code_state: NotRequired[
-        Union[Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal[""]]
+        Union[
+            Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal["unlinked", ""]
+        ]
     ]
     code_changed_since: NotRequired[str]
+    code_rev: NotRequired[str]
     code_moved: NotRequired[list["CodeLink"]]
     body_truncated: NotRequired[bool]
     next: NotRequired[str]
@@ -16014,6 +16017,7 @@ class MemorySearchBody(TypedDict, total=False):
 
 class MemorySearchOutput(TypedDict, total=False):
     results: Required[list["MemorySearchHit"]]
+    code_note: NotRequired[str]
     reader_block: NotRequired[str]
     reader_instructions: NotRequired[str]
     bodies_returned: NotRequired[int]

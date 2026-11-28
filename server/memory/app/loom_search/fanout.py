@@ -465,6 +465,7 @@ async def search_sections(
             payload["conversations"] = {**conv_dump, "results": conv_hits}
 
         payload = answer_first(payload, namespace, explain=explain, moved=moved)
+        _note_code_of_served(payload["memory"])
         if settled is not None:
             # The block is rendered from the rows left after trimming, through their models:
             # the dumps hide the score_components the restatement notes read. The
@@ -474,6 +475,13 @@ async def search_sections(
             label = "" if repo_namespace == namespace else repo_namespace
             mem["reader_block"] = render_reader_block(served, settled.query, label_namespace=label)
         return payload
+
+
+def _note_code_of_served(memory: dict[str, Any]) -> None:
+    """Set the memory section's `code_note` from the rows left after trimming: the
+    search read its own off every row it served. A failed leg's section has none."""
+    if "code_note" in memory:
+        memory["code_note"] = code_change.unchecked(h["code_state"] for h in memory["results"])
 
 
 def _leg_error(leg: str, e: Exception) -> str:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from server.memory.domain import code_change
 from server.memory.domain.context_layout import label_part, one_item
 
 
@@ -26,10 +27,12 @@ class EvidenceItem:
     author: str = ""
     # The keys a digest compressed, so a summary says what it derives from.
     derived_from: tuple[str, ...] = ()
-    # `<state>@<commit>` (the state alone when no commit is known) when the memory's
-    # linked code changed, was not found again or went (` code_state=…` on the line);
-    # "" otherwise.
+    # The state of a memory that names code (` code_state=…` on the line), as
+    # `<state>@<commit>` when a commit put it there (`code_change.label`); "" for one
+    # that names none.
     code_state: str = ""
+    # The commit its worst link was anchored at (` rev=…` on the line); "" with no link.
+    code_rev: str = ""
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,11 @@ def _derived(item: EvidenceItem) -> str:
     return f" derived_from={','.join(label_part(k) for k in keys[:3])}{more}"
 
 
+def _state(item: EvidenceItem) -> str:
+    """The item's code state without the commit `code_change.label` adds."""
+    return item.code_state.partition("@")[0]
+
+
 def pack_evidence(
     items: list[EvidenceItem],
     *,
@@ -69,6 +77,8 @@ def pack_evidence(
     `max_per_group` items before filling the remaining budget. This prevents
     one verbose transcript or document from crowding out other evidence planes.
     Order stays relevance-descending; the event date rides each line as a label.
+    When a line it renders is of an unlinked or changed memory the list opens with
+    `code_change.UNCHECKED`, inside the budget.
     """
 
     if char_budget <= 0 or not items:
@@ -101,21 +111,29 @@ def pack_evidence(
     citations: list[str] = []
     groups: list[str] = []
     truncated = False
+    # room for the sentence is kept whenever a candidate would need it
+    unchecked = code_change.unchecked(_state(item) for item in ordered)
+    room = char_budget - (len(unchecked) + 1 if unchecked else 0)
+    served: list[str] = []
     for item in ordered:
         group = item.group or item.source or "fact"
         marker = " conflict=true" if item.conflict else ""
         date = f" date={item.temporal_anchor[:10]}" if item.temporal_anchor else ""
         code = f" code_state={item.code_state}" if item.code_state else ""
+        code += f" rev={item.code_rev[:12]}" if item.code_rev else ""
         labels = f"source={item.source}{item.author}{_derived(item)}{date}{marker}{code}"
         line = one_item(f"- [{label_part(item.citation)} {labels}] {item.text}")
         tentative = "\n".join([*lines, line])
-        if len(tentative) > char_budget:
+        if len(tentative) > room:
             truncated = True
             break
         lines.append(line)
+        served.append(_state(item))
         citations.append(item.citation)
         if group not in groups:
             groups.append(group)
+    if unchecked := code_change.unchecked(served):
+        lines.insert(0, unchecked)
 
     rendered, trim_truncated = _trim("\n".join(lines), char_budget)
     return PackedEvidence(
