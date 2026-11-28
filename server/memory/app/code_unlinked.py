@@ -9,6 +9,7 @@ and the pass's own cursors. Nothing is resolved again.
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any
@@ -64,7 +65,9 @@ class _Pass:
     def has_read(self, org: str, memory: dict[str, Any]) -> bool:
         """The pass read `memory` as it is now: written before the queue position and,
         while the backfill runs, at or before the identity it has reached. A version is
-        the write's wall-clock time in ns."""
+        the write's wall-clock time in ns, and the position is ClickHouse's time at the
+        queue insert: a write queued after the position with an earlier version (an
+        insert in flight, a writer clock behind) reads as read until the next pass."""
         if not self.read_to or int(memory["version"]) // 1000 > self.read_to:
             return False
         ident = (org, *(str(memory[c]) for c in IDENTITY[1:]))
@@ -79,18 +82,16 @@ async def unlinked(
     read), the last written first: each with its memory_key and
     memory_id and, under `pending`, what it `waits_for` (`index`: its repository's first
     index or a file that does not parse; `trunk`: a qualified name trunk does not define
-    yet; `link_pass`: the pass to read it). Read of the memories under `keys` when given,
-    of the `SCANNED` last written otherwise. A memory whose repository the caller may not
+    yet; `link_pass`: the pass to read it). Read of the `SCANNED` last written, among
+    those under `keys` when given. A memory whose repository the caller may not
     read counts as naming none: its cause must not tell what that repository holds.
     Nothing is read, and nothing counted, in an org that indexes no repository."""
     out: dict[str, list[dict[str, str]]] = {cause: [] for cause in CAUSES}
     if not any(cfg.org == org for cfg in configured_repos()):
         return out  # the org indexes no repository: no memory of it could be linked
-    heads = [
-        h
-        for h in await store.linkable_of_namespace(org, namespace, keys, limit=SCANNED)
-        if _names_code(h)
-    ]
+    linkable = await store.linkable_of_namespace(org, namespace, keys, limit=SCANNED)
+    # reading names is CPU work: off the loop
+    heads = await asyncio.to_thread(lambda: [h for h in linkable if _names_code(h)])
     if not heads:
         return out
     named = {h["mid"]: code_namespace_for(org, namespace, list(h.get("tags") or [])) for h in heads}

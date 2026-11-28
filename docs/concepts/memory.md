@@ -530,23 +530,22 @@ link comes back only when its own name does. A definition moved to another file 
 own name with an edit is followed there when its text is close to the one the link last
 read. A new definition left where it was stops that search only when it may be the old
 one under a new name: an export list or an unrelated function added beside it does not. A
-name gone from its file is
-looked for in the files changed
-since its last check as the mirror holds them, beside the index, so a definition moved by
-a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
-followed when the link is rechecked. When `memory_code_links_mirror_naming_files` or more
-of those files name it, or more than `memory_code_links_mirror_changed_files` changed
-under the entry's prefixes, or the diff cannot be read, or the paths are more than git
-takes in one command or searches in its time, the mirror adds nothing and the index
-decides. When git cannot run the search, or a definition it finds cannot be
-fingerprinted, a live link the index's namesakes do not settle is `unresolved`. Files the
-ingest would not index (outside the entry's `path_prefixes`, refused by its denylist,
-over the byte cap, binary) add no definition; a generated file, which the ingest declares
-without searching its text, does. A file the parser fails on keeps its links as they were
-until it parses. When the fingerprint rules change, every link is re-hashed from the
-commits its hashes were taken at. When its old text is gone from git, a link that matched
-it takes the text the next check finds and a changed one stays `changed`; one whose old
-text no longer parses keeps its last state, and the worker reports it.
+name gone from its file is looked for in the files changed since its last check as the
+mirror holds them, beside the index, so a definition moved by a commit the index has not
+taken in whole (past `code_ingest_max_files_per_commit`) is followed when the link is
+rechecked. When `memory_code_links_mirror_naming_files` or more of those files name it,
+or more than `memory_code_links_mirror_changed_files` changed under the entry's prefixes,
+or the diff cannot be read, or the paths are more than git takes in one command or
+searches in its time, the mirror adds nothing and the index decides. When git cannot run
+the search, or a definition it finds cannot be fingerprinted, a live link the index's
+namesakes do not settle is `unresolved`. Files the ingest would not index (outside the
+entry's `path_prefixes`, refused by its denylist, over the byte cap, binary) add no
+definition; a generated file, which the ingest declares without searching its text, does.
+A file the parser fails on keeps its links as they were until it parses. When the
+fingerprint rules change, every link is re-hashed from the commits its hashes were taken
+at. When its old text is gone from git, a link that matched it takes the text the next
+check finds and a changed one stays `changed`; one whose old text no longer parses keeps
+its last state, and the worker reports it.
 
 After a rename a memory's text still says the old name until it is revised, by the
 link pass where the swap is certain ([below](#a-memorys-text-after-a-rename)) or by a
@@ -643,10 +642,11 @@ The links are read where the code is:
   commit that put its code in a changed, unresolved or missing state) when one is known, and
   `supersedes_key` when it replaces an older row, and `code_moved` (its links to code in the
   file that is now at another path or symbol than it was written against) when there are
-  any; a row another row read for the answer supersedes is not served. `lessons_left_out` counts the rows the cap, a cut or that rule left
-  out. A decision or constraint is served whole or left out. The read runs after the answer,
-  never enters the search memo, and is skipped for `include_lessons: false`, with
-  `code_result_lessons` off, or for a token narrowed to its own user or session.
+  any; a row another row read for the answer supersedes is not served. `lessons_left_out`
+  counts the rows the cap, a cut or that rule left out. A decision or constraint is served
+  whole or left out. The read runs after the answer, never enters the search memo, and is
+  skipped for `include_lessons: false`, with `code_result_lessons` off, or for a token
+  narrowed to its own user or session.
 - `code.grep` in matches mode focuses inline lessons on the definitions its
   matches name in trunk files. When selecting files to read, grep prefers
   files with a current lesson linked to a matched definition at the returned
@@ -721,9 +721,9 @@ counts the served memories that name code (a backticked or qualified name, a cal
 | `code_unlinked_name_unresolved`  | lists no `files`, and each name is defined nowhere on trunk or more than once.                                                                                                                                             |
 | `code_unlinked_pending`          | waits for its link; each sample says what it `waits_for`: `link_pass` (the worker has not read this write), `index` (no index yet, or a file that does not parse) or `trunk` (a qualified name trunk does not define yet). |
 
-The counts are of the 2,000 served memories last written (all under `keys` when given),
-and only in an org that indexes a repository; a raw tool observation, which is never
-linked, is not counted. How far each repository's links trail its
+The counts are of the 2,000 served memories last written (of those under `keys` when
+given), and only in an org that indexes a repository; a raw tool observation, which is
+never linked, is not counted. How far each repository's links trail its
 index is a gauge, and a health warning when it lasts
 ([monitoring](../operations/monitoring.md#what-to-alert-on)).
 
@@ -820,9 +820,9 @@ says. A sentence ends after `.`, `!` or `?` and a space (not after a one-letter 
 such as `e.g.`), at a blank line and before a list item; a line break alone does not end
 one. The words that mark a sentence as
 being about the name are English, and `call` or `calls` is not one: it is read as calling
-the code. The finding reads the 2,000 memories whose `moved` link was last checked (all
-under `keys` when given), in the repositories the caller may read, and no high-sensitivity
-memory; a link whose code also changed is listed under `code_links_stale`. Neither the
+the code. The finding reads the 2,000 memories whose `moved` link was last checked (of
+those under `keys` when given), in the repositories the caller may read, and no
+high-sensitivity memory; a link whose code also changed is listed under `code_links_stale`. Neither the
 memory's key, tags, `files`, entities and concepts nor a line number written in its text
 is edited.
 

@@ -110,9 +110,13 @@ _NAMED = 2
 _NAME_CHARS = 120
 
 
+def _value(link: Any, name: str) -> Any:
+    return link.get(name) if isinstance(link, Mapping) else getattr(link, name, None)
+
+
 def _field(link: Any, name: str) -> str:
-    value = link.get(name) if isinstance(link, Mapping) else getattr(link, name, None)
-    text = " ".join(str(value or "").replace("`", "'").split())
+    """A path or name of `link` as one line of a note."""
+    text = " ".join(str(_value(link, name) or "").replace("`", "'").split())
     return text if len(text) <= _NAME_CHARS else text[: _NAME_CHARS - 1] + "…"
 
 
@@ -122,7 +126,7 @@ def _now(link: Any) -> str:
     path, symbol, was = _field(link, "path"), _field(link, "symbol"), _field(link, "was_symbol")
     if not symbol:
         return f"`{_field(link, 'was_path')}` is now `{path}`"
-    start, end = int(_field(link, "start_line") or 0), int(_field(link, "end_line") or 0)
+    start, end = int(_value(link, "start_line") or 0), int(_value(link, "end_line") or 0)
     lines = f":{start}-{end}" if 0 < start <= end else ""
     name = f"`{symbol}` " if symbol != was else ""
     return f"`{was}` is now {name}at {path}{lines}"

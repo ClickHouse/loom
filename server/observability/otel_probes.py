@@ -780,9 +780,10 @@ def _probe_code_state() -> dict[str, list[tuple[float, dict[str, str]]]]:
     client = _probe_client()
     rows = list(client.query(_CODE_STATE_SQL).result_rows)
     # The FINAL counts over the four code tables read every live code row (GBs a call on
-    # a large deployment) for figures that move once an index run; the watermark rows
-    # above cost nothing. So the counts refresh on their own, slower clock:
-    # LOOM_OTEL_CODE_COUNTS_CACHE_S, default an hour, 0 = every call.
+    # a large deployment) for figures that move once an index run. The statement above
+    # reads the small state table and, of every link row, only its repository. So the
+    # counts refresh on their own, slower clock: LOOM_OTEL_CODE_COUNTS_CACHE_S, default
+    # an hour, 0 = every call.
     ttl = float(settings.otel_code_counts_cache_s)
     now_m = time.monotonic()
     never = float(_CODE_COUNTS_CACHE["at"]) <= 0.0  # monotonic() may be < ttl after boot
