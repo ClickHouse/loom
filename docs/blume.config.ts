@@ -118,12 +118,6 @@ export default defineConfig({
       display: "page",
     },
   },
-  footer: {
-    links: [
-      { label: "Glossary", href: "/glossary" },
-      { label: "Benchmark results", href: "/benchmarks/results" },
-    ],
-  },
   github: {
     owner: "ClickHouse",
     repo: "loom",

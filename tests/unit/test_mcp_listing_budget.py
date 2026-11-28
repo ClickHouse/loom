@@ -586,6 +586,43 @@ def test_the_listing_of_code_tools_alone_stays_within_its_budget():
         reset_code_scope(bound)
 
 
+def test_a_plugin_connection_lists_every_tool_in_the_compact_shapes():
+    """A coding-agent plugin's URL names `schema_profile=plugin`. Bound to a repository
+    or not, it lists every tool of the roster in the compact shapes and loads the
+    pre-edit read and the literal search up front: the memory tools stay listed for
+    the client's tool search."""
+    from server.transport.mcp_schemas import PLUGIN_SCHEMA_PROFILE, resolve_schema_profile
+
+    assert PLUGIN_SCHEMA_PROFILE not in SCHEMA_PROFILES, "only a URL names it"
+    assert resolve_schema_profile("plugin", "standard") == "plugin"
+    assert resolve_schema_profile(None, "plugin") == "standard"
+    unbound = _listing("coding", False, "plugin")
+    scope = set_code_scope("acme/code-repo")
+    try:
+        bound = _listing("coding", False, "plugin")
+        code_only = {t["name"] for t in _listing("coding", False, "compact")}
+        assert not mt.lists_follow_code_scope("coding", "plugin")
+    finally:
+        reset_code_scope(scope)
+    assert bound == unbound, "the listing does not follow the repository header"
+    names = {t["name"] for t in bound}
+    assert names == {t["name"] for t in _listing("coding", False)}
+    assert {"loom_search", "loom_memory_set", "loom_op"} <= names - code_only
+    compact = {t["name"]: t for t in _listing("coding", False, "compact")}
+    upfront = [t for t in bound if t.get("_meta", {}).get("anthropic/alwaysLoad")]
+    assert {t["name"] for t in upfront} == {"loom_code_edit_context", "loom_code_grep"}
+    assert _tok(upfront) <= 700
+    for tool in bound:
+        if tool["name"] != "loom_code_grep":
+            assert tool == compact[tool["name"]], tool["name"]
+    # grep keeps `namespace`, which the session's start names for the checkout, and
+    # leaves out what `path_globs` expresses and the several-repository presence check
+    grep = next(t for t in bound if t["name"] == "loom_code_grep")["inputSchema"]["properties"]
+    listed = set(compact["loom_code_grep"]["inputSchema"]["properties"])
+    assert set(grep) == listed - {"namespaces", "path_prefix", "langs"}
+    assert "namespace" in grep and "path_globs" in grep
+
+
 def test_tracker_toolset_lists_the_tracker_record_bisect_pr_check_and_impact_within_its_own_budget():
     """A second MCP entry for QA work; nothing lands on core/coding."""
     from server.operations.toolsets import _MCP_CODING_OPS, _MCP_CORE_OPS, _MCP_TRACKER_OPS

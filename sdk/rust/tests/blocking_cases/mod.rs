@@ -264,6 +264,48 @@ fn clones_run_concurrently_and_survive_original_drop() {
     request(&server);
 }
 
+#[test]
+fn synchronous_calls_pace_and_retry_by_the_async_rules() {
+    for (status, code, retried) in [
+        (429, "RATE_LIMITED", true),
+        (408, "REQUEST_TIMEOUT", true),
+        (503, "OVERLOADED", false),
+    ] {
+        let server = Server::new(vec![
+            response(
+                status,
+                json!({"detail": {"code": code, "message": "again", "retry_after_s": 0.01}}),
+                "",
+            ),
+            response(200, json!({"answer": "ok"}), ""),
+            retry_scope::unused_response(),
+        ]);
+        let client = blocking::Client::builder("org", "ns", "bot")
+            .base_url(&server.url)
+            .api_key("")
+            .retry(retry_scope::immediate())
+            .build()
+            .unwrap();
+        let result = client.call::<Value>(
+            "assistant.ask",
+            &json!({"question": "which"}),
+            CallOptions::default(),
+        );
+        assert_eq!(result.is_ok(), retried, "{code}");
+        assert!(!request(&server).headers.contains_key("idempotency-key"));
+        let second = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio::time::timeout(Duration::from_millis(300), server.request())
+                    .await
+                    .is_ok()
+            });
+        assert_eq!(second, retried, "{code}");
+    }
+}
+
 #[tokio::test]
 async fn runtime_construction_drop_and_calls_have_explicit_boundaries() {
     let client = blocking::Client::builder("org", "ns", "bot")

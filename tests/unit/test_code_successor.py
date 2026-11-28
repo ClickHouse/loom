@@ -7,8 +7,8 @@ from __future__ import annotations
 import pytest
 
 from server.code.app.memory_links import file_definitions
-from server.code.domain.anchor import Link, locate, recheck
-from server.code.domain.successor import _MAX_LINES, Side, successor
+from server.code.domain.anchor import Link, local_name, locate, recheck, unnumbered
+from server.code.domain.successor import _MAX_LINES, Side, elsewhere, successor
 from tests.unit.step_count import steps as count
 
 
@@ -97,6 +97,10 @@ def test_a_method_of_a_removed_class_never_moves_to_a_namesake_in_another() -> N
     )
     after = "class Writer:\n    def flush(self):\n        pass\n\n    def fetch_rows(self):\n        return 1\n"
     assert _after(("reader.py", before), ("reader.py", after)).state == "missing"
+    # nor by the search across scopes: a method this small is any class's
+    assert _elsewhere({"reader.py": before}, {"reader.py": after}, "Reader.fetch_rows").state == (
+        "missing"
+    )
 
 
 _KEPT = "def other():\n    return 0\n"
@@ -121,6 +125,44 @@ _GONE = _KEPT + "\n\ndef fetch_rows(data):\n    return sorted(data, key=len)[:10
 def test_a_successor_is_named_only_on_corroborated_evidence(after: str, state: str) -> None:
     link = _after(("reader.py", _GONE), ("reader.py", after))
     assert (link.state, link.qualified_name) == (state, "reader::fetch_rows")
+
+
+@pytest.mark.parametrize(
+    ("after", "uncertain", "unmatched"),
+    [
+        # nothing new in its scope: removed, with no doubt
+        (_KEPT, False, False),
+        # new definitions there, none close to it: it is not among them
+        (_KEPT + '\n\n__all__ = ["other"]\n', True, True),
+        (_KEPT + "\n\ndef warm_up(host, port):\n    connect(host, port).ping()\n", True, True),
+        # two close candidates: it may be either
+        (
+            _KEPT + "\n\ndef load_rows(data):\n    return sorted(data, key=len)[:20]\n\n\n"
+            "def read_rows(data):\n    return sorted(data, key=len)[:30]\n",
+            True,
+            False,
+        ),
+        # a small definition with its text under an unrelated name: not it by the name
+        # rule, but its shape is the same, so it may be
+        (_KEPT + "\n\ndef warm_up(data):\n    return sorted(data, key=len)[:10]\n", True, False),
+        # the same with an edit: its text is close, and an unrelated name rules nothing out
+        (_KEPT + "\n\ndef warm_up(data):\n    return sorted(data, key=len)[:20]\n", True, False),
+        # a new name declared twice, a stub before the close text: every declaration counts
+        (
+            _KEPT + "\n\ndef warm_up(data):\n    raise NotImplementedError\n\n\n"
+            "def warm_up(data):\n    return sorted(data, key=len)[:20]\n",
+            True,
+            False,
+        ),
+    ],
+)
+def test_new_definitions_that_are_not_close_leave_the_old_one_unmatched(
+    after: str, uncertain: bool, unmatched: bool
+) -> None:
+    old, new = _side("reader.py", _GONE), _side("reader.py", after)
+    was = next(d for d in old.defs if d.name == "fetch_rows")
+    found = successor(was, old, new)
+    assert (found.definition, found.uncertain, found.unmatched) == (None, uncertain, unmatched)
 
 
 def test_a_namespace_renamed_with_its_file_is_not_a_renamed_class() -> None:
@@ -495,7 +537,8 @@ def test_a_rival_too_long_to_compare_may_be_the_one_so_no_successor_is_certain()
     old, new = _side("m.py", before), _side("m.py", after)
     was = next(d for d in old.defs if d.name == "fetch_rows")
     found = successor(was, old, new)
-    assert (found.definition, found.uncertain) == (None, True)
+    # not compared, so not ruled out either
+    assert (found.definition, found.uncertain, found.unmatched) == (None, True, False)
 
 
 def test_a_class_renamed_in_a_file_of_out_of_line_methods_is_unsure() -> None:
@@ -595,3 +638,300 @@ def test_a_class_renamed_with_a_comment_added_above_a_method_moves_its_methods(
     before, after = program("Reader"), program("Loader", "    # closes it\n")
     got = _after(("reader.py", before), ("reader.py", after), name)
     assert (got.state, got.qualified_name) == ("moved", f"reader::Loader::{name}")
+
+
+# ---- renamed as it moved to another file or scope -----------------------------------
+
+
+def _turnover(
+    before: dict[str, str], after: dict[str, str]
+) -> tuple[list[Side], list[Side], list[Side]]:
+    """What the files gained, lost and kept by the name inside their module, as the
+    recheck reads a range: each file's new definitions, its removed ones, and those it
+    still has under a name it had."""
+
+    def local(side: Side) -> dict[str, list]:
+        names: dict[str, list] = {}
+        for d in side.defs:
+            names.setdefault(unnumbered(local_name(d.qualified_name, side.path)), []).append(d)
+        return names
+
+    new, gone, kept = [], [], []
+    for path in sorted(before.keys() | after.keys()):
+        old = _side(path, before.get(path, ""))
+        now = _side(path, after.get(path, ""))
+        was, here = local(old), local(now)
+        new.append(Side(path, [d for n in here.keys() - was.keys() for d in here[n]], now.lines))
+        kept.append(Side(path, [d for n in here.keys() & was.keys() for d in here[n]], now.lines))
+        gone.append(Side(path, [d for n in was.keys() - here.keys() for d in was[n]], old.lines))
+    return new, gone, kept
+
+
+def _elsewhere(before: dict[str, str], after: dict[str, str], name: str = "fetch_rows") -> Link:
+    """The link on `name` in a.py (or the only file of `before`) once the files are as
+    `after`, where its own file no longer defines it."""
+    path = "a.py" if "a.py" in before else next(iter(before))
+    old = _side(path, before[path])
+    was = next(d for d in old.defs if local_name(d.qualified_name, path) == name or d.name == name)
+    link = Link(path, was.qualified_name, was.body_hash, checked_hash=was.body_hash)
+    here = _side(path, after[path]).defs if path in after else []
+    s = elsewhere(was, old, *_turnover(before, after))
+    return recheck(
+        link,
+        path_now=path if path in after else "",
+        here=here,
+        renamed=s.definition,
+        renamed_exactly=s.exact,
+        uncertain=s.uncertain,
+        carried=s.carried,
+        head="c2",
+    )
+
+
+_KEEP = "def keep():\n    return 0\n"
+_SMALL_ROWS = "def fetch_rows(n):\n    return list(range(n))\n"
+_ROWS = (
+    "def fetch_rows(n, start=0):\n    out = []\n    for i in range(start, n):\n"
+    "        if i % 2:\n            out.append(i)\n        else:\n            out.append(-i)\n"
+    "    return sorted(out)\n"
+)
+_METHOD = (
+    "    def fetch_rows(self, n, start=0):\n        for i in range(start, n):\n"
+    "            if i % 2:\n                self.rows.append(i)\n            else:\n"
+    "                self.rows.append(-i)\n        return sorted(self.rows)\n"
+)
+_READER_CLOSES = (
+    "class Reader:\n    def __init__(self):\n        self.rows = []\n\n"
+    "    def close(self):\n        pass\n"
+)
+_READER = _READER_CLOSES + "\n" + _METHOD
+_OTHER_ROWS = "class Other:\n" + _METHOD
+
+
+@pytest.mark.parametrize("gone", [_KEEP, None], ids=["file-kept", "file-deleted"])
+def test_a_function_renamed_as_it_moved_to_another_file_is_moved(gone: str | None) -> None:
+    after = {"b.py": _ROWS.replace("fetch_rows", "warm_up")} | ({"a.py": gone} if gone else {})
+    got = _elsewhere({"a.py": _KEEP + "\n\n" + _ROWS}, after)
+    assert (got.state, got.path, got.qualified_name) == ("moved", "b.py", "b::warm_up")
+    assert got.body_hash == got.checked_hash  # only its name changed: the new baseline
+
+
+@pytest.mark.parametrize(
+    ("name", "state"),
+    [
+        ("_fetch_rows", "moved"),
+        ("fetch_rows_v2", "moved"),
+        ("load_rows", "missing"),
+        ("warm_up", "missing"),
+    ],
+)
+def test_a_small_function_renamed_as_it_moved_keeps_the_words_of_its_name(
+    name: str, state: str
+) -> None:
+    # under thirty tokens two definitions look alike by their shape alone, and among every
+    # changed file one shared word is no kinship
+    after = {"a.py": _KEEP, "b.py": _SMALL_ROWS.replace("fetch_rows", name)}
+    assert _elsewhere({"a.py": _KEEP + "\n\n" + _SMALL_ROWS}, after).state == state
+
+
+def test_a_removed_stub_is_not_handed_to_a_new_stub_sharing_a_word_of_its_name() -> None:
+    # two exception stubs have one shape whatever they are for
+    stub = "class ReadError(Exception):\n    pass\n"
+    before = {"errors.py": _KEEP + "\n\n" + stub}
+    after = {"errors.py": _KEEP, "retry.py": stub.replace("ReadError", "RetryError")}
+    got = _elsewhere(before, after, "ReadError")
+    assert (got.state, got.path) == ("missing", "errors.py")
+    # the same stub made private as it moved is still the one the memory names
+    after = {"errors.py": _KEEP, "retry.py": stub.replace("ReadError", "_ReadError")}
+    got = _elsewhere(before, after, "ReadError")
+    assert (got.state, got.qualified_name) == ("moved", "retry::_ReadError")
+
+
+@pytest.mark.parametrize("name", ["Reader", "Reader.fetch_rows", "Reader.close"])
+def test_a_class_renamed_as_it_moved_takes_its_members(name: str) -> None:
+    after = {"a.py": _KEEP, "b.py": _READER.replace("Reader", "Loader")}
+    got = _elsewhere({"a.py": _KEEP + "\n\n" + _READER}, after, name)
+    assert (got.state, got.qualified_name) == (
+        "moved",
+        "b::" + name.replace("Reader", "Loader").replace(".", "::"),
+    )
+
+
+def test_a_method_that_left_its_class_for_another_file_reads_changed() -> None:
+    # the same text in another class: what surrounds it is not what the memory saw
+    got = _elsewhere(
+        {"a.py": _READER}, {"a.py": _READER_CLOSES, "b.py": _OTHER_ROWS}, "Reader.fetch_rows"
+    )
+    assert (got.state, got.qualified_name) == ("changed", "b::Other::fetch_rows")
+    assert got.carried
+
+
+def test_a_method_that_became_a_function_reads_changed() -> None:
+    function = "\n".join(line[4:] for line in _METHOD.splitlines()) + "\n"
+    got = _elsewhere(
+        {"a.py": _READER}, {"a.py": _READER_CLOSES + "\n\n" + function}, "Reader.fetch_rows"
+    )
+    assert (got.state, got.qualified_name) == ("changed", "a::fetch_rows")
+
+
+@pytest.mark.parametrize(
+    ("theirs", "state"),
+    [
+        (_OTHER_ROWS.replace("append(-i)", "append(-i * 2)"), "changed"),  # close
+        ("class Other:\n    def fetch_rows(self):\n        return {'unrelated': 1}\n", "missing"),
+    ],
+    ids=["close", "not-close"],
+)
+def test_its_own_name_in_another_class_elsewhere_is_it_only_with_a_close_text(
+    theirs: str, state: str
+) -> None:
+    got = _elsewhere(
+        {"a.py": _READER}, {"a.py": _READER_CLOSES, "b.py": theirs}, "Reader.fetch_rows"
+    )
+    assert got.state == state
+    assert (got.path == "b.py") == (state == "changed")
+
+
+_DICT = (
+    "class {0}:\n    def __init__(self):\n        self.data = {{}}\n\n"
+    "    def __iter__(self):\n        return {1}\n\n"
+    "    def __len__(self):\n        return len(self.data)\n"
+)
+
+
+_FOLDED = _DICT.format("Folded", "iter(self.data.keys())")
+
+
+@pytest.mark.parametrize(
+    ("kept", "theirs", "state"),
+    [
+        # the class came with it, edited: two of its three members, and this one
+        (_KEEP, _FOLDED, "changed"),
+        # another class's: one member name in common says nothing
+        (
+            _KEEP,
+            "class Folded:\n    def __iter__(self):\n        return iter(self.data)\n",
+            "missing",
+        ),
+        # its own class is still there, less this method: the new class is another one
+        (
+            _DICT.format("Multi", "0").replace("    def __iter__(self):\n        return 0\n\n", ""),
+            _FOLDED,
+            "missing",
+        ),
+    ],
+    ids=["its-class-came-along", "unrelated-class", "its-class-stayed"],
+)
+def test_a_small_method_goes_to_its_name_in_another_class_only_with_its_class(
+    kept: str, theirs: str, state: str
+) -> None:
+    # `__iter__` is any class's, and a text this short is mostly its signature
+    before = {"a.py": _KEEP + "\n\n" + _DICT.format("Multi", "iter(self.data)")}
+    got = _elsewhere(before, {"a.py": kept, "b.py": theirs}, "Multi.__iter__")
+    assert got.state == state
+
+
+_CLEAR = "    def clear(self):\n        self.data.clear()\n"
+_OWN = (
+    "    def get(self, key):\n        return self.data[key]\n\n"
+    "    def put(self, key, value):\n        self.data[key] = value\n\n"
+    "    def pop(self, key):\n        return self.data.pop(key)\n\n"
+    "    def keys(self):\n        return list(self.data)\n\n"
+) + _CLEAR
+
+
+@pytest.mark.parametrize(
+    ("own", "state"),
+    [
+        # five members of its own beside the four it took in: mostly another class
+        (_OWN, "missing"),
+        # one of its own: it keeps the removed class's
+        (_CLEAR, "changed"),
+    ],
+    ids=["mostly-its-own", "mostly-the-removed-class"],
+)
+def test_a_class_that_was_already_there_is_weighed_with_the_members_it_had(
+    own: str, state: str
+) -> None:
+    # Store was in b.py and takes Multi's members in as Multi goes
+    multi = _KEEP + "\n\n" + _DICT.format("Multi", "iter(self.data)")
+    after = {"a.py": _KEEP, "b.py": _DICT.format("Store", "iter(self.data)") + "\n" + own}
+    before = {"a.py": multi, "b.py": "class Store:\n" + own}
+    assert _elsewhere(before, after, "Multi.__iter__").state == state
+    # as the same class is when the range brings it in whole
+    assert _elsewhere({"a.py": multi}, after, "Multi.__iter__").state == state
+
+
+def test_a_small_method_follows_its_class_renamed_with_an_alias_left_behind() -> None:
+    # the old name stays as an alias of the class: no member is left under it
+    before = {"a.py": _DICT.format("Multi", "iter(self.data)")}
+    after = {"a.py": _DICT.format("Folded", "iter(self.data)") + "\n\nMulti = Folded\n"}
+    got = _elsewhere(before, after, "Multi.__iter__")
+    assert (got.state, got.qualified_name) == ("moved", "a::Folded::__iter__")
+
+
+def test_a_small_method_never_becomes_a_function_of_its_name() -> None:
+    before = {"a.py": _DICT.format("Multi", "iter(self.data)")}
+    after = {"a.py": _KEEP, "b.py": "def __iter__(self):\n    return iter(self.data)\n"}
+    assert _elsewhere(before, after, "Multi.__iter__").state == "missing"
+
+
+def test_a_close_namesake_that_stayed_leaves_an_edited_move_unresolved() -> None:
+    # sibling classes share the method. Client keeps its name and takes the text of the
+    # removed Sync, while Client's old text arrives as Async: the new one is not the
+    # only close one, and the one that stayed never inherits a link
+    sync, other = _METHOD, _METHOD.replace("sorted(self.rows)", "list(self.rows)")
+    before = {"a.py": "class Sync:\n" + sync, "b.py": "class Client:\n" + other}
+    after = {"b.py": "class Client:\n" + sync + "\n\nclass Async:\n" + other}
+    got = _elsewhere(before, after, "Sync.fetch_rows")
+    assert (got.state, got.path) == ("unresolved", "a.py")
+    # with no namesake kept beside it, the new one is followed
+    alone = {"b.py": "class Async:\n" + other}
+    got = _elsewhere({"a.py": "class Sync:\n" + sync}, alone, "Sync.fetch_rows")
+    assert (got.state, got.qualified_name) == ("changed", "b::Async::fetch_rows")
+
+
+def test_a_namesake_that_stayed_never_makes_removed_code_unresolved() -> None:
+    # nothing new is close to it: the code is gone, however alike its sibling is
+    before = {"a.py": "class Sync:\n" + _METHOD, "b.py": "class Client:\n" + _METHOD}
+    after = {"a.py": _KEEP, "b.py": "class Client:\n" + _METHOD + "\n\nX = 1\n"}
+    assert _elsewhere(before, after, "Sync.fetch_rows").state == "missing"
+
+
+def test_two_new_definitions_of_its_shape_leave_it_unresolved() -> None:
+    after = {
+        "a.py": _KEEP,
+        "b.py": _ROWS.replace("fetch_rows", "load_rows"),
+        "c.py": _ROWS.replace("fetch_rows", "read_rows"),
+    }
+    got = _elsewhere({"a.py": _KEEP + "\n\n" + _ROWS}, after)
+    assert (got.state, got.path) == ("unresolved", "a.py")
+
+
+def test_two_close_definitions_of_its_name_leave_it_unresolved() -> None:
+    edited = _OTHER_ROWS.replace("append(-i)", "append(-i * 2)")
+    after = {"a.py": _READER_CLOSES, "b.py": edited, "c.py": edited.replace("Other", "Third")}
+    assert _elsewhere({"a.py": _READER}, after, "Reader.fetch_rows").state == "unresolved"
+
+
+def test_a_new_definition_another_removed_one_may_have_become_is_not_followed() -> None:
+    # c.py lost a definition of the same shape: b.py's may be either's
+    before = {"a.py": _KEEP + "\n\n" + _ROWS, "c.py": _ROWS.replace("fetch_rows", "scan_rows")}
+    after = {"a.py": _KEEP, "c.py": _KEEP, "b.py": _ROWS.replace("fetch_rows", "load_rows")}
+    assert _elsewhere(before, after).state == "unresolved"
+
+
+def test_removed_twins_each_follow_the_new_definition_of_their_own_name() -> None:
+    # two classes with the same methods move at once: each method goes with its name
+    twins = _READER + "\n\n" + _READER.replace("Reader", "Writer").replace("fetch_rows", "put_rows")
+    moved = twins.replace("Reader", "Loader").replace("Writer", "Saver")
+    before, after = {"a.py": _KEEP + "\n\n" + twins}, {"a.py": _KEEP, "b.py": moved}
+    got = _elsewhere(before, after, "Writer.put_rows")
+    assert (got.state, got.qualified_name) == ("moved", "b::Saver::put_rows")
+    # the same `close` in both: which class's it is cannot be told by the method alone
+    assert _elsewhere(before, after, "Writer.close").state == "unresolved"
+
+
+def test_a_removed_definition_with_nothing_new_like_it_is_missing() -> None:
+    after = {"a.py": _KEEP, "b.py": "def unrelated(n):\n    return {'n': n}\n"}
+    assert _elsewhere({"a.py": _KEEP + "\n\n" + _ROWS}, after).state == "missing"

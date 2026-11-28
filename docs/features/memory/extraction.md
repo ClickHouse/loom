@@ -84,10 +84,18 @@ from the observe plane. Only these run `loom.drop_non_durable` and `loom.verify_
 The rules in `server/memory/domain/durable_facts.py` match sentence shape, not topic words: what
 a release changed is kept; whether its CI was green at the time is dropped.
 
-A plugin's session capture (a `source:` tag) is extracted under coding-session rules that
-follow the conversation rules and replace their code rules. What the user states is kept
-as in any conversation. From the work, only knowledge about the codebase that a later
-session in the repository can reuse without reading the code again is kept:
+A plugin's session capture (a `source:` tag) is extracted with a prompt of its own, at
+every capture size. It holds no conversation rule or example, and is about 2,700 tokens
+where the conversation prompt is 20,000 to 34,000, because most captures hold nothing to
+keep and the prompt is then what the call costs. What the user states that holds beyond
+the session is kept: a standing rule, a preference, a decision, a fact about their setup.
+What the user asks for the task alone is not. Its schema asks for the fields a coding fact
+uses and for the end of a state the user bounds (`valid_to`, `foresight`), so a freeze
+"until Friday" stops being served after that day. The extractor sets no `valid_at`,
+`temporal_confidence`, occurrence record or `question_topic` on a session capture's fact;
+the row takes its `valid_at` from the fact's `temporal_anchor` when that is not in the
+future, else from the observation date. From the work, only knowledge about the codebase
+that a later session in the repository can reuse without reading the code again is kept:
 
 - how a behaviour is reached across definitions or files, as one claim for the whole path;
 - a relation between definitions that reading one of them does not show;

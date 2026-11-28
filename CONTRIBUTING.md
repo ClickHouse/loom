@@ -171,7 +171,8 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 ## Commits and sign-offs (DCO)
 
 - **Messages say why.** The diff says what changed.
-- **Sign off every commit** under the [Developer Certificate of Origin](https://developercertificate.org/): `git commit -s -m "your message"`. There is no CLA.
+- **Sign off every commit** under the [Developer Certificate of Origin](https://developercertificate.org/): `git commit -s -m "your message"`.
+- **Sign the Contributor License Agreement (CLA)** in addition to signing off each commit. If you still need to sign the [ClickHouse Individual Contributor License Agreement](https://gist.github.com/clickhouse-admin/e7369fa5e6541e28e8645f9e095d3596), CLA assistant posts a signing link on your pull request.
 - **Comments explain why**, not what or when: no history, dates, names or ticket numbers in source.
 
 ## Material changes

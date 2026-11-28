@@ -52,6 +52,7 @@ fn omitted_response_fields_keep_wire_defaults() {
     assert_eq!(hit.created_at, "");
     assert_eq!(hit.code_state, "");
     assert_eq!(hit.code_changed_since, "");
+    assert!(hit.code_moved.is_empty());
     assert!(!hit.body_truncated);
     assert_eq!(hit.next, "");
     assert_eq!(hit.source_resource_id, "");
@@ -204,6 +205,12 @@ fn search_preserves_chunk_parent_attribution_and_decision_signals() {
             "user_id": "owner", "status": "superseded", "superseded_by": "successor",
             "superseded_at": "retired", "created_at": "created", "code_state": "changed",
             "code_changed_since": "c0ffee",
+            "code_moved": [{
+                "code_namespace": "code-a", "path": "src/reader.py",
+                "symbol": "reader::load_rows", "start_line": 12, "end_line": 40,
+                "state": "changed", "was_path": "src/reader.py",
+                "was_symbol": "reader::fetch_rows"
+            }],
             "body_truncated": true, "next": "memory.get", "source_resource_id": "resource",
             "source_class": "extracted", "verified": true, "explanation": "citation",
             "session_id": "conversation", "speaker": "alice", "about_other": true,
@@ -244,6 +251,11 @@ fn search_preserves_chunk_parent_attribution_and_decision_signals() {
     assert_eq!(hit.created_at, "created");
     assert_eq!(hit.code_state, "changed");
     assert_eq!(hit.code_changed_since, "c0ffee");
+    assert_eq!(hit.code_moved.len(), 1);
+    assert_eq!(hit.code_moved[0].symbol, "reader::load_rows");
+    assert_eq!(hit.code_moved[0].was_symbol, "reader::fetch_rows");
+    assert_eq!(hit.code_moved[0].start_line.to_string(), "12");
+    assert_eq!(hit.code_moved[0].end_line.to_string(), "40");
     assert!(hit.body_truncated);
     assert_eq!(hit.next, "memory.get");
     assert_eq!(hit.source_resource_id, "resource");

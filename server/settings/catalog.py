@@ -1633,9 +1633,10 @@ class CodeSettings(BaseModel):
     # --- search ranking, legs and caches (code.search) ------------------------
     # Fire-and-forget code_search_trace/code_search_outcome telemetry.
     code_trace_log_enabled: bool = True
-    # Post-fusion rank priors in code.search (path-noise penalty, query↔path
+    # Rank priors in code.search (the test-path and prose penalties, query↔path
     # stem affinity, file coherence), applied after RRF and before the outcome
-    # boost. Kill switch.
+    # boost. The lexical leg also picks its candidates on the two path penalties,
+    # before RRF. Kill switch for both.
     code_fusion_signals: bool = True
     # Long-question trim: past this many lexemes the question is treated as an
     # issue body (template headings stripped, the rarest 32 tokens gate, the
@@ -1737,9 +1738,11 @@ class CodeSettings(BaseModel):
     # Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the
     # question kinds `code_search_catalogue_kinds` names; 1.0 = off.
     code_search_catalogue_penalty: float = 1.0
-    # Fusion multiplier for prose files (documentation, release notes, changelogs)
-    # unless the query asks for documentation or the search is constrained to paths;
-    # 1.0 = off.
+    # Multiplier for prose files (documentation, release notes, changelogs) unless
+    # the query asks for documentation or the search is constrained to paths. The
+    # ranking multiplies the fused score by it, and the lexical leg picks its
+    # candidates on each row's vote times it, before RRF. A smaller value makes
+    # the lexical leg read deeper. 1.0 = off.
     code_search_prose_penalty: float = 0.25
     # Chunk-kind ranking prior when the request names none: structural boosts the
     # kind named by the question; flat/default apply fixed tables; off disables it.
@@ -4453,12 +4456,9 @@ class ObservabilitySettings(BaseModel):
     # every pass.
     worker_ledger_rows: bool = True
 
-    # Self-hosted adoption reports. Set false to stop all adoption reporting.
+    # Self-hosted adoption reports, including public aggregate activity for contact domains.
+    # Set false to stop adoption reporting.
     adoption_telemetry_enabled: bool = True
-    # Share namespace contact domains and counts in adoption reports. Set false to omit them.
-    adoption_telemetry_share_domains: bool = True
-    # Seconds between adoption checks and retries. A report covers 12 hours.
-    adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 
     # Master switch for OTel emission. `init_otel()` also refuses under pytest
     # regardless: server/main.py calls it at import, and a test run must never

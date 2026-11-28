@@ -11,7 +11,9 @@ import {
   gateSignature,
   renderGate,
   sessionScope,
+  sessionStart,
   venvPython,
+  writtenSince,
 } from "../lib/test-gate.mjs";
 
 const GATE = {
@@ -48,9 +50,47 @@ test("render dedupes commands, lists unknown-runner tests and untested names", (
   const text = renderGate(GATE);
   assert.match(text, /^Loom test gate \(graph is a floor\): run: pytest tests\/unit\/test_a\.py · /);
   assert.equal((text.match(/pytest tests\/unit\/test_a\.py/g) || []).length, 1);
-  assert.match(text, /also reached \(no known runner\): src\/x\/tests\/gtest_parts\.cpp/);
-  assert.match(text, /no test reaches: MergeTreeData::renameTempPartAndAdd, Foo::bar\./);
-  assert.match(text, /Run the tests and rely on green/);
+  assert.match(text, /also reached \(no known runner\): src\/x\/tests\/gtest_parts\.cpp · /);
+  assert.match(text, /links no test to: MergeTreeData::renameTempPartAndAdd, Foo::bar \(the tests named here may/);
+  assert.match(text, /\. Run the tests before finishing, or say why not\.$/);
+});
+
+test("beside tests to run, an untested function is the index's view, not a fact about those tests", () => {
+  // A constructor, and a test file whose every test builds the object: the graph holds no edge between them.
+  const built = {
+    obligations: true,
+    counts_floor: true,
+    tests: [{ test_path: "tests/test_widgets.py", why: "changed_test", run: "pytest tests/test_widgets.py" }],
+    untested: [{ qualified_name: "src.pkg.widgets::Widget::__init__", path: "src/pkg/widgets.py" }],
+    untested_total: 1,
+  };
+  assert.equal(
+    renderGate(built, { python: "python3", testExists: () => true }),
+    "Loom test gate (graph is a floor): run: python3 -m pytest tests/test_widgets.py · the index links no test to: Widget::__init__ (the tests named here may still reach it). Run the tests before finishing, or say why not.",
+  );
+  assert.doesNotMatch(renderGate(GATE, { testExists: () => true }), /no test reaches/);
+  assert.match(
+    renderGate(GATE, { testExists: () => true }),
+    /Foo::bar \(the tests named here may still reach them\)\. /,
+  );
+  // With no test to run there is none to hedge about.
+  for (const none of [renderGate({ ...GATE, tests: [] }), renderGate(GATE, { testExists: () => false })]) {
+    assert.match(none, /no test reaches: MergeTreeData::renameTempPartAndAdd, Foo::bar\. /);
+  }
+  assert.match(renderGate({ ...GATE, tests: [] }), /Foo::bar\. Add a test that reaches it/);
+});
+
+test("plain pytest runs fold into one command; a run with an option stays its own", () => {
+  const gate = (runs) => ({ obligations: true, tests: runs.map((run) => ({ run })) });
+  assert.equal(
+    renderGate(gate(["pytest tests/a.py", "pytest tests/b.py"]), { python: "python3" }),
+    "Loom test gate: run: python3 -m pytest tests/a.py tests/b.py. Run the tests before finishing, or say why not.",
+  );
+  assert.match(
+    renderGate(gate(["npm test", "pytest tests/a.py", "pytest -k slow tests/c.py", "pytest tests/b.py::test_x"])),
+    /run: npm test ; pytest tests\/a\.py tests\/b\.py::test_x ; pytest -k slow tests\/c\.py\. /,
+  );
+  assert.match(renderGate(gate(["pytest tests/a.py"])), /run: pytest tests\/a\.py\. /);
 });
 
 test("render caps and counts the overflow", () => {
@@ -61,7 +101,9 @@ test("render caps and counts the overflow", () => {
     untested_total: 0,
   };
   const text = renderGate(many, { maxRuns: 2 });
-  assert.match(text, /pytest t0\.py ; pytest t1\.py \(\+4 more\)/);
+  assert.match(text, /run: pytest t0\.py t1\.py \(\+4 more\)\./);
+  const mixed = { ...many, tests: Array.from({ length: 6 }, (_, i) => ({ run: `npm test t${i}` })) };
+  assert.match(renderGate(mixed, { maxRuns: 2 }), /run: npm test t0 ; npm test t1 \(\+4 more\)\./);
 });
 
 test("a deleted indexed test is reported as missing, never prescribed as a runnable command", () => {
@@ -83,7 +125,7 @@ test("a deleted indexed test is reported as missing, never prescribed as a runna
   assert.match(text, /indexed tests not present in this checkout: tests\/unit\/test_migrations_schema_slice\.py/);
   assert.equal((text.match(/test_migrations_schema_slice\.py/g) || []).length, 1);
   assert.match(text, /Missing tests are not passes/);
-  assert.match(text, /no test reaches:/);
+  assert.match(text, /the index links no test to:/);
 });
 
 test("a gate with only unavailable tests remains an explicit obligation", () => {
@@ -234,6 +276,28 @@ import { commentOnlyDiff, withPython } from "../lib/test-gate.mjs";
 const hunk = (file, lines) =>
   `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -1,0 +2 @@\n${lines.join("\n")}\n`;
 
+test("a file last written before the session began is not the session's change", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-since-"));
+  try {
+    for (const f of ["old.py", "new.py"]) fs.writeFileSync(path.join(dir, f), "x = 1\n");
+    const began = Date.parse("2001-09-09T01:46:40.000Z");
+    fs.utimesSync(path.join(dir, "old.py"), new Date(began - 1000), new Date(began - 1000));
+    fs.utimesSync(path.join(dir, "new.py"), new Date(began + 1000), new Date(began + 1000));
+    const rows = [
+      { type: "user", message: { content: "hi" } },
+      { type: "assistant", timestamp: "2001-09-09T01:46:40.000Z" },
+    ];
+    assert.equal(sessionStart(rows), began);
+    assert.equal(sessionStart([{ type: "user" }, { timestamp: "nope" }]), 0);
+    assert.equal(sessionStart(undefined), 0);
+    // A deleted file has no time and stays; an unknown start keeps every path.
+    assert.deepEqual(writtenSince(dir, ["old.py", "new.py", "gone.py"], began), ["new.py", "gone.py"]);
+    assert.deepEqual(writtenSince(dir, ["old.py", "new.py"], 0), ["old.py", "new.py"]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a comment- or blank-only diff owes no test", () => {
   assert.equal(commentOnlyDiff(hunk("server/naming.py", ["+# loomcheck"])), true);
   assert.equal(commentOnlyDiff(hunk("lib/a.mjs", ["+// note", "+", "-/* old */"])), true);
@@ -267,7 +331,7 @@ test("nothing to run asks for a test, not for running tests", () => {
     untested: [{ qualified_name: "server.naming::validate_namespace_name" }],
   });
   assert.match(text, /no test reaches: server\.naming::validate_namespace_name/);
-  assert.match(text, /Add a test that reaches it, or say why the change needs none/);
+  assert.match(text, /Add a test that reaches it, or say why none is needed\.$/);
   assert.doesNotMatch(text, /Run the tests/);
 });
 
@@ -570,9 +634,81 @@ test("a run before the tree's last change, an edit or another shell command answ
   assert.equal(answered([edit(), bash(SUITE, PASSED, { isSidechain: true })]), false);
 });
 
-test("a run that failed, ran a subset or ran another file answers nothing", () => {
-  assert.equal(answered([edit(), bash(SUITE, FAILED)]), false);
-  assert.equal(answered([edit(), bash(SUITE, PASSED), bash(SUITE, FAILED)]), false);
+// Output of a suite that fails 8 tests with or without the change, and of a run that stopped at its first failure.
+const LAST_FAILED = "FAILED tests/test_io.py::test_reads_every_row - Deprec...\n";
+const BASE = `${LAST_FAILED}8 failed, 466 passed, 10 skipped in 1.01s`;
+const CHANGED = `${LAST_FAILED}8 failed, 467 passed, 10 skipped in 0.81s`;
+const STOPPED =
+  "FAILED tests/test_basic.py::test_reads_one_row - AssertionError: ...\n" +
+  "!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n" +
+  "1 failed, 38 passed in 0.37s";
+
+test("a run that printed its failures answers the gate, unless it stopped at the first one", () => {
+  assert.equal(answered([edit(), bash(SUITE, FAILED)]), true);
+  assert.equal(answered([edit(), bash(SUITE, PASSED), bash(SUITE, FAILED)]), true);
+  assert.equal(answered([edit(), bash("python -m pytest tests -q 2>&1 | tail -3", CHANGED)]), true);
+  assert.equal(answered([edit(), bash("pytest tests -q", "400 passed, 5 errors in 1.60s")]), true);
+  assert.equal(answered([edit(), bash("pytest tests -q", "3 failed in 0.10s")]), true);
+  // The run never reached the files after the failure.
+  for (const flag of ["-x", "-qx", "--exitfirst", "--maxfail=1", "--maxfail 2"]) {
+    const stops = `python -m pytest tests -q ${flag} 2>&1 | tail -3`;
+    assert.equal(answered([edit(), bash(stops, STOPPED)]), false, flag);
+    assert.equal(answered([edit(), bash(stops, "38 passed, 1 error in 0.37s")]), false, flag);
+    assert.equal(answered([edit(), bash(stops, PASSED)]), true, flag);
+  }
+  // A limit set outside pytest's arguments shows in pytest's own line; so does --sw set in a configuration file.
+  assert.equal(answered([edit(), bash("PYTEST_ADDOPTS=-x python -m pytest tests -q 2>&1 | tail -3", STOPPED)]), false);
+  const stepwise =
+    "!!!!!!!! Interrupted: Test failed, continuing from this test next run. !!!!!!!!!\n1 failed, 38 passed in 0.37s";
+  assert.equal(answered([edit(), bash("pytest tests -q", stepwise)]), false);
+  // A named file that failed to import is one error among the tests that ran.
+  assert.equal(
+    answered([edit(), bash("pytest tests -q --continue-on-collection-errors", "400 passed, 1 error in 1.60s")]),
+    false,
+  );
+  // A collection that stopped at an error ran no test.
+  for (const none of ["1 error in 0.12s", "2 skipped, 1 error in 0.20s"]) {
+    assert.equal(answered([edit(), bash("pytest tests -q", none)]), false, none);
+  }
+});
+
+test("a command's runs count from the first one that only runs and output follow", () => {
+  const two = {
+    ...RUN_GATE,
+    tests: [...RUN_GATE.tests, { test_path: "tests/test_b.py", run: "pytest tests/test_b.py" }],
+  };
+  const onlyB = { ...RUN_GATE, tests: two.tests.slice(1) };
+  // Without the change, then with it: the last run tested the tree as it stands.
+  const both =
+    "git stash -q; python -m pytest tests -q 2>&1 | tail -2; git stash pop -q; python -m pytest tests -q 2>&1 | tail -2";
+  assert.equal(answered([edit(), bash(both, `${BASE}\n${CHANGED}`)]), true);
+  assert.equal(answered([edit(), bash(`cd /r; ${both}`, `${BASE}\n${CHANGED}`)]), true);
+  assert.equal(answered([edit(), bash(both, CHANGED)]), false);
+  // The run before the pop tested another tree, and the pop forgets every earlier run.
+  const split = "pytest tests/test_a.py -q; git stash pop -q; pytest tests/test_b.py -q";
+  const output = "3 passed in 0.10s\n2 passed in 0.10s";
+  assert.equal(answered([edit(), bash(split, output)]), false);
+  assert.equal(answered([edit(), bash(split, output)], onlyB), true);
+  assert.equal(
+    answered([edit(), bash("pytest tests/test_a.py -q", "3 passed in 0.10s"), bash(split, output)], two),
+    false,
+  );
+  // With the change, then without it: the first run printed no summary and the pop came after the last.
+  const backwards =
+    "python -m pytest tests -q 2>&1 | grep FAILED; git stash -q; python -m pytest tests -q 2>&1 | tail -1; git stash pop -q";
+  assert.equal(answered([edit(), bash(backwards, BASE)]), false);
+  assert.equal(answered([edit(), bash("python -m pytest tests -q 2>&1 | tail -3; git diff --stat", CHANGED)]), false);
+  // A move between two runs leaves the later run's paths unknown.
+  assert.equal(
+    answered([edit(), bash("pytest tests -q; git stash pop -q; cd sub; pytest tests -q", output)], {
+      ...RUN_GATE,
+      tests: [{ test_path: "sub/tests/test_a.py", run: "pytest sub/tests/test_a.py" }],
+    }),
+    false,
+  );
+});
+
+test("a run of a subset or of another file answers nothing", () => {
   assert.equal(answered([edit(), bash("pytest tests -q -k new", "1 passed, 4 deselected in 0.10s")]), false);
   assert.equal(answered([edit(), bash("pytest tests/test_a.py::test_new -q", "1 passed in 0.10s")]), false);
   assert.equal(answered([edit(), bash("pytest tests --ignore=tests/test_a.py -q", "9 passed in 0.10s")]), false);
@@ -707,9 +843,10 @@ test("the hook blocks a change whose tests never ran and lets an answered one st
     execFileSync("git", args, { cwd: dir, stdio: "ignore" });
   }
   fs.appendFileSync(path.join(dir, "src/a.py"), "def g():\n    return 2\n");
-  // The change is older than the transcript rows, until something rewrites a file.
+  const change = call("Edit", { file_path: path.join(dir, "src/a.py") }, "updated");
+  // The change is as old as the session's first row, until something rewrites a file.
   const touch = (file, when) => fs.utimesSync(path.join(dir, file), when, when);
-  touch("src/a.py", new Date(1e12 - 1000));
+  touch("src/a.py", new Date(change[0].timestamp));
   fs.writeFileSync(
     cachePathFor(dir, tmp),
     JSON.stringify({ ts: Date.now(), indexed: true, org: "o", namespace: "code-x", repo: "x/y", prefixes: [] }),
@@ -745,7 +882,6 @@ test("the hook blocks a change whose tests never ran and lets an answered one st
       child.on("close", () => resolve(out));
       child.stdin.end(JSON.stringify({ cwd: dir, session_id: session, transcript_path: transcript }));
     });
-  const change = call("Edit", { file_path: path.join(dir, "src/a.py") }, "updated");
   try {
     const ran = [change, bash(SUITE, PASSED)];
     const no = [said("Fix f. Do not run the test suite."), change];
@@ -771,6 +907,12 @@ test("the hook blocks a change whose tests never ran and lets an answered one st
     touch("src/b.py", new Date(1e12 - 1000));
     touch("src/a.py", new Date());
     assert.match(await stop("edited-after-run", ran), /"decision":"block"/);
+    // A tree left dirty before the session: reading or running the file changes nothing.
+    touch("src/a.py", new Date(1e12 - 1000));
+    assert.equal(
+      await stop("only-read", [bash("cat src/a.py", "def f():"), bash("grep -n g src/a.py", "3:def g():")]),
+      "",
+    );
   } finally {
     server.closeAllConnections();
     server.close();

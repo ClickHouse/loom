@@ -84,6 +84,10 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
   const selfHosted = await read("self-hosted");
   assert.deepEqual(selfHosted.selfHosted.domains, ["company.example", "other.example"]);
   assert.equal(selfHosted.selfHosted.domainDirectories, null);
+  assert.equal(selfHosted.selfHosted.domainAccounts, null);
+  assert.equal(selfHosted.selfHosted.firstObservation, null);
+  assert.equal(selfHosted.selfHosted.versionTrends, null);
+  assert.equal(selfHosted.selfHosted.companyTrends, null);
   assert.equal(selfHosted.selfHosted.growth, null);
   assert.equal(selfHosted.selfHosted.growthCoverage, null);
   assert.deepEqual(selfHosted.openSource, []);
@@ -169,6 +173,85 @@ test("reads the names-only directory and retained deployment growth from the agg
   assert.equal(fallback.domainDirectories, null);
   assert.equal(fallback.growth, null);
   assert.equal(fallback.growthCoverage, null);
+});
+
+test("reads measured company activity and excludes smoke versions and private fields", async (t) => {
+  const day = "2026-11-09";
+  const period = { grain: "day", period: day, period_end: "2026-11-10" };
+  const total = { range_days: 30, comparison: "current", reporting: 6 };
+  const versions = { loom_version: "1.2.3", clickhouse_version: "26.1", active_installations: 4 };
+  const firstObservation = { day: "2026-09-11", loom_version: "1.0.0", clickhouse_version: "25.12" };
+  const versionTrend = { ...period, product: "loom", version: "1.2.3", active_installations: 4 };
+  const companyTrend = { ...period, companies: 0, days_reported: 1, complete_days_reported: 1 };
+  const measurements = {
+    day,
+    active_accounts: 0,
+    serving_processes: null,
+    successful_requests: 13,
+    active_installations: 2,
+    loom_version: "1.2.3",
+    first_seen: "2026-10-01",
+    last_seen: "2026-11-07",
+  };
+  const activity = { ...period, active_accounts: 0, accounts_days_reported: 1, account_reporting_installations: 2 };
+  const rows = {
+    totals: [{ ...total, verified_companies: 5 }],
+    versions: [
+      versions,
+      { loom_version: "1.2.2", clickhouse_version: "26.1", installations: 5 },
+      { ...versions, loom_version: "0.0.0-smoke" },
+      { ...versions, clickhouse_version: "0.0.0-smoke" },
+    ],
+    activity: [activity],
+    retention: [],
+    lifecycle: [],
+    oss: [],
+    domain_directories: [
+      { range_days: 30, domains: ["measured.example", "names-only.example"] },
+      { range_days: 90, domains: ["measured.example", "earlier.example"] },
+    ],
+    domain_accounts: [
+      { range_days: 30, domain: "measured.example", ...measurements, installation_id: "private" },
+      { range_days: 30, domain: "earlier.example", ...measurements },
+      { range_days: 90, domain: "earlier.example", ...measurements },
+      { range_days: 90, domain: "private.example", ...measurements },
+    ],
+    first_observation: [{ ...firstObservation, installation_id: "private" }],
+    version_trends: [versionTrend, { ...versionTrend, version: "0.0.0-smoke" }],
+    company_trends: [{ ...companyTrend, domains: ["private.example"] }],
+  };
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({
+      data: [Object.fromEntries(Object.entries(rows).map(([key, items]) => [key, items.map(JSON.stringify)]))],
+    }),
+  );
+  const read = () =>
+    createAdoptionReader(
+      {
+        LOOM_ADOPTION_QUERY_ENDPOINT_URL: "https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001",
+        LOOM_ADOPTION_QUERY_KEY_ID: "fixture-id",
+        LOOM_ADOPTION_QUERY_KEY_SECRET: "fixture-secret",
+      },
+      new Date("2026-11-10T08:00:00Z"),
+    )("self-hosted");
+  const { selfHosted } = await read();
+  assert.deepEqual(selfHosted.totals, [total]);
+  assert.deepEqual(selfHosted.versions, [versions]);
+  assert.deepEqual(selfHosted.activity, [activity]);
+  assert.deepEqual(selfHosted.domainAccounts, {
+    30: { "measured.example": measurements },
+    90: { "earlier.example": measurements },
+  });
+  assert.deepEqual(selfHosted.firstObservation, firstObservation);
+  assert.deepEqual(selfHosted.versionTrends, [versionTrend]);
+  assert.deepEqual(selfHosted.companyTrends, [companyTrend]);
+
+  rows.domain_accounts[0].active_accounts = null;
+  rows.company_trends[0].period_end = day;
+  const malformed = (await read()).selfHosted;
+  assert.equal(malformed.domainAccounts, null);
+  assert.equal(malformed.companyTrends, null);
+  assert.deepEqual(malformed.firstObservation, firstObservation);
 });
 
 test("keeps Query API credentials off unrecognized endpoint URLs", async (t) => {

@@ -231,11 +231,10 @@ async fn generic_calls_cover_operations_without_facades_and_future_operations() 
 }
 
 #[tokio::test]
-async fn unknown_and_nonidempotent_operations_never_retry_after_dispatch() {
+async fn nonidempotent_operations_are_paced_on_a_429_and_retry_nothing_else() {
     for op in ["future.operation", "memory.touch"] {
         for reply in [
             response(503, "{}", ""),
-            response(429, "{}", "Retry-After: 0.001\r\n"),
             "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{}".into(),
         ] {
             let server = Server::new(vec![reply, response(200, "{}", "")]);
@@ -247,6 +246,23 @@ async fn unknown_and_nonidempotent_operations_never_retry_after_dispatch() {
                 .await
                 .unwrap_err();
             assert_eq!(failure.metadata.unwrap().attempts, 1, "{op}");
+            assert!(!server
+                .request()
+                .await
+                .headers
+                .contains_key("idempotency-key"));
+        }
+        let server = Server::new(vec![
+            response(429, "{}", "Retry-After: 0.001\r\n"),
+            response(200, "{}", ""),
+        ]);
+        let result = server
+            .client()
+            .call::<Value>(op, &json!({}), CallOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(result.metadata.attempts, 2, "{op}");
+        for _ in 0..2 {
             assert!(!server
                 .request()
                 .await

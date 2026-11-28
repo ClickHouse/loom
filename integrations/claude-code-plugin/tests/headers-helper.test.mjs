@@ -74,8 +74,12 @@ test("the plugin's .mcp.json uses the helper and a localhost default URL", () =>
   const block = JSON.parse(fs.readFileSync(fileURLToPath(new URL("../.mcp.json", import.meta.url)), "utf8"));
   const loom = block.mcpServers.loom;
   assert.equal(loom.type, "http");
-  // the toolset is a setting; the fragment carries the project directory to the helper
-  assert.equal(loom.url, "${user_config.server_url}/mcp?toolset=${user_config.toolset}#${CLAUDE_PROJECT_DIR}");
+  // the toolset is a setting; the profile is the plugin's own listing and instructions;
+  // the fragment carries the project directory to the helper
+  assert.equal(
+    loom.url,
+    "${user_config.server_url}/mcp?toolset=${user_config.toolset}&schema_profile=plugin#${CLAUDE_PROJECT_DIR}",
+  );
   assert.equal(loom.headersHelper, 'node "${CLAUDE_PLUGIN_ROOT}/bin/loom-mcp-headers.mjs"');
   assert.equal(loom.headers, undefined, "no static header: the helper supplies it");
 });

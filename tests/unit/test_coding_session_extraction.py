@@ -11,14 +11,18 @@ import pytest
 from server.llm.client import LLMResult
 from server.memory.app import durability_verifier, pipeline, pipeline_state
 from server.memory.app.extract import ExtractionResult, extract_from_messages
+from server.memory.app.extract.extract import _extraction_system_prompt
+from server.memory.app.extract.parse import _parse_fact_list
 from server.memory.app.extract.prompts import _extraction_base_prompt
+from server.memory.app.extract.sweep import slim_sweep_system_prompt
 from server.memory.app.trajectory_notes import TRAJECTORY_EXTRACTION_INSTRUCTIONS
 from server.memory.domain import durable_facts
 from server.memory.domain.extraction_prompts import (
-    _CODING_SESSION_PROMPT_BLOCK,
     _CODING_SESSION_RETRY_ADDENDUM,
+    _CODING_SESSION_SYSTEM_PROMPT,
     CODING_SESSION_ANCHOR,
 )
+from server.memory.domain.prompt_fence import FENCE_NOTE
 from server.settings import settings
 from tests.unit.llm_fake import ScriptedLLM
 
@@ -29,10 +33,66 @@ _MESSAGES = [
 
 
 @pytest.mark.parametrize("compact", [False, True])
-def test_the_coding_rules_follow_the_base_prompt_of_a_coding_session_only(compact: bool) -> None:
+def test_a_coding_session_is_extracted_with_its_own_prompt_at_every_size(compact: bool) -> None:
     assert CODING_SESSION_ANCHOR not in _extraction_base_prompt(compact)
-    prompt = _extraction_base_prompt(compact, agent_learnings=True, coding_session=True)
-    assert prompt.endswith(_CODING_SESSION_PROMPT_BLOCK)
+
+    def system_prompt(existing: list[dict[str, str]] | None) -> str:
+        return _extraction_system_prompt(
+            compact,
+            existing_memories=existing,
+            namespace_categories=None,
+            custom_instructions="",
+            agent_learnings=True,
+            coding_session=True,
+        )
+
+    prompt = system_prompt(None)
+    # No conversation rule or example and no examples preamble.
+    assert prompt == _CODING_SESSION_SYSTEM_PROMPT
+    assert "EXAMPLE 1" not in prompt
+    # Most captures hold nothing to keep, so this prompt is what their call costs.
+    assert len(prompt) < 9000
+    # Shown existing memories, which only a short capture is, it ends with the
+    # fence note: the one other system text a session capture is sent.
+    existing = [{"memory_key": "k0", "value": "User lives in Lyon."}]
+    assert system_prompt(existing) == prompt + "\n\n" + FENCE_NOTE
+
+
+def test_the_coding_session_prompt_ends_with_a_schema_the_parser_reads() -> None:
+    prompt = _CODING_SESSION_SYSTEM_PROMPT
+    anchor = prompt[prompt.index("The example's fact in this schema:") :]
+    (fact,) = _parse_fact_list(anchor[: anchor.index("\n\n")])
+    assert fact.memory_key == "request_init_parse_header_none"
+    assert [(s, o) for s, _, o in fact.relations] == [("request.__init__", "parse_header")]
+    assert fact.relation_phrases == ["indexes_result_of"]
+    assert fact.source_message_indices == [0]
+    assert len(fact.entities) == 4 and fact.tags == ["code", "pitfall"]
+    # The schema is the last section, so a sweep's prompt takes it without the rules.
+    slim = slim_sweep_system_prompt(prompt)
+    assert "source_message_indices" in slim and "DO NOT EXTRACT" not in slim
+
+
+def test_the_session_schema_names_every_field_the_write_step_acts_on() -> None:
+    schema = _CODING_SESSION_SYSTEM_PROMPT.partition("OUTPUT SCHEMA")[2]
+    # A field the schema leaves out keeps the parser's default: no link to the
+    # memory a fact refines, no ownership tag, no retirement on a forget request,
+    # no end to a state the user bounded.
+    for name in (
+        "key",
+        "value",
+        "tags",
+        "entities",
+        "topics",
+        "linked_keys",
+        "source_message_indices",
+        "temporal_anchor",
+        "valid_to",
+        "foresight",
+        "relations",
+        "about",
+        "forget",
+    ):
+        assert f'\n  "{name}": ' in schema, name
 
 
 async def _calls_for_no_facts(

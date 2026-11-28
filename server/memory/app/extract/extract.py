@@ -170,15 +170,18 @@ def _extraction_system_prompt(
     agent_learnings: bool = False,
     coding_session: bool = False,
 ) -> str:
-    """The extractor's system prompt: the base prompt under the strict-examples
-    preamble, the fence note, the namespace's categories and the caller's
-    instructions. Each call appends the operator's policy after it
-    (`with_policy`)."""
-    system_prompt = with_strict_examples_preamble(
-        _extraction_base_prompt(
-            compact, agent_learnings=agent_learnings, coding_session=coding_session
-        )
+    """The extractor's system prompt: the base prompt (under the strict-examples
+    preamble when it is the conversation prompt), the fence note, the namespace's
+    categories and the caller's instructions. Each call appends the operator's
+    policy after it (`with_policy`)."""
+    system_prompt = _extraction_base_prompt(
+        compact, agent_learnings=agent_learnings, coding_session=coding_session
     )
+    # The preamble binds the reply to numbered examples and rules out judging
+    # whether a case is worth a fact; a coding session's prompt has no such
+    # examples and asks for exactly that judgement.
+    if not coding_session:
+        system_prompt = with_strict_examples_preamble(system_prompt)
     if existing_memories:
         from server.memory.domain.prompt_fence import FENCE_NOTE
 
@@ -533,8 +536,8 @@ async def extract_from_messages(
     `agent_learnings` asks the same call for the assistant's standing rules about
     itself, returned as facts with `about="agent"` (`_split_agent_rules`).
 
-    `coding_session` marks a coding plugin's session capture: the base prompt ends
-    with the coding-session rules, under which zero facts is an answer, not a misfire.
+    `coding_session` marks a coding plugin's session capture: its system prompt is the
+    coding-session prompt alone, under which zero facts is an answer, not a misfire.
     """
     if not messages:
         return _no_messages_result()

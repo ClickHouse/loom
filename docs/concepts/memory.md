@@ -465,9 +465,35 @@ A memory's detail in the dashboard lists these links with their state
 ([clip](../assets/screenshots/clip-memory-linked-code.webm)).
 
 A link follows its definition through file moves, renames (with an edit, when the new
-name is related to the old), and its class's rename within the file. A namesake in
-another class or namespace never inherits a link, and a `missing` link comes back only
-when its own name does. A name gone from its file is looked for in the files changed
+name is related to the old), and its class's rename within the file. A definition
+renamed as it moves to another file, class or namespace is looked for among the
+definitions the changed files did not have before: the only one with its tokens under
+another name reads `moved`; failing that, the only one of its own name with a close text
+reads `changed`, unless a definition of that name that stayed in the changed files is
+close as well. A member reads `changed` there unless its class came with it unchanged. A
+definition under 30 tokens is told by neither its text nor its own name, which any class
+may define: it is followed there only under a name of the same words (`_read_rows` or
+`read_rows_v2` for `read_rows`) and with its scope, from module level to module level
+or, once no member of its class is left in its file, into the class that is that one
+renamed or keeps its members. Two definitions that may be it,
+or one that another removed definition may have become, leave the link `unresolved`. A
+range that changed more than 32 files under the entry's `path_prefixes` is not searched
+this way, and a warning in the server log names it; nor is a range whose diff cannot be
+read. Over such a range a live link is read as if nothing was renamed. An `unresolved`
+link is looked for from the commit its code was last read at, so its range grows with
+every commit. While that range is searched, the link is followed once one definition
+that may be it is left. Over a range that is not searched it stays `unresolved`, and no
+later commit narrows that range. The `memory_code_links` worker's pass outcome counts in
+`wide_ranges` the ranges its own pass followed, not those a `code.refresh` call followed
+first. A
+namesake that was already there never inherits a link, and a `missing` link comes back
+only when its own name does. A definition moved to another file under its own name with
+an edit is followed there when its text is close to the one the link last read. A new
+definition left where it was stops that search only when it may be the old one under a
+new name: an export list or an unrelated function added beside it does not. The search
+for a definition renamed as it moved is not made past a new definition left there,
+unless that one is another definition renamed alone. A name gone from its file is
+looked for in the files changed
 since its last check as the mirror holds them, beside the index, so a definition moved by
 a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
 followed when the link is rechecked. When `memory_code_links_mirror_naming_files` or more
@@ -484,8 +510,24 @@ commits its hashes were taken at. When its old text is gone from git, a link tha
 it takes the text the next check finds and a changed one stays `changed`; one whose old
 text no longer parses keeps its last state, and the worker reports it.
 
-Loom never writes the memory. The namespace's `code_change_policy`
-(`namespace.register`) decides what reads make of a change:
+Loom never writes the memory, so after a rename its text still says the old name. The
+reads that serve its links (listed below, `namespace.validate` apart) name where the
+code is now. A link that is `fresh`, `moved` or `changed` at another path or symbol than
+the memory was written against is served with both: the current `path`, `symbol`,
+`start_line` and `end_line` (trunk's, at the link's last check), and `was_path` and
+`was_symbol`, the oldest of the identities the link keeps (its last 16; a claim the
+`revise` policy found to hold is re-anchored where the code is and still carries them).
+A link to a file carries the path it was written against and no lines. A definition
+renamed back to its first name carries neither, nor does an `unresolved` or `missing`
+link, nor a link to a definition that replaced a link to its file. In text the line
+reads
+``(code moved: `reader::fetch_rows` is now `reader::load_rows` at src/reader.py:12-40)``;
+a line whose code also changed keeps its warning and adds the same clause. A line names
+two such links and counts the rest. Naming the place moves no result: a `moved` memory
+keeps its rank.
+
+The namespace's `code_change_policy` (`namespace.register`) decides what reads make of a
+change:
 
 | Policy                     | Removed code                                                                                                                                                                                                                           | Changed code                                                                                                                                                          |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -540,7 +582,10 @@ trunk's last state.
 
 The links are read where the code is:
 
-- `code.symbol` attaches the linked memories as `lessons`, each with its `code_state`.
+- `code.symbol` attaches the linked memories as `lessons`, each with its `code_state`
+  and, when the definition read is at another path or symbol than the memory was written
+  against, `code_moved` (on a branch, with the branch's own lines; a branch that still
+  has the code under an earlier name gets none, since the text names what it has).
   They come from the repository's team namespace and the `lesson_namespaces` the call
   names (over MCP the caller's memory home when it names none), never from every
   namespace the caller can read. The read is bounded by `code_enrich_timeout_s` and
@@ -555,8 +600,9 @@ The links are read where the code is:
   root that it ends in), each with its `code_state`, within `code_result_lessons_tokens`. Each
   row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `changed_since` (the
   commit that put its code in a changed, unresolved or missing state) when one is known, and
-  `supersedes_key` when it replaces an older row; a row another row read for the answer
-  supersedes is not served. `lessons_left_out` counts the rows the cap, a cut or that rule left
+  `supersedes_key` when it replaces an older row, and `code_moved` (its links to code in the
+  file that is now at another path or symbol than it was written against) when there are
+  any; a row another row read for the answer supersedes is not served. `lessons_left_out` counts the rows the cap, a cut or that rule left
   out. A decision or constraint is served whole or left out. The read runs after the answer,
   never enters the search memo, and is skipped for `include_lessons: false`, with
   `code_result_lessons` off, or for a token narrowed to its own user or session.
@@ -574,17 +620,25 @@ The links are read where the code is:
   `memory.for_file` to read the broader file history.
 - `memory.for_file` serves memories linked to code in the file beside those whose
   `files` name it. A line whose code changed, was not found again or went says so and
-  names the first indexed commit at which it read so; `context.pack` decision lines
-  carry the same note, and its memory lines a `code_state=<state>@<commit>` label.
-- `memory.get` returns the links as `code` (with any `suggestion`); `memory.search` hits
+  names the first indexed commit at which it read so, and a line whose code is now at
+  another path or symbol says where (each hit lists those links as `code_moved`);
+  `context.pack` decision lines carry the same note, and its memory lines a
+  `code_state=<state>@<commit>` label with `(code moved: …)` ahead of the text.
+- `memory.get` returns the links as `code` (each with its lines, any `suggestion`, and
+  `was_path` and `was_symbol` when the code moved); `memory.search` hits
   read from a memory's own row carry its worst link as `code_state` and, when that is
   `changed`, `unresolved` or `missing`, the commit that put it there, when one is known,
-  as `code_changed_since` (a chunk, record or summary hit carries neither and is never
+  as `code_changed_since`, and the links now at another path or symbol as `code_moved`
+  (a chunk, record or summary hit carries none of these and is never
   left out). A `render="reader"` block and every page of `loom_search`'s text say so on
-  such a hit's line, with the same note as a `memory.for_file` line; `memory.ask` notes
-  the memories whose code moved, changed or went.
+  such a hit's line, with the same note as a `memory.for_file` line. Where the
+  deployment sets `memory_ask_code_namespace` to a code namespace the caller may read
+  and leaves `memory_ask_code_staleness` on, `memory.ask` gives its synthesis a note of
+  the memories whose code moved, changed or went, with the same clause for a link now at
+  another path or symbol.
 - `namespace.validate` lists memories whose code changed, was not found again or is
-  gone, in the repositories the caller may read.
+  gone, in the repositories the caller may read, and the edits that bring a memory's
+  text up to a rename its link followed.
 
 A memory with no link reads exactly as one whose code is current. `namespace.validate`
 counts the served memories that name code (a backticked or qualified name, a call, or
@@ -602,6 +656,53 @@ and only in an org that indexes a repository; a raw tool observation, which is n
 linked, is not counted. How far each repository's links trail its
 index is a gauge, and a health warning when it lasts
 ([monitoring](../operations/monitoring.md#what-to-alert-on)).
+
+A `moved` link is at its code, and the memory's text may still name the old definition or
+path. `namespace.validate` lists each memory whose text does under the `info` finding
+`code_rename_edits`, with either the `edits` its text allows (replace `old` with `new`
+from `start` to `end`, counted in Unicode code points of the text, where the text reads
+`old`) and the `content_sha256` they are of, or the one `reason` no edit is offered. The finding's `totals` count the memories by `edits` and by reason. Loom
+writes nothing: to apply an edit, read the sentence it changes, then call `memory.update`
+on the key with the revised text and `if_match_sha256` set to the listed hash. That is a
+revision by the caller, with its conflict check, and it is refused when the memory changed
+after the report read it. The link pass then links the revised memory where the code is.
+
+An edit is offered only for a name written as code (a whole backticked identifier, an
+`A::b`, or a call written `a.b(` or `name()`) and for a whole repository path, in the
+spelling the text uses: `Reader.get` becomes `Reader.fetch`, a full dotted name becomes the
+full new one, and `self.get` keeps its receiver. The whole memory gets no edit for the
+first of these reasons that applies:
+
+| Reason                   | The memory                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `not_text`               | has a value that is not one string.                                                                                                                                                                                                                                                                                                                                                                             |
+| `link_not_settled`       | has a link that is pending, `changed`, `unresolved` or `missing`, that its renamed class carried, or that is hashed under older fingerprint rules.                                                                                                                                                                                                                                                              |
+| `incomplete`             | names more code than the link caps keep.                                                                                                                                                                                                                                                                                                                                                                        |
+| `overloaded`             | is linked to a definition the index numbers among several of one name.                                                                                                                                                                                                                                                                                                                                          |
+| `quoted_or_literal`      | holds the old name or path in a fenced block, a URL, a quoted string or a backticked span that is more than one name.                                                                                                                                                                                                                                                                                           |
+| `prose_occurrence`       | writes the old name as a bare word of the prose.                                                                                                                                                                                                                                                                                                                                                                |
+| `old_name_remains`       | would still hold the old name or path where no edit reaches: a plain word, a part of a longer name, a longer name written as code that names no definition on the indexed trunk (`conn.read_rows()`), the dotted module the definition left (two segments or more) outside a name written as code that names a definition on the indexed trunk, a path before a line number, or a path whose file still exists. |
+| `names_several`          | writes one name that two of its links were written against.                                                                                                                                                                                                                                                                                                                                                     |
+| `receiver_form`          | writes the name as `self.name`, `cls.name` or `this.name`, and its `files` do not name the defining file.                                                                                                                                                                                                                                                                                                       |
+| `old_name_still_defined` | spells the old name in a way that still names a definition on the indexed trunk.                                                                                                                                                                                                                                                                                                                                |
+| `new_name_present`       | already holds the new name or path.                                                                                                                                                                                                                                                                                                                                                                             |
+| `dated_claim`            | is dated (`valid_to`, `invalid_at` or `temporal_anchor`), or the sentence to edit holds a commit hash, a version tag, a year, a month (`May` only capitalised after another word), or a pull request or issue number.                                                                                                                                                                                           |
+| `about_naming`           | would be edited in a sentence about the name or the place: it holds `name`, `names`, `named`, `naming`, a word that starts with `renam` or `alias`, `called`, `formerly`, `used to`, `replaced`, `moved from`, `deprecated`, `legacy`, `before` or `previously`.                                                                                                                                                |
+| `named_in_key_or_tags`   | holds the old name or path in its `memory_key` or a tag.                                                                                                                                                                                                                                                                                                                                                        |
+| `named_in_files`         | lists the old path in `files`, which `memory.update` keeps.                                                                                                                                                                                                                                                                                                                                                     |
+| `would_unlink`           | would lose a link once revised: the new name is not one definition on the indexed trunk, or the revised text no longer names a definition or file it is linked to.                                                                                                                                                                                                                                              |
+
+A memory whose text names no old name or path is not listed, whatever its links, key, tags
+and `files` say: its bare name still holds after a move, or the link is back where the text
+says. A sentence ends after `.`, `!` or `?` and a space (not after a one-letter abbreviation
+such as `e.g.`), at a blank line and before a list item; a line break alone does not end
+one. The words that mark a sentence as
+being about the name are English, and `call` or `calls` is not one: it is read as calling
+the code. The finding reads the 2,000 memories whose `moved` link was last checked (all
+under `keys` when given), in the repositories the caller may read, and no high-sensitivity
+memory; a link whose code also changed is listed under `code_links_stale`. Neither the
+memory's key, tags, `files`, entities and concepts nor a line number written in its text
+is edited.
 
 ## Time
 

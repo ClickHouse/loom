@@ -1,102 +1,75 @@
 ---
-import { Panel } from "@clickhouse/click-ui/Panel";
-import { Table } from "@clickhouse/click-ui/Table";
-import { Text } from "@clickhouse/click-ui/Text";
-import { Title } from "@clickhouse/click-ui/Title";
-import AdoptionTrend from "./AdoptionTrend.astro";
+import type { ChartGrain } from "../lib/adoption-chart-series.mjs";
+import { activityPoints } from "../lib/adoption-chart-series.mjs";
+import AdoptionMetricPair from "./AdoptionMetricPair.astro";
 
 interface Props {
   rows: {
     period: string;
     operations: number;
     active: number;
-    reporting: number;
-    estimate: number | null;
     days_reported: number;
+    complete_days_reported?: number;
     current: boolean;
+    active_accounts?: number | null;
+    accounts_days_reported?: number;
+    serving_processes?: number | null;
+    processes_days_reported?: number;
   }[];
-  grain: "day" | "week" | "month";
+  grain: ChartGrain;
+  rangeStart?: string;
+  rangeEnd?: string;
+  view: "activity" | "accounts" | "requests";
+  showProcesses?: boolean;
 }
 
-const { rows, grain } = Astro.props;
-const number = new Intl.NumberFormat("en-US");
-const hasActivity = rows.some(({ active, operations }) => active > 0 || operations > 0);
-const hasEstimate = rows.some(({ estimate, operations }) => estimate !== null && estimate > operations);
-const hasCurrentPeriod = rows.some(({ current }) => current);
-const columns = [
-  "Period start (UTC)",
-  "Reporting installations",
-  "Active installations",
-  "Successful requests",
-  ...(hasEstimate ? ["Projected requests"] : []),
-  "Days reported",
-];
+const { rows, grain, rangeStart, rangeEnd, view, showProcesses } = Astro.props;
+const accountPoints = activityPoints(rows, "active_accounts", grain, "accounts_days_reported");
+const processPoints = activityPoints(rows, "serving_processes", grain, "processes_days_reported");
 ---
 
-{hasActivity ? <>
-<Text className="activity-guide" size="sm" color="muted">
-  Counts use completed UTC days.{grain !== "day" && " Charts show periods that begin within the selected window."}
-  {" Gaps indicate periods without a report."}
-  {hasCurrentPeriod && " Hollow markers show activity to date in the current period."}
-</Text>
-<div class="charts">
-  <Panel className="chart" orientation="vertical" alignItems="start" padding="lg" gap="none" hasBorder fillWidth>
-    <Title type="h3" size="sm">Active installations</Title>
-    <Text size="sm" color="muted">Distinct installations with a successful request.</Text>
-    <AdoptionTrend
-      rows={rows.map(({ period, active, current }) => ({ day: period, value: active, current }))}
-      label="Active installations"
-      grain={grain}
-      mode="line"
-      color="info"
-      showNotes={false}
-      showTable={false}
-    />
-  </Panel>
-  <Panel className="chart" orientation="vertical" alignItems="start" padding="lg" gap="none" hasBorder fillWidth>
-    <Title type="h3" size="sm">Successful requests</Title>
-    <Text size="sm" color="muted">Successful requests across reporting installations.</Text>
-    <AdoptionTrend
-      rows={rows.map(({ period, operations, current }) => ({ day: period, value: operations, current }))}
-      label="Successful requests"
-      grain={grain}
-      mode="line"
-      showNotes={false}
-      showTable={false}
-    />
-  </Panel>
-</div></> : (
-  <Text size="sm" color="muted">The reporting installations recorded no successful requests in these periods.</Text>
-)}
-
-<details class="data" open={!hasActivity}>
-  <summary>View installation and request data</summary>
-  <Table
-    aria-label="Installation and request data"
-    size="sm"
-    mobileLayout="scroll"
-    headers={columns.map((label) => ({ label, scope: "col" }))}
-    rows={rows.map(({ period, reporting, active, operations, estimate, days_reported, current }) => ({
-      id: period,
-      items: [
-        period + (current ? " to date" : ""),
-        number.format(reporting),
-        number.format(active),
-        number.format(operations),
-        ...(hasEstimate ? [estimate === null ? "—" : number.format(estimate)] : []),
-        days_reported,
-      ].map((label) => ({ label })),
-    }))}
+{view === "activity" && (
+  <AdoptionMetricPair
+    label="Active installations"
+    description="Distinct installations with a successful request."
+    rows={activityPoints(rows, "active", grain)}
+    {grain}
+    kind="gauge"
+    axisStart={rangeStart}
+    axisEnd={rangeEnd}
   />
-</details>
-
-<style>
-  .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem; }
-  .chart { min-inline-size: 0; }
-  .chart p { margin-block-start: 0.3rem; }
-  @media (min-width: 46.01rem) and (max-width: 58rem) { .chart p { min-block-size: 2lh; } }
-  :global(.activity-guide) { margin-block-end: 0.7rem; }
-  .data { margin-block-start: 0.75rem; }
-  summary { cursor: pointer; padding-block: 0.55rem; color: var(--click-global-color-text-link-default); font-size: 0.86rem; }
-  @media (max-width: 46rem) { .charts { grid-template-columns: minmax(0, 1fr); } }
-</style>
+)}
+{view === "requests" && (
+  <AdoptionMetricPair
+    label="Successful requests"
+    rows={activityPoints(rows, "operations", grain)}
+    {grain}
+    growthLabel="Cumulative requests"
+    growthFirst
+    axisStart={rangeStart}
+    axisEnd={rangeEnd}
+  />
+)}
+{view === "accounts" && (
+    <AdoptionMetricPair
+      label="Active users"
+      description="Authenticated users with successful requests, including service identities."
+      observedLabel={grain === "day" ? "Daily total" : "Peak daily total"}
+      rows={accountPoints}
+      {grain}
+      kind="gauge"
+      axisStart={rangeStart}
+      axisEnd={rangeEnd}
+    />
+  )}
+{view === "activity" && (showProcesses || processPoints.length > 0) && (
+    <AdoptionMetricPair
+      label="Serving processes"
+      description="Processes that handled successful requests. Restarts and workers can contribute."
+      rows={processPoints}
+      {grain}
+      kind="gauge"
+      axisStart={rangeStart}
+      axisEnd={rangeEnd}
+    />
+  )}
