@@ -147,6 +147,7 @@ const headers = [
     try {
       const response = await fetch(section.dataset.refreshUrl, {
         method: "POST",
+        headers: { "X-Loom-Adoption-Fragment": "domains" },
         body: new URLSearchParams(section.dataset.refreshParams),
         signal: AbortSignal.timeout(40_000),
       });

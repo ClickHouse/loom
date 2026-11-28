@@ -20,6 +20,7 @@ from server.workers import pass_context, status_store
 
 _COLLECTOR_URL = "https://loom.clickhouse.com/api/v1/adoption"
 _WINDOW = timedelta(hours=12)
+# not a setting: the collector accepts only five-minute snapshot timestamps.
 SNAPSHOT_INTERVAL_SECONDS = 300
 # not a setting: the collector accepts reports up to one MiB.
 _MAX_REPORT_BYTES = 1_048_576

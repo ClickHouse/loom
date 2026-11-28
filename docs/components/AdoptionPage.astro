@@ -25,15 +25,16 @@ import AdoptionFilterForm from "./AdoptionFilterForm.astro";
 import AdoptionGrowth from "./AdoptionGrowth.astro";
 import AdoptionLifecycle from "./AdoptionLifecycle.astro";
 import AdoptionMetricPair from "./AdoptionMetricPair.astro";
+import AdoptionOverviewStat from "./AdoptionOverviewStat.astro";
 import AdoptionPicker from "./AdoptionPicker.astro";
 import AdoptionTrend from "./AdoptionTrend.astro";
 import AdoptionState from "./AdoptionState.astro";
 import AdoptionUsageTrends from "./AdoptionUsageTrends.astro";
 import SiteFrame from "./SiteFrame.astro";
 
-type Props = Exclude<Awaited<ReturnType<typeof readAdoptionPage>>, Response>;
+type Props = Exclude<Awaited<ReturnType<typeof readAdoptionPage>>, Response> & { directoryRefresh?: boolean };
 
-const { tab, path, params, filters, today, selfHosted, events, lifecycle, oss } = Astro.props;
+const { tab, path, params, filters, today, selfHosted, events, lifecycle, oss, directoryRefresh } = Astro.props;
 const { days, grain } = filters;
 const cutoff = daysBefore(today, days);
 const lastDay = daysBefore(today, 1);
@@ -64,18 +65,19 @@ const accountReports = dailyActivityForRange(selfHosted.activity, "active_accoun
 const firstAccounts = accountReports[0];
 const latestAccounts = accountReports.at(-1);
 const latestInstances = dailyActivityForRange(selfHosted.activity, "serving_processes", cutoff, today).at(-1);
+const activeDomains = {
+  id: "adoption-active-domains",
+  label: "Active domains",
+  value: directoryNames?.length,
+  note:
+    directoryNames == null
+      ? "Directory unavailable"
+      : directoryDays === days
+        ? "With successful requests"
+        : `${directoryDays}-day directory`,
+};
 const overview = [
-  {
-    id: "adoption-active-domains",
-    label: "Active domains",
-    value: directoryNames?.length,
-    note:
-      directoryNames == null
-        ? "Directory unavailable"
-        : directoryDays === days
-          ? "With successful requests"
-          : `${directoryDays}-day directory`,
-  },
+  activeDomains,
   {
     label: "Active users",
     value: latestAccounts?.active_accounts,
@@ -191,8 +193,21 @@ const state = Object.fromEntries(
     domain_page: Math.min(Number.MAX_SAFE_INTEGER, Math.max(1, Math.floor(Number(input("domain_page"))) || 1)),
   }).filter((entry): entry is [string, string | number] => entry[1] !== undefined),
 );
+const directory = {
+  names: directoryNames,
+  ranked: directoryIsRanked,
+  metrics: directoryMetrics,
+  days: directoryDays,
+  fallback: directoryFallback,
+  path,
+  state,
+};
 ---
 
+{directoryRefresh ? <>
+  <AdoptionOverviewStat {...activeDomains} value={showCount(activeDomains.value)} />
+  <AdoptionDomainDirectory {...directory} />
+</> : (
 <SiteFrame
   title={tab === "oss" ? "Open Source Adoption | ClickHouse Loom" : "Self-hosted Adoption | ClickHouse Loom"}
   description={tab === "oss" ? "Follow Loom SDK downloads, repository activity, and release distribution." : "Explore self-hosted Loom adoption, active domains, and feature usage."}
@@ -222,16 +237,11 @@ const state = Object.fromEntries(
     {tab === "self-hosted" ? <>
       <section aria-label="Self-hosted adoption overview" class="overview">
         <div class="metrics">
-          {overview.map(({ id, label, value, note }) => (
-            <Panel {id} className="adoption-stat" orientation="vertical" alignItems="start" padding="md" gap="xs" hasBorder fillWidth>
-              <BigStat className="metric-value" height="auto" order="titleBottom" size="lg" {label} title={showCount(value)} />
-              <Text size="sm" color="muted">{note}</Text>
-            </Panel>
-          ))}
+          {overview.map((stat) => <AdoptionOverviewStat {...stat} value={showCount(stat.value)} />)}
         </div>
         <div class="coverage">
           {summary?.last_reported === today && <Text size="sm" color="muted">Totals include completed reporting windows today.</Text>}
-          {observation && <Text size="sm" color="muted">Earliest retained report {showDay(observation.day)} UTC</Text>}
+          {observation && <Text size="sm" color="muted">Earliest retained report {showDay(observation.day)} UTC · Loom {observation.loom_version} · ClickHouse {observation.clickhouse_version}</Text>}
           <Link size="sm" href="/telemetry">Telemetry definitions</Link>
         </div>
       </section>
@@ -263,15 +273,7 @@ const state = Object.fromEntries(
             />}
       </section>
 
-      <AdoptionDomainDirectory
-        names={directoryNames}
-        ranked={directoryIsRanked}
-        metrics={directoryMetrics}
-        days={directoryDays}
-        fallback={directoryFallback}
-        {path}
-        {state}
-      />
+      <AdoptionDomainDirectory {...directory} />
 
       <section class="adoption-section" aria-labelledby="activity-title" id="activity">
         <div class="section-heading">
@@ -448,6 +450,7 @@ const state = Object.fromEntries(
     </div>
   </div>
 </SiteFrame>
+)}
 
 <style>
   :global(#content):has(> .adoption) { padding-block-start: clamp(1.5rem, 3.8vw, 3.5rem); }

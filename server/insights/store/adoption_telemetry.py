@@ -140,7 +140,8 @@ _SNAPSHOT_READ_LIMITS = {
     "read_overflow_mode": "throw",
 }
 _READ_LIMIT_CODES = (158, 307, 396)  # TOO_MANY_ROWS, TOO_MANY_BYTES, TOO_MANY_ROWS_OR_BYTES
-_MAX_SNAPSHOT_DOMAINS = 2000  # With domain names capped at 253 bytes, this fits in one MiB.
+# not a setting: the collector accepts at most 2,000 domains per snapshot.
+_MAX_SNAPSHOT_DOMAINS = 2000
 _LIVE_DOMAINS_SQL = f"""
 SELECT * FROM ({DAILY_DOMAIN_ACTIVITY_SQL})
 ORDER BY successful_requests DESC, domain

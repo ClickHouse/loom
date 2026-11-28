@@ -93,7 +93,7 @@ use the selected reporting period.
 
 Apply [warehouse.sql](warehouse.sql) and grant `SELECT` on the listed views before
 updating the saved Query API query. Deploy the collector before releasing workers
-that send version 3. Publishing the site does not run the warehouse changes.
+that send live snapshots. Publishing the site does not run the warehouse changes.
 When a version 2 sender has already delivered the final window of a UTC day,
 version 3 measurements start with the next completed day.
 
