@@ -37,8 +37,9 @@ async def search(
     rerank_endpoint: str = "",
     embedder: Any = None,
     abstain_threshold: float = 0.30,
+    noise_floor: float = 0.22,
     # the cosine of a confident hit for this embedder; with `abstain_threshold`, the
-    # scale the calibration reads the vector leg's best cosine on
+    # scale `retrieval_confidence` reads the vector leg's best cosine on
     confident_similarity: float = 0.62,
     extra_terms: list[str] | None = None,
     bodies: str = "auto",
@@ -133,9 +134,14 @@ async def search(
         )
         return result
 
-    # Calibration reads the legs' own rows, before any prior
+    # Calibration reads the legs' own order, before any prior: the lexical leg's first
+    # rows, which differ from its pool when it cut the pool on the path penalties
+    cut = st.lexical_head != st.lexical_rows
     legs_agree = _calibrate(
         st,
+        _fuse(st, st.lexical_head)[0] if cut else fused,
+        run_vector=st.run_vector,
+        noise_floor=noise_floor,
         abstain_threshold=abstain_threshold,
         confident_similarity=confident_similarity,
     )

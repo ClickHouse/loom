@@ -360,7 +360,7 @@ async def _warm(args: argparse.Namespace) -> int:
     embedder = get_embedder()
     override = settings.code_ask_llm_model
     llm = get_llm_client_for_model(override) if override else get_llm_client()
-    abstain_threshold, confident_similarity = await resolve_code_thresholds(org, ns)
+    abstain_threshold, noise_floor, confident_similarity = await resolve_code_thresholds(org, ns)
 
     hits = misses = abstains = 0
     for i, q in enumerate(questions, 1):
@@ -375,6 +375,7 @@ async def _warm(args: argparse.Namespace) -> int:
                 "top_k": 10,
                 "token_budget": settings.code_ask_token_budget,
                 "abstain_threshold": abstain_threshold,
+                "noise_floor": noise_floor,
                 "confident_similarity": confident_similarity,
             },
         )

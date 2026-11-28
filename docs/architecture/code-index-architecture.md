@@ -628,8 +628,9 @@ with the largest `penalty / (60 + rank)` instead:
   pool, where `f` is the smallest factor a path can get: 2,912 rows for the default
   penalties together, 980 for the prose penalty alone, at most 10,000.
 - **Calibration does not read the cut.** The statement also returns the leg's own
-  first 200 rows, and leg agreement and abstention are computed on those, as without
-  the penalties. A penalty reaches them only as the order of rows with one score.
+  first 200 rows, and leg agreement, the top similarity and abstention are computed on
+  those, as without the penalties. A penalty reaches them only as the order of rows
+  with one score.
 
 The vector leg and the concept leg are not cut.
 
@@ -642,20 +643,26 @@ the rows (`code/domain/index/search_confidence.py`, `code/app/search/calibrate.p
   embedder's boot calibration, else `LOOM_LLM_RERANK_SKIP_ABOVE`), 1 at that cosine.
   An absolute cosine is not comparable across embedding models: one scores unrelated
   text 0.2, another 0.7.
-- **What it separates.** A question about another repository or another subject
-  scores near 0. A question the index can answer scores near 1.
+- **What it separates.** A question the index can answer usually scores near 1, and
+  one about another repository or another subject usually scores lower. It is a
+  tendency, not a rule: measured on issue prompts with one embedding model, the median
+  prompt sent to another repository's index scored 0.30 and about one in five still
+  read `low`.
 - **What it does not separate.** Among questions the index can answer, a result that
   holds the file to change and one that does not score alike. A high confidence is
   not evidence that the first result is the right one.
 - **No cosine.** A search with no vector leg (no embedder, a lexical-only request, a
-  failed leg) reads 0.5: it never abstains on a similarity nobody measured and never
-  reads `low`.
+  failed leg) reads 0.5, which never bands `low`.
+- **Not abstention.** Abstention is decided apart from the confidence, on the fused
+  list: its top cosine under the abstain threshold (`below_threshold`), or a
+  route-aware score (that cosine, its margin over the second hit, route agreement and
+  the pool size) under `LOOM_CODE_SEARCH_ABSTAIN_CONFIDENCE_BELOW`
+  (`low_calibrated_confidence`).
 
-`retrieval_risk` bands the confidence: `abstain` below
-`LOOM_CODE_SEARCH_ABSTAIN_CONFIDENCE_BELOW` (0.15) or when the best cosine is under the
-abstain threshold, `medium` from `LOOM_CODE_SEARCH_MEDIUM_RISK_FROM` (0.35), `low` from
-`LOOM_CODE_SEARCH_LOW_RISK_FROM` (0.70), `high` between. `route_agreement` is reported
-beside it and is not part of it.
+`retrieval_risk` bands the confidence of a result the search does not abstain on:
+`high` below `LOOM_CODE_SEARCH_MEDIUM_RISK_FROM` (0.35), `medium` from it, `low` from
+`LOOM_CODE_SEARCH_LOW_RISK_FROM` (0.70). It reads `abstain` when the search abstains.
+`route_agreement` is reported beside the confidence and is not part of it.
 
 After relevance ranking, per-file saturation spreads broad search results across
 files. It is skipped for an explicit path, a symbol route, test intent, or a

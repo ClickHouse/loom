@@ -1988,8 +1988,8 @@ Semantic search over the agent's own memory.
 | `retrieval_confidence` | `float` | Calibrated confidence in the hit set, 0 to 1, from top similarity, top-two margin, route agreement and result count; 0 on no hits. |
 | `retrieval_risk` | `Literal['low', 'medium', 'high', 'abstain']` | Risk label from `retrieval_confidence`: "low" (>= 0.75), "medium" (>= 0.55), "high" (below), "abstain" (below the abstain thresholds). |
 | `term_leg` | `Literal['complete', 'empty', 'capped', 'timed_out', 'failed', 'off']` | What the term leg did: "complete"; "empty" (the namespace holds no definition); "capped" or "timed_out" past its bounds; "failed" (a read failed, so no definition was served); "off" (a page handle or a field asking for other rows turned it… |
-| `route_agreement` | `float` | Share of the retrieval routes that ran (semantic, graph, triples, evidence) that also found support, 0 to 1. |
-| `calibration_explanation` | `str` | The inputs behind `retrieval_confidence`: top_similarity, margin, route_agreement, evidence_support. |
+| `route_agreement` | `float` | Share of the retrieval routes that ran (semantic, graph, triples, evidence, extra legs) that also found support, 0 to 1. |
+| `calibration_explanation` | `str` | The inputs behind `retrieval_confidence`: top_similarity, margin, route_agreement, evidence_support (and constrained=true when set). |
 | `fallback_rounds_used` | `int` | Recursive-fallback cascade accounting (iterative-judge). rounds_used = rounds spent (capped at LOOM_MEMORY_SEARCH_FALLBACK_MAX_ROUNDS); budget_exhausted = a leg was denied by the round/wall-clock cap; elapsed_ms = wall-clock in the cascade. |
 | `fallback_budget_exhausted` | `bool` | True when a fallback leg was denied by the round or wall-clock cap. |
 | `fallback_elapsed_ms` | `int` | Wall-clock milliseconds spent in the fallback cascade. |

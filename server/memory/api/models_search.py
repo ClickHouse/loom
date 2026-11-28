@@ -830,11 +830,11 @@ class MemorySearchOutput(BaseModel):
     # was served); "off" (a page handle or a field asking for other rows turned it off).
     # `retrieval_confidence` and `retrieval_risk` describe the hits that are not governed.
     term_leg: TermLegStatus = "off"
-    # Share of the retrieval routes that ran (semantic, graph, triples, evidence)
-    # that also found support, 0 to 1.
+    # Share of the retrieval routes that ran (semantic, graph, triples, evidence,
+    # extra legs) that also found support, 0 to 1.
     route_agreement: float = 0.0
     # The inputs behind `retrieval_confidence`: top_similarity, margin,
-    # route_agreement, evidence_support.
+    # route_agreement, evidence_support (and constrained=true when set).
     calibration_explanation: str = ""
     # Recursive-fallback cascade accounting (iterative-judge). rounds_used =
     # rounds spent (capped at

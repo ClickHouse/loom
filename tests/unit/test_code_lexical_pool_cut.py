@@ -302,15 +302,16 @@ def test_calibration_reads_the_leg_s_own_order_and_the_ranking_reads_the_pool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The prose row is the leg's second row and the vector leg's second, so the legs
-    agree, as without the cut. It lost its pool slot, so it is ranked on its vector vote
-    alone; read from the pool, no row would be in both legs. The top similarity is the
-    vector leg's best cosine, whatever the fusion puts first."""
+    agree and it leads the fusion calibration reads (top similarity 0.7, its own), as
+    without the cut. It lost its pool slot, so it is ranked on its vector vote alone;
+    fused from the pool, the vector leg's first row would lead (0.8) and no row would
+    be in both legs."""
     monkeypatch.setattr(settings, "code_search_pr_leg", "off")
     res = asyncio.run(
         search(_Repo(_CUT_ROWS), "o", "n", query=_IMPLEMENTATION, embedder=_Embedder(), top_k=5)  # type: ignore[arg-type]
     )
     assert "legs_agree=True" in res.score_explanation
-    assert res.top_similarity == 0.8
+    assert res.top_similarity == 0.7
     assert "(lexical=3, vector=2)" in res.score_explanation
     found = {u.unit_id: (u.via, u.lexical_rank, u.vector_rank) for u in res.units}
     assert found == {

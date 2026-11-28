@@ -274,10 +274,12 @@ generated from the same schemas.
 - **`retrieval_risk`** (`low`, `medium`, `high`, `abstain`) bands
   `retrieval_confidence`, the search's estimate that the index holds an answer to the
   question. `low`: the best semantic match is about as close as a confident hit for
-  the embedding model. `high` and `abstain`: it is little closer than unrelated text,
-  as for a question about another repository. A search with no semantic leg reads
-  `medium`. The band does not say which result is right: verify the results at any
-  band ([how it is computed](../../architecture/code-index-architecture.md#query-patterns)).
+  the embedding model. `high`: it is little closer than unrelated text, as is usual
+  for a question about another repository, though some of those still read `low`. A
+  search with no semantic leg reads `medium`. `abstain`: the search abstained, which
+  it decides apart from the confidence (`abstain_code` says why). The band does not
+  say which result is right: verify the results at any band
+  ([how it is computed](../../architecture/code-index-architecture.md#query-patterns)).
 - **Coverage is a floor.** `coverage_floor: true` means the index holds every chunk the
   chunker admitted, not every byte. Files over `LOOM_CODE_INGEST_MAX_FILE_BYTES`,
   vendored and generated trees, and excluded paths are absent. An empty grep does not

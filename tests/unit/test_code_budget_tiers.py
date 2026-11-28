@@ -96,6 +96,7 @@ def test_code_ask_token_budget_defaults_to_setting_and_honours_caller():
             CodeAskInput(org="o", namespace="ns", question="how do merges pick parts?"),
             0.5,
             0.1,
+            0.62,
         )
         caller_kw = _ask_search_kwargs(
             CodeAskInput(
@@ -106,10 +107,12 @@ def test_code_ask_token_budget_defaults_to_setting_and_honours_caller():
             ),
             0.5,
             0.1,
+            0.62,
         )
     assert default_kw["token_budget"] == 4000
     assert caller_kw["token_budget"] == 1500
-    assert default_kw["abstain_threshold"] == 0.5 and default_kw["confident_similarity"] == 0.1
+    assert default_kw["abstain_threshold"] == 0.5 and default_kw["noise_floor"] == 0.1
+    assert default_kw["confident_similarity"] == 0.62
     # The response reports what synthesis saw, not what the caller asked for.
     from server.code.api.models_search import CodeAskOutput
 

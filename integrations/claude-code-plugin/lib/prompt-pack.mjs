@@ -191,11 +191,13 @@ export function searchBody(repo, prompt, { topK = 3, token } = {}) {
 /** Gate on the index's own verdict, not on the caller's optimism: the answer
  *  it labels low-risk (`retrieval_risk`, banded by the deployment's own
  *  settings), or `minConfidence` when the caller names one. Low risk says the
- *  index holds code about the prompt: a question about another repository
- *  almost never reads it. It does not say the pointers are the right ones: a
- *  file to change was among the first three for about two prompts in three.
- *  The model re-reads the pointers on every later request, so a medium or
- *  high risk sends none. */
+ *  index probably holds code about the prompt: a prompt about another
+ *  repository usually reads medium or high, and about one in five still read
+ *  low. It does not say the pointers are the right ones: a file to change was
+ *  among the first three for about two prompts in three. A search with no
+ *  semantic leg (no embedding model, a failed leg) reads medium. The model
+ *  re-reads the pointers on every later request, so a medium or high risk
+ *  sends none. */
 export function accept(res, minConfidence = null) {
   if (!res || res.abstain) return false;
   if (!Array.isArray(res.results) || !res.results.length) return false;

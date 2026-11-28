@@ -153,25 +153,15 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
     ),
     DefaultChange(
         version="1.3.1",
-        name="code_search_abstain_confidence_below",
-        old=0.35,
-        new=0.15,
-        why=(
-            "code.search confidence is computed on a new scale: the best cosine read "
-            "between the embedder's calibrated abstain threshold and its cosine of a "
-            "confident hit. A question the index cannot answer scores near 0. A "
-            "deployment that set the variable for the old scale should unset it."
-        ),
-    ),
-    DefaultChange(
-        version="1.3.1",
         name="code_search_medium_risk_from",
         old=0.4,
         new=0.35,
         why=(
-            "On the new code.search confidence scale most questions about another "
-            "repository score under 0.35. A deployment that set the variable for the "
-            "old scale should unset it."
+            "code.search's `retrieval_confidence` is computed on a new scale: the vector "
+            "leg's best cosine read between the embedder's calibrated abstain threshold "
+            "and its cosine of a confident hit. On it about nine in ten measured prompts "
+            "about other code scored under 0.35. A deployment that set the variable for "
+            "the old scale should unset it."
         ),
     ),
     DefaultChange(
@@ -180,9 +170,11 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         old=0.55,
         new=0.7,
         why=(
-            "On the new code.search confidence scale low risk starts above what a "
-            "question about another repository scores. A deployment that set the "
-            "variable for the old scale should unset it."
+            "On the new `retrieval_confidence` scale low risk starts close to the cosine "
+            "of a confident hit. A prompt about other code usually scores lower; about "
+            "one in five sent to another repository's index still read low. A deployment "
+            "that set the variable for the old scale should unset it, and one that set "
+            "the plugins' `LOOM_PROMPT_PACK_MIN_CONF` should pick a value on the new scale."
         ),
     ),
 )

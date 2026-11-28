@@ -29,6 +29,7 @@ from server.code.domain.search_scope import (
 )
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
+from server.memory.domain.retrieval_calibration import calibrate_retrieval
 from server.settings import settings
 
 # ---- glob converter ----------------------------------------------------------
@@ -306,7 +307,9 @@ def test_pattern_skips_the_symbol_route_and_constrains_both_legs() -> None:
     assert "constrained=pattern" in res.score_explanation
     assert "matched_files=12" in res.score_explanation
     assert res.retrieval_work["scope_count_queries"] == 1
-    assert "constrained=true" in res.calibration_explanation
+    assert res.calibration_explanation == (
+        "best_cosine=0.80, abstain_threshold=0.30, confident_similarity=0.62, constrained=true"
+    )
 
 
 def test_too_broad_pattern_is_refused_before_any_scan() -> None:
@@ -345,6 +348,21 @@ def test_path_filters_alone_skip_the_count_and_suffix_scoped() -> None:
     assert "count" not in repo.calls
     assert res.constrained and res.route.endswith("+scoped")
     assert "constrained=langs" in res.score_explanation
+
+
+# ---- calibration flag -----------------------------------------------------------
+
+
+def test_constrained_calibration_does_not_read_a_small_pool_as_thin() -> None:
+    plain = calibrate_retrieval(top_similarity=0.6, result_count=2, abstain_threshold=0.3)
+    constrained = calibrate_retrieval(
+        top_similarity=0.6, result_count=2, abstain_threshold=0.3, constrained=True
+    )
+    assert constrained.confidence > plain.confidence
+    assert "constrained=true" in constrained.explanation
+    assert "constrained" not in plain.explanation
+    empty = calibrate_retrieval(top_similarity=0.0, result_count=0, constrained=True)
+    assert empty.risk == "abstain" and "constraint" in empty.explanation
 
 
 # ---- memo key ------------------------------------------------------------------

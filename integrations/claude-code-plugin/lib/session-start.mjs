@@ -253,9 +253,8 @@ const CODE_ARBITRATION =
   "loom_code_impact for a change's effects.\n" +
   "- If the needed tool is deferred, discover it with the client's tool search (ToolSearch in Claude Code). " +
   "A definition does not supply its callers; retrieve the missing evidence for the question.\n" +
-  "- A definition, callers or impact answer a hook already supplied: use it, and Read only a returned span " +
-  "to verify it. Search pointers a hook sent are candidates: Read one to check it, and search when none " +
-  "holds what the task needs. Skip retrieval for self-contained tasks.\n" +
+  "- If a hook already supplied the answer, use it; do not repeat the lookup. Read only a returned span " +
+  "to verify it. Skip retrieval for self-contained tasks.\n" +
   "- Explicit local-tool requests, uncommitted changes and unindexed files: use local grep/Read. " +
   "A code question quoting an identifier or error is still a code investigation. If Loom is " +
   "unavailable or abstains, use a targeted local lookup and name the limitation.\n" +

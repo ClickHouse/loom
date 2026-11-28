@@ -30,6 +30,20 @@ def calibrate_retrieval(
     triples_matched: int = 0,
     evidence_support_count: int = 0,
     abstain_threshold: float = 0.30,
+    # Additional independent retrieval routes beyond the built-in graph/
+    # triple/evidence slots — the code plane counts its lexical and
+    # fuzzy-symbol legs here. Votes are capped to possible.
+    extra_route_votes: int = 0,
+    extra_routes_possible: int = 0,
+    # A pool narrowed by a caller-supplied predicate (code.search `pattern`
+    # / path filters) is small by construction: the count
+    # term saturates and the explanation says so, so a three-chunk pool
+    # that matches the pattern is not read as thin retrieval.
+    constrained: bool = False,
+    # The confidence below which the result is flagged
+    # `abstain`. 0.35 is the memory plane's cut-off; the code plane passes
+    # its own setting.
+    confidence_abstain_below: float = 0.35,
 ) -> RetrievalCalibration:
     """Return calibrated confidence and risk label for a search result set."""
 
@@ -38,7 +52,11 @@ def calibrate_retrieval(
             confidence=0.0,
             risk="abstain",
             route_agreement=0.0,
-            explanation="no results survived retrieval filters",
+            explanation=(
+                "no chunk matched the constraint (pattern / path filters)"
+                if constrained
+                else "no results survived retrieval filters"
+            ),
         )
 
     margin = max(0.0, top_similarity - second_similarity)
@@ -55,16 +73,19 @@ def calibrate_retrieval(
     if evidence_support_count:
         route_possible += 1
         route_votes += 1
+    if extra_routes_possible > 0:
+        route_possible += extra_routes_possible
+        route_votes += min(extra_route_votes, extra_routes_possible)
 
     route_agreement = route_votes / max(route_possible, 1)
     score = (
         0.55 * max(0.0, min(top_similarity, 1.0))
         + 0.20 * max(0.0, min(margin * 2.0, 1.0))
         + 0.20 * route_agreement
-        + 0.05 * min(result_count / 5.0, 1.0)
+        + 0.05 * (1.0 if constrained else min(result_count / 5.0, 1.0))
     )
     confidence = max(0.0, min(score, 1.0))
-    if top_similarity < abstain_threshold or confidence < 0.35:
+    if top_similarity < abstain_threshold or confidence < confidence_abstain_below:
         risk = "abstain"
     elif confidence < 0.55:
         risk = "high"
@@ -75,6 +96,7 @@ def calibrate_retrieval(
     explanation = (
         f"top_similarity={top_similarity:.2f}, margin={margin:.2f}, "
         f"route_agreement={route_agreement:.2f}, evidence_support={evidence_support_count}"
+        + (", constrained=true" if constrained else "")
     )
     return RetrievalCalibration(
         confidence=round(confidence, 3),

@@ -41,10 +41,7 @@ test("indexed code guidance starts with Loom and reuses answers supplied by hook
   assert.match(text, /Explicit local-tool requests/);
   assert.doesNotMatch(text, /Explicit literal-search requests/);
   assert.match(text, /quoting an identifier or error is still a code investigation/);
-  assert.match(text, /answer a hook already supplied: use it/);
-  // Search pointers hold a file to change for about two prompts in three: never "do not search".
-  assert.match(text, /pointers a hook sent are candidates.*search when none/);
-  assert.doesNotMatch(text, /do not repeat/);
+  assert.match(text, /hook already supplied.*do not repeat/);
   assert.match(text, /uncommitted.*local/);
   assert.match(text, /unavailable or abstains.*local/);
 });

@@ -276,7 +276,11 @@ local-only changes and self-contained requests. Ambiguous or empty typed answers
 not trigger another automatic lookup. Search pointers are sent only when
 the index labels its own answer low-risk (or, with `LOOM_PROMPT_PACK_MIN_CONF`
 set, from that confidence) and never when it abstains; they are candidates, and
-the text does not tell the model to stop searching. Supply a task inside `<issue>...</issue>` when a harness adds instructions;
+the text does not tell the model to stop searching. A search with no semantic leg
+reads `medium` (confidence 0.5), so it sends no search pointers: a server with no
+embedding model, or a vector leg that failed or missed its deadline.
+`LOOM_PROMPT_PACK_MIN_CONF=0.5` sends them there too, and then also for every
+indexed-code prompt whose confidence is 0.5 or more. Supply a task inside `<issue>...</issue>` when a harness adds instructions;
 the existing query helper extracts that block.
 
 Memory recall's default `first` mode makes one attempt on the first qualifying prompt,

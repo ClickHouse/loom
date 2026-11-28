@@ -294,7 +294,8 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
 
 Then:
 
-- `POST /v1/code.calibrate` (`ADMIN`) derives the code index's abstention thresholds from
+- `POST /v1/code.calibrate` (`ADMIN`) derives the code index's abstention thresholds, and
+  the confident-hit cosine at which `retrieval_confidence` reads 1.0, from
   `bench/fixtures/code_calibration_probes.jsonl` (shipped in the image).
 - `loom code describe --top-pct 20` (optional, LLM cost) writes one-line descriptions for
   the most central chunks.

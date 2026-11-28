@@ -1760,18 +1760,19 @@ class CodeSettings(BaseModel):
     # A prose question whose nearest file card's cosine is below this
     # abstains `off_domain`; independent of the card leg. 0 = off.
     code_search_abstain_card_below: float = 0.0
-    # code.search confidence below which a result is flagged
-    # `low_calibrated_confidence` (still returned): the best cosine sits where a
-    # question about another repository does.
-    code_search_abstain_confidence_below: float = 0.15
-    # The code.search confidence from which a result reads `retrieval_risk`
-    # "medium"; below it the result reads "high": most questions about another
-    # repository score under it.
+    # The abstain score below which a code.search result is flagged
+    # `low_calibrated_confidence` (still returned). The score is not
+    # `retrieval_confidence`: it blends the top cosine, its margin over the second
+    # hit, route agreement and the pool size. The deployment sets 0.30.
+    code_search_abstain_confidence_below: float = 0.35
+    # The `retrieval_confidence` from which a code.search result reads
+    # `retrieval_risk` "medium"; below it the result reads "high". In the measurement
+    # behind the default about nine in ten prompts about other code scored under it.
     code_search_medium_risk_from: float = 0.35
-    # The code.search confidence from which a result reads `retrieval_risk` "low":
-    # the best cosine is close to that of a confident hit, above what a question about
-    # another repository scores. The coding-agent plugins send their prompt pointers
-    # from it.
+    # The `retrieval_confidence` from which a code.search result reads `retrieval_risk`
+    # "low": the best cosine is close to that of a confident hit. A prompt about other
+    # code usually scores lower, but about one in five sent to another repository's
+    # index still read low. The coding-agent plugins send their prompt pointers from it.
     code_search_low_risk_from: float = 0.70
     # The question kinds the hypothetical answer votes on.
     code_search_hyde_kinds: str = "responsibility"
@@ -5340,7 +5341,9 @@ class ProviderSettings(ModelSettings):
 
     # Skip the rerank when the vector top hit's cosine is ≥ this (strong
     # matches rank reliably; the rerank costs ~500 ms). Fallback when the
-    # adaptive gate has no probe.
+    # adaptive gate has no probe. Also the fallback for the cosine at which
+    # code.search's `retrieval_confidence` reads 1.0, so raising it lowers that
+    # confidence and its risk band where no calibration exists.
     llm_rerank_skip_above: float = 0.62
 
     # Recovery worker: retries failed embeds and reconciles orphan

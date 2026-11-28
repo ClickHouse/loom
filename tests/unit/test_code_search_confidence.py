@@ -33,10 +33,8 @@ def test_a_degenerate_scale_is_a_step_at_the_confident_cosine() -> None:
 
 
 def test_risk_bands() -> None:
-    bands = dict(abstain_below=0.15, medium_from=0.35, low_from=0.70)
-    assert [sc.risk_band(c, **bands) for c in (0.0, 0.149, 0.15, 0.349, 0.35, 0.699, 0.7, 1.0)] == [
-        "abstain",
-        "abstain",
+    bands = dict(medium_from=0.35, low_from=0.70)
+    assert [sc.risk_band(c, **bands) for c in (0.0, 0.349, 0.35, 0.699, 0.7, 1.0)] == [
         "high",
         "high",
         "medium",
@@ -50,13 +48,12 @@ def test_the_default_bands_on_the_scale() -> None:
     def band(confidence: float) -> str:
         return sc.risk_band(
             confidence,
-            abstain_below=settings.code_search_abstain_confidence_below,
             medium_from=settings.code_search_medium_risk_from,
             low_from=settings.code_search_low_risk_from,
         )
 
-    # a cosine at the confident hit's is low risk; one at the middle of the range,
-    # where another repository's text sits, abstains
-    assert band(1.0) == "low" and band(0.0) == "abstain"
+    # a cosine at the confident hit's is low risk; one at the middle of the range or
+    # under it is high risk, and the band never abstains
+    assert band(1.0) == "low" and band(0.0) == "high"
     # a search with no cosine is neither
     assert band(sc.NO_COSINE_CONFIDENCE) == "medium"
