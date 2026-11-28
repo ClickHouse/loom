@@ -88,7 +88,9 @@ rows, those with something to check first. It serves whole rows, `check` rows fi
 then constraints. `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` defaults to `0` (unlimited);
 a positive setting or request token budget trims whole rows to fit. Each row
 carries the pre-edit block's line for it with its value cut at the line length (source,
-`(pinned)` and the code-change note kept), `pinned`, `code_state` and a `verdict`. Each
+`(pinned)` and the code-change note kept), `pinned`, `code_state` and a `verdict`. When
+a served row has a code state the section's `note` says what it was compared with: the
+repository as Loom indexed it, not the caller's checkout. Each
 changed file read is one `memory.for_file` read: four ClickHouse reads (files match, code
 links, their memories, the linked rows; a file with many links slices the last), each
 keeping up to 50 rows with up to `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` × 48 bytes of value.

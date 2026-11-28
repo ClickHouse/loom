@@ -49,6 +49,10 @@ SHUNT_PASS_REASONS: frozenset[str] = frozenset(
         # A denial whose per-session budget spend could not be written (the counts file
         # cannot be kept), let through rather than deny every such call
         "budget_unrecorded",
+        # A Bash command of several parts, never refused: a refusal withholds every part
+        "compound_command",
+        # The index did not answer the lookup in full, so there was nothing to refuse with
+        "index_unanswered",
     }
 )
 

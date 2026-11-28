@@ -45,6 +45,18 @@ test("the Stop gates are wired directly: the host reads what they print", () => 
   assert.deepEqual(wired("Stop"), ["loom-record", "loom-test-gate", "loom-validate-gate", "loom-namespace-health"]);
 });
 
+test("one hook names a changed file's tests per tool: the blast radius after an edit tool, the test gate after a shell", () => {
+  // Both print additional context for the call; a tool that started both would get the tests line twice.
+  const tools = (script) =>
+    manifest.hooks.PostToolUse.filter((g) => g.hooks.some((h) => h.args[0].endsWith(`/hooks/${script}.mjs`))).flatMap(
+      (g) => g.matcher.split("|"),
+    );
+  assert.deepEqual(tools("loom-blast-radius"), ["Edit", "Write", "MultiEdit"]);
+  assert.deepEqual(tools("loom-test-gate"), ["Bash", "PowerShell"]);
+  const gate = manifest.hooks.PostToolUse.flatMap((g) => g.hooks).find((h) => h.args[0].endsWith("loom-test-gate.mjs"));
+  assert.equal(gate.args[1], "PostToolUse", "the script reads its event from this argument");
+});
+
 test("the SessionEnd hook declares a timeout: Claude Code gives the event 1.5 s by default", () => {
   // The launcher runs the event's five recording scripts in its own process
   // and waits for them: a slow server or a loaded machine passes the default

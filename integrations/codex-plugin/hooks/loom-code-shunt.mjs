@@ -6,18 +6,22 @@
 //
 // Input: the host's PreToolUse JSON on stdin (tool_name, tool_input, cwd,
 // session_id). Output: nothing (the call proceeds) or one `deny` whose
-// reason names the op to call instead. Nothing else ever blocks.
+// reason carries the index's answer: the declarations of the lines a read
+// asked for, a symbol's definition, the tracker's verdict. Nothing else ever
+// blocks.
 //
-// Fail-open: no token, no repository or an unindexed one, an unanswered
-// lookup, a modified or untracked file, a targeted read → the call proceeds.
+// Fail-open: no token, no repository or an unindexed one, a lookup the index
+// did not answer in full, a modified or untracked file, a targeted read, a
+// Bash command of several parts → the call proceeds.
 // Bounds: the repository lookup (cached 10 min, 1 min when unanswered) has
-// LOOM_SHUNT_RESOLVE_TIMEOUT_MS (8 s); a symbol answer 2.5 s; a tracker
-// answer LOOM_TRACKER_SHUNT_TIMEOUT_MS (3 s); the whole process exits by
-// DEADLINE_MS.
+// LOOM_SHUNT_RESOLVE_TIMEOUT_MS (8 s); a symbol or outline answer 2.5 s; a
+// tracker answer LOOM_TRACKER_SHUNT_TIMEOUT_MS (3 s); the whole process exits
+// by DEADLINE_MS.
 //
 // Side effects, all in $TMPDIR: the shared repository cache
 // (lib/repo-scope.mjs); per-session denial budgets for the read-window cap,
-// symbol greps and tracker searches (sessionStatePath "shunt-cap"); the
+// symbol greps and tracker searches, and the whole files whose lookup gave no
+// declarations (sessionStatePath "shunt-cap"); the
 // user's decision log (tmpStatePath "shunt-log") and its unflushed copy, one
 // batch per reporting scope and session (repo.pending, named by batchKind in
 // lib/shunt-ledger.mjs), all through lib/tmp-state.mjs's private-file helpers,
@@ -43,6 +47,7 @@ import {
 } from "../lib/loom-client.mjs";
 import {
   DEFAULT_MAX_LINES,
+  DEFAULT_OUTLINE_BUDGET,
   DEFAULT_READ_CAP,
   SYMBOL_GREP_DENIALS_PER_SYMBOL,
   TRACKER_SEARCH_DENIALS_PER_QUERY,
@@ -50,6 +55,7 @@ import {
   classifyGrep,
   wantsLines,
   classifyRead,
+  declarationsInSpan,
   denyGhSearchWithAnswer,
   denySymbolGrepWithAnswer,
   localFirstOn,
@@ -58,11 +64,11 @@ import {
   readSpan,
   runLocalGrep,
   spendCapBudget,
-  symbolAnswerText,
   symbolInPattern,
   trackerAnswerText,
+  wholeSymbolAnswer,
 } from "../lib/code-shunt.mjs";
-import { ghIssueSearchInCommand, parseBashBulkSegments } from "../lib/shell-command.mjs";
+import { ghIssueSearchInCommand, isCompoundCommand, parseBashBulkSegments } from "../lib/shell-command.mjs";
 import {
   aggregateShuntLog,
   batchKind,
@@ -92,6 +98,10 @@ const SHUNT_BASH = envSwitch("LOOM_SHUNT_BASH", true);
 // indexed checkout is answered by the tracker record first. `LOOM_TRACKER_SHUNT=off`.
 const SHUNT_TRACKER = envSwitch("LOOM_TRACKER_SHUNT", true);
 const TRACKER_SEARCH_TIMEOUT_MS = Math.max(500, Number(process.env.LOOM_TRACKER_SHUNT_TIMEOUT_MS || 3000) || 3000);
+// One symbol or outline answer, asked only for a call the local rules would
+// refuse. A call it does not answer runs having waited for it: once per symbol
+// or whole file per session, at each over-cap read.
+const LOOKUP_TIMEOUT_MS = 2500;
 const LOG_ON = envSwitch("LOOM_SHUNT_LOG", true);
 const REPORT_ON = envSwitch("LOOM_SHUNT_REPORT", true);
 const FLUSH_TIMEOUT_MS = 300;
@@ -156,8 +166,10 @@ function deny(reason) {
   );
 }
 
-/** Per-session denial counts, {key: n}, for three budgets: over-cap reads (the
- *  file's path), symbol greps (`sym:`) and answered tracker searches (`qa:`).
+/** Per-session counts, {key: n}: three denial budgets, over-cap reads (the
+ *  file's path), symbol greps (`sym:`) and answered tracker searches (`qa:`),
+ *  and the whole files whose lookup gave no declarations (`miss:`), asked
+ *  about once.
  *  {} when the file is missing or refused. A denial is given only when its
  *  spend was written: when the file cannot be kept (tmp not writable, or a file
  *  planted there) the call passes as if its budget were spent, so a planted
@@ -168,6 +180,11 @@ function readCapCounts(sessionId) {
 
 // The pass reason for a call whose budget spend could not be written: it passes.
 const BUDGET_UNRECORDED = "budget_unrecorded";
+// A Bash command of several parts is never refused: a refusal withholds every
+// part. Its reads and greps are still counted as passes.
+const COMPOUND_COMMAND = { deny: null, reason: "compound_command" };
+// The index did not answer in full, so there is nothing to refuse with.
+const INDEX_UNANSWERED = { deny: null, reason: "index_unanswered" };
 
 /** True when the spend was kept. */
 function writeCapCounts(sessionId, counts) {
@@ -289,14 +306,50 @@ function settle(repo, { tool, verdict, tokens, path = "", span = { start: 0, end
     endLine: span.end,
   });
   if (shouldFlushShunt({ denied, pending: unflushed })) flushPending(repo);
-  return denied;
+}
+
+/** The index's declarations in `span` of `rel`: one bounded code.outline. []
+ *  when it did not answer for the whole span. */
+async function indexedDeclarations(repo, rel, span) {
+  if (!repo.namespace) return [];
+  const outline = await postBounded(
+    "code.outline",
+    {
+      org: repo.org || "",
+      namespace: repo.namespace,
+      path: rel,
+      token_budget: DEFAULT_OUTLINE_BUDGET,
+      include_lessons: false,
+      consumer: "claude-code-shunt",
+    },
+    { timeoutMs: LOOKUP_TIMEOUT_MS },
+  );
+  return declarationsInSpan(outline, span);
+}
+
+/** The declarations a refusal of this read would list, [] when the index does
+ *  not hold them all. A whole file (`missKey` set) is asked about once per
+ *  session: a lookup that gave none, whether the index answered with an empty
+ *  or cut outline or did not answer, is kept in the counts file under that
+ *  key, so an unreachable server costs each file one wait. The counts are read
+ *  again for the write: another hook of the session may have spent a budget
+ *  during the lookup. */
+async function readDeclarations(repo, rel, span, sessionId, missKey) {
+  if (missKey && capBudgetSpent(readCapCounts(sessionId), missKey, 1)) return [];
+  const declarations = await indexedDeclarations(repo, rel, span);
+  if (missKey && !declarations.length) writeCapCounts(sessionId, spendCapBudget(readCapCounts(sessionId), missKey));
+  return declarations;
 }
 
 /** Read-shaped decision (Read tool or `cat`): classify, price, span. A
  *  ranged read consults the session's cap budget first; a cap denial spends
- *  one of the file's denials. */
-function settleRead(repo, { tool, rel, abs, offset, limit, sessionId, ctxBase, denyRewrite }) {
+ *  one of the file's denials. A denial carries the declarations of the lines
+ *  asked for; without them, or inside a `compound` command, the read passes.
+ *  `fromEnd`: the slice is the file's last `limit` lines (`tail -n N`). */
+async function settleRead(repo, opts) {
+  const { tool, rel, abs, limit, fromEnd, sessionId, ctxBase, denyRewrite, compound } = opts;
   const lineCount = countLines(abs);
+  const offset = fromEnd ? Math.max(1, lineCount - limit + 1) : opts.offset;
   const bytes = fileBytes(abs);
   const ranged = offset != null || limit != null;
   const capCounts = READ_CAP > 0 && ranged ? readCapCounts(sessionId) : {};
@@ -310,22 +363,29 @@ function settleRead(repo, { tool, rel, abs, offset, limit, sessionId, ctxBase, d
     readCap: READ_CAP,
     capCounts,
   };
+  const span = readSpan({ lineCount, offset, limit });
   let verdict = classifyRead(readCtx, MAX_LINES);
-  if (verdict.capped && !writeCapCounts(sessionId, spendCapBudget(capCounts, rel)))
+  if (verdict.deny && compound) verdict = COMPOUND_COMMAND;
+  else if (verdict.deny) {
+    const asked = ranged ? span : { start: 1, end: lineCount };
+    const declarations = await readDeclarations(repo, rel, asked, sessionId, ranged ? "" : `miss:${rel}`);
+    verdict = declarations.length ? classifyRead({ ...readCtx, declarations }, MAX_LINES) : INDEX_UNANSWERED;
+  }
+  if (verdict.capped && !writeCapCounts(sessionId, spendCapBudget(readCapCounts(sessionId), rel)))
     verdict = { deny: null, reason: BUDGET_UNRECORDED };
   if (verdict.deny && denyRewrite) verdict.deny = denyRewrite(verdict.deny);
-  // A whole-file hit kept the whole file out; a cap hit kept the SPAN out
-  // (what the ranged read would have let in); a pass let its span in.
-  const tokens =
-    verdict.deny && !verdict.capped
-      ? estimateTokensSaved(bytes)
-      : estimateTokensRead({ bytes, lineCount, offset, limit });
-  return settle(repo, { tool, verdict, tokens, path: rel, span: readSpan({ lineCount, offset, limit }) });
+  // What the read lets into the context: the whole file, or the span of a
+  // ranged read. A hit kept that out, less the refusal's own text.
+  const read = estimateTokensRead({ bytes, lineCount, offset, limit });
+  const tokens = verdict.deny ? Math.max(0, read - estimateTokensSaved(verdict.deny.length)) : read;
+  settle(repo, { tool, verdict, tokens, path: rel, span });
 }
 
 /** classifyGrep with the symbol rule's once-per-symbol budget:
- *  the budget shares the read-cap counts file under a `sym:` key. */
-function classifySymbolGrep(ctx, sessionId) {
+ *  the budget shares the read-cap counts file under a `sym:` key. Inside a
+ *  `compound` command the grep that would be a symbol lookup passes as one,
+ *  and spends nothing. */
+function classifySymbolGrep(ctx, sessionId, compound = false) {
   const symbol = ctx.isFile ? symbolInPattern(ctx.pattern) : "";
   if (!symbol) return classifyGrep(ctx);
   const key = `sym:${symbol}`;
@@ -335,46 +395,44 @@ function classifySymbolGrep(ctx, sessionId) {
     symbol,
     symbolBudgetSpent: capBudgetSpent(counts, key, SYMBOL_GREP_DENIALS_PER_SYMBOL),
   });
+  if (verdict.symbol && compound) return COMPOUND_COMMAND;
   if (verdict.symbol && !writeCapCounts(sessionId, spendCapBudget(counts, key)))
     return { deny: null, reason: BUDGET_UNRECORDED };
   return verdict;
 }
 
-/** A symbol-grep denial fetches the definition itself (one bounded code.symbol
- *  call, 2.5 s) — otherwise the turn costs three model rounds (denied grep,
- *  loom_code_symbol, confirming grep) and tens of seconds when the index and
- *  the checkout disagree. The index answer is the answer, whatever commit the
- *  checkout is on; only named files the caller modified get their local grep
- *  inlined. */
+/** A symbol-grep denial carries the definition: one bounded code.symbol call,
+ *  so the turn is one model round, not three (denied grep, loom_code_symbol,
+ *  confirming grep). The index answer is the answer, whatever commit the
+ *  checkout is on; named files the caller modified get their local grep
+ *  inlined. When the index holds no single definition, does not answer in
+ *  time, or those lines do not fit, the grep runs. */
 async function answerSymbolDeny(verdict, repo, ctx, { cwd = repo.root, files = [] } = {}) {
-  if (!verdict.deny || !verdict.symbol || !repo.namespace) return verdict;
-  try {
-    const res = await postBounded(
-      "code.symbol",
-      {
-        org: repo.org || "",
-        namespace: repo.namespace,
-        name: verdict.symbol,
-        include_body: false,
-        include_history: false,
-        include_examples: false,
-        include_lessons: false,
-      },
-      { timeoutMs: 2500 },
-    );
-    const dirtyFiles = files.filter((f) => {
-      const rel = pathUnder(repo.root, path.resolve(cwd, f));
-      return rel != null && gitStatusClass(repo.root, rel) !== "";
-    });
-    const localGrep = dirtyFiles.length
-      ? localGrepText(runLocalGrep(cwd, ctx.pattern, dirtyFiles), { pattern: ctx.pattern, files: dirtyFiles })
-      : "";
-    const answer = symbolAnswerText(res, { asOf: repo.asOf, namespace: repo.namespace, localGrep, dirtyFiles });
-    if (answer) verdict.deny = denySymbolGrepWithAnswer({ ...ctx, symbol: verdict.symbol }, answer);
-  } catch {
-    /* the plain redirect stands */
-  }
-  return verdict;
+  if (!verdict.symbol) return verdict;
+  if (!repo.namespace) return INDEX_UNANSWERED;
+  const res = await postBounded(
+    "code.symbol",
+    {
+      org: repo.org || "",
+      namespace: repo.namespace,
+      name: verdict.symbol,
+      include_body: false,
+      include_history: false,
+      include_examples: false,
+      include_lessons: false,
+    },
+    { timeoutMs: LOOKUP_TIMEOUT_MS },
+  );
+  const dirtyFiles = files.filter((f) => {
+    const rel = pathUnder(repo.root, path.resolve(cwd, f));
+    return rel != null && gitStatusClass(repo.root, rel) !== "";
+  });
+  const localGrep = dirtyFiles.length
+    ? localGrepText(runLocalGrep(cwd, ctx.pattern, dirtyFiles), { pattern: ctx.pattern, files: dirtyFiles })
+    : "";
+  const answer = wholeSymbolAnswer(res, { asOf: repo.asOf, namespace: repo.namespace, localGrep, dirtyFiles });
+  if (!answer) return INDEX_UNANSWERED;
+  return { ...verdict, deny: denySymbolGrepWithAnswer({ ...ctx, symbol: verdict.symbol }, answer) };
 }
 
 /** A GitHub issue search is a question the tracker record
@@ -471,7 +529,7 @@ async function main() {
     const abs = path.resolve(cwd, String(input.file_path || ""));
     const rel = pathUnder(root, abs);
     if (rel == null) return;
-    settleRead(repo, { tool, rel, abs, offset: input.offset, limit: input.limit, sessionId, ctxBase });
+    await settleRead(repo, { tool, rel, abs, offset: input.offset, limit: input.limit, sessionId, ctxBase });
     return;
   }
 
@@ -519,39 +577,43 @@ async function main() {
   }
 
   if (tool === "Bash" && SHUNT_BASH) {
-    // Each bulk segment of a `;` / `&&` / `|` chain is judged in order; the
-    // first deny ends the call (one deny per hook), passes are all counted.
-    for (const bulk of parseBashBulkSegments(commandText(input))) {
-      if (await settleBashBulk(repo, { bulk, cwd: path.resolve(cwd, bulk.cwd || "."), sessionId, ctxBase })) return;
+    // Each bulk segment of a `;` / `&&` / `|` chain is counted in order; only
+    // a command that is one read or one grep can be denied.
+    const command = commandText(input);
+    const compound = isCompoundCommand(command);
+    for (const bulk of parseBashBulkSegments(command)) {
+      await settleBashBulk(repo, { bulk, cwd: path.resolve(cwd, bulk.cwd || "."), sessionId, ctxBase, compound });
     }
   }
 }
 
-/** One bulk-shaped Bash segment; true when it was denied. */
-async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase }) {
+/** One bulk-shaped Bash segment. Inside a `compound` command it passes: no
+ *  lookup is made and no denial budget is spent. */
+async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase, compound }) {
   const root = repo.root;
   if (bulk.kind === "read") {
     const abs = path.resolve(cwd, bulk.file);
     const rel = pathUnder(root, abs);
-    if (rel == null) return false;
+    if (rel == null) return;
     // A `sed -n 'A,Bp'` / `head -n N` / `tail -n +A` /
     // `awk 'NR>=A && NR<=B'` slice carries its span, so the read-window
-    // cap judges it exactly as Read(offset, limit); a whole-file `cat`,
-    // `nl`, `tac`, `sed -n p` keeps the whole-file rule.
+    // cap judges it exactly as Read(offset, limit); `tail -n N` carries a
+    // length alone, counted back from the file's last line; a whole-file
+    // `cat`, `nl`, `tac`, `sed -n p` keeps the whole-file rule.
     const cmdName = bulk.cmd || "cat";
-    return settleRead(repo, {
+    await settleRead(repo, {
       tool: `Bash:${cmdName}`,
       rel,
       abs,
       sessionId,
       ctxBase,
+      compound,
       offset: bulk.offset,
       limit: bulk.limit,
-      denyRewrite: (t) =>
-        t
-          .replace("Whole-file reads are", `\`${cmdName}\` of a whole file is`)
-          .replace(/^loom-code-shunt: Read of /, `loom-code-shunt: \`${cmdName}\` of `),
+      fromEnd: bulk.offset == null && bulk.limit != null,
+      denyRewrite: (t) => t.replace(/^loom-code-shunt: Read of /, `loom-code-shunt: \`${cmdName}\` of `),
     });
+    return;
   }
   const abs = path.resolve(cwd, bulk.dir);
   const rel = pathUnder(root, abs);
@@ -559,7 +621,7 @@ async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase }) {
   try {
     isFile = fs.statSync(abs).isFile();
   } catch {
-    return false;
+    return;
   }
   const ctx = {
     ...ctxBase,
@@ -568,11 +630,11 @@ async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase }) {
     pattern: bulk.pattern,
     modified: isFile && rel != null ? gitStatusClass(root, rel) : "",
   };
-  const verdict = await answerSymbolDeny(classifySymbolGrep(ctx, sessionId), repo, ctx, {
+  const verdict = await answerSymbolDeny(classifySymbolGrep(ctx, sessionId, compound), repo, ctx, {
     cwd,
     files: bulk.files || [bulk.dir],
   });
-  return settle(repo, { tool: "Bash:grep", verdict, tokens: 0, path: rel || "" });
+  settle(repo, { tool: "Bash:grep", verdict, tokens: 0, path: rel || "" });
 }
 
 main()

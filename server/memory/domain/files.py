@@ -14,7 +14,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from server.code.domain.facets import extract_code_facets
+from server.code.domain.facets import extract_code_facets, file_paths
 from server.core.relative_paths import without_dot_slashes
 
 MAX_FILES = 32
@@ -76,6 +76,16 @@ def detect_value_files(text: str) -> list[str]:
         return []
     files, _concepts = extract_code_facets(_URL_RE.sub(" ", str(text)))
     return normalize_files(f for f in files if f.lower() not in _LIBRARY_NAMES)
+
+
+def names_file(text: str) -> bool:
+    """`text` names a file by a path with a directory, as `detect_value_files` finds one:
+    a bare `notes.txt` may be anything, `src/reader.py` is a repository's. The path
+    pattern alone, and only for a text with a slash: a read asks it of every row it serves."""
+    if "/" not in text:
+        return False
+    paths = file_paths(_URL_RE.sub(" ", text))
+    return any("/" in without_dot_slashes(path) for path in paths)
 
 
 def files_for_set(

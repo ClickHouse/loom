@@ -17,6 +17,7 @@ from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import configured_repos
 from server.memory.api.models_crud import CodeLink
 from server.memory.domain import code_change
+from server.memory.domain.files import names_file
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
@@ -293,18 +294,34 @@ async def _annotation_reads(
     return _heads_of(input.org, idents, links, heads), seen, policies
 
 
+def unlinked(hit: Any) -> bool:
+    """The hit was read from a memory's own row, shows no link state and its text names a
+    file (`files.names_file`): the read has no comparison with code to show for
+    it. A link it holds is pending or in a repository the caller may not read."""
+    if getattr(hit, "code_state", "") or getattr(hit, "_row_identity", None) is None:
+        return False
+    row = getattr(hit, "row", None)  # a listed row (the startup recall), not a search hit
+    text = getattr(hit, "content_excerpt", None) if row is None else row.value
+    return names_file(str(text or ""))
+
+
 async def annotate_hits(input: Any, hits: list[Any]) -> None:
     """Set each search hit's `code_state` to its worst link in a repository the caller
-    may read, `code_changed_since` to the commit of that state
-    (`code_change.worst_commit`) and `code_moved` to those of the links now at another
-    path or symbol than the memory was written against (`relocated`; the links
-    themselves on `_code_links`), mark for a lower rank (`_code_ranked_down`) the hits
-    whose code changed or went, and drop, in place, the hits about code that is gone
-    (`code_change.hidden`)."""
+    may read (`unlinked` for one that names a file and shows none, `unlinked`),
+    `code_changed_since` to the commit of that state (`code_change.worst_commit`),
+    `code_rev` to the commit that link was anchored at (`code_change.anchored_commit`)
+    and `code_moved` to those of the links now at another path or symbol than the
+    memory was written against (`relocated`; the links themselves on `_code_links`),
+    mark for a lower rank (`_code_ranked_down`) the hits whose code changed or went,
+    and drop, in place, the hits about code that is gone (`code_change.hidden`). When
+    the links cannot be read a hit gets the `unlinked` label alone, which needs no link."""
     try:
         memories, seen, policies = await _annotation_reads(input, hits)
     except Exception as e:  # noqa: BLE001 — the links are additive to the read
         log.debug("code links unavailable: %s", e)
+        for h in hits:
+            if unlinked(h):
+                h.code_state = code_change.UNLINKED
         return
     kept = []
     for h, m in zip(hits, memories, strict=True):
@@ -321,6 +338,7 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
         h._code_links = shown
         h.code_state = code_change.worst([a["state"] for a in shown])
         h.code_changed_since = code_change.worst_commit(shown)
+        h.code_rev = code_change.anchored_commit(shown)
         h.code_moved = relocated(shown)
         # the served window moves it down after the verdict (`code_change.rank_down`)
         h._code_ranked_down = bool(
@@ -329,6 +347,8 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
             and h.code_state in code_change.DEMOTED
             and not code_change.held(m)
         )
+        if unlinked(h):
+            h.code_state = code_change.UNLINKED
         kept.append(h)
     hits[:] = kept
 

@@ -52,6 +52,7 @@ fn omitted_response_fields_keep_wire_defaults() {
     assert_eq!(hit.created_at, "");
     assert_eq!(hit.code_state, "");
     assert_eq!(hit.code_changed_since, "");
+    assert_eq!(hit.code_rev, "");
     assert!(hit.code_moved.is_empty());
     assert!(!hit.body_truncated);
     assert_eq!(hit.next, "");
@@ -204,7 +205,7 @@ fn search_preserves_chunk_parent_attribution_and_decision_signals() {
             "valid_at": "valid", "via_path": ["alice", "bob"], "entities": ["bob"],
             "user_id": "owner", "status": "superseded", "superseded_by": "successor",
             "superseded_at": "retired", "created_at": "created", "code_state": "changed",
-            "code_changed_since": "c0ffee",
+            "code_changed_since": "c0ffee", "code_rev": "ba5e",
             "code_moved": [{
                 "code_namespace": "code-a", "path": "src/reader.py",
                 "symbol": "reader::load_rows", "start_line": 12, "end_line": 40,
@@ -251,6 +252,7 @@ fn search_preserves_chunk_parent_attribution_and_decision_signals() {
     assert_eq!(hit.created_at, "created");
     assert_eq!(hit.code_state, "changed");
     assert_eq!(hit.code_changed_since, "c0ffee");
+    assert_eq!(hit.code_rev, "ba5e");
     assert_eq!(hit.code_moved.len(), 1);
     assert_eq!(hit.code_moved[0].symbol, "reader::load_rows");
     assert_eq!(hit.code_moved[0].was_symbol, "reader::fetch_rows");
