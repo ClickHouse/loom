@@ -17,6 +17,11 @@ const docsMedia = join(root, "public", "docs-media");
 const locales = ["es", "ja", "ko", "pt-BR", "zh-CN"];
 const docsBlob = "https://github.com/ClickHouse/loom/blob/main/docs/";
 const docsSite = "https://loom.clickhouse.com/docs";
+// The release renderer retains front matter, so add this summary only to the website.
+const englishDescriptions = {
+  "getting-started/agent-setup.md":
+    "Give your coding agent the instructions from your Loom release to install the stack and verify that memory search works.",
+};
 const localizedSeo = {
   "architecture/storage-authority.md": {
     es: { title: "Almacenamiento en Postgres y ClickHouse" },
@@ -349,6 +354,7 @@ async function prepareContent() {
     const prepared = withContentMetadata(normalizeTranslatedTitle(rendered, localizedSeo[sourcePath]?.[locale]), {
       date: contentDates.get(original),
       locale: localized ? locale : "en",
+      description: localized ? undefined : englishDescriptions[preparedPath],
     });
     if (prepared !== text) writeFileSync(file, prepared);
   }

@@ -39,7 +39,7 @@ function descriptionFrom(body, locale) {
   return "";
 }
 
-export function withContentMetadata(text, { date, locale = "en" } = {}) {
+export function withContentMetadata(text, { date, locale = "en", description } = {}) {
   const match = /^---\r?\n([\s\S]*?)^---[\t ]*(?:\r?\n|$)/m.exec(text);
   const frontmatter = match?.index === 0 ? match : null;
   const metadata = frontmatter ? (load(frontmatter[1]) ?? {}) : {};
@@ -52,8 +52,8 @@ export function withContentMetadata(text, { date, locale = "en" } = {}) {
     (value) => typeof value === "string" && value.trim(),
   );
   if (!hasDescription) {
-    const description = descriptionFrom(body, locale);
-    if (description) updates.description = description;
+    const summary = description ?? descriptionFrom(body, locale);
+    if (summary) updates.description = summary;
   }
   if (!Object.keys(updates).length) return text;
   return `---\n${dump({ ...metadata, ...updates }, { lineWidth: -1 })}---\n${frontmatter ? body : `\n${body}`}`;
