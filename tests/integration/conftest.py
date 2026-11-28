@@ -67,6 +67,9 @@ _TIER_BY_FIXTURE = {
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    from tests.integration import _restore_phase_witness
+
+    config.pluginmanager.register(_restore_phase_witness, "restore-phase-witness")
     for name, doc in _TIERS.items():
         config.addinivalue_line("markers", f"{name}: {doc}")
 
