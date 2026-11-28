@@ -103,7 +103,11 @@
   "files": [
     "dist",
     "README.md",
-    "examples"
+    "examples",
+    "openclaw.plugin.json",
+    "openclaw/index.mjs",
+    "openclaw/tools.mjs",
+    "openclaw/README.md"
   ],
   "scripts": {
     "build": "tsdown",
@@ -158,7 +162,8 @@
     "@langchain/langgraph-checkpoint": ">=1.2.3 <2.0.0",
     "@mastra/core": ">=1.83.0 <1.84.0",
     "@openai/agents": ">=0.22.0 <0.23.0",
-    "ai": ">=7.0.0 <8.0.0"
+    "ai": ">=7.0.0 <8.0.0",
+    "openclaw": "2026.11.6"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/sdk": {
@@ -183,6 +188,9 @@
       "optional": true
     },
     "ai": {
+      "optional": true
+    },
+    "openclaw": {
       "optional": true
     }
   },
@@ -210,6 +218,19 @@
     "glob": "14.0.2",
     "gaxios@6.7.1": {
       "uuid": "11.1.1"
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./openclaw/index.mjs"
+    ],
+    "compat": {
+      "pluginApi": "2026.11.6",
+      "minGatewayVersion": "2026.11.6"
+    },
+    "build": {
+      "openclawVersion": "2026.11.6",
+      "pluginSdkVersion": "2026.11.6"
     }
   }
 }

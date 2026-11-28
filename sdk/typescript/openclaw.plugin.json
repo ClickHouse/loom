@@ -1,0 +1,26 @@
+{
+  "id": "clickhouse-loom",
+  "name": "ClickHouse Loom",
+  "description": "Explicit memory save and search through the ClickHouse Loom SDK",
+  "categories": ["memory"],
+  "contracts": { "tools": ["clickhouse_loom_save", "clickhouse_loom_search"] },
+  "toolMetadata": {
+    "clickhouse_loom_save": { "optional": true },
+    "clickhouse_loom_search": { "optional": true }
+  },
+  "reload": { "turnHandover": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["baseUrl", "tokenEnv", "org", "namespace", "agentId", "userId", "sessionKey"],
+    "properties": {
+      "baseUrl": { "type": "string", "minLength": 1 },
+      "tokenEnv": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" },
+      "org": { "type": "string", "minLength": 1 },
+      "namespace": { "type": "string", "minLength": 1 },
+      "agentId": { "type": "string", "minLength": 1 },
+      "userId": { "type": "string", "minLength": 1 },
+      "sessionKey": { "type": "string", "minLength": 1 }
+    }
+  }
+}
