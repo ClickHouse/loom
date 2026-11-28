@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@microsoft/api-extractor": "7.60.1"
+  }
+}
