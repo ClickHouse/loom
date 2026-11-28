@@ -867,7 +867,13 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
     declared = False
 
     async def _finish(code: int) -> int:
-        _note(phase="embed", embedded=total, failed=result.failed, poisoned=result.poisoned)
+        _note(
+            phase="embed",
+            embedded=total,
+            reused=result.reused,
+            failed=result.failed,
+            poisoned=result.poisoned,
+        )
         await _compact_after_bulk(total, embedder.model_name)
         if declared:
             await _republish_counts(repo, org, ns)
@@ -879,7 +885,12 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
             done=total,
             rows_written=total,
             errors=result.failed,
-            counters={"embedded": total, "failed": result.failed, "poisoned": result.poisoned},
+            counters={
+                "embedded": total,
+                "embed_reused": result.reused,
+                "failed": result.failed,
+                "poisoned": result.poisoned,
+            },
             phase="embed",
         )
         return code
@@ -918,7 +929,10 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
             result=result,
         )
         total += n
-        print(f"  embedded {total} (+{n}); failed={result.failed} poisoned={result.poisoned}")
+        print(
+            f"  embedded {total} (+{n}); reused={result.reused} "
+            f"failed={result.failed} poisoned={result.poisoned}"
+        )
         if result.switched_off:
             # Its rows stay as they are, so the next page would be the same one.
             print(f"  {org}'s model calls are switched off — stopping", file=sys.stderr)
