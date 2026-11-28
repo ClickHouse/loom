@@ -1,7 +1,8 @@
 // The shunt always answers from the index unless
 // the developer chose local-first. A throwaway git checkout, the repo entry
 // seeded in the shared cache (no code.repos call), the hook run as Claude
-// Code runs it, and a local server only where a call is expected.
+// Code runs it, and a local server only where a call is expected: a refusal
+// needs the index's answer, so every test that expects one serves it.
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -117,6 +118,35 @@ async function withServer(answers, fn) {
   }
 }
 
+// The index's outline of BIG, as code.outline serves it: whole, in source order.
+const OUTLINE = {
+  "/v1/code.outline": {
+    entries: [
+      { kind: "function", qualified_name: "f0", signature: "int f0()", start_line: 1, end_line: 1, tier: "scip" },
+      {
+        kind: "function",
+        qualified_name: "f450",
+        signature: "int f450()",
+        start_line: 451,
+        end_line: 451,
+        tier: "scip",
+      },
+      {
+        kind: "function",
+        qualified_name: "f899",
+        signature: "int f899()",
+        start_line: 900,
+        end_line: 900,
+        tier: "scip",
+      },
+    ],
+    total: 3,
+    returned: 3,
+    elided: 0,
+  },
+};
+const lookups = (seen) => seen.filter((s) => s.url !== "/v1/code.outcome").map((s) => s.url);
+
 const readOf = (dir, rel) => ({
   tool_name: "Read",
   tool_input: { file_path: path.join(dir, rel) },
@@ -124,14 +154,39 @@ const readOf = (dir, rel) => ({
   session_id: "e2e",
 });
 
-test("a checkout far behind the index is still shunted", async () => {
+test("a checkout far behind the index is still shunted, with the file's declarations", async () => {
   const { dir } = checkout({ "src/a.cpp": BIG });
-  const r = await runHook(readOf(dir, "src/a.cpp"), { tmp: seed(dir) });
-  assert.match(
-    r.deny,
-    /^loom-code-shunt: src\/a\.cpp is 900 lines and is in loom's code index \(as of 0123456789ab\)\./,
-  );
-  assert.match(r.log, /\thit\tRead\t/);
+  await withServer(OUTLINE, async (url, seen) => {
+    const r = await runHook(readOf(dir, "src/a.cpp"), { tmp: seed(dir), url });
+    assert.match(
+      r.deny,
+      /^loom-code-shunt: src\/a\.cpp is 900 lines and is in loom's code index \(as of 0123456789ab\)\. Its declarations \(lines, qualified name, header\):\n1-1 f0 int f0\(\)\n451-451 f450 int f450\(\)\n900-900 f899 int f899\(\)\nRead the lines you need/,
+    );
+    assert.match(r.log, /\thit\tRead\t/);
+    assert.deepEqual(seen[0].body, {
+      org: "o",
+      namespace: "code-x",
+      path: "src/a.cpp",
+      token_budget: 1500,
+      include_lessons: false,
+      consumer: "claude-code-shunt",
+    });
+  });
+});
+
+test("a whole-file read the index cannot outline in full runs", async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const cut = { "/v1/code.outline": { ...OUTLINE["/v1/code.outline"], total: 900, elided: 897 } };
+  for (const [name, answers] of Object.entries({ cut, empty: { "/v1/code.outline": { entries: [] } }, silent: {} })) {
+    await withServer(answers, async (url) => {
+      const r = await runHook(readOf(dir, "src/a.cpp"), { tmp: seed(dir), url });
+      assert.equal(r.deny, null, name);
+      assert.match(r.log, /\tpass\tRead\t\d+\t\tindex_unanswered\tsrc\/a\.cpp\t/, name);
+    });
+  }
+  const down = await runHook(readOf(dir, "src/a.cpp"), { tmp: seed(dir) });
+  assert.equal(down.deny, null, "an unreachable server");
+  assert.match(down.log, /\tpass\tRead\t\d+\t\tindex_unanswered\t/);
 });
 
 test("local_first stands the shunt down entirely, even when HEAD is the indexed commit", async () => {
@@ -246,21 +301,121 @@ test("a symbol grep is answered by the index; a named file you modified gets its
   assert.doesNotMatch(r.deny, /HEAD|ANSWER FROM THE INDEX|do not grep/);
 });
 
-test("a chained Bash read is judged segment by segment; the first deny wins", async () => {
-  const { dir } = checkout({ "src/a.cpp": BIG, "src/small.cpp": "int x;\n" });
-  const tmp = seed(dir);
-  const bash = (command) => ({ tool_name: "Bash", tool_input: { command }, cwd: dir, session_id: "e2e" });
+const bashOf = (dir, command, session = "e2e") => ({
+  tool_name: "Bash",
+  tool_input: { command },
+  cwd: dir,
+  session_id: session,
+});
+const SYMBOL = {
+  "/v1/code.symbol": {
+    definitions: [{ path: "src/a.cpp", start_line: 7327, end_line: 7344, symbol: "DB::renameTempPartAndAdd" }],
+  },
+};
+
+test("a Bash command of several parts is never refused: its reads are counted, the index is not asked", async () => {
+  const { dir } = checkout({
+    "src/a.cpp": BIG,
+    "src/small.cpp": "int x;\n",
+    "src/a.h": "bool renameTempPartAndAdd(\n",
+  });
   // As a Git Bash command names it on Windows: forward slashes.
   const cdDir = dir.replace(/\\/g, "/");
-  const r = await runHook(bash(`cd ${cdDir}; wc -l src/a.cpp; cat src/small.cpp; cat src/a.cpp`), { tmp });
-  assert.match(r.deny, /^loom-code-shunt: src\/a\.cpp is 900 lines.*`cat` of a whole file is/);
-  const lines = r.log.trim().split("\n");
-  assert.equal(lines.length, 2, "the small read passed and was counted, the big one denied");
-  assert.match(lines[0], /\tpass\tBash:cat\t.*\tsrc\/small\.cpp\t/);
-  assert.match(lines[1], /\thit\tBash:cat\t/);
-  const p = await runHook(bash("cd src && sed -n '1,40p' a.cpp; echo ---"), { tmp: seed(dir) });
-  assert.equal(p.deny, null, "a ranged read passes (no read cap set)");
-  assert.match(p.log, /\tpass\tBash:sed\t.*targeted_span\tsrc\/a\.cpp\t1\t40/);
+  const env = { LOOM_SHUNT_READ_CAP: "200" };
+  await withServer({ ...OUTLINE, ...SYMBOL }, async (url, seen) => {
+    const tmp = seed(dir);
+    const r = await runHook(bashOf(dir, `cd ${cdDir}; wc -l src/a.cpp; cat src/small.cpp; cat src/a.cpp`), {
+      tmp,
+      url,
+    });
+    assert.equal(r.deny, null);
+    const lines = r.log.trim().split("\n");
+    assert.equal(lines.length, 2, "both reads are counted");
+    assert.match(lines[0], /\tpass\tBash:cat\t\d+\t\tunder_max_lines\tsrc\/small\.cpp\t/);
+    assert.match(lines[1], /\tpass\tBash:cat\t\d+\t\tcompound_command\tsrc\/a\.cpp\t/);
+    for (const [command, logged] of [
+      ["cat src/a.cpp | head -5; cat src/a.cpp && echo ok", /\tpass\tBash:cat\t\d+\t\tcompound_command\t/],
+      ["make test || cat src/a.cpp", /\tpass\tBash:cat\t\d+\t\tcompound_command\t/],
+      ["cd src && sed -n '1,500p' a.cpp", /\tpass\tBash:sed\t\d+\t\tcompound_command\tsrc\/a\.cpp\t1\t500/],
+      ["cd src && sed -n '1,40p' a.cpp; echo ---", /\tpass\tBash:sed\t\d+\t\ttargeted_span\tsrc\/a\.cpp\t1\t40/],
+      ["git status; grep -n renameTempPartAndAdd src/a.h", /\tpass\tBash:grep\t\d+\t\tsingle_file_grep\tsrc\/a\.h\t/],
+      ['cd src; gh issue list --search "merge hangs"', null],
+    ]) {
+      const p = await runHook(bashOf(dir, command), { tmp: seed(dir), url, env });
+      assert.equal(p.deny, null, command);
+      if (logged) assert.match(p.log, logged, command);
+      else assert.equal(p.log, "", command);
+    }
+    assert.deepEqual(lookups(seen), [], "a pass costs no lookup");
+    // The same reads and the same grep, each as the whole command, are refused with the index's answer.
+    const cat = await runHook(bashOf(dir, "cat src/a.cpp"), { tmp: seed(dir), url });
+    assert.match(cat.deny, /^loom-code-shunt: src\/a\.cpp is 900 lines.*Its declarations.*:\n1-1 f0 int f0\(\)\n/);
+    assert.match(cat.log, /\thit\tBash:cat\t/);
+    const sed = await runHook(bashOf(dir, "sed -n '400,899p' src/a.cpp"), { tmp: seed(dir), url, env });
+    assert.match(
+      sed.deny,
+      /^loom-code-shunt: `sed` of src\/a\.cpp lines 400-899 is 500 lines, over the 200-line read window.*The declarations in those lines \(lines, qualified name, header\):\n451-451 f450 int f450\(\)\nRead the ones you need/,
+    );
+    const grep = await runHook(bashOf(dir, "grep -n renameTempPartAndAdd src/a.h"), { tmp: seed(dir), url });
+    assert.match(grep.deny, /Index answer: DB::renameTempPartAndAdd is defined at src\/a\.cpp:7327-7344/);
+  });
+});
+
+test("a ranged read, a grep for a local variable and a grep for test names in one command all run", async () => {
+  const { dir } = checkout({
+    "src/app/blueprints.py": Array.from({ length: 622 }, (_, i) => `x${i} = ${i}`).join("\n") + "\n",
+    "tests/test_blueprints.py": "def test_dotted_name_not_allowed(app, client):\n    pass\n",
+  });
+  const command =
+    'sed -n 188,198p src/app/blueprints.py; grep -n "self_name" src/app/blueprints.py; ' +
+    'grep -n "def test_dotted_name\\|def test_.*dot" tests/test_blueprints.py';
+  await withServer({}, async (url, seen) => {
+    const tmp = seed(dir);
+    const r = await runHook(bashOf(dir, command), { tmp, url });
+    assert.equal(r.deny, null);
+    const lines = r.log.trim().split("\n");
+    assert.equal(lines.length, 3);
+    assert.match(lines[0], /\tpass\tBash:sed\t\d+\t\ttargeted_span\tsrc\/app\/blueprints\.py\t188\t198/);
+    assert.match(lines[1], /\tpass\tBash:grep\t\d+\t\tsingle_file_grep\tsrc\/app\/blueprints\.py\t/);
+    assert.match(lines[2], /\tpass\tBash:grep\t\d+\t\tsingle_file_grep\ttests\/test_blueprints\.py\t/);
+    assert.deepEqual(lookups(seen), []);
+    // Alone, the grep asks the index once: it holds no definition of a local variable, so the grep runs.
+    const alone = bashOf(dir, 'grep -n "self_name" src/app/blueprints.py');
+    const first = await runHook(alone, { tmp, url });
+    assert.equal(first.deny, null);
+    assert.match(first.log, /\tpass\tBash:grep\t\d+\t\tindex_unanswered\tsrc\/app\/blueprints\.py\t\d+\t\d+\n$/);
+    const again = await runHook(alone, { tmp, url });
+    assert.equal(again.deny, null);
+    assert.match(again.log, /\tsymbol_grep_spent\tsrc\/app\/blueprints\.py\t\d+\t\d+\n$/);
+    assert.deepEqual(lookups(seen), ["/v1/code.symbol"], "one lookup per symbol per session");
+  });
+});
+
+test("a symbol grep the index answers with several definitions, or with local lines that do not fit, runs", async () => {
+  const many = Array.from({ length: 20 }, () => "bool renameTempPartAndAdd(int);").join("\n") + "\n";
+  const { dir } = checkout({ "src/a.h": "bool renameTempPartAndAdd(\n", "src/a.cpp": "// def\n" });
+  const one = SYMBOL["/v1/code.symbol"].definitions[0];
+  const grep = (session) => ({
+    tool_name: "Grep",
+    tool_input: { pattern: "renameTempPartAndAdd", path: path.join(dir, "src/a.cpp") },
+    cwd: dir,
+    session_id: session,
+  });
+  await withServer({ "/v1/code.symbol": { definitions: [one, { ...one, path: "src/a.h" }] } }, async (url) => {
+    const r = await runHook(grep("two"), { tmp: seed(dir), url });
+    assert.equal(r.deny, null);
+    assert.match(r.log, /\tpass\tGrep\t\d+\t\tindex_unanswered\t/);
+  });
+  await withServer(SYMBOL, async (url) => {
+    assert.match((await runHook(grep("one"), { tmp: seed(dir), url })).deny, /Index answer: DB::renameTempPartAndAdd/);
+    fs.appendFileSync(path.join(dir, "src/a.h"), many);
+    const r = await runHook(bashOf(dir, "grep -n renameTempPartAndAdd src/a.cpp src/a.h", "long"), {
+      tmp: seed(dir),
+      url,
+    });
+    assert.equal(r.deny, null, "21 local lines are more than a refusal carries");
+    assert.match(r.log, /\tpass\tBash:grep\t\d+\t\tindex_unanswered\t/);
+  });
 });
 
 // The hook's pending batch for the seeded repository (o/code-x), the server at
@@ -281,7 +436,7 @@ const posix = process.platform !== "win32";
 test("a deny claims the pending batch, posts it as code.outcome and removes it", async () => {
   const { dir } = checkout({ "src/a.cpp": BIG });
   const tmp = seed(dir);
-  await withServer({}, async (url, seen) => {
+  await withServer(OUTLINE, async (url, seen) => {
     const r = await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting });
     assert.ok(r.deny);
     await settle();
@@ -301,10 +456,30 @@ test("the read cap denies a file twice per session, then passes it as cap_spent"
   const { dir } = checkout({ "src/a.cpp": BIG });
   const tmp = seed(dir);
   const env = { LOOM_SHUNT_READ_CAP: "200" };
-  for (let i = 0; i < 2; i++) assert.ok((await runHook(rangedRead(dir), { tmp, env })).deny, `denial ${i + 1}`);
-  const third = await runHook(rangedRead(dir), { tmp, env });
-  assert.equal(third.deny, null);
-  assert.match(third.log, /\tpass\tRead\t\d+\t\tcap_spent\t/);
+  await withServer(OUTLINE, async (url, seen) => {
+    for (let i = 0; i < 2; i++) {
+      const r = await runHook(rangedRead(dir), { tmp, url, env });
+      assert.match(
+        r.deny,
+        /lines 1-500 is 500 lines.*:\n1-1 f0 int f0\(\)\n451-451 f450 int f450\(\)\nRead the ones/,
+        `denial ${i + 1}`,
+      );
+    }
+    const third = await runHook(rangedRead(dir), { tmp, url, env });
+    assert.equal(third.deny, null);
+    assert.match(third.log, /\tpass\tRead\t\d+\t\tcap_spent\t/);
+    assert.equal(lookups(seen).length, 2, "a spent budget asks nothing");
+  });
+  // An over-cap read the index cannot describe runs, and spends none of the file's denials.
+  const quiet = seed(dir);
+  await withServer({}, async (url) => {
+    const r = await runHook(rangedRead(dir), { tmp: quiet, url, env });
+    assert.equal(r.deny, null);
+    assert.match(r.log, /\tpass\tRead\t\d+\t\tindex_unanswered\tsrc\/a\.cpp\t1\t500/);
+  });
+  await withServer(OUTLINE, async (url) => {
+    assert.ok((await runHook(rangedRead(dir), { tmp: quiet, url, env })).deny, "the budget is still whole");
+  });
 });
 
 test("symlinks planted at the shunt's tmp files are not followed and cannot lock the agent out", {
@@ -314,7 +489,7 @@ test("symlinks planted at the shunt's tmp files are not followed and cannot lock
   const tmp = seed(dir);
   const planted = {};
   const victims = {};
-  await withServer({}, async (url, seen) => {
+  await withServer(OUTLINE, async (url, seen) => {
     Object.assign(planted, {
       log: logPath(tmp),
       pending: pendingPath(tmp, url),
@@ -344,7 +519,7 @@ test("a hard link planted at the pending batch is neither posted nor truncated",
   const tmp = seed(dir);
   const victim = path.join(tmp, "victim-log");
   fs.writeFileSync(victim, plantedBatch);
-  await withServer({}, async (url, seen) => {
+  await withServer(OUTLINE, async (url, seen) => {
     fs.linkSync(victim, pendingPath(tmp, url));
     for (let i = 0; i < 2; i++) assert.ok((await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting })).deny);
     await settle();
@@ -359,7 +534,7 @@ test("a flush also posts the batch another session left behind", async () => {
   const { dir: other } = checkout({ "src/a.cpp": BIG });
   const tmp = seed(dir);
   fs.writeFileSync(cachePathFor(other, tmp), fs.readFileSync(cachePathFor(dir, tmp)));
-  await withServer({}, async (url, seen) => {
+  await withServer(OUTLINE, async (url, seen) => {
     const a = await runHook({ ...readOf(dir, "src/a.cpp"), session_id: "A" }, { tmp, url, env: reporting });
     assert.equal(a.deny, null, "a modified file passes; nothing is flushed yet");
     await settle();
@@ -381,7 +556,7 @@ test("a flush also posts the batch another session left behind", async () => {
 test("a flush leaves another reporting scope's batch alone", async () => {
   const { dir } = checkout({ "src/a.cpp": BIG });
   const tmp = seed(dir);
-  await withServer({}, async (url, seen) => {
+  await withServer(OUTLINE, async (url, seen) => {
     // Another repository's batch, and one this repository's lines would go to under another server.
     const others = [pendingPath(tmp, url, "X", "code-other"), pendingPath(tmp, "http://127.0.0.1:9", "Y")];
     for (const f of others) fs.writeFileSync(f, plantedBatch, { mode: 0o600 });
@@ -446,7 +621,9 @@ test("an over-cap read whose budget cannot be written passes as budget_unrecorde
   const { dir } = checkout({ "src/a.cpp": BIG });
   const tmp = seed(dir);
   plantCap(tmp);
-  const r = await runHook(rangedRead(dir), { tmp, env: { LOOM_SHUNT_READ_CAP: "200" } });
+  const r = await withServer(OUTLINE, (url) =>
+    runHook(rangedRead(dir), { tmp, url, env: { LOOM_SHUNT_READ_CAP: "200" } }),
+  );
   assert.equal(r.deny, null);
   assert.match(r.log, /\tpass\tRead\t\d+\t\tbudget_unrecorded\t/);
 });
