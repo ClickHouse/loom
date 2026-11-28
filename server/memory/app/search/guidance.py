@@ -301,5 +301,7 @@ async def attach_search_guidance(
             if parked:
                 # Link state can change while the served memory revision stays the same.
                 hit.code_state = worst([hit.use_guidance.freshness.code])
+                # the commit the first page cached may not be the one that state rests on now
+                hit.code_changed_since = ""
         kept.append(hit)
     return kept

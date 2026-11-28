@@ -87,12 +87,14 @@ async def test_parked_hit_refreshes_cached_code_state(
     monkeypatch.setattr(guidance, "guidance_code_states", code_states)
     hit = _hit()
     hit.code_state = "missing"
+    hit.code_changed_since = "commit-a"  # the page-one state, since moved or unreadable
     await guidance.attach_search_guidance(_INPUT, [hit], snapshot_only=True)
     parked = search_pages.unparked(search_pages._parked(hit))
     assert parked is not None
     assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == [parked]
     assert parked.use_guidance is not None and parked.use_guidance.freshness.code == state
     assert parked.code_state == (state if state in ("changed", "fresh") else "")
+    assert parked.code_changed_since == ""
 
 
 @pytest.mark.asyncio
