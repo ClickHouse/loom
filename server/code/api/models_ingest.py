@@ -151,6 +151,9 @@ class CodeCalibrateOutput(BaseModel):
     noise_floor: float
     # Cosine below which the search abstains: `noise_floor` plus 0.05.
     abstain_threshold: float
+    # Cosine of a confident hit, the probes' 75th-percentile question-to-answer cosine:
+    # where `code.search`'s `retrieval_confidence` reads 1.0.
+    rerank_skip_above: float
     # The embedding model the probes ran against; the calibration applies to it.
     embedder_model: str
     # Query/positive pairs read from the probe corpus.
