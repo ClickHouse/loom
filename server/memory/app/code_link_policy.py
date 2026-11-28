@@ -95,11 +95,11 @@ async def apply_policies(
                 made = [a for a in links[mid] + pending[mid] if a["inputs_hash"] == want]
                 try:
                     written = await code_renames.revise(org, row, made)
-                except Exception as e:  # noqa: BLE001 — a failed revision leaves its memory due
-                    if not isinstance(e, customer.HOLDS):  # held is not failed
-                        result.errors.append(f"policy {org}/{mid}: {e}")
+                except Exception as e:  # failed or held: its memory stays due, behind the rest
                     rows += _behind(mine)
-                    continue
+                    if isinstance(e, customer.HOLDS):
+                        continue  # held is not failed: no error
+                    raise  # counted with the memory's other failures, below
                 if written:
                     result.renamed += 1
                     continue  # its links are of its old text: the link pass makes them again

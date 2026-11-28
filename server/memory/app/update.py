@@ -994,6 +994,7 @@ async def _write_revision(
             op=op,
         )
     duplicate_of_id, status_cols = _status_columns(conflict_result)
+    revision_run_id = _revision_run_id(input, existing)
     # value_json only for dict-shaped values (CH JSON rejects primitives).
     # memory_id is preserved (carried from `existing`) — usage events and
     # peers' conflict_with arrays key on it, so rotating it would dangle them.
@@ -1003,7 +1004,7 @@ async def _write_revision(
         value_json=(serialized_value if isinstance(new_value, dict) else "{}"),
         version=new_version,
         updated_at=memory_repo.written_now(),
-        run_id=_revision_run_id(input, existing),
+        run_id=revision_run_id,
         **_authorship(existing, pipeline),
         tombstoned_at=None,
         char_limit=input.char_limit,
@@ -1077,14 +1078,13 @@ async def _write_revision(
     try:
         # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
         after_write.index_late_rows(emb_rows, ch=ch)
-        cfg = await cfg_task
         conflict_result = await _update_post_write(input, existing, conflict_result, ch, follows)
 
         # Same-key supersession, exactly as memory.set runs it after its insert: a writer's
         # own revision retires the older rows of its key, one nobody asked for retires none.
         if not pipeline:
             await _revision_supersession(
-                input.org, existing, serialized_value, ch, cfg.policy, follows
+                input.org, existing, serialized_value, ch, (await cfg_task).policy, follows
             )
         await _revised_edges(existing, memory_row, new_value, new_sha, sensitivity, op=op, ch=ch)
         await project_stated_relations(
