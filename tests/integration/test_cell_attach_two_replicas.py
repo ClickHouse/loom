@@ -439,6 +439,7 @@ async def test_attach_with_two_live_api_replicas(
                         host=host,
                         credential_sha256=hashlib.sha256(_CREDENTIAL.encode()).hexdigest(),
                         probe_url="",
+                        upstream_url=None,
                         wait=20,
                         router=str(router),
                     )

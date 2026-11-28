@@ -18,6 +18,9 @@ MAX_KEYS = 10_000  # not a setting: memory per replica, not behaviour
 # unread. A cell's placement carries its fingerprint, so `attach/begin` refuses one whose
 # placement body could pass this.
 MAX_BODY_BYTES = 64 * 1024  # not a setting: the request's own shape bounds it
+# Directory reservations have one finite fleet count and byte envelope.
+MAX_CELLS = 4096  # not a setting: the directory fleet protocol
+MAX_CENSUS_BYTES = 4 * 1024 * 1024  # not a setting: the directory reservation envelope
 # `attach/begin` carries two fingerprints and the allow lists attach judged the stores by.
 ATTACH_BEGIN_MAX_BYTES = 256 * 1024  # not a setting: the request's own shape bounds it
 # The most orgs one `attach/place` batch names (its body also within MAX_BODY_BYTES).

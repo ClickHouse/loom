@@ -917,6 +917,7 @@ def test_a_later_cell_registers_only_once_the_first_is_serving() -> None:
         bucket="",
         bucket_prefix="",
         probe_url="http://eu-2.internal:7790",
+        upstream_url="http://eu-2.internal:7777",
         is_first=False,
         tenancy_rows=0,
         state_rows=0,

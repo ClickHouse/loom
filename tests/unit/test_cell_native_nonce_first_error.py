@@ -105,6 +105,7 @@ def native_call(monkeypatch, nonce_edges, exchange):
         host="first.example.test",
         credential_sha256="hash",
         probe_url="",
+        upstream_url=None,
         ch_allow_user=[],
         ch_allow_user_directory=[],
         ch_allow_object=[],

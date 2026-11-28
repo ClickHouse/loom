@@ -318,6 +318,7 @@ async def _prepare(stores: dict[str, Any], network: _Network) -> None:
         host=HOST,
         credential_sha256=CREDENTIAL_SHA,
         probe_url="",
+        upstream_url=None,
         wait=0,
         router=ROUTER,
     )
@@ -812,6 +813,7 @@ async def test_prepare_is_refused_while_attach_holds_the_lock(cell_stores) -> No
         host=HOST,
         credential_sha256=CREDENTIAL_SHA,
         probe_url="",
+        upstream_url=None,
         wait=0,
         router=ROUTER,
     )

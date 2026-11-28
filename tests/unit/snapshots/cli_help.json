@@ -469,8 +469,8 @@
   "options: -h, --help show this help message and exit --cell CELL This cell's name (LOOM_CELL) --org ORG The org to place --router ROUTER The router's URL (default: LOOM_CELL_ROUTER_URL)"
  ],
  "loom cell prepare": [
-  "usage: loom cell prepare [-h] --cell CELL --host HOST --credential-sha256 SHA256 [--probe-url PROBE_URL] [--wait WAIT] [--router ROUTER]",
-  "options: -h, --help show this help message and exit --cell CELL This cell's name (LOOM_CELL) --host HOST The host the cell serves its orgs at --credential-sha256 SHA256 The sha256 of the cell's router credential (`loom cell credential new`) --probe-url PROBE_URL A later cell's probe listener address (not the first's) --wait WAIT Seconds to retry a busy or unreachable probe listener --router ROUTER The router's URL (default: LOOM_CELL_ROUTER_URL)"
+  "usage: loom cell prepare [-h] --cell CELL --host HOST --credential-sha256 SHA256 [--probe-url PROBE_URL] [--upstream-url UPSTREAM_URL] [--wait WAIT] [--router ROUTER]",
+  "options: -h, --help show this help message and exit --cell CELL This cell's name (LOOM_CELL) --host HOST The host the cell serves its orgs at --credential-sha256 SHA256 The sha256 of the cell's router credential (`loom cell credential new`) --probe-url PROBE_URL A later cell's probe listener address (not the first's) --upstream-url UPSTREAM_URL A later cell's internal main-port origin (with --probe-url) --wait WAIT Seconds to retry a busy or unreachable probe listener --router ROUTER The router's URL (default: LOOM_CELL_ROUTER_URL)"
  ],
  "loom cell attach": [
   "usage: loom cell attach [-h] --cell CELL [--wait WAIT] [--scan-budget SCAN_BUDGET] [--dry-run] [--ch-allow-user CH_ALLOW_USER] [--ch-allow-user-directory CH_ALLOW_USER_DIRECTORY] [--ch-allow-object CH_ALLOW_OBJECT] [--ch-allow-replica CH_ALLOW_REPLICA] [--pg-allow-role PG_ALLOW_ROLE] [--revoke-unprovisioned] [--router ROUTER]",

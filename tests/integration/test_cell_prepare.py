@@ -20,7 +20,7 @@ import httpx
 import pytest
 
 from server.cli import cell as cell_cli
-from server.cli import cell_prepare
+from server.cli import cell_control, cell_prepare
 from server.core import cell, cell_probe, instances, pg
 from server.core.ch import get_client
 from server.core.leases import LOCK_TABLE
@@ -103,6 +103,7 @@ def _args(**over: Any) -> argparse.Namespace:
         "host": "LOOM.example",
         "credential_sha256": CREDENTIAL_SHA,
         "probe_url": "",
+        "upstream_url": None,
         "wait": 0,
         "router": "http://127.0.0.1:7900",
     }
@@ -284,6 +285,8 @@ async def test_a_later_cell_registers_after_the_first_as_enforced(
         await pg.close_pool()
         monkeypatch.setattr(settings, "pg_dsn", later_dsn)
         monkeypatch.setattr(settings, "cell", "eu-2")
+        monkeypatch.setattr(settings, "public_base_url", "https://eu-2.loom.example")
+        monkeypatch.setattr(settings, "oauth_issuer", "https://eu-2.loom.example")
         await pg_migrate.migrate()
         later_id = f"dep-{uuid.uuid4().hex[:8]}"
         await pg.execute(
@@ -298,6 +301,7 @@ async def test_a_later_cell_registers_after_the_first_as_enforced(
             host="eu-2.loom.example",
             credential_sha256=sha,
             probe_url="http://eu-2.internal:7790",
+            upstream_url="http://eu-2.internal:7777",
         )
         # A live process without its LOOM_CELL: a later cell runs with it from its first
         # boot, so the router registers nothing.
@@ -337,6 +341,14 @@ async def test_a_later_cell_registers_after_the_first_as_enforced(
             "next": None,
         }
         assert await _nonces_left(ch) == (0, 0)
+        prepared = await cell_control.request(
+            cell_cli.operator_router(args), args.cell, transport, "", method="GET"
+        )
+        local = await _cell_rows()
+        assert (prepared["current_fp"], prepared["next_fp"]) == (
+            local["current"],
+            local["next"],
+        )
     finally:
         await pg.close_pool()
         await drop_database(cell_dsn, later_db)

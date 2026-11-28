@@ -15,6 +15,7 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
+from server.core import cell
 from server.router import app as router_app
 from server.router import directory
 from server.settings import settings
@@ -39,6 +40,23 @@ def _body(**over: Any) -> dict[str, Any]:
         "held": dict(HELD),
     }
     body.update(over)
+    if body.get("probe_url") and body.get("host") != "loom.example":
+        body.setdefault("upstream_url", "http://eu-2.internal:7777")
+        host = cell.normalise_host(body["host"])
+        body.setdefault(
+            "current_fp",
+            cell.as_value(
+                {
+                    **cell.DEFAULTS,
+                    "deployment_id": body["deployment_id"],
+                    "public_host": host,
+                    "oauth_issuer_host": host,
+                    "bucket": body["bucket"],
+                    "bucket_prefix": body["bucket_prefix"],
+                }
+            ),
+        )
+        body.setdefault("next_fp", None)
     return {k: v for k, v in body.items() if v is not ...}
 
 
@@ -234,7 +252,7 @@ def test_an_address_is_written_one_way_however_it_is_spelled(router) -> None:
         ("http://[FD00:0:0:0:0:0:0:7]:7790", "http://[fd00::7]:7790"),
         ("https://eu-2.internal:443/", "https://eu-2.internal"),
     ):
-        assert router_app._cell_address(spelled) == written
+        assert router_app.routing.cell_address(spelled) == written
 
 
 def test_a_rerun_the_directory_refuses_is_refused_before_the_probe(router) -> None:
@@ -579,8 +597,10 @@ class _CountingConnection:
             for f in directory.Cell.__dataclass_fields__
         }
 
-    async def fetch(self, *_a: Any) -> list[Any]:
+    async def fetch(self, sql: str, *_a: Any) -> list[Any]:
         self.statements += 1
+        if sql == directory._REGISTRATION_RESERVATIONS:
+            return [{"cell": None, "current_fp": None, "next_fp": None, "fits": True}]
         return []
 
     def transaction(self) -> Any:
@@ -621,6 +641,18 @@ def test_the_registration_bounds_count_the_statements_the_code_sends(monkeypatch
         bucket="docs",
         bucket_prefix="eu-2",
         probe_url="http://eu-2.internal:7790",
+        upstream_url="http://eu-2.internal:7777",
+        current_fp=cell.as_value(
+            {
+                **cell.DEFAULTS,
+                "deployment_id": "dep-2",
+                "public_host": "eu-2.loom.example",
+                "oauth_issuer_host": "eu-2.loom.example",
+                "bucket": "docs",
+                "bucket_prefix": "eu-2",
+            }
+        ),
+        next_fp=None,
         is_first=False,
         tenancy_rows=0,
         state_rows=0,
