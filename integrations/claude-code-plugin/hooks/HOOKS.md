@@ -16,7 +16,8 @@ is JSON on stdin.
 - **It never fails the host session.** Every path exits 0 and a thrown error
   is swallowed. A hook that ends in `runHookMain` (`lib/loom-client.mjs`)
   writes that error's first line to stderr under `LOOM_HOOK_DEBUG=on`, with
-  bearer tokens and JWTs redacted; nothing else reaches stderr. The one
+  bearer tokens and JWTs redacted, also when `loom-record` runs it in the
+  hook; nothing else reaches stderr. The one
   exception is a missing Node: Claude Code reports `node` not found, and the
   launcher exits 1 with one `loom:` line on stderr; both are non-blocking
   errors.
@@ -43,16 +44,19 @@ is JSON on stdin.
   are lost; when it dies, its job file stays, the client status check counts
   it, and `node loom-record.mjs <Event> - <job file>` replays it. Either
   way no cursor has moved, so the next Stop sends the conversation turns
-  again. The job file holds the payload as the host sent it, tool input and
-  output included; what the scripts send is redacted. That process has no
-  stderr: to see a recording script's error under `LOOM_HOOK_DEBUG=on`,
-  start the script itself with the payload on stdin. PreCompact stays
-  direct, so the working-memory note is written before the compaction's
-  primer reads it.
+  again. The job file holds the payload as the host sent it, the prompt or
+  the tool input and output included; what the scripts send is redacted.
+  That process has no stderr: to see a recording script's error under
+  `LOOM_HOOK_DEBUG=on`, start the script itself with the payload on stdin.
+  PreCompact stays direct, so the working-memory note is written before the
+  compaction's primer reads it.
 - **A prompt waits for one process.** `loom-record` runs the two lookups a
   prompt waits for (`loom-prompt-pack`, `loom-prompt-recall`) in the hook
   itself, side by side, and prints what they found as one
   `additionalContext`, the code pointers first, the recall on the next line.
+  Before it starts the detached process it writes the run's begin to the
+  session's run state (**loom-run**, below), with the checkout lookup the
+  lookups share.
   The other gates and the scripts that inject context run as hooks of their
   own: the host reads their output.
 - **It is safe without Loom.** No credential means no request (the only
@@ -88,7 +92,7 @@ receives on stdout.
 | Event                                                          | Script                | Reads                              | Output                   | Side effects                                                                                                                                                                                                          | Off                                |
 | -------------------------------------------------------------- | --------------------- | ---------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | SessionStart                                                   | loom-session-start    | cwd, session_id                    | primer text              | context.pack, code.repos/index_status/map, task.counts, namespace.get, session.brief_list, collection.list; GET /v1/health: its round trip is cached as the RTT bound, its `version` feeds the server version warning | `LOOM_INJECT_CONTEXT=false`        |
-| UserPromptSubmit                                               | loom-record           | the payload                        | JSON additionalContext   | starts one detached process, which runs the event's `detached` rows; runs the event's `in loom-record` rows itself and prints their context as one answer                                                             | each script's own                  |
+| UserPromptSubmit                                               | loom-record           | the payload                        | JSON additionalContext   | keeps the run's begin in the run state; starts one detached process, which runs the event's `detached` rows; runs the event's `in loom-record` rows itself and prints their context as one answer                     | each script's own                  |
 | UserPromptSubmit, in loom-record                               | loom-prompt-pack      | prompt, cwd, session_id            | its context              | code.search                                                                                                                                                                                                           | `LOOM_PROMPT_PACK=off`             |
 | UserPromptSubmit, in loom-record                               | loom-prompt-recall    | prompt, cwd, session_id            | its context              | context.pack                                                                                                                                                                                                          | `LOOM_PROMPT_RECALL=off`           |
 | UserPromptSubmit, detached                                     | loom-run              | prompt, session_id                 | none                     | run.begin on the first prompt; appends the turn journal                                                                                                                                                               | `LOOM_RUN_LEDGER=off`              |
@@ -272,12 +276,13 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   again on the next prompt with the same id, and closed at SessionEnd if it was
   never answered; any other 4xx is final for the session); every prompt is also
   appended to the turn journal, which clients without a parseable
-  transcript read. Under Claude Code the begin runs in the detached process,
-  so the prompt does not wait for it, and a tool observation sent before the
-  answer carries the derived id as well; the session's run state holds the
-  begin's body from the ask until the answer, a SessionEnd that comes first
-  asks again with it, and an answer that arrives after that close is
-  dropped. SessionEnd closes the run with the last
+  transcript read. Under Claude Code the prompt does not wait for the begin,
+  and a tool observation sent before the answer carries the derived id as
+  well: the hook writes the begin's body to the session's run state and the
+  detached process asks it. A SessionEnd that comes before the answer, or
+  before that process has started, asks the begin itself and closes the run:
+  a process that starts after it asks nothing, and an answer that arrives
+  after it is dropped. SessionEnd closes the run with the last
   assistant text, `outcome: none` and the recalled keys, awaited and then
   exited at once; the hook never claims which memories were used.
 - **loom-validate-gate.** Collects the memory keys this session wrote
@@ -295,10 +300,12 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   finds it tells it with no call of its own; a Stop that comes while the
   audit is unanswered passes, and a later one tells, so a session whose only
   Stop comes before the answer is not told. A Stop that finds the ask older
-  than the request bound with no verdict (the detached process died) asks in
-  place. The verdict is the namespace's last day as of that prompt. A wiring
-  that starts the script at Stop only (Codex, a hand-wired client) asks on
-  the first Stop and waits for the answer. Later stops make no call.
+  than twice the request bound with no verdict (the detached process died:
+  a live one looks the checkout up and then answers or gives up inside one
+  bound) asks in place. The verdict is the namespace's last day as of that
+  prompt. A wiring that starts the script at Stop only (Codex, a hand-wired
+  client) asks on the first Stop and waits for the answer. Later stops make
+  no call.
 - **loom-test-gate.** With uncommitted changes this session made in a
   loom-indexed repo (dirty paths the transcript shows an edit tool targeted
   or a shell command named, written since the session's first row; a tree

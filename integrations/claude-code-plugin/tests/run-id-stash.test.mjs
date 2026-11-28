@@ -165,6 +165,27 @@ test("a begin answered after SessionEnd closed the run does not mark it begun ag
   withTmpdir(tmp, () => assert.deepEqual(readRunState("s4b"), { run_id: "0a1b2c3d" }));
 });
 
+test("a begin answered after a SessionEnd that got no answer does not mark the run begun", async () => {
+  const tmp = freshTmp();
+  const payload = { session_id: "s4c", cwd: tmp, prompt: "p" };
+  let asked;
+  const firstBegin = new Promise((resolve) => (asked = resolve));
+  // The prompt's begin is answered at 900 ms, inside its own bound. The session ends
+  // meanwhile: its begin, capped at 400 ms, gets no answer, so it closes nothing.
+  await withServer({ beginRunId: "0a1b2c3d", delayMs: 900, onBegin: () => asked() }, async (url, seen) => {
+    const prompt = runHook("UserPromptSubmit", payload, { tmp, url });
+    await firstBegin;
+    await runHook("SessionEnd", { ...payload, reason: "exit" }, { tmp, url });
+    await prompt;
+    assert.equal(seen.filter((r) => r.url.endsWith("/run.complete")).length, 0, "nothing was closed");
+  });
+  // Not begun with no close to come: a resumed session's next prompt asks again.
+  withTmpdir(tmp, () => {
+    assert.equal(readRunState("s4c").begun, undefined);
+    assert.equal(readRunState("s4c").attempted, true);
+  });
+});
+
 test("a begin whose answer was lost is recovered, not duplicated, on the next prompt", async () => {
   // One server: the first begin commits but its answer arrives after the hook's
   // timeout; the retry gets the same id (the server's begin is idempotent).

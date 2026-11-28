@@ -1038,24 +1038,29 @@ let shared = null;
  * Import the hook scripts at `urls` and run their mains in this process, in
  * that order, each on the payload text `raw` as if the host had started it.
  * Resolves, when all of them have returned, to what each main returned (its
- * answer for the host, or undefined); nothing they throw escapes.
+ * answer for the host, or undefined); nothing they throw escapes. The
+ * sharing starts with the call: a scope the caller resolves before it
+ * awaits the result is the one the scripts get.
  */
 export async function runHooksTogether(raw, urls) {
   // Past any one hook's own bound: a settle of at most five seconds, then two requests.
   scheduleExit(0, 2 * requestTimeoutMs() + 10000);
   shared = { raw, mains: [], scopes: new Map(), tops: new Map() };
   for (const url of urls) {
+    shared.script = basename(url);
     try {
       await import(url);
-    } catch {
-      /* a script that does not load records nothing; the others still run */
+    } catch (e) {
+      // A script that does not load records nothing; the others still run.
+      reportSwallowed(e, shared.script);
     }
   }
-  const run = async (main) => {
+  const run = async ({ main, script }) => {
     try {
       return await main();
-    } catch {
-      /* swallowed, as runHookMain does: a script that throws has no answer */
+    } catch (e) {
+      // Swallowed, as runHookMain does: a script that throws has no answer.
+      reportSwallowed(e, script);
       return undefined;
     }
   };
@@ -1070,15 +1075,22 @@ export function printHookAnswer(answer, done) {
   process.stdout.write(JSON.stringify(answer) + "\n", done);
 }
 
+/** With LOOM_HOOK_DEBUG=on, the first line of an error `script` swallowed,
+ *  redacted, to stderr: how a broken hook shows itself. */
+function reportSwallowed(e, script) {
+  if (!envSwitch("LOOM_HOOK_DEBUG", false)) return;
+  const line = String((e && (e.stack || e.message)) || e).split("\n")[0];
+  process.stderr.write(`loom hook ${script}: ${redactHead(line, 300).slice(0, 300)}\n`);
+}
+
 /**
  * Run a hook's `main` and print the answer it returns, if any. Whatever it
- * throws, the hook exits 0: a hook never fails the host session. With
- * LOOM_HOOK_DEBUG=on the error's first line, redacted, goes to stderr, which
- * is how a broken hook shows itself.
+ * throws, the hook exits 0: a hook never fails the host session, and
+ * LOOM_HOOK_DEBUG=on reports the error (reportSwallowed).
  */
 export function runHookMain(main) {
   if (shared) {
-    shared.mains.push(main);
+    shared.mains.push({ main, script: shared.script });
     return;
   }
   Promise.resolve()
@@ -1087,10 +1099,7 @@ export function runHookMain(main) {
       if (answer && typeof answer === "object") printHookAnswer(answer);
     })
     .catch((e) => {
-      if (envSwitch("LOOM_HOOK_DEBUG", false)) {
-        const line = String((e && (e.stack || e.message)) || e).split("\n")[0];
-        process.stderr.write(`loom hook ${basename(process.argv[1] || "")}: ${redactHead(line, 300).slice(0, 300)}\n`);
-      }
+      reportSwallowed(e, basename(process.argv[1] || ""));
       scheduleExit(0);
     });
 }

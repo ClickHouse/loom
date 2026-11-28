@@ -12,7 +12,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertMode, hostEnv, withTmpdir } from "./host-env.mjs";
 import { removeSandbox } from "./hook-sandbox.mjs";
 import { LOOKUPS, RECORDERS, mergedContext } from "../hooks/loom-record.mjs";
@@ -118,6 +118,8 @@ function env(box, url, extra = {}) {
     // Longer than loom-run's round trip to a local fake: the conversation
     // hook is still waiting when the run closes.
     LOOM_CONV_SETTLE_MS: "300",
+    // What a script throws in the launcher then reaches stderr, which the cases check.
+    LOOM_HOOK_DEBUG: "on",
     ...extra,
   });
 }
@@ -128,6 +130,21 @@ function dyingCopy(box) {
   const preload = path.join(box.dir, "die-as-copy.cjs");
   fs.writeFileSync(preload, "if (process.argv[4] && /loom-record\\.mjs$/.test(process.argv[1])) process.exit(1);\n");
   return { NODE_OPTIONS: `--require ${preload}` };
+}
+
+/** Environment in which a detached copy of the launcher starts only once
+ *  `go()` is called: a copy the session's later hooks get ahead of. */
+function heldCopy(box) {
+  const preload = path.join(box.dir, "hold-copy.cjs");
+  const gate = path.join(box.dir, "go");
+  fs.writeFileSync(
+    preload,
+    `if (process.argv[4] && /loom-record\\.mjs$/.test(process.argv[1])) {
+       const wait = new Int32Array(new SharedArrayBuffer(4));
+       while (!require("node:fs").existsSync(${JSON.stringify(gate)})) Atomics.wait(wait, 0, 0, 20);
+     }\n`,
+  );
+  return { env: { NODE_OPTIONS: `--require ${preload}` }, go: () => fs.writeFileSync(gate, "") };
 }
 
 /** The payloads handed off and not yet recorded. */
@@ -329,6 +346,40 @@ test("a prompt's hook prints what both lookups found and waits for neither the r
   }
 });
 
+test("a script the launcher runs beside others reports what it throws under LOOM_HOOK_DEBUG", async () => {
+  const box = sandbox();
+  const client = pathToFileURL(path.join(root, "lib", "loom-client.mjs")).href;
+  const throwing = path.join(box.dir, "loom-throws.mjs");
+  const driver = path.join(box.dir, "driver.mjs");
+  fs.writeFileSync(
+    throwing,
+    `import { runHookMain } from ${JSON.stringify(client)};
+     runHookMain(async () => { throw new Error("no index for Bearer ${TOKEN}\\nnot shown"); });\n`,
+  );
+  const urls = [throwing, path.join(box.dir, "loom-missing.mjs")].map((file) => pathToFileURL(file).href);
+  fs.writeFileSync(
+    driver,
+    `import { runHooksTogether } from ${JSON.stringify(client)};
+     await runHooksTogether("{}", ${JSON.stringify(urls)});\n`,
+  );
+  try {
+    const r = await runLauncher([], env(box, "http://127.0.0.1:9"), "", { script: driver });
+    assert.equal(r.code, 0);
+    const lines = r.stderr.trim().split("\n");
+    assert.equal(lines.length, 2, r.stderr);
+    // The script that does not load, then the one that throws: each by name, one redacted line.
+    assert.match(lines[0], /^loom hook loom-missing\.mjs: .*Cannot find module/);
+    assert.match(lines[1], /^loom hook loom-throws\.mjs: Error: no index for /);
+    assert.equal(r.stderr.includes(TOKEN), false, "the token is redacted");
+    const quiet = await runLauncher([], env(box, "http://127.0.0.1:9", { LOOM_HOOK_DEBUG: "off" }), "", {
+      script: driver,
+    });
+    assert.deepEqual(quiet, { code: 0, stdout: "", stderr: "" });
+  } finally {
+    await removeSandbox(box);
+  }
+});
+
 test("a prompt with nothing to add prints nothing", async () => {
   const box = sandbox();
   indexed(box);
@@ -340,6 +391,37 @@ test("a prompt with nothing to add prints nothing", async () => {
     await arrived(loom, ["run.begin", "namespace.audit"]);
     assert.ok(await recorded(box), `left behind: ${handedOff(box)}`);
   } finally {
+    await loom.close();
+    await removeSandbox(box);
+  }
+});
+
+test("a session that ends before the prompt's copy has started leaves no run open", async () => {
+  const box = sandbox();
+  const loom = await heldLoom({ replies: { "run.begin": { run_id: `cc-${SESSION}` } } });
+  loom.release();
+  const runOps = () => loom.ops.filter((op) => op.startsWith("run."));
+  const copy = heldCopy(box);
+  try {
+    const hookEnv = env(box, loom.url, copy.env);
+    const r = await runLauncher(["UserPromptSubmit"], hookEnv, payload("UserPromptSubmit", box, PROMPT));
+    assert.deepEqual(r, { code: 0, stdout: "", stderr: "" });
+    // The hook is back and its copy has asked nothing: the begin is on disk all the same.
+    assert.deepEqual(runOps(), []);
+    assert.equal(withTmpdir(box.tmp, () => readRunState(SESSION)).body.goal, PROMPT.prompt);
+    // The session ends first (an abort right after the prompt): its hook opens the run and closes it.
+    assert.deepEqual(await runHook("SessionEnd", box, loom.url), { code: 0, stdout: "", stderr: "" });
+    assert.deepEqual(runOps(), ["run.begin", "run.complete"]);
+    // The copy starts now. A begin sent after the close would open the run again, with nothing left to close it.
+    copy.go();
+    assert.ok(await recorded(box), `left behind: ${handedOff(box)}`);
+    assert.deepEqual(runOps(), ["run.begin", "run.complete"]);
+    assert.deepEqual(
+      withTmpdir(box.tmp, () => readRunState(SESSION)),
+      { run_id: `cc-${SESSION}` },
+    );
+  } finally {
+    copy.go();
     await loom.close();
     await removeSandbox(box);
   }
@@ -396,10 +478,21 @@ test("a Stop asks in place when the prompt's copy asked long ago and left no ver
   const loom = await heldLoom({ replies: { "namespace.audit": AUDIT } });
   loom.release();
   const stop = () =>
-    runLauncher(["Stop"], env(box, loom.url), payload("Stop", box, { stop_hook_active: false }), { script: HEALTH });
+    runLauncher(
+      ["Stop"],
+      env(box, loom.url, { LOOM_HOOK_TIMEOUT_MS: "8000" }),
+      payload("Stop", box, { stop_hook_active: false }),
+      { script: HEALTH },
+    );
+  const asked = (ago) => writeJsonFile(sessionStatePath("nshealth", SESSION, { tmp: box.tmp }), { asked_at: ago });
   try {
+    // Past the 8 s bound, inside twice that: a copy that looked the checkout up
+    // before a slow request can still be at work, and is not asked over.
+    asked(Date.now() - 9000);
+    assert.deepEqual(await stop(), { code: 0, stdout: "", stderr: "" });
+    assert.deepEqual(loom.ops, []);
     // A copy killed between its ask and its answer leaves this behind.
-    writeJsonFile(sessionStatePath("nshealth", SESSION, { tmp: box.tmp }), { asked_at: Date.now() - 60000 });
+    asked(Date.now() - 60000);
     assert.match(JSON.parse((await stop()).stdout).reason, /exact_key_store/);
     assert.deepEqual(await stop(), { code: 0, stdout: "", stderr: "" });
     assert.deepEqual(loom.ops, ["namespace.audit"]);

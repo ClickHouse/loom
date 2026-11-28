@@ -13,8 +13,8 @@
 //   Stop              → tells a stored verdict once, with no call. A wiring
 //                       that starts this script at Stop only (Codex, a
 //                       hand-wired client) asks here, on the first Stop, as
-//                       does a Stop that finds an ask past the request bound
-//                       with no verdict: its process died.
+//                       does a Stop that finds an ask older than twice the
+//                       request bound with no verdict: its process died.
 //
 // Fail-open everywhere: no token, no scope, server down or slower than the
 // hook's bound, a healthy namespace, a stop this hook caused — the agent
@@ -75,7 +75,9 @@ async function main() {
     return;
   }
   const state = readJsonFile(cp);
-  const decision = decideAudit(state, requestTimeoutMs());
+  // Twice the bound: the copy stamps its ask, looks the checkout up, and then
+  // its request alone may take the bound. A live copy is not asked over.
+  const decision = decideAudit(state, 2 * requestTimeoutMs());
   if (decision.cache !== state) writeJsonFile(cp, decision.cache);
   const line = decision.audit ? await verdict(payload, token) : decision.line;
   const out = healthPayload(line);

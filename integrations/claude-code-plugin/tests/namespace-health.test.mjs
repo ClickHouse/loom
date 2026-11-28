@@ -120,9 +120,9 @@ test("decideAudit: a stop passes while a copy is asking, tells its verdict once,
   assert.ok(quiet.cache.audited_at > 0);
 });
 
-test("decideAudit: a copy that asked past the request bound and stored no verdict died, so the stop audits", () => {
+test("decideAudit: a copy that asked longer ago than a live one takes and stored no verdict died, so the stop audits", () => {
   const asked = { asked_at: 1000 };
-  assert.equal(decideAudit(asked, BOUND_MS, 1000 + BOUND_MS).audit, false, "still inside its bound");
+  assert.equal(decideAudit(asked, BOUND_MS, 1000 + BOUND_MS).audit, false, "a live copy may still answer");
   const overdue = decideAudit(asked, BOUND_MS, 1001 + BOUND_MS);
   assert.equal(overdue.audit, true);
   assert.deepEqual(overdue.cache, { asked_at: 1000, audited_at: 1001 + BOUND_MS });

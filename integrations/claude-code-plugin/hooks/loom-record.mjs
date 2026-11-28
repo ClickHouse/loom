@@ -12,9 +12,10 @@
 //       what the host runs, with the payload on stdin.
 //       At a prompt, after a tool call and at Stop the payload goes to a
 //       private job file, one detached copy of this script is started on
-//       it, and the hook exits; at a prompt it first runs the lookups and
-//       prints what they found. With no credential there is nothing to
-//       record, and nothing is started.
+//       it, and the hook exits; at a prompt it first keeps the run's begin
+//       for the copy to ask, runs the lookups and prints what they found.
+//       With no credential there is nothing to record, and nothing is
+//       started.
 //       At SessionEnd the event's scripts run here and the hook exits when
 //       they have returned: a host that is torn down when the client exits
 //       (a container whose entrypoint is the client, a CI runner that kills
@@ -35,7 +36,16 @@
 // turns again.
 
 import { spawnDetached } from "../lib/flush-job.mjs";
-import { agentMode, printHookAnswer, readStdinText, resolveToken, runHooksTogether } from "../lib/loom-client.mjs";
+import {
+  agentMode,
+  normalizePayload,
+  printHookAnswer,
+  readStdinText,
+  resolveScope,
+  resolveToken,
+  runHooksTogether,
+} from "../lib/loom-client.mjs";
+import { keepRunBegin, runLedgerEnabled } from "../lib/run-hook.mjs";
 import { readPrivateFile, removeFile } from "../lib/tmp-state.mjs";
 
 /** The scripts each event records with, in the order they start. At
@@ -69,6 +79,20 @@ export function mergedContext(event, answers) {
   return { hookSpecificOutput: { hookEventName: event, additionalContext: texts.join("\n") } };
 }
 
+/** The run's begin goes to the session's run state before the copy that asks
+ *  it is started (loom-run has the rules): a SessionEnd that comes before
+ *  that copy has run finds the begin, asks it and closes the run, and the
+ *  copy then asks nothing. */
+function keepBegin(raw) {
+  try {
+    if (!runLedgerEnabled() || !resolveToken()) return;
+    const payload = normalizePayload(JSON.parse(raw));
+    if (payload.session_id) keepRunBegin(payload, () => resolveScope(payload.cwd || process.cwd()));
+  } catch {
+    /* nothing kept: the copy asks no begin, and the hook still hands off and looks up */
+  }
+}
+
 async function hook(script, event, client) {
   const raw = await readStdinText();
   if (event === "SessionEnd") {
@@ -77,11 +101,15 @@ async function hook(script, event, client) {
     process.stdin.destroy();
     return run(raw, RECORDERS[event]);
   }
-  // An agent's token is left to the copy: renewing one is a request.
+  // Started first: the lookups share what the hook looks up about the checkout below.
+  const lookups = LOOKUPS[event] ? run(raw, LOOKUPS[event]) : null;
+  // An agent's token is left to the copy, or at a prompt to what the hook runs
+  // anyway: renewing one is a request.
   if (agentMode() || resolveToken()) {
+    if (event === "UserPromptSubmit") keepBegin(raw);
     spawnDetached([script, event, client || "-"], raw, { kind: `record-${event}` });
   }
-  const answer = LOOKUPS[event] ? mergedContext(event, await run(raw, LOOKUPS[event])) : null;
+  const answer = lookups ? mergedContext(event, await lookups) : null;
   // Exits itself: a host that never closes stdin would hold the process open.
   if (answer) printHookAnswer(answer, () => process.exit(0));
   else process.exit(0);
