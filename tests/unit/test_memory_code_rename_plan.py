@@ -132,6 +132,9 @@ def test_planning_the_revised_text_again_offers_no_edit() -> None:
         ('the "read_rows" key feeds `read_rows`', "quoted_or_literal"),
         ("```\nread_rows(conn)\n```\n`read_rows` is hot", "quoted_or_literal"),
         ("`rows = read_rows(conn)` then `read_rows`", "quoted_or_literal"),
+        # written as code through something the index does not define
+        ("`read_rows` retries; call cfg.read_rows() once.", "old_name_remains"),
+        ("`Reader.read_rows` retries; wrap `conn.read_rows()` in a try.", "old_name_remains"),
         # the sentence is about the name, or about a point in time
         ("We should rename `read_rows` to something shorter.", "about_naming"),
         ("`read_rows`, formerly the slow path, retries.", "about_naming"),
@@ -142,10 +145,14 @@ def test_planning_the_revised_text_again_offers_no_edit() -> None:
         ("The naming of `read_rows` follows the loader.", "about_naming"),
         ("The helper is called `read_rows`.", "about_naming"),
         ("`read_rows` is an alias of the loader.", "about_naming"),
+        # a wrapped line and a one-letter abbreviation do not end the sentence
+        ("The loader was formerly named\n`read_rows`.", "about_naming"),
+        ("It was renamed, e.g. `read_rows` retries.", "about_naming"),
         ("`read_rows` regressed in a1b2c3d4e5.", "dated_claim"),
         ("`read_rows` retries since v2.3.", "dated_claim"),
         ("`read_rows` retries, see #1234.", "dated_claim"),
         ("In March `read_rows` retried twice.", "dated_claim"),
+        ("In May `read_rows` retried twice.", "dated_claim"),
         # the new name is there already
         ("`read_rows` calls `fetch_rows`.", "new_name_present"),
         ("`read_rows` and the fetch_rows helper.", "new_name_present"),
@@ -160,14 +167,21 @@ def test_a_spelling_or_sentence_that_cannot_be_swapped_withholds_the_memory(
 
 
 def test_a_cue_in_another_sentence_does_not_withhold() -> None:
-    text = "The loader was renamed in 2019. `read_rows` retries twice.\nSee #12 for the loader."
-    assert _revised(text) == text.replace("read_rows", "fetch_rows")
+    for text in (
+        "The loader was renamed in 2019. `read_rows` retries twice.\nSee #12 for the loader.",
+        # a blank line and a list item end a sentence that has no full stop
+        "The loader was renamed\n\n`read_rows` retries twice",
+        "- the loader was renamed\n- `read_rows` retries twice\n3. see #12",
+    ):
+        assert _revised(text) == text.replace("read_rows", "fetch_rows")
 
 
 def test_a_longer_word_that_holds_a_cue_or_a_call_of_the_code_does_not_withhold() -> None:
     for text in (
         "`read_rows` reads the filename, the hostname and the namespace.",
         "The worker calls `read_rows` twice.",
+        "`read_rows` may retry twice.",
+        "May `read_rows` retry twice?",
     ):
         assert _revised(text) == text.replace("read_rows", "fetch_rows")
 
@@ -214,6 +228,14 @@ def test_a_name_another_definition_is_written_by_is_left_alone() -> None:
     assert _revised(text, links=links, defs=[_d(PATH, NEW), other]) == (
         "`Writer.read_rows` buffers; `Reader.fetch_rows` retries."
     )
+    # renamed as well, under its own link: each link edits its own name
+    now = _d("src/io/writer.py", "src.io.writer::Writer::fetch_rows")
+    links = [RENAMED, _link(now.path, now.qualified_name, was=(other.path, other.qualified_name))]
+    assert _revised(text, links=links, defs=[_d(PATH, NEW), now]) == (
+        "`Writer.fetch_rows` buffers; `Reader.fetch_rows` retries."
+    )
+    # the head no longer defines it and no link follows it
+    assert _plan(text).reason == "old_name_remains"
 
 
 def test_a_new_name_that_does_not_resolve_to_the_link_withholds() -> None:
@@ -298,9 +320,8 @@ def test_a_scope_change_edits_only_the_spellings_that_name_the_old_scope() -> No
         "`Loader` wraps the socket."
     )
     # a member written through the old class is not this link's to rename
-    assert _plan("`Reader` wraps; `Reader.get` reads.", links=[link], defs=defs).reason == (
-        "old_name_remains"
-    )
+    for text in ("`Reader` wraps; `Reader.get` reads.", "`Reader` wraps; `~Reader` closes."):
+        assert _plan(text, links=[link], defs=defs).reason == "old_name_remains"
     # moved to another module under its own name: only a qualified spelling changes
     moved = _link(
         "src/net/util.py", "src.net.util::backoff", was=("src/io/util.py", "src.io.util::backoff")

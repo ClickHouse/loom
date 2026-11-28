@@ -58,13 +58,14 @@ REASONS = (
 UNNAMED = REASONS[-1]
 
 # what makes a sentence a statement about a point in time: a commit, a version tag, a
-# year, a month, a pull request or issue
+# year, a month, a pull request or issue. `May` is the month only capitalised after
+# another word: elsewhere it is the verb.
 _DATED = re.compile(
     r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b"
     r"|\bv\d+(?:\.\d+)*\b|\b\d+\.\d+\.\d+\b"
     r"|\b(?:19|20)\d\d\b"
     r"|\b(?:january|february|march|april|june|july|august|september|october|november"
-    r"|december)\b"
+    r"|december)\b|(?<=\w\s)(?-i:May)\b"
     r"|#\d+\b|\b(?:pr|mr|gh)[- ]?\d+\b|\b(?:issue|pull request)s? \d+",
     re.IGNORECASE,
 )
@@ -75,7 +76,11 @@ _NAMING = re.compile(
     r"|moved from|deprecated|legacy|before|previously)\b",
     re.IGNORECASE,
 )
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n")
+# a sentence ends after `.`, `!` or `?` and a space (not after a one-letter abbreviation:
+# `e.g.`, `i.e.`), at a blank line and before a list item; a wrapped line goes on
+_SENTENCE_END = re.compile(
+    r"(?<!\W[A-Za-z]\.)(?<=[.!?])\s+|\n[ \t]*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)])[ \t])"
+)
 _JOIN = re.compile(r"::|\.")
 # the ordinal the index gives the second and later definitions of one name in a scope
 _ORDINAL = re.compile(r"(?<=[^:.])#\d+(?=$|::|\.)")
@@ -165,7 +170,7 @@ def plan(
         alive = m.was_path not in gone
         why |= _in_labels(memory, m, alive)
         if m.name:
-            why |= _renamed(text, m, spans, quoted, by_name, files, edits)
+            why |= _renamed(text, m, moves, spans, quoted, by_name, files, edits)
         if m.was_path != m.path:
             why |= _repathed(text, m, quoted, files, alive, edits)
     why |= _old_modules(text, moves, list(edits), quoted)
@@ -231,6 +236,7 @@ def _respelled(written: str, m: _Move) -> str:
 def _renamed(
     text: str,
     m: _Move,
+    moves: Sequence[_Move],
     spans: Sequence[Span],
     quoted: Sequence[tuple[int, int]],
     by_name: Mapping[str, Sequence[Definition]],
@@ -252,11 +258,7 @@ def _renamed(
         to = _respelled(s.name, m)
         if s.receiver and not any(path_matches(p, f) for f in files for p in (m.was_path, m.path)):
             why.add("receiver_form")
-        if any(
-            names_symbol(s.name, _plain(d.qualified_name), d.path)
-            for d in by_name.get(bare_name(s.name), ())
-            if (d.path, d.qualified_name) != (m.path, m.name)
-        ):
+        if _names_another(s.name, m, by_name):
             why.add("old_name_still_defined")
         at = resolve(to, by_name.get(new, ()), files)
         if at is None or (at.path, at.qualified_name) != (m.path, m.name):
@@ -266,10 +268,27 @@ def _renamed(
     # a move keeps the bare name valid: only the spellings it replaces may be left over
     olds = [old] if old != new else sorted({s.name for s in mine})
     news = [new] if old != new else sorted({_respelled(s.name, m) for s in mine})
-    why |= _left_over(text, olds, mine, spans, quoted)
+    # a name that ends in an old spelling holds as it is when it names another
+    # definition at the head, and is edited by the link whose old definition it names
+    others = [
+        s
+        for s in spans
+        if _names_another(s.name, m, by_name)
+        or any(x != m and x.name and names_symbol(s.name, x.was_name, x.was_path) for x in moves)
+    ]
+    why |= _left_over(text, olds, [*mine, *others], spans, quoted)
     if mine and any(_word(t).search(text) for t in news):
         why.add("new_name_present")
     return why
+
+
+def _names_another(name: str, m: _Move, by_name: Mapping[str, Sequence[Definition]]) -> bool:
+    """`name` as written names a definition at the head other than the one `m` is at."""
+    return any(
+        names_symbol(name, _plain(d.qualified_name), d.path)
+        for d in by_name.get(bare_name(name), ())
+        if (d.path, d.qualified_name) != (m.path, m.name)
+    )
 
 
 def _plain(qualified_name: str) -> str:
@@ -289,24 +308,24 @@ def _inside(regions: Sequence[tuple[int, int]], start: int, end: int) -> tuple[i
 def _left_over(
     text: str,
     olds: Sequence[str],
-    mine: Sequence[Span],
+    covered: Sequence[Span],
     spans: Sequence[Span],
     quoted: Sequence[tuple[int, int]],
 ) -> set[str]:
-    """Why an old spelling that no edit of `mine` covers withholds the memory. A name
-    written as code that ends in it and is not edited names another definition."""
+    """Why an old spelling withholds the memory, unless it ends one of the `covered`
+    names: those an edit replaces and those that name other code."""
     why: set[str] = set()
     for spelling in olds:
         for o in _word(spelling).finditer(text):
-            if any(s.start <= o.start() and o.end() == s.end for s in mine):
+            if any(s.start <= o.start() and o.end() == s.end for s in covered):
                 continue
-            theirs = next((s for s in spans if s.start <= o.start() and o.end() <= s.end), None)
             if _inside(quoted, *o.span()):
                 why.add("quoted_or_literal")
-            elif theirs is None:
+            elif any(s.start <= o.start() and o.end() <= s.end for s in spans):
+                # `Reader.get` still holds the old `Reader`; `cfg.read_rows()` names nothing
+                why.add("old_name_remains")
+            else:
                 why.add("prose_occurrence" if code_shaped(spelling) else "old_name_remains")
-            elif o.end() != theirs.end:
-                why.add("old_name_remains")  # `Reader.get` still holds the old `Reader`
     return why
 
 
@@ -400,7 +419,7 @@ def _in_labels(memory: Mapping[str, Any], m: _Move, alive: bool) -> set[str]:
 
 
 def _sentence(text: str, at: int) -> str:
-    """The sentence, or line, of `text` that holds position `at`."""
+    """The sentence of `text` that holds position `at`."""
     start = max((b.end() for b in _SENTENCE_END.finditer(text, 0, at)), default=0)
     end = _SENTENCE_END.search(text, at)
     return text[start : end.start() if end else len(text)]
