@@ -70,10 +70,16 @@ class _LessonsOut(BaseModel):
 
     # The memories about the answer's top files, best first, capped at
     # `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt,
-    # code_state}, with `changed_since`, `code_moved` and `supersedes_key` when they apply.
+    # code_state}, with `rev`, `first_written`, `changed_since`, `code_moved` and
+    # `supersedes_key` when set.
     # `code_state` is the worst state of the row's links to code in the file: `fresh`,
     # `moved`, or `changed`, `unresolved` or `missing` when that code differs from what the
-    # memory was written against; '' for a row that names the file only. `changed_since` is
+    # memory was written against; `unlinked` for a row with no link whose text names a
+    # file by its path, which the read has no comparison for; '' for a row that names the
+    # file only in `files`. `rev` is the first 12 characters of the commit that link was
+    # anchored at, `first_written` the day a row with a code state was first written,
+    # which a later write of its text does not move. `code_state` and `rev` describe
+    # the repository as indexed, not the caller's checkout. `changed_since` is
     # the commit that put its code in a `changed`, `unresolved` or `missing` state, when
     # known; `code_moved` lists its links to code in the file that is now at another path
     # or symbol than the memory was written against, each a code link's non-empty fields:

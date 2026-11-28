@@ -480,7 +480,7 @@ def test_search_cursor_research_preserves_verified_offset(
         return service.CodeSearchResult(units=units[:top_k], pool=units, route="hybrid")
 
     async def thresholds(*args):
-        return (0, 0)
+        return (0, 0, 0)
 
     async def coverage_note(*args):
         return "Index coverage note."

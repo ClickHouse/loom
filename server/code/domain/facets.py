@@ -10,6 +10,7 @@ line; the query side shares this same parsing.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 
 # A path-ish token: at least one "/" separating segments, ending in a
 # recognized source/config extension, with an optional ":<line>" suffix.
@@ -111,6 +112,12 @@ def has_code_signal(text: str) -> bool:
         or _ERROR_TOKEN_RE.search(text)
         or _SCREAMING_ERR_RE.search(text)
     )
+
+
+def file_paths(text: str) -> Iterator[str]:
+    """The tokens of `text` that are a path with a directory and a known extension, the
+    line suffix dropped: the first pattern `extract_code_facets` reads, alone."""
+    return (m.group(1) for m in _FILE_PATH_RE.finditer(text))
 
 
 def _strip_line_suffix(path: str) -> str:

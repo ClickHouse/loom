@@ -317,6 +317,8 @@ def test_outcome_pass_reason_is_the_source_from_a_fixed_vocabulary() -> None:
         "cap_spent",  # Read-window cap budget spent
         "symbol_grep_spent",  # Single-file symbol grep budget spent
         "budget_unrecorded",  # A denial budget's spend could not be written
+        "compound_command",  # A Bash command of several parts is never refused
+        "index_unanswered",  # The index did not answer the lookup in full
     }
     # The plugin's vocabulary is the same list, in the same order of concern.
     plugin = (

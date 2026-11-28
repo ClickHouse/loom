@@ -65,13 +65,15 @@ function base(p) {
 /**
  * Render the blast line, or "" when there is nothing worth saying.
  * `touchedPaths` = files edited this session (repo-relative) so co-change
- * partners the agent already touched are not reported as missing.
+ * partners the agent already touched are not reported as missing. With
+ * `tests` false the tests reaching the change are left out: the test gate's
+ * line beside this one names their command.
  */
-export function renderBlast(rel, impact, { maxNames = 5, touchedPaths = [] } = {}) {
+export function renderBlast(rel, impact, { maxNames = 5, touchedPaths = [], tests: namesTests = true } = {}) {
   if (!impact) return "";
   const touched = (impact.touched_symbols || []).map((s) => short(s.qualified_name)).filter(Boolean);
   const impacted = (impact.impacted_symbols || []).filter((s) => s && s.qualified_name);
-  const tests = (impact.impacted_tests || []).filter((t) => t && t.test_path);
+  const tests = namesTests ? (impact.impacted_tests || []).filter((t) => t && t.test_path) : [];
   const already = new Set([rel, ...touchedPaths.map(String)]);
   const missing = (impact.co_change_missing || []).filter((m) => m && m.path && !already.has(String(m.path)));
   if (!impacted.length && !tests.length && !missing.length) return ""; // owners alone are not a radius

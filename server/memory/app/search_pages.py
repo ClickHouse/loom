@@ -20,6 +20,8 @@ Handle format: `page/<sha256 prefix>@<offset>`. The blob's JSON is
 "namespaces_searched": [...], "namespaces_skipped": [...], "hits": [...]}`
 where `hits` is the tail in rank order, each a `_MemorySearchHit` dump, and
 the namespace lists are the first call's, so every page says what it covers.
+A hit is stored without its `unlinked` label, which is not a link state: the
+page that serves it labels it again (`unparked`).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.core import pg
 from server.core.datetimes import naive_utc_now
+from server.memory.domain.code_change import UNLINKED
 from server.memory.domain.search_types import RowKey, hit_row_key
 from server.settings import settings
 
@@ -63,10 +66,13 @@ def split_tail(pool: list[Any], final: list[Any]) -> tuple[int, list[Any]]:
 def _parked(hit: Any) -> dict[str, Any]:
     """A hit as a page stores it, with what a later page's checks read, off the wire: the
     row's identity, which tells a shared definition, and under the Postgres authority what
-    its check reads (`row_chunk`, `row_version`, `chunk_typed`)."""
+    its check reads (`row_chunk`, `row_version`, `chunk_typed`). `code_state` holds a
+    link state or none: a build that serves the page may not know another value."""
     if not hasattr(hit, "model_dump"):
         return dict(hit)
     out: dict[str, Any] = hit.model_dump()
+    if out["code_state"] == UNLINKED:
+        out["code_state"] = ""
     if getattr(hit, "_row_identity", None) is not None:
         out["row_identity"] = list(hit._row_identity)
     if not pg.enabled():
@@ -81,9 +87,11 @@ def _parked(hit: Any) -> dict[str, Any]:
 
 
 def unparked(row: dict[str, Any]) -> _MemorySearchHit | None:
-    """A parked row back as a hit, with what `_parked` kept off the wire; None for a row
-    this build cannot read."""
+    """A parked row back as a hit, with what `_parked` kept off the wire and labelled
+    `unlinked` as a search labels one (`code_link_reads.unlinked`); None for a row this
+    build cannot read."""
     from server.memory.api.models_search import _MemorySearchHit
+    from server.memory.app.code_link_reads import unlinked
 
     r = dict(row)
     identity, chunk = r.pop("row_identity", None), r.pop("row_chunk", None)
@@ -99,6 +107,8 @@ def unparked(row: dict[str, Any]) -> _MemorySearchHit | None:
         hit._row_chunk = tuple(chunk)
     hit._row_version = row_version
     hit._chunk_typed = chunk_typed
+    if unlinked(hit):
+        hit.code_state = UNLINKED
     return hit
 
 

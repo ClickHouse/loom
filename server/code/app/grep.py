@@ -36,6 +36,7 @@ from server.code.app.grep_source import (
     ContextSource,
     collect_contexts,
     match_revisions,
+    match_window_source,
     page_contexts,
     recover_page_context,
     recover_source_chunks,
@@ -485,6 +486,8 @@ async def _grep_page_context(
                 repo, org, ns, scan.chunks, scan.matches, scan.match_commits, context_lines, budget
             )
             span_attrs(span, verified=len(complete_contexts))
+    # Without bodies, an excerpt carries the signature and docstring its hit sits under.
+    headers = not input.include_body
     source = await asyncio.to_thread(
         collect_contexts,
         scan.chunks,
@@ -493,6 +496,7 @@ async def _grep_page_context(
         _LINE_SCAN_MAX_CHARS,
         match_commits=scan.match_commits,
         complete_contexts=complete_contexts,
+        header_hits=matches if headers else None,
     )
     if input.context_lines:
         await recover_page_context(
@@ -504,10 +508,18 @@ async def _grep_page_context(
             context_lines,
             match_revisions(scan.matches, scan.match_commits),
             complete_contexts=complete_contexts,
+            headers=headers,
             max_source_bytes=_LINE_SCAN_MAX_CHARS,
             budget=budget,
         )
-    page = page_contexts(source, matches, context_lines, complete_contexts=complete_contexts)
+    page = page_contexts(
+        source, matches, context_lines, complete_contexts=complete_contexts, headers=headers
+    )
+    if headers:
+        # A cursor's pool keeps match windows: a later page reads its own headers.
+        source = match_window_source(
+            source, scan.matches, context_lines, complete_contexts=complete_contexts
+        )
     return page, source, context_lines, complete_contexts
 
 
@@ -1489,11 +1501,16 @@ async def _serve_grep_page(
             input.context_lines,
             revisions,
             complete_contexts=complete_contexts,
+            headers=not input.include_body,
             max_source_bytes=_LINE_SCAN_MAX_CHARS,
             budget=budget,
         )
         context = page_contexts(
-            source, page, input.context_lines, complete_contexts=complete_contexts
+            source,
+            page,
+            input.context_lines,
+            complete_contexts=complete_contexts,
+            headers=not input.include_body,
         )
     context_budget = _partial_fields(budget)
     trace_run_id = new_trace_run_id()

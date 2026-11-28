@@ -16,6 +16,12 @@ from server.code.store.index.sql import _scope_sql, skip_tests_sql
 from server.core.datetimes import naive_utc_now as _now
 
 
+def _nearest_first(rows: list[dict[str, Any]], *keys: str) -> list[dict[str, Any]]:
+    """`rows` nearest first, rows at one distance in `keys` order: the statement that
+    read them may sort on the distance alone."""
+    return sorted(rows, key=lambda r: (r["distance"], *(r[k] for k in keys)))
+
+
 class SearchMixin(CodeRepoBase):
     """code.search legs, corpus statistics and outcome signals."""
 
@@ -37,6 +43,13 @@ class SearchMixin(CodeRepoBase):
         chunk wins by covering more query subtokens and pays nothing for its
         length. idfs are app-computed from the corpus-stat MVs and bound
         positionally (memory-plane convention).
+
+        Rows with one score come in file order, the earlier lines first
+        (`path, start_line, chunk_id`). A short query's rows tie by the
+        thousand, ClickHouse returns equal rows in the order it read them,
+        which changes with the parts that hold them, and the rank decides
+        the pool and the vote. `(path, chunk_id)` is the table's key under
+        the identity columns, so no two rows are left equal.
 
         `scope` adds the pattern / path predicates to the plain WHERE after
         the identity keys; unset, the statement is unchanged byte for byte.
@@ -76,7 +89,7 @@ class SearchMixin(CodeRepoBase):
               AND {score} > 0
               {where_prefix}
               {scope_sql}
-            ORDER BY lex_score DESC
+            ORDER BY lex_score DESC, path, start_line, chunk_id
             LIMIT {{pool:UInt32}}
             """,
             {
@@ -123,7 +136,7 @@ class SearchMixin(CodeRepoBase):
               AND scope IN {{names:Array(String)}}
               AND kind IN ('function', 'class_skeleton')
               {scope_sql}
-            ORDER BY path, scope, start_line
+            ORDER BY path, scope, start_line, chunk_id
             LIMIT 1 BY path, scope
             """,
             {
@@ -172,7 +185,7 @@ class SearchMixin(CodeRepoBase):
             # Source files only — two thirds of the ClickHouse
             # cards are tests, and for a behaviour question they are the nearest
             where_prefix += skip_tests_sql("scope_path")
-        return await self._ch.query_all(
+        rows = await self._ch.query_all(
             f"""
             SELECT scope_path AS path, summary, pagerank,
                    cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
@@ -194,6 +207,7 @@ class SearchMixin(CodeRepoBase):
                 **({"prefix": path_prefix} if path_prefix else {}),
             },
         )
+        return _nearest_first(rows, "path")
 
     async def vector_search_chunks(
         self,
@@ -253,7 +267,7 @@ class SearchMixin(CodeRepoBase):
                 **scope_params,
             },
         )
-        return rows
+        return _nearest_first(rows, "path", "start_line", "chunk_id")
 
     async def vector_shortlist_ids(
         self,
@@ -325,7 +339,8 @@ class SearchMixin(CodeRepoBase):
         the served one until a merge collapsed them.
         The client keeps one row per key, drops the tombstoned ones and the
         rows the two IN lists admit beyond the asked keys, and returns the
-        vector leg's unit columns in distance order, `pool` rows at most."""
+        vector leg's unit columns in distance order, chunks at one distance in
+        file order, `pool` rows at most."""
         if not keys:
             return []
         uniq = sorted({(str(p), str(c)) for p, c in keys})
@@ -356,7 +371,7 @@ class SearchMixin(CodeRepoBase):
                     ORDER BY version DESC
                     LIMIT 1 BY path, chunk_id
                 )
-                ORDER BY distance ASC
+                ORDER BY distance ASC, path, start_line, chunk_id
                 LIMIT {{lim:UInt32}}
                 """,
                 params,

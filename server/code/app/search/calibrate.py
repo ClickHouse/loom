@@ -1,4 +1,5 @@
-"""Calibration and abstention on the raw fusion, before any prior reorders it."""
+"""Abstention on the raw fusion and the confidence of the result, before any prior
+reorders it."""
 
 from __future__ import annotations
 
@@ -6,6 +7,7 @@ from typing import Any
 
 from server.code.app.search.state import _SearchState
 from server.code.app.search.voting import _apply_voting_leg_outcomes
+from server.code.domain.index import search_confidence
 from server.memory.domain.retrieval_calibration import calibrate_retrieval, finalize_abstain
 from server.settings import settings
 
@@ -17,9 +19,16 @@ def _calibrate(
     run_vector: bool,
     noise_floor: float,
     abstain_threshold: float,
+    confident_similarity: float,
 ) -> bool:
-    """Calibrate the fused list and decide abstention on it, before any
-    prior reorders it; returns whether the two content legs agreed."""
+    """Decide abstention on the fused list and read the confidence off the vector
+    leg, before any prior reorders either; returns whether the two content legs agreed.
+
+    Two readings, on purpose. Abstention is the route-aware score of the fused list
+    against `abstain_threshold` and `code_search_abstain_confidence_below`.
+    `retrieval_confidence` and the low, medium or high band are the vector leg's best
+    cosine on the embedder's calibrated scale (`search_confidence`): they say whether
+    the index holds an answer, and nothing abstains on them."""
     result, constrained, fuzzy_hit = st.result, st.constrained, st.fuzzy_hit
     lexical_rows, vector_rows = st.lexical_rows, st.vector_rows
     card_gate, card_stats, concept_stats = st.card_gate, st.card_stats, st.concept_stats
@@ -48,15 +57,43 @@ def _calibrate(
         result_count=len(fused),
         abstain_threshold=abstain_threshold,
         confidence_abstain_below=float(settings.code_search_abstain_confidence_below),
-        medium_risk_from=settings.code_search_medium_risk_from,
-        low_risk_from=settings.code_search_low_risk_from,
         **calibration_routes(legs_agree=legs_agree, both_legs=both_legs, fuzzy_hit=fuzzy_hit),
         constrained=constrained,
     )
-    result.retrieval_confidence = calibration.confidence
     result.route_agreement = calibration.route_agreement
-    result.calibration_explanation = calibration.explanation
-    result.retrieval_risk = calibration.risk
+
+    if vector_rows:
+        best_cosine = 1.0 - float(vector_rows[0]["distance"])
+        confidence = search_confidence.similarity_term(
+            best_cosine,
+            abstain_threshold=abstain_threshold,
+            confident_similarity=confident_similarity,
+        )
+        explanation = (
+            f"best_cosine={best_cosine:.2f}, abstain_threshold={abstain_threshold:.2f}, "
+            f"confident_similarity={confident_similarity:.2f}"
+        )
+        if not search_confidence.has_range(
+            abstain_threshold=abstain_threshold, confident_similarity=confident_similarity
+        ):
+            explanation += ", no scale: confident_similarity is not above abstain_threshold"
+    else:
+        # the request skipped the vector leg, no embedder is configured, the leg failed
+        # or it ran and returned no row (a scope or path filter that admits no embedded
+        # chunk, an embedding backlog)
+        confidence = search_confidence.NO_COSINE_CONFIDENCE
+        explanation = "no vector row, best cosine unknown"
+    result.retrieval_confidence = round(confidence, 3)
+    result.calibration_explanation = explanation + (", constrained=true" if constrained else "")
+    result.retrieval_risk = (
+        "abstain"
+        if calibration.risk == "abstain"
+        else search_confidence.risk_band(
+            confidence,
+            medium_from=float(settings.code_search_medium_risk_from),
+            low_from=float(settings.code_search_low_risk_from),
+        )
+    )
 
     result.abstain, result.abstain_code, result.abstain_reason = finalize_abstain(
         top_similarity=top_sim,

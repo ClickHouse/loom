@@ -510,9 +510,10 @@ commits its hashes were taken at. When its old text is gone from git, a link tha
 it takes the text the next check finds and a changed one stays `changed`; one whose old
 text no longer parses keeps its last state, and the worker reports it.
 
-Loom never writes the memory, so after a rename its text still says the old name. The
-reads that serve its links (listed below, `namespace.validate` apart) name where the
-code is now. A link that is `fresh`, `moved` or `changed` at another path or symbol than
+After a rename a memory's text still says the old name until it is revised, by the
+link pass where the swap is certain ([below](#a-memorys-text-after-a-rename)) or by a
+person. Until then the reads that serve its links (listed below, `namespace.validate`
+apart) name where the code is now. A link that is `fresh`, `moved` or `changed` at another path or symbol than
 the memory was written against is served with both: the current `path`, `symbol`,
 `start_line` and `end_line` (trunk's, at the link's last check), and `was_path` and
 `was_symbol`, the oldest of the identities the link keeps (its last 16; a claim the
@@ -598,7 +599,9 @@ The links are read where the code is:
   namespace, the memories linked to code in each file or naming it by its path or a tail of it
   (a bare filename, `search/handler.py`; an absolute path is trusted to name a file below the
   root that it ends in), each with its `code_state`, within `code_result_lessons_tokens`. Each
-  row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `changed_since` (the
+  row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `rev` (the first 12
+  characters of the commit its link was anchored at) for a linked row, `first_written` (the
+  day it was first written) for a row with a code state, `changed_since` (the
   commit that put its code in a changed, unresolved or missing state) when one is known, and
   `supersedes_key` when it replaces an older row, and `code_moved` (its links to code in the
   file that is now at another path or symbol than it was written against) when there are
@@ -623,7 +626,8 @@ The links are read where the code is:
   names the first indexed commit at which it read so, and a line whose code is now at
   another path or symbol says where (each hit lists those links as `code_moved`);
   `context.pack` decision lines carry the same note, and its memory lines a
-  `code_state=<state>@<commit>` label with `(code moved: …)` ahead of the text.
+  `code_state=<state>` label (`<state>@<commit>` when a commit put it there) with
+  `(code moved: …)` ahead of the text.
 - `memory.get` returns the links as `code` (each with its lines, any `suggestion`, and
   `was_path` and `was_symbol` when the code moved); `memory.search` hits
   read from a memory's own row carry its worst link as `code_state` and, when that is
@@ -636,11 +640,39 @@ The links are read where the code is:
   and leaves `memory_ask_code_staleness` on, `memory.ask` gives its synthesis a note of
   the memories whose code moved, changed or went, with the same clause for a link now at
   another path or symbol.
+- Each of those reads says of a memory that names code which state it is in, the commit
+  its link was anchored at (`code_rev` on a search hit, `rev` on a line or a lesson) and
+  a day, under a label that says which day it is. `first_written` is the day of the
+  memory's first write: a `memory.for_file` line, a lesson (the field `first_written`)
+  and a startup recall line print it, and no later write moves it. `written` is the day
+  the text served was written: a line of a search hit prints it from the hit's
+  `created_at`, the search document's, which a write of the text (`memory.set`,
+  `memory.update_by_id`) and `memory.restore` stamp again. For a memory whose text was
+  written again or restored, `written` is therefore a later day than `first_written`.
+  Neither is the row's `updated_at`: an unpin, a lock, an unlock or a label moves neither.
+  The commit is the repository's indexed head when the link was made or last re-anchored;
+  for a link made after its memory that is a later commit than the writer worked at.
+  A search hit read from a memory's own row that shows no link state, and whose text
+  names a file by a path with a directory, is `unlinked`: the read has no comparison
+  with code to show for it. Where no repository is indexed that is every such hit, and a
+  hit whose only link is pending or in a repository the caller may not read is marked
+  the same way. A `memory.for_file` line and a lesson are marked likewise; a memory that
+  names its file only in `files`, by a bare file name or by a symbol is not. `unlinked`
+  is a label a read gives: no row and no parked search page stores it.
+  A reply that serves a memory with a code state says once what was compared: no code
+  for an `unlinked` memory, and for every other state the repository as Loom indexed
+  it, which is not the caller's checkout. That sentence is `code_note` on
+  `memory.search`, the first line of a reader block, of a `context.pack` block and of
+  `loom_search`'s plain lines, the line after the header of a `memory.for_file`
+  block, and the `note` of a review brief's `rationale` section, whose rows carry the
+  `memory.for_file` line. A block takes the sentence's room from the budget of the row
+  that prints with it, so a row left out takes its part of the sentence with it.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read, and the edits that bring a memory's
   text up to a rename its link followed.
 
-A memory with no link reads exactly as one whose code is current. `namespace.validate`
+A memory with no link carries no link state: a read marks it `unlinked` when its text
+names a file by its path, and serves it without a label otherwise. `namespace.validate`
 counts the served memories that name code (a backticked or qualified name, a call, or
 `files`) and hold no link, by cause, as `info` findings:
 
@@ -657,15 +689,67 @@ linked, is not counted. How far each repository's links trail its
 index is a gauge, and a health warning when it lasts
 ([monitoring](../operations/monitoring.md#what-to-alert-on)).
 
+### A memory's text after a rename
+
 A `moved` link is at its code, and the memory's text may still name the old definition or
-path. `namespace.validate` lists each memory whose text does under the `info` finding
-`code_rename_edits`, with either the `edits` its text allows (replace `old` with `new`
-from `start` to `end`, counted in Unicode code points of the text, where the text reads
-`old`) and the `content_sha256` they are of, or the one `reason` no edit is offered. The finding's `totals` count the memories by `edits` and by reason. Loom
-writes nothing: to apply an edit, read the sentence it changes, then call `memory.update`
-on the key with the revised text and `if_match_sha256` set to the listed hash. That is a
-revision by the caller, with its conflict check, and it is refused when the memory changed
-after the report read it. The link pass then links the revised memory where the code is.
+path. The link pass that follows the rename plans the edits that bring the text up to it
+and applies them itself when all of these hold:
+
+- the plan offers edits: none of the reasons in the table below applies;
+- the memory is held in the repository's code namespace, as a team rule or decision
+  is. A memory of any other namespace is linked through its `repo:` tag, which its
+  writer set and which grants nothing: its readers may hold no role on the repository,
+  so the new name or path is not written into it;
+- no person holds the memory (pinned, locked or verified), and no service account
+  attested the text as it is, which a revision would leave stale;
+- the memory is `active` and not labelled `high`. One flagged `conflicted` keeps its
+  text: a revision would drop the flag on its side while the other memory keeps its own;
+- the repository is indexed on one branch. Another indexed branch may still define the
+  old name, and a memory linked again from its revised text is no longer served there;
+- the org's model calls are not switched off. The revision embeds the new text, so the
+  pass revises nothing in such an org and takes its memories up once the calls are back
+  on.
+
+The revision is one `memory.update_by_id` write on the hash of the text the edits were
+planned for, so a memory rewritten in the meantime is left alone. The write reads the
+memory again under its key's lock, and one pinned, verified, attested or no longer
+`active` since the pass read it keeps its text. It runs that write's
+blacklist and conflict checks, embeds the new text and closes the facts the old value
+stated, as any revision does. Nobody asked for it, so it changes that memory alone. It is
+not written where a caller's revision would do more: the conflict check finds the revised
+text a duplicate, a restatement, a refinement or a contradiction of another memory, or
+the conflict resolver would judge it against one. It also retires no other row of the
+same key. Such a memory keeps its text and is listed with its `edits`.
+
+The new version stays its writer's row (`actor` is kept) and leaves an audit row by
+`process:code_rename` and a `memory.revised` event; `memory.history` keeps the text it
+replaced. Its `source_class` is never raised. A row its writer asserted is `derived` from
+then on, since the text is no longer what they stated, so search no longer prefers it in
+a near-tie (`memory_search_asserted_boost_scale`). Every other class is kept: an
+unattested `external` row stays out of `memory.ask` synthesis. The next pass
+links the revised memory where the code is, and it reads `fresh`. The `memory_code_links`
+pass outcome counts the memories revised as `renamed`. A link followed with an edit to
+its code reads `changed` and its memory's text is never revised: whether the claim still
+holds is the `revise` policy's question. A recheck made inside a `code.refresh` call
+revises nothing and leaves the memory to the worker's next pass.
+
+Every other memory keeps its text. `namespace.validate` lists each memory whose text
+still names an old definition or path under the `info` finding `code_rename_edits`,
+with either the `edits` its text allows (replace `old` with `new` from `start` to `end`,
+counted in Unicode code points of the text, where the text reads `old`) and the
+`content_sha256` they are of, or the one `reason` no edit is offered. The finding's
+`totals` count the memories by `edits` and by reason. A memory listed with `edits` is one
+the link pass left (held outside the repository's code namespace, held by a person,
+attested, flagged `conflicted`, in a repository indexed on more than one branch, or
+close to another memory once revised) or has not reached yet. The
+pass decides once, when its link follows the rename: a memory it left then is not
+revised later, and neither is one whose link already read `moved` under a build that
+revises no text ([rule 67](../architecture/rolling-upgrades.md#the-rules)). Those stay
+listed until a principal applies the edit. The report writes nothing: to apply an edit,
+read the sentence it changes, then call `memory.update` on the key with the revised text and
+`if_match_sha256` set to the listed hash. That is a revision by the caller, with its
+conflict check, and it is refused when the memory changed after the report read it. The
+link pass then links the revised memory where the code is.
 
 An edit is offered only for a name written as code (a whole backticked identifier, an
 `A::b`, or a call written `a.b(` or `name()`) and for a whole repository path, in the

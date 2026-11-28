@@ -26,7 +26,7 @@ _TODAY = (
     + "\n"
     + " " * 14
     + """
-            ORDER BY lex_score DESC
+            ORDER BY lex_score DESC, path, start_line, chunk_id
             LIMIT {pool:UInt32}
             """
 )

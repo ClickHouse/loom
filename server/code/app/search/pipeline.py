@@ -38,6 +38,9 @@ async def search(
     embedder: Any = None,
     abstain_threshold: float = 0.30,
     noise_floor: float = 0.22,
+    # the cosine of a confident hit for this embedder; with `abstain_threshold`, the
+    # scale `retrieval_confidence` reads the vector leg's best cosine on
+    confident_similarity: float = 0.62,
     extra_terms: list[str] | None = None,
     bodies: str = "auto",
     min_fan_in: int = 0,
@@ -137,6 +140,7 @@ async def search(
         run_vector=st.run_vector,
         noise_floor=noise_floor,
         abstain_threshold=abstain_threshold,
+        confident_similarity=confident_similarity,
     )
     ranked = await _rank_units(
         repo,

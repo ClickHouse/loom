@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { RECORDERS } from "../hooks/loom-record.mjs";
+import { LOOKUPS, RECORDERS } from "../hooks/loom-record.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const manifest = JSON.parse(fs.readFileSync(path.join(here, "..", "hooks", "hooks.json"), "utf8"));
@@ -15,23 +15,46 @@ function wired(event) {
   return manifest.hooks[event].flatMap((g) => g.hooks).map((h) => h.args[0].match(/hooks\/(loom-[a-z-]+)\.mjs$/)[1]);
 }
 
-test("a recording script runs through the launcher, never beside it", () => {
-  // The launcher runs these scripts in one process (a detached one, or its
-  // own at SessionEnd); one wired directly as well would record twice and
-  // hold the host for its request.
+test("a script the launcher runs is never wired beside it", () => {
+  // The launcher runs an event's recording scripts in one process (a
+  // detached one, or its own at SessionEnd) and its lookups in its own; one
+  // wired directly as well would run twice and hold the host for its request.
   for (const [event, scripts] of Object.entries(RECORDERS)) {
     const names = wired(event);
+    const run = [...scripts, ...(LOOKUPS[event] || [])];
     assert.equal(names.filter((n) => n === "loom-record").length, 1, `${event}: the launcher is wired once`);
     assert.deepEqual(
-      names.filter((n) => scripts.includes(n)),
+      names.filter((n) => run.includes(n)),
       [],
       `${event}: wired beside the launcher`,
     );
   }
+  assert.deepEqual(
+    Object.keys(LOOKUPS).filter((event) => !Object.hasOwn(RECORDERS, event)),
+    [],
+    "a lookup's event is one the launcher is wired for",
+  );
+});
+
+test("a prompt starts one process, which opens the session's run", () => {
+  assert.deepEqual(wired("UserPromptSubmit"), ["loom-record"]);
+  assert.ok(RECORDERS.UserPromptSubmit.includes("loom-run"));
 });
 
 test("the Stop gates are wired directly: the host reads what they print", () => {
   assert.deepEqual(wired("Stop"), ["loom-record", "loom-test-gate", "loom-validate-gate", "loom-namespace-health"]);
+});
+
+test("one hook names a changed file's tests per tool: the blast radius after an edit tool, the test gate after a shell", () => {
+  // Both print additional context for the call; a tool that started both would get the tests line twice.
+  const tools = (script) =>
+    manifest.hooks.PostToolUse.filter((g) => g.hooks.some((h) => h.args[0].endsWith(`/hooks/${script}.mjs`))).flatMap(
+      (g) => g.matcher.split("|"),
+    );
+  assert.deepEqual(tools("loom-blast-radius"), ["Edit", "Write", "MultiEdit"]);
+  assert.deepEqual(tools("loom-test-gate"), ["Bash", "PowerShell"]);
+  const gate = manifest.hooks.PostToolUse.flatMap((g) => g.hooks).find((h) => h.args[0].endsWith("loom-test-gate.mjs"));
+  assert.equal(gate.args[1], "PostToolUse", "the script reads its event from this argument");
 });
 
 test("the SessionEnd hook declares a timeout: Claude Code gives the event 1.5 s by default", () => {

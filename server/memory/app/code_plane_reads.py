@@ -77,9 +77,10 @@ async def lessons_for_symbol(
     fresh_at_commit: str = "",
 ) -> list[dict[str, Any]]:
     """The served memories of `namespaces` linked to this symbol, current ones first,
-    each with the state of the symbol's code on the branch read, and `code_moved` when
-    the read found that code at another path or symbol than the memory was written
-    against (`_moved_here`).
+    each with the state of the symbol's code on the branch read, `rev` (the first 12
+    characters of the commit its link was anchored at), `first_written` (the day it was
+    first written) and `code_moved` when the read found that code at another path or
+    symbol than the memory was written against (`_moved_here`).
     `fresh_at_commit` restricts the answer to lessons confirmed fresh at that revision.
     Otherwise an unreadable branch uses trunk's state."""
     from server.code.app import memory_links as code
@@ -145,6 +146,8 @@ async def lessons_for_symbol(
             "namespace": str(row["namespace"]),
             "excerpt": str(row["excerpt"]),
             "code_state": state,
+            "rev": str(a.get("anchored_commit") or "")[:12],
+            "first_written": str(row.get("created_at") or "")[:10],
             "changed_since": a["changed_since"] if state == "changed" else "",
             "suggestion": suggestion,
         }
@@ -224,8 +227,8 @@ async def decisions_for_paths(
     served and the rest left out. The rows `first` admits rank ahead, then constraints,
     then pinned rows, then by confidence. Each is a `memory.for_file` hit with its
     `memory_id`, `code_state` the worst over its links on every path,
-    `code_changed_since` the commit of that state, `code_moved` its relocated links on
-    every path, `line` (the
+    `code_changed_since` the commit of that state, `code_rev` the commit the link in that
+    state was anchored at, `code_moved` its relocated links on every path, `line` (the
     pre-edit block's line, the value cut) and `text` (the value as that read holds it:
     cut at its ceiling when `value_truncated`). Each path's read keeps its top
     PER_PATH_ROWS rows. `refused`, and nothing read, when the caller may not read
@@ -262,6 +265,7 @@ async def decisions_for_paths(
             if worst([row["code_state"], hit["code_state"]]) != row["code_state"]:
                 row["code_state"] = hit["code_state"]
                 row["code_changed_since"] = hit.get("code_changed_since", "")
+                row["code_rev"] = hit.get("code_rev", "")
             if row is not hit:
                 row["code_moved"] = [*row.get("code_moved", []), *hit.get("code_moved", [])]
     found = [r | {"line": listing_line(r), "text": value_text(r)} for r in rows.values()]

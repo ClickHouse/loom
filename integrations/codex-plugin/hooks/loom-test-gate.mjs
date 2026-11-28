@@ -1,30 +1,47 @@
 #!/usr/bin/env node
-// loom-test-gate — Stop hook.
+// loom-test-gate — PostToolUse (Bash|PowerShell) and Stop.
 //
-// On Stop, if the working tree has uncommitted changes THIS SESSION made
+// PostToolUse, the default (LOOM_TEST_GATE unset): after a shell command
+// that changed files in a loom-indexed repo, ask `code.test_gate` about each
+// one and attach ONE line per file naming the command of the tests the
+// index links to it, or of the file itself when it is a test, or the changed
+// functions the index links no test to when there is no test to name; once
+// per file and once per test per session. The line rides the tool result, so it
+// costs no model request, and it arrives while the file is still being
+// edited. An edit tool's call gets the same line from loom-blast-radius, the
+// one hook wired for those tools.
+//
+// Stop: if the working tree has uncommitted changes THIS SESSION made
 // in a loom-indexed repo, ask `code.test_gate` for the change's obligations
 // (tests to run, untested touched functions) and block the stop ONCE per
 // distinct change with a reason that names them. "This session's" is read
 // from the transcript: dirty paths an edit tool targeted or a shell command
 // named, written since the session began (by the file's modification time);
 // a tree left dirty before the session does not gate a turn that changed
-// nothing. A Claude Code transcript that already answers the ask does not
-// block either (`runAnswered` in lib/test-gate.mjs); a Codex rollout answers
-// nothing, so its stop blocks.
+// nothing. By default any test run since the session's last code change
+// lets the stop pass, whatever it ran and however it went (`testedSince`,
+// `lastCodeChange` in lib/test-gate.mjs): the stop is held for a session
+// that ran no test since its last code change, and nothing is asked of the
+// server for one that ran some. A documentation file changed after the run
+// holds nothing.
+//
+// With LOOM_TEST_GATE=block nothing is named at edit time, and the stop
+// passes only when a Claude Code transcript shows the named tests ran on the
+// tree as it stands (`runAnswered`); a Codex rollout answers nothing there,
+// so its stop blocks.
 //
 // Fail-open everywhere: no token, not an indexed repo, clean tree, nothing
 // of the tree touched this session, server down, second stop on the same
-// change — the agent stops as normal. Without a transcript path the whole
-// dirty tree is the change.
-// LOOM_TEST_GATE=off disables; LOOM_TEST_GATE_DEPTH (1-3) sets the hops.
+// change — the agent stops as normal. Without a transcript path the default
+// holds no stop, and LOOM_TEST_GATE=block takes the whole dirty tree as the
+// change.
+// LOOM_TEST_GATE=off disables both; LOOM_TEST_GATE_DEPTH (1-3) sets the hops.
 
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
 import {
   git,
   gitToplevel,
-  pathUnder,
+  normalizeToolName,
   postBounded,
   readStdinJson,
   DIFF_ARGS,
@@ -32,30 +49,54 @@ import {
   resolveServerUrl,
   resolveToken,
   scheduleExit,
-  envSwitch,
 } from "../lib/loom-client.mjs";
-import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
+import { cachedUnindexed, resolveIndexedRepo } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 import { readAllLines } from "../lib/transcript.mjs";
 import {
+  adviceFiles,
+  adviceLines,
+  advicePayload,
   checkoutPython,
   commentOnlyDiff,
   decideBlock,
+  gateDepth,
+  gateMode,
   gatePayload,
   gateSignature,
+  lastCodeChange,
   newestChange,
   renderGate,
   runAnswered,
   sessionScope,
   sessionStart,
+  testedSince,
+  testsIn,
   writtenSince,
 } from "../lib/test-gate.mjs";
 
-const ENABLED = envSwitch("LOOM_TEST_GATE", true);
-const DEPTH = Math.min(3, Math.max(1, Number(process.env.LOOM_TEST_GATE_DEPTH || 2)));
+const MODE = gateMode();
+const DEPTH = gateDepth();
+const AFTER_TOOL = process.argv[2] === "PostToolUse";
+
+/** After a shell command: the line for the files it changed, or nothing. */
+async function advise(payload, token) {
+  const tool = normalizeToolName(payload.tool_name);
+  if (tool !== "Bash" && tool !== "PowerShell") return;
+  const cwd = payload.cwd || process.cwd();
+  // This runs after every shell command: a checkout already known to have no index costs no git call.
+  if (cachedUnindexed(cwd)) return;
+  const { root, files } = adviceFiles(payload, { cwd });
+  if (!files.length) return;
+  const repo = await resolveIndexedRepo(root, { consumer: "claude-code-testgate" });
+  if (!repo.indexed) return;
+  const lines = await adviceLines(payload, files, { root, repo, token, depth: DEPTH });
+  const out = advicePayload(lines.map((l) => l.text).join("\n"));
+  if (out) process.stdout.write(JSON.stringify(out) + "\n");
+}
 
 async function main() {
-  if (!ENABLED) {
+  if (MODE === "off" || (AFTER_TOOL && MODE === "block")) {
     scheduleExit(0);
     return;
   }
@@ -65,6 +106,11 @@ async function main() {
     return;
   }
   const payload = await readStdinJson();
+  if (AFTER_TOOL) {
+    await advise(payload, token);
+    scheduleExit(0);
+    return;
+  }
   // A Stop fired by our own block must never block again.
   if (payload.stop_hook_active) {
     scheduleExit(0);
@@ -90,6 +136,11 @@ async function main() {
   const rows = transcript ? readAllLines(transcript) : [];
   const changed = transcript ? writtenSince(root, sessionScope(dirty, rows, { root, cwd }), sessionStart(rows)) : dirty;
   if (!changed.length) {
+    scheduleExit(0);
+    return;
+  }
+  // The default holds the stop of a session whose transcript shows no test run since its last code change.
+  if (MODE === "advise" && (!transcript || testedSince(rows, lastCodeChange(root, changed)))) {
     scheduleExit(0);
     return;
   }
@@ -127,16 +178,7 @@ async function main() {
     },
     { token, serverUrl: resolveServerUrl() },
   );
-  const testExists = (testPath) => {
-    const target = path.resolve(root, testPath);
-    if (!pathUnder(root, target)) return false;
-    try {
-      return fs.statSync(target).isFile();
-    } catch {
-      // A stale index row or another checkout's test is an explicit gap.
-      return false;
-    }
-  };
+  const testExists = testsIn(root);
   // The newest file time among the uncommitted and untracked files.
   const lastModified = () => {
     const untracked = git(["ls-files", "-z", "--others", "--exclude-standard"], root, {
