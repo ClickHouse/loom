@@ -1056,6 +1056,22 @@ test("any test run that finished since the change counts, whatever it ran and ho
   assert.equal(testedSince([], 0), false);
 });
 
+test("a tool and its argument are read up to 256 characters apart, and a long line in time linear in its length", () => {
+  const ran = (command) => testedSince(bash(command, ""), 0);
+  assert.equal(ran(`make ${"a".repeat(255)} test`), true);
+  assert.equal(ran(`make ${"a".repeat(256)} test`), false);
+  // A verb further back than that names no package.
+  assert.equal(ran(`pip install ${"a".repeat(249)} pytest`), false);
+  assert.equal(ran(`pip install ${"a".repeat(250)} pytest`), true);
+  // Two lines of 20,000 characters. The first cost over 15 s of CPU with no
+  // bound; the second, where each tool has a verb and many `tests` within
+  // reach, is the costliest shape found with one.
+  const before = process.cpuUsage();
+  assert.equal(ran(`x install ${"make test ".repeat(2000)}`), true);
+  assert.equal(ran(`${" npm".repeat(44)} rm${" tests".repeat(18)}`.repeat(70)), false);
+  assert.ok(process.cpuUsage(before).user < 2e6);
+});
+
 test("the last code change is the most recently written code file that can be read", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-last-code-"));
   try {

@@ -647,7 +647,12 @@ function runsHere(command, run) {
 // --no-install jest` and `docker run --rm app pytest` run. A build tool's
 // target of a verb's name hides the run after it: `make install test` is
 // read as none.
-const FETCHED = String.raw`\s(?:(?:un)?install|add|i|ci|get|remove|rm|update|upgrade|download|require)\s[^\n;|&]*`;
+//
+// A tool and its argument, and a verb and the name after it, are read up to
+// 256 characters apart in one simple command (`SPAN`). With no bound the read
+// costs the cube of a line's length, and a Stop hook cannot interrupt it.
+const SPAN = String.raw`[^\n;|&]{0,256}`;
+const FETCHED = String.raw`\s(?:(?:un)?install|add|i|ci|get|remove|rm|update|upgrade|download|require)\s${SPAN}`;
 // What a build tool is told to leave out is no run, for every tool of the
 // list: the word after `-x`, where Gradle takes a task to exclude (`gradle
 // build -x test`), and `test.skip`, Maven's property (`mvn package
@@ -655,9 +660,9 @@ const FETCHED = String.raw`\s(?:(?:un)?install|add|i|ci|get|remove|rm|update|upg
 const LEFT_OUT = String.raw`\s-x\s+\S*`;
 const RUNNER = new RegExp(
   String.raw`(?<![\w.-])(?:(?<!import\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|nextest|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])(?<!${FETCHED})` +
-    String.raw`|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*(?<![A-Za-z])tests?(?![a-z]|\.skip)(?<!${FETCHED}|${LEFT_OUT})` +
-    String.raw`|(?:make|npm|pnpm|yarn|bun|rake)\s[^\n;|&]*(?<=\s)test[a-z](?<!${FETCHED})` +
-    String.raw`|gradlew?\s[^\n;|&]*[a-z]Test(?![A-Za-z])(?<!${LEFT_OUT}))`,
+    String.raw`|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s${SPAN}(?<![A-Za-z])tests?(?![a-z]|\.skip)(?<!${FETCHED}|${LEFT_OUT})` +
+    String.raw`|(?:make|npm|pnpm|yarn|bun|rake)\s${SPAN}(?<=\s)test[a-z](?<!${FETCHED})` +
+    String.raw`|gradlew?\s${SPAN}[a-z]Test(?![A-Za-z])(?<!${LEFT_OUT}))`,
 );
 
 /** True when `command` starts a test runner (`RUNNER`), read as the shell
