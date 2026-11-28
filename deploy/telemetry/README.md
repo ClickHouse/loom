@@ -32,8 +32,10 @@ region and set these server-side environment variables in Production.
 | `LOOM_TELEMETRY_CLICKHOUSE_PASSWORD` | Credential for that user                          |
 | `CRON_SECRET`                        | Secret for the daily snapshot job                 |
 
-Vercel calls `/api/oss-snapshot` daily to save GitHub star and fork counts. The metric
-row key makes repeated runs on the same UTC day replace that day's snapshot. Set a
+Vercel calls `/api/oss-snapshot` daily to save GitHub star and fork counts, release
+asset downloads, and GHCR pulls. The metric row key makes repeated runs on the same
+UTC day replace that day's snapshot. Distribution charts show the latest observed
+total and compare snapshots from consecutive complete periods. Set a
 request rate limit on `/api/v1/adoption` in the deployment firewall. Before releasing
 the reporting worker, send a synthetic report to a deployment configured with a test
 warehouse. Check the acknowledgement, then resend the report and confirm that

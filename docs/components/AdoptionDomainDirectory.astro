@@ -58,8 +58,8 @@ const headers = [
   },
   { label: "Requests", scope: "col" as const, width: "124px" },
   { label: "Active users", scope: "col" as const },
-  { label: "Active instances", scope: "col" as const },
-  ...(withProcesses ? [{ label: "Serving processes", scope: "col" as const }] : []),
+  { label: "Active installations", scope: "col" as const },
+  ...(withProcesses ? [{ label: "Active instances", scope: "col" as const }] : []),
   { label: "Loom version", scope: "col" as const },
   { label: "First seen", scope: "col" as const },
   { label: "Last active", scope: "col" as const },
@@ -123,7 +123,7 @@ const headers = [
           {page < lastPage && <Button {...{ name: "domain_page", value: String(page + 1) }} htmlType="submit" type="secondary" iconRight="chevron-right" label="Next" />}
         </form>}
       </div>
-      {withUsage && <Text size="sm" color="muted">Active instances ran a successful request. Domain activity uses completed daily reports. User and process counts use the latest measured UTC day.</Text>}
+      {withUsage && <Text size="sm" color="muted">Active installations recorded a successful request. Domain activity uses completed daily reports. User and instance counts use the latest measured UTC day.</Text>}
     </Panel>
   )}
 </section>
