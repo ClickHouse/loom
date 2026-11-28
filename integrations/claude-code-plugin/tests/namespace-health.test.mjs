@@ -1,4 +1,4 @@
-// The namespace-health Stop hook — one audit per session, one line on a critical.
+// The namespace-health hook — one audit per session, one line on a critical.
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -6,6 +6,7 @@ import {
   AUDIT_WINDOW_SECONDS,
   auditBody,
   criticalCodes,
+  decideAsk,
   decideAudit,
   healthPayload,
   renderHealth,
@@ -78,14 +79,43 @@ test("renderHealth: many codes are capped with a +N tail", () => {
   );
 });
 
-test("decideAudit: the first stop of a session audits, every later one passes", () => {
+test("decideAudit: with no copy at work the first stop audits, every later one passes", () => {
   const first = decideAudit({});
   assert.equal(first.audit, true);
   assert.ok(first.cache.audited_at > 0);
   const second = decideAudit(first.cache);
   assert.equal(second.audit, false);
-  assert.deepEqual(second.cache, first.cache);
+  assert.equal(second.cache, first.cache);
   assert.equal(decideAudit(null).audit, true);
+});
+
+test("decideAsk: a prompt's copy asks once per session, and not after a stop has", () => {
+  const first = decideAsk({});
+  assert.equal(first.ask, true);
+  assert.ok(first.state.asked_at > 0);
+  assert.equal(decideAsk(first.state).ask, false);
+  assert.equal(decideAsk({ ...first.state, line: "" }).ask, false);
+  assert.equal(decideAsk(decideAudit({}).cache).ask, false);
+  assert.equal(decideAsk(null).ask, true);
+});
+
+test("decideAudit: a stop passes while a copy is asking, tells its verdict once, and never audits", () => {
+  const asking = decideAsk({}).state;
+  const pending = decideAudit(asking);
+  assert.deepEqual([pending.audit, pending.line], [false, undefined]);
+  assert.equal(pending.cache, asking, "nothing to write: a later stop still tells");
+
+  const line = "loom: namespace ns has 1 critical usage finding (x) — run /loom-optimize";
+  const told = decideAudit({ ...asking, line });
+  assert.deepEqual([told.audit, told.line], [false, line]);
+  assert.ok(told.cache.audited_at > 0);
+  const after = decideAudit(told.cache);
+  assert.deepEqual([after.audit, after.line], [false, undefined]);
+
+  // A healthy namespace, or an audit that did not answer: nothing to tell, once.
+  const quiet = decideAudit({ ...asking, line: "" });
+  assert.deepEqual([quiet.audit, quiet.line], [false, ""]);
+  assert.ok(quiet.cache.audited_at > 0);
 });
 
 test("healthPayload: the line rides a block-once reason, nothing else", () => {

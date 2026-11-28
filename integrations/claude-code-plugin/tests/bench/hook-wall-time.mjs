@@ -9,7 +9,11 @@
 // detached ones included, which gives the process counts.
 //
 //   node tests/bench/hook-wall-time.mjs --plugin <plugin dir> [--latency 300]
-//        [--tools 55] [--stops 3] [--runs 5] [--settle <ms>] [--json out.json]
+//        [--tools 55] [--stops 3] [--shell 1] [--runs 5] [--settle <ms>]
+//        [--json out.json]
+//
+// --shell 1 is a session that reads, edits and tests through the shell alone
+// (no Edit or Read call), as a short headless session does.
 //
 // To compare two revisions, run it on each one's plugin directory (for
 // `main`: `git archive origin/main integrations/claude-code-plugin | tar -x
@@ -24,7 +28,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 function args(argv) {
-  const o = { plugin: "", latency: 300, tools: 55, stops: 3, runs: 5, json: "", settle: "" };
+  const o = { plugin: "", latency: 300, tools: 55, stops: 3, shell: 0, runs: 5, json: "", settle: "" };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i].replace(/^--/, "");
     if (!(k in o)) throw new Error(`unknown argument ${argv[i]}`);
@@ -109,7 +113,14 @@ function runOne(h, plugin, env, stdin) {
     child.stdout.on("data", (c) => (stdout += c));
     child.stderr.on("data", (c) => (stderr += c));
     child.on("close", (code) =>
-      resolve({ script: path.basename(argv[0]), ms: performance.now() - started, code, stdout, stderr }),
+      resolve({
+        script: path.basename(argv[0]),
+        pid: child.pid,
+        ms: performance.now() - started,
+        code,
+        stdout,
+        stderr,
+      }),
     );
     child.stdin.on("error", () => {});
     child.stdin.end(stdin);
@@ -158,14 +169,16 @@ async function session(o, manifest, server) {
       event,
       tool,
       ms,
-      hooks: done.map((d) => ({ script: d.script, ms: d.ms })),
+      hooks: done.map((d) => ({ script: d.script, pid: d.pid, ms: d.ms })),
       out: done.filter((d) => d.stdout.trim()).map((d) => d.script),
     });
   };
 
-  // 43 Bash, 8 Edit and 4 Read per 55 calls, spread evenly.
+  // 43 Bash, 8 Edit and 4 Read per 55 calls, spread evenly; with --shell every
+  // call is Bash and each third one edits a file before it runs the tests.
   const kinds = [];
-  for (let i = 0; i < o.tools; i++) kinds.push(i % 7 === 3 ? "Edit" : i % 14 === 6 ? "Read" : "Bash");
+  for (let i = 0; i < o.tools; i++)
+    kinds.push(o.shell ? "Bash" : i % 7 === 3 ? "Edit" : i % 14 === 6 ? "Read" : "Bash");
   const stopAfter = new Set();
   for (let s = 1; s <= o.stops; s++) stopAfter.add(Math.ceil((o.tools * s) / o.stops) - 1);
 
@@ -180,9 +193,13 @@ async function session(o, manifest, server) {
     }
     const tool = kinds[i];
     const file = path.join(box.cwd, "src", `m${i % 8}.py`);
+    const shellEdit = Boolean(o.shell) && i % 3 === 1;
+    const test = `python3 -m pytest tests/test_m${i % 8}.py -q`;
     const input =
       tool === "Bash"
-        ? { command: `python3 -m pytest tests/test_m${i % 8}.py -q`, description: "run tests" }
+        ? shellEdit
+          ? { command: `sed -i 's/return/return 1 +/' src/m${i % 8}.py && ${test}`, description: "edit, run tests" }
+          : { command: test, description: "run tests" }
         : tool === "Read"
           ? { file_path: file, offset: 1, limit: 40 }
           : { file_path: file, old_string: "return", new_string: "return 1 +" };
@@ -197,7 +214,7 @@ async function session(o, manifest, server) {
       },
     });
     await fire("PreToolUse", { tool_name: tool, tool_input: input }, tool);
-    if (tool === "Edit") fs.appendFileSync(file, `# edit ${i}\nx${i} = ${i}\n`);
+    if (tool === "Edit" || shellEdit) fs.appendFileSync(file, `# edit ${i}\nx${i} = ${i}\n`);
     const response =
       tool === "Bash"
         ? { stdout: "60 passed in 0.41s\n".repeat(3), stderr: "", interrupted: false }
@@ -258,6 +275,7 @@ async function session(o, manifest, server) {
     await new Promise((r) => setTimeout(r, 50));
   }
   const p = procs();
+  for (const e of events) for (const h of e.hooks) h.cpu = p.exits.get(h.pid)?.cpu ?? null;
   const stranded = fs.readdirSync(box.tmp).filter((f) => /^loom-(flush|record)-/.test(f));
   const lastOpAt = server.ops.length ? Math.max(...server.ops.map((x) => x.at)) : hostDone;
   fs.rmSync(box.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
@@ -305,16 +323,19 @@ async function main() {
       firings: all.length / runs.length,
       processes: all[0].hooks.length,
       medianMs: median(all.map((e) => e.ms)),
+      // The fastest firing: what the event costs when nothing else has the CPU.
+      minMs: Math.min(...all.map((e) => e.ms)),
       sessionMs: median(runs.map((r) => sum(r.events.filter((e) => kindOf(e) === k).map((e) => e.ms)))),
     };
   });
   const scripts = {};
   for (const r of runs)
-    for (const e of r.events) for (const h of e.hooks) (scripts[`${h.script} ${e.event}`] ||= []).push(h.ms);
+    for (const e of r.events) for (const h of e.hooks) (scripts[`${h.script} ${e.event}`] ||= []).push(h);
   const perHook = Object.entries(scripts).map(([k, v]) => ({
     hook: k,
     n: v.length / runs.length,
-    medianMs: median(v),
+    medianMs: median(v.map((h) => h.ms)),
+    medianCpuMs: median(v.filter((h) => h.cpu !== null).map((h) => h.cpu)),
   }));
   // In-process view from the preload: node's own start-up, then the rest.
   const boot = median(runs.flatMap((r) => r.procs.map((p) => p.boot)));
@@ -332,6 +353,7 @@ async function main() {
     stops: o.stops,
     runs: o.runs,
     sessionHookWallMs: median(runs.map((r) => sum(r.events.map((e) => e.ms)))),
+    sessionHookWallMinMs: Math.min(...runs.map((r) => sum(r.events.map((e) => e.ms)))),
     perEvent,
     perHook,
     nodeBootMs: boot,
@@ -349,15 +371,17 @@ async function main() {
   if (o.json) fs.writeFileSync(o.json, JSON.stringify(out, null, 2));
   const f = (x) => x.toFixed(0).padStart(6);
   console.log(`plugin ${o.plugin}\nlatency ${o.latency} ms, ${o.tools} tool calls, ${o.stops} stops, ${o.runs} runs`);
-  console.log(`\nevent                      firings  procs  median ms  session ms`);
+  console.log(`\nevent                      firings  procs  median ms  min ms  session ms`);
   for (const e of perEvent)
     console.log(
-      `${e.kind.padEnd(26)} ${String(e.firings).padStart(7)} ${String(e.processes).padStart(6)} ${f(e.medianMs)}     ${f(e.sessionMs)}`,
+      `${e.kind.padEnd(26)} ${String(e.firings).padStart(7)} ${String(e.processes).padStart(6)} ${f(e.medianMs)}   ${f(e.minMs)}     ${f(e.sessionMs)}`,
     );
-  console.log(`session hook wall time: ${out.sessionHookWallMs.toFixed(0)} ms`);
-  console.log(`\nhook process                              n   median ms`);
+  console.log(
+    `session hook wall time: ${out.sessionHookWallMs.toFixed(0)} ms (fastest run ${out.sessionHookWallMinMs.toFixed(0)} ms)`,
+  );
+  console.log(`\nhook process                              n   median ms  own CPU ms`);
   for (const h of perHook.sort((a, b) => a.hook.localeCompare(b.hook)))
-    console.log(`${h.hook.padEnd(40)} ${String(h.n).padStart(3)} ${f(h.medianMs)}`);
+    console.log(`${h.hook.padEnd(40)} ${String(h.n).padStart(3)} ${f(h.medianMs)}      ${f(h.medianCpuMs)}`);
   console.log(`\nnode start-up (to first user code): ${boot.toFixed(0)} ms`);
   console.log(
     `processes: ${out.processesWaitedOn} waited on, ${out.processesDetached} detached, ${out.processesTotal} in all`,

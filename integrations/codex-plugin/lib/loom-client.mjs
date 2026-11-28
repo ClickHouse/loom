@@ -453,10 +453,13 @@ const gitSpelling = new Map();
 /** The checkout root for `cwd`, as realPath names it; "" outside a
  *  repository. */
 export function gitToplevel(cwd) {
+  // Scripts sharing a process ask about one directory: one git call for all.
+  const key = String(cwd ?? "");
+  if (shared && shared.tops.has(key)) return shared.tops.get(key);
   const top = git(["rev-parse", "--show-toplevel"], cwd);
-  if (!top) return "";
-  const real = realPath(top);
-  gitSpelling.set(real, top);
+  const real = top ? realPath(top) : "";
+  if (real) gitSpelling.set(real, top);
+  if (shared) shared.tops.set(key, real);
   return real;
 }
 
@@ -1023,23 +1026,24 @@ export function diffHeaders(diff, max) {
 }
 
 // --- several hooks in one process --------------------------------------------
-// hooks/loom-record.mjs runs an event's recording scripts in one process.
+// hooks/loom-record.mjs runs an event's scripts in one process.
 // While `shared` is set, a script's runHookMain keeps its main for
 // runHooksTogether to start, readStdinJson answers the payload that was
-// handed off, resolveScope looks a directory up once for all of them, and
-// scheduleExit does nothing: the process ends when every main has returned,
-// not when the first one is done.
+// handed off, resolveScope and gitToplevel look a directory up once for all
+// of them, and scheduleExit does nothing: the process ends when every main
+// has returned, not when the first one is done.
 let shared = null;
 
 /**
  * Import the hook scripts at `urls` and run their mains in this process, in
  * that order, each on the payload text `raw` as if the host had started it.
- * Resolves when all of them have returned; nothing they throw escapes.
+ * Resolves, when all of them have returned, to what each main returned (its
+ * answer for the host, or undefined); nothing they throw escapes.
  */
 export async function runHooksTogether(raw, urls) {
   // Past any one hook's own bound: a settle of at most five seconds, then two requests.
   scheduleExit(0, 2 * requestTimeoutMs() + 10000);
-  shared = { raw, mains: [], scopes: new Map() };
+  shared = { raw, mains: [], scopes: new Map(), tops: new Map() };
   for (const url of urls) {
     try {
       await import(url);
@@ -1049,20 +1053,28 @@ export async function runHooksTogether(raw, urls) {
   }
   const run = async (main) => {
     try {
-      await main();
+      return await main();
     } catch {
-      /* swallowed, as runHookMain does: this process has no host to tell */
+      /* swallowed, as runHookMain does: a script that throws has no answer */
+      return undefined;
     }
   };
-  await Promise.all(shared.mains.map(run));
+  const answers = await Promise.all(shared.mains.map(run));
   shared = null;
   scheduleExit(0); // the grace each hook gives its last fire-and-forget post
+  return answers;
+}
+
+/** Print a hook's answer for the host: one line of JSON. */
+export function printHookAnswer(answer, done) {
+  process.stdout.write(JSON.stringify(answer) + "\n", done);
 }
 
 /**
- * Run a hook's `main`. Whatever it throws, the hook exits 0: a hook never
- * fails the host session. With LOOM_HOOK_DEBUG=on the error's first line,
- * redacted, goes to stderr, which is how a broken hook shows itself.
+ * Run a hook's `main` and print the answer it returns, if any. Whatever it
+ * throws, the hook exits 0: a hook never fails the host session. With
+ * LOOM_HOOK_DEBUG=on the error's first line, redacted, goes to stderr, which
+ * is how a broken hook shows itself.
  */
 export function runHookMain(main) {
   if (shared) {
@@ -1071,6 +1083,9 @@ export function runHookMain(main) {
   }
   Promise.resolve()
     .then(main)
+    .then((answer) => {
+      if (answer && typeof answer === "object") printHookAnswer(answer);
+    })
     .catch((e) => {
       if (envSwitch("LOOM_HOOK_DEBUG", false)) {
         const line = String((e && (e.stack || e.message)) || e).split("\n")[0];

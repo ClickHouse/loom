@@ -39,9 +39,12 @@ def test_plugin_manifest_version_moved_with_the_run_hook() -> None:
     assert (major, minor) >= (0, 3), (
         "loom-run.mjs shipped without a version bump; clients never updated"
     )
+    # The launcher is the prompt's one hook; it hands the run hook to a detached process.
     hooks = json.loads((root / "hooks" / "hooks.json").read_text())
     assert any(
-        "loom-run.mjs" in h["args"][0]
+        "loom-record.mjs" in h["args"][0]
         for grp in hooks["hooks"]["UserPromptSubmit"]
         for h in grp["hooks"]
     )
+    launcher = (root / "hooks" / "loom-record.mjs").read_text()
+    assert 'UserPromptSubmit: ["loom-run",' in launcher

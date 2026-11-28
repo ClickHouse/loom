@@ -3,10 +3,10 @@
 // it: the agent CLI installs the plugin from this checkout into a scratch
 // home, then runs one headless turn against a local fake that answers both
 // the model API and Loom. The model's turn runs one shell command, so the
-// session fires SessionStart, UserPromptSubmit, PreToolUse, PostToolUse and
-// Stop the way the agent runs hooks on this platform (Claude Code with no
-// shell, Codex through its shell), and the MCP entry's header helper runs the
-// way the agent runs it. No model provider is called.
+// session fires SessionStart, UserPromptSubmit, PreToolUse, PostToolUse,
+// Stop and SessionEnd the way the agent runs hooks on this platform (Claude
+// Code with no shell, Codex through its shell), and the MCP entry's header
+// helper runs the way the agent runs it. No model provider is called.
 //
 //   node agent-session.mjs claude --bin <path to claude>
 //   node agent-session.mjs codex  --bin <path to the native codex binary>
@@ -175,7 +175,8 @@ async function startFake(port) {
         res.end("{}");
       } else {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ rendered: "", results: [], repos: [] }));
+        // run.begin answers the run's id: without one the session has no run to close.
+        res.end(JSON.stringify({ rendered: "", results: [], repos: [], run_id: body.run_id }));
       }
     });
   };
@@ -455,8 +456,10 @@ async function codexSession(opts, box, url) {
 
 /** A Loom call only one event's hooks make, by that event: the primer's
  *  startup pack, the run the first prompt opens, the tool call's record, the
- *  turns the Stop reports. PreToolUse sends nothing outside an indexed
- *  checkout; Claude Code reports its hook results instead. */
+ *  turns the Stop reports and, for Claude Code, the run's close, which its
+ *  SessionEnd hook hands to a detached process: it arrives after the agent
+ *  has exited. PreToolUse sends nothing outside an indexed checkout; Claude
+ *  Code reports its hook results instead. */
 function expectedCalls(agent) {
   return {
     SessionStart: (s) => s.path === "/v1/context.pack" && s.mode === "startup",
@@ -465,6 +468,7 @@ function expectedCalls(agent) {
     // Claude Code also appends the conversation at SessionEnd; its usage
     // hook runs at Stop alone.
     Stop: (s) => s.path === (agent === "claude" ? "/v1/cost.record_turns" : "/v1/conversation.append"),
+    ...(agent === "claude" ? { SessionEnd: (s) => s.path === "/v1/run.complete" } : {}),
   };
 }
 
@@ -477,9 +481,11 @@ async function main() {
   let result;
   try {
     result = await (opts.agent === "claude" ? claudeSession : codexSession)(opts, box, url);
-    // Stop hands its posts to a detached flusher: give it time to land.
+    // The hooks hand their posts to detached processes, which outlive the
+    // agent: give them time to land.
     const deadline = opts.noNode ? 0 : Date.now() + 20000;
-    while (Date.now() < deadline && !fake.seen.some(EXPECTED_CALLS.Stop)) {
+    const landed = () => Object.values(EXPECTED_CALLS).every((call) => fake.seen.some(call));
+    while (Date.now() < deadline && !landed()) {
       await new Promise((r) => setTimeout(r, 250));
     }
     const used = path.join(box.home, "nvm-node-used");

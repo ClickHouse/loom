@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { RECORDERS } from "../hooks/loom-record.mjs";
+import { LOOKUPS, RECORDERS } from "../hooks/loom-record.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const manifest = JSON.parse(fs.readFileSync(path.join(here, "..", "hooks", "hooks.json"), "utf8"));
@@ -15,36 +15,41 @@ function wired(event) {
   return manifest.hooks[event].flatMap((g) => g.hooks).map((h) => h.args[0].match(/hooks\/(loom-[a-z-]+)\.mjs$/)[1]);
 }
 
-test("a recording script runs through the launcher, never beside it", () => {
-  // The launcher runs these scripts in one process (a detached one, or its
-  // own at SessionEnd); one wired directly as well would record twice and
-  // hold the host for its request.
+test("a script the launcher runs is never wired beside it", () => {
+  // The launcher runs an event's recording scripts in one detached process
+  // and its lookups in its own; one wired directly as well would run twice
+  // and hold the host for its request.
   for (const [event, scripts] of Object.entries(RECORDERS)) {
     const names = wired(event);
+    const run = [...scripts, ...(LOOKUPS[event] || [])];
     assert.equal(names.filter((n) => n === "loom-record").length, 1, `${event}: the launcher is wired once`);
     assert.deepEqual(
-      names.filter((n) => scripts.includes(n)),
+      names.filter((n) => run.includes(n)),
       [],
       `${event}: wired beside the launcher`,
     );
   }
+  assert.deepEqual(
+    Object.keys(LOOKUPS).filter((event) => !Object.hasOwn(RECORDERS, event)),
+    [],
+    "a lookup's event is one the launcher is wired for",
+  );
+});
+
+test("a prompt starts one process", () => {
+  assert.deepEqual(wired("UserPromptSubmit"), ["loom-record"]);
 });
 
 test("the Stop gates are wired directly: the host reads what they print", () => {
   assert.deepEqual(wired("Stop"), ["loom-record", "loom-test-gate", "loom-validate-gate", "loom-namespace-health"]);
 });
 
-test("the SessionEnd hook declares a timeout: Claude Code gives the event 1.5 s by default", () => {
-  // The launcher runs the event's five recording scripts in its own process
-  // and waits for them: a slow server or a loaded machine passes the default
-  // budget, and a launcher killed there leaves their requests unsent. A
-  // `timeout` raises the event budget to match (docs: hooks-guide,
-  // limitations), up to 60 s.
+test("the SessionEnd hook asks for no longer than the host's default budget", () => {
+  // Claude Code gives the event 1.5 s by default. The launcher hands the
+  // payload off and exits, so it needs no `timeout` of its own.
   const hooks = manifest.hooks.SessionEnd.flatMap((g) => g.hooks);
-  assert.equal(hooks.length, 1);
-  for (const h of hooks) {
-    assert.ok(Number.isInteger(h.timeout) && h.timeout >= 5 && h.timeout <= 60, `${h.args[0]}: timeout=${h.timeout}`);
-  }
+  assert.deepEqual(wired("SessionEnd"), ["loom-record"]);
+  for (const h of hooks) assert.equal(h.timeout, undefined, h.args[0]);
 });
 
 test("the Codex hooks.json carries only the fields Codex's strict parser accepts", () => {

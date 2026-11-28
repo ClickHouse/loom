@@ -3,7 +3,9 @@
 //
 //   UserPromptSubmit  → on the FIRST prompt of a session, run.begin with the
 //                       prompt as the goal (run_id = cc-<session_id>, or
-//                       the id the server answers instead).
+//                       the id the server answers instead). Claude Code
+//                       runs this in loom-record's detached process, so the
+//                       prompt does not wait for the answer.
 //   SessionEnd        → run.complete with the transcript's last assistant
 //                       text as final_response. outcome:"none" — the hook
 //                       knows the run ended, not whether it succeeded, and
@@ -79,6 +81,11 @@ async function main() {
     // use it. A begin may commit before its answer arrives, so every retry re-sends
     // the first redacted body (the README's hooks table has the retry rules).
     const body = prior.attempted && prior.body ? prior.body : beginBody(scope, payload, prompt);
+    // On disk before the answer: Claude Code runs this in a detached process, and a
+    // SessionEnd or a second prompt that comes first finds a begin to ask again. A
+    // resumed session's previous run id stays until the answer, as it did while the
+    // prompt waited here.
+    writeJsonFile(sp, { ...prior, attempted: true, body, at: Date.now() });
     const res = await postBoundedResult("run.begin", body, opts);
     const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
     // 408, 429 and a 2xx with no usable id may still have opened the run.
