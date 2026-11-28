@@ -78,6 +78,9 @@ code or conversations. Use the [self-hosted memory checklist](self-hosted-clickh
 to review storage and model destinations. For a pipeline with separate implementation and review agents,
 continue with [memory for a software factory](multi-agent.md#memory-for-a-software-factory).
 
+Compare [memory architectures](../guides/compare-agent-memory.md) by deployment,
+sharing, provenance and staleness handling before choosing a service or harness.
+
 ### Check one coding lesson across sessions
 
 Use a disposable example rather than a secret or an unverified project rule:
