@@ -111,6 +111,18 @@ def test_text_outside_the_edits_is_byte_identical() -> None:
     assert revised(text, planned.edits) == text.replace("`read_rows`", "`fetch_rows`")
 
 
+def test_an_edit_is_positioned_in_unicode_code_points() -> None:
+    """A character outside the Basic Multilingual Plane before the edit is one position,
+    not the two UTF-16 units or four bytes it takes elsewhere."""
+    text = "\U0001f680 `read_rows` retries."
+    (edit,) = _plan(text).edits
+    assert (edit.start, edit.end, edit.old) == (3, 12, "read_rows")
+    assert text[edit.start : edit.end] == edit.old
+    utf16 = text.encode("utf-16-le")
+    assert utf16[2 * edit.start : 2 * edit.end].decode("utf-16-le") == "`read_row"
+    assert revised(text, [edit]) == "\U0001f680 `fetch_rows` retries."
+
+
 def test_planning_the_revised_text_again_offers_no_edit() -> None:
     text = "`Reader.read_rows` retries; `read_rows` backs off."
     after = _revised(text)

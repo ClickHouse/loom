@@ -506,7 +506,8 @@ _CODE_RENAME_EDITS = (
     "info",
     "A memory whose linked code was renamed or moved and followed there: the link is at "
     "the new name or path and the memory's text still says the old one. Each sample "
-    "carries either `edits` (replace `old` with `new` at `start`..`end` of the text) "
+    "carries either `edits` (replace `old` with `new` at `start`..`end` of the text, "
+    "counted in Unicode code points; apply none unless that slice reads `old`) "
     "with the `content_sha256` they are of, or the `reason` no edit is offered; `totals` "
     "counts the memories by `edits` and by reason. Nothing is written: to apply, read "
     "the edited sentence, then memory.update the key with the revised text and "

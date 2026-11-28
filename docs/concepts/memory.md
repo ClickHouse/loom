@@ -606,9 +606,9 @@ index is a gauge, and a health warning when it lasts
 
 A `moved` link is at its code, and the memory's text may still name the old definition or
 path. `namespace.validate` lists each memory whose text does under the `info` finding
-`code_rename_edits`, with either the `edits` its text allows (replace `old` with `new` at
-characters `start` to `end`) and the `content_sha256` they are of, or the one `reason` no
-edit is offered. The finding's `totals` count the memories by `edits` and by reason. Loom
+`code_rename_edits`, with either the `edits` its text allows (replace `old` with `new`
+from `start` to `end`, counted in Unicode code points of the text, where the text reads
+`old`) and the `content_sha256` they are of, or the one `reason` no edit is offered. The finding's `totals` count the memories by `edits` and by reason. Loom
 writes nothing: to apply an edit, read the sentence it changes, then call `memory.update`
 on the key with the revised text and `if_match_sha256` set to the listed hash. That is a
 revision by the caller, with its conflict check, and it is refused when the memory changed

@@ -146,10 +146,13 @@ not rewrite it; `namespace.validate` lists what a rewrite would be:
 1. Call `namespace.validate` on the memory namespace (with `keys` to check the lessons
    one session wrote) and read the `code_rename_edits` finding. Each sample is one lesson
    with either `edits` and a `content_sha256`, or a `reason`.
-2. For a lesson with `edits`, replace `old` with `new` at characters `start` to `end` of
-   its text, applying the last edit first so the earlier positions hold. Read the edited
-   sentence: an edit is offered on the spelling and the index, and whether the claim
-   survives the swap is yours to judge.
+2. For a lesson with `edits`, `start` and `end` count Unicode code points of its text (a
+   Python string index; not the UTF-16 units of a JavaScript string, nor bytes). Check
+   that the text from `start` to `end` reads `old`, and apply nothing when it does not:
+   the positions were counted in another unit. Then replace it with `new`, applying the
+   last edit first so the earlier positions hold. Read the edited sentence: an edit is
+   offered on the spelling and the index, and whether the claim survives the swap is
+   yours to judge.
 3. Call `memory.update` on the key with the revised text and `if_match_sha256` set to the
    sample's `content_sha256`. A lesson that changed since the report returns `409`; run
    the report again.

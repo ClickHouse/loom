@@ -89,7 +89,9 @@ _DATES = ("valid_to", "invalid_at", "temporal_anchor")
 
 
 class Edit(NamedTuple):
-    """Replace `text[start:end]`, which reads `old`, with `new`."""
+    """Replace `text[start:end]`, which reads `old`, with `new`. The positions count
+    Unicode code points, as a Python string index does: a caller that indexes UTF-16
+    units or bytes converts them, and checks the slice against `old`."""
 
     start: int
     end: int
