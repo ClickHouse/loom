@@ -13,7 +13,9 @@ from server.knowledge.app import private_sync, source_sync
 from server.knowledge.app import sources as source_ops
 from server.knowledge.domain.sources import (
     SYNC_WORKER_ACTOR,
+    KnowledgeSource,
     home,
+    is_worker_source,
     mirror_uri_suffix,
     turn_lease_name,
 )
@@ -85,6 +87,15 @@ async def _run_once() -> None:
             pass_context.set_cursor(json.dumps(["", ""]))
 
 
+def _blocks_retirement(item: queue.Retirement, current: KnowledgeSource | None) -> bool:
+    # A queue entry can precede inactivation or outlive its native registration.
+    return (
+        current is not None
+        and current.source_id == item.source_id
+        and (current.active or is_worker_source(current))
+    )
+
+
 async def _retire(item: queue.Retirement, run: source_sync.Pass) -> None:
     async with source_ops.sources_lease(item.org, item.namespace):
         with sequential_reads():
@@ -92,8 +103,8 @@ async def _retire(item: queue.Retirement, run: source_sync.Pass) -> None:
             if not await queue.pending(item):
                 return
             current = await store.latest_source(item.org, item.namespace, item.name)
-        if current is not None and current.source_id == item.source_id and current.active:
-            return  # a crash after enqueue but before inactivation cannot delete live content
+        if _blocks_retirement(item, current):
+            return
     src = item.source()
     for doc in await store.source_documents(item.org, *home(src)):
         if run.spent():
@@ -111,7 +122,7 @@ async def _finish(item: queue.Retirement) -> None:
             if not await queue.pending(item):
                 return
             current = await store.latest_source(item.org, item.namespace, item.name)
-            if current is not None and current.source_id == item.source_id and current.active:
+            if _blocks_retirement(item, current):
                 return
             if await store.count_documents(item.org, *home(item.source())):
                 return

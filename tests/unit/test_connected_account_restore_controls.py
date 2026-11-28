@@ -110,6 +110,29 @@ async def test_dry_run_discovers_history_without_changing_any_authority(world):
     assert world.writes == world.source_writes == world.retirement_rows == world.revokes == []
 
 
+@pytest.mark.parametrize("apply", [False, True], ids=["dry-run", "apply"])
+async def test_worker_history_holds_native_restore_before_any_retirement(world, apply):
+    native = world.source
+    worker_history = replace(
+        native,
+        kind="mcp",
+        credential_mode="worker",
+        active=False,
+        connection_id="dcba0000-1234-4abc-8000-0000ffffffff",
+        credential_enc="",
+    )
+    world.source_history.append(worker_history)
+    rows = dict(world.rows)
+    fences = dict(world.fences)
+
+    with pytest.raises(RuntimeError, match="worker source history requires worker-aware restore"):
+        await connected_restore.restore_all(apply=apply, ch=world)
+
+    assert world.rows == rows and world.fences == fences
+    assert world.source_history == [native, worker_history]
+    assert world.writes == world.source_writes == world.retirement_rows == world.revokes == []
+
+
 async def test_legacy_live_override_does_not_override_connection_offline_check(monkeypatch, world):
     query_one = world.query_one
 

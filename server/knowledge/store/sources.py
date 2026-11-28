@@ -26,19 +26,26 @@ import json
 from datetime import datetime
 from typing import Any, Literal, NamedTuple
 
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.live_chunks import has_live_chunks_sql
+from server.knowledge.domain.source_bindings import WORKER_HISTORY, source_account_match
 from server.knowledge.domain.sources import (
+    MIRRORED_ACCESS,
     NAMESPACE_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
+    WorkerSourceHistory,
     id_list_config,
+    is_worker_source,
     items_from_config,
     json_object,
     options_in,
     state_key,
     stored_config,
+    worker_connection_id,
+    worker_source_marker,
 )
 from server.settings import settings
 
@@ -58,38 +65,75 @@ _COLUMNS = (
 )
 
 
-def _items(raw: str) -> list[dict[str, Any]]:
+def _items(raw: str, *, strict: bool = False) -> list[dict[str, Any]]:
     """The stored items, or [] (the source's config names them)."""
     try:
         data = json.loads(raw or "[]")
-    except ValueError:
+    except (ValueError, RecursionError):
         return []
-    return [i for i in data if isinstance(i, dict)] if isinstance(data, list) else []
+    if not isinstance(data, list):
+        return []
+    items = [item for item in data if isinstance(item, dict)]
+    return [] if strict and len(items) != len(data) else items
+
+
+def _worker_config(raw: str) -> dict[str, Any]:
+    try:
+        return json_object(raw)
+    except RecursionError:
+        return {}
 
 
 def _source(row: dict[str, Any]) -> KnowledgeSource:
     created = row.get("created_at")
     updated = row.get("updated_at")
-    kind = str(row.get("source_kind") or row.get("kind") or "")
-    config = json_object(str(row.get("config_json") or ""))
+    legacy_kind = str(row.get("kind") or "")
+    source_kind = str(row.get("source_kind") or "")
+    kind = source_kind or legacy_kind
+    mode = str(row.get("credential_mode") or "shared")
+    raw_config = str(row.get("config_json") or "")
+    raw_items = str(row.get("items_json") or "")
+    access = str(row.get("access") or NAMESPACE_ACCESS)
+    active = bool(row.get("active"))
+    pending_delete = bool(row.get("pending_delete"))
+    worker_row = worker_source_marker(kind, mode) or legacy_kind == "mcp"
+    current_worker = (
+        kind == "mcp"
+        and not legacy_kind
+        and mode == "worker"
+        and access == MIRRORED_ACCESS
+        and active
+        and not pending_delete
+    )
+    if current_worker:
+        config, items = _worker_config(raw_config), _items(raw_items, strict=True)
+    elif worker_row:
+        config, items = {}, []
+    else:
+        legacy_config = json_object(raw_config)
+        config = options_in(kind, legacy_config)
+        # A row an older build wrote holds its items in its config alone.
+        items = _items(raw_items) or items_from_config(kind, legacy_config)
     return KnowledgeSource(
         org=str(row.get("org") or ""),
         namespace=str(row.get("namespace") or ""),
         name=str(row.get("name") or ""),
         kind=kind,
         source_id=str(row.get("source_id") or ""),
-        config=options_in(kind, config),
-        # A row an older build wrote holds its items in `config` alone.
-        items=_items(str(row.get("items_json") or "")) or items_from_config(kind, config),
+        config=config,
+        items=items,
+        worker_history=WorkerSourceHistory(legacy_kind, source_kind, raw_config, raw_items)
+        if worker_row
+        else None,
         credential_enc=str(row.get("credential_enc") or ""),
         secret_enc=str(row.get("secret_enc") or ""),
-        access=str(row.get("access") or NAMESPACE_ACCESS),
-        credential_mode=str(row.get("credential_mode") or "shared"),
+        access=access,
+        credential_mode=mode,
         owner_subject=str(row.get("owner_subject") or ""),
         connection_id=str(row.get("connection_id") or ""),
         created_by=str(row.get("created_by") or ""),
-        active=bool(row.get("active")),
-        pending_delete=bool(row.get("pending_delete")),
+        active=active,
+        pending_delete=pending_delete,
         created_at=created if isinstance(created, datetime) else None,
         updated_at=updated if isinstance(updated, datetime) else None,
     )
@@ -130,7 +174,7 @@ async def connected_sources(
     rows = await (ch or _default_client()).query_all(
         f"SELECT {_COLUMNS} FROM {TABLE} FINAL WHERE org = {{org:String}} "
         "AND credential_mode = 'connected' AND owner_subject = {subject:String} "
-        "ORDER BY namespace, name LIMIT {limit:UInt64}",
+        f"AND NOT {WORKER_HISTORY} ORDER BY namespace, name LIMIT {{limit:UInt64}}",
         params={
             "org": org,
             "subject": subject,
@@ -244,12 +288,12 @@ async def connected_owner_namespaces(
 ) -> list[str]:
     """Include historical bindings hidden by a newer source of a different owner."""
     maximum = settings.knowledge_connected_registry_scan_limit
+    predicate, binding = source_account_match(kind, include_damaged=True)
     rows = await (ch or _default_client()).query_all(
         f"SELECT DISTINCT namespace FROM {TABLE} "
         "WHERE org = {org:String} AND owner_subject = {owner:String} "
-        "AND credential_mode = 'connected' AND source_kind = {kind:String} "
-        "ORDER BY namespace LIMIT {limit:UInt64}",
-        params={"org": org, "owner": subject, "kind": kind, "limit": maximum + 1},
+        f"AND {predicate} ORDER BY namespace LIMIT {{limit:UInt64}}",
+        params={"org": org, "owner": subject, "kind": binding, "limit": maximum + 1},
     )
     if len(rows) > maximum:
         raise RuntimeError("connected_source_owner_bound")
@@ -260,13 +304,22 @@ async def erase_connected_owner(
     org: str, namespace: str, subject: str, kind: str, *, ch: _CHClient | None = None
 ) -> None:
     """The caller holds the stopped account and this namespace's source lease."""
+    predicate, binding = source_account_match(kind)
     await (ch or _default_client()).execute(
         f"DELETE FROM {TABLE} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
-        "AND owner_subject = {owner:String} AND credential_mode = 'connected' "
-        "AND source_kind = {kind:String}",
-        params={"org": org, "ns": namespace, "owner": subject, "kind": kind},
+        f"AND owner_subject = {{owner:String}} AND {predicate}",
+        params={"org": org, "ns": namespace, "owner": subject, "kind": binding},
         settings={"lightweight_deletes_sync": 2},
     )
+
+
+def _payload_for_insert(src: KnowledgeSource) -> tuple[str, str]:
+    if is_worker_source(src):
+        history = src.worker_history
+        if src.active or history is None:
+            raise ValueError("Only inactive worker source history may be written")
+        return history.config_json, history.items_json
+    return json.dumps(stored_config(src), sort_keys=True), json.dumps(src.items, sort_keys=True)
 
 
 async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) -> None:
@@ -274,16 +327,19 @@ async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) ->
     version is left to the column's DEFAULT, the ClickHouse servers' clocks, not the
     writing replica's: the lease-serialized writes stay ordered while those clocks
     differ by less than the lease's handoff between writes."""
+    config_json, items_json = _payload_for_insert(src)
+    history = src.worker_history
+    legacy_kind = src.kind if history is None and id_list_config(src) is not None else ""
     now = naive_utc_now_seconds()
     row = {
         "org": src.org,
         "namespace": src.namespace,
         "name": src.name,
         "source_id": src.source_id,
-        "kind": src.kind if id_list_config(src) is not None else "",
-        "source_kind": src.kind,
-        "config_json": json.dumps(stored_config(src), sort_keys=True),
-        "items_json": json.dumps(src.items, sort_keys=True),
+        "kind": history.legacy_kind if history else legacy_kind,
+        "source_kind": history.source_kind if history else src.kind,
+        "config_json": config_json,
+        "items_json": items_json,
         "credential_enc": src.credential_enc,
         "secret_enc": src.secret_enc,
         "access": src.access,
@@ -520,20 +576,37 @@ __all__ = [
 ]
 
 
+async def worker_history_exists(*, ch: _CHClient | None = None) -> bool:
+    """Refuse native restore if it would miss worker-owned source history."""
+    with sequential_reads():
+        row = await (ch or _default_client()).query_one(
+            f"SELECT 1 AS present FROM {TABLE} WHERE {WORKER_HISTORY} LIMIT 1"
+        )
+    return row is not None
+
+
 async def connected_history(
     *, owner: tuple[str, str, str] | None = None, ch: _CHClient | None = None
 ) -> list[KnowledgeSource]:
     """Metadata of every historical connected source id, including replaced names."""
-    where = "credential_mode = 'connected'"
-    if owner:
-        where += " AND (org, owner_subject, source_kind) = {owner:Tuple(String, String, String)}"
+    where = f"credential_mode = 'connected' AND NOT {WORKER_HISTORY}"
+    mode = "connected"
+    binding = owner or ("", "", "")
+    if owner is not None:
+        owner_columns = "(org, owner_subject, source_kind)"
+        if connection := worker_connection_id(owner[2]):
+            where = WORKER_HISTORY
+            owner_columns = "(org, owner_subject, connection_id)"
+            binding = (owner[0], owner[1], connection)
+            mode = "worker"
+        where += f" AND {owner_columns} = {{owner:Tuple(String, String, String)}}"
     maximum = settings.knowledge_connected_registry_scan_limit
     rows = await (ch or _default_client()).query_all(
         "SELECT DISTINCT org, namespace, name, source_id, source_kind, owner_subject, "
         f"connection_id FROM {TABLE} WHERE {where} "
         "ORDER BY org, owner_subject, source_kind, namespace, name, source_id, connection_id "
         "LIMIT {limit:UInt64}",
-        params={"owner": owner or ("", "", ""), "limit": maximum + 1},
+        params={"owner": binding, "limit": maximum + 1},
     )
     if len(rows) > maximum:
         raise RuntimeError("connected_restore_inventory_bound")
@@ -543,10 +616,10 @@ async def connected_history(
             namespace=row["namespace"],
             name=row["name"],
             kind=row["source_kind"],
-            source_id=row["source_id"],
+            source_id=str(row["source_id"]),
             owner_subject=row["owner_subject"],
             connection_id=row["connection_id"],
-            credential_mode="connected",
+            credential_mode=mode,
             access="mirrored",
         )
         for row in rows

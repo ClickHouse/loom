@@ -13,10 +13,11 @@ from uuid import UUID
 
 import pytest
 
+from server.core.errors import OverloadedError
 from server.knowledge.api.models_sources import KnowledgeSourceRemoveInput
 from server.knowledge.app import source_retirements as cleanup
 from server.knowledge.app import sources
-from server.knowledge.domain.sources import MIRRORED_ACCESS
+from server.knowledge.domain.sources import MIRRORED_ACCESS, WorkerSourceHistory
 from server.knowledge.store import source_retirements as queue
 from server.knowledge.store import sources as store
 from tests.unit.test_knowledge_sources import NS, ORG, _add
@@ -76,6 +77,45 @@ def test_namespace_retirement_queues_mirrors_before_inactivation(
     assert asyncio.run(sources.deactivate_namespace_sources(ORG, NS)) == ["design-decks"]
     assert queued == [fake.rows[key].source_id]
     assert fake.rows[key].pending_delete
+
+
+@pytest.mark.parametrize("namespace_cleanup", [False, True])
+@pytest.mark.parametrize("legacy_only", [False, True])
+def test_native_retirement_refuses_worker_registration_without_writing(
+    fake: Any, monkeypatch: pytest.MonkeyPatch, namespace_cleanup: bool, legacy_only: bool
+) -> None:
+    asyncio.run(sources.handle_knowledge_source_add(_add()))
+    native_key = (ORG, NS, "design-decks")
+    worker_key = (ORG, NS, "worker-source")
+    fake.rows[worker_key] = dataclasses.replace(
+        fake.rows[native_key],
+        name=worker_key[2],
+        source_id=str(UUID(int=2)),
+        kind="notion" if legacy_only else "mcp",
+        credential_mode="connected" if legacy_only else "worker",
+        access=MIRRORED_ACCESS,
+        worker_history=WorkerSourceHistory(
+            "mcp" if legacy_only else "", "notion" if legacy_only else "mcp", "{}", "[]"
+        ),
+    )
+    before = fake.rows.copy()
+
+    async def forbidden(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("native retirement cannot queue worker cleanup")
+
+    monkeypatch.setattr(sources, "_queue_retirement", forbidden)
+    request = (
+        sources.deactivate_namespace_sources(ORG, NS)
+        if namespace_cleanup
+        else sources.handle_knowledge_source_remove(
+            KnowledgeSourceRemoveInput(
+                org=ORG, namespace=NS, name=worker_key[2], confirm=worker_key[2]
+            )
+        )
+    )
+    with pytest.raises(OverloadedError, match="worker source cleanup is unavailable"):
+        asyncio.run(request)
+    assert fake.rows == before
 
 
 @pytest.fixture
@@ -212,6 +252,34 @@ def test_replacement_preserves_old_cleanup_and_new_documents(work: Any) -> None:
     assert work.cleared == [old.source_id]
     assert work.current[(new.org, new.namespace, new.name)].active
     assert work.identities == [((cleanup.WORKER,), {"org": old.org, "namespace": old.mirror})]
+
+
+@pytest.mark.parametrize("marked_at", ["never", "start", "finish"])
+def test_pending_mirror_retirement_rechecks_worker_history(
+    work: Any, monkeypatch: pytest.MonkeyPatch, marked_at: str
+) -> None:
+    item = _item()
+    _put(work, item, "private-address")
+    native = dataclasses.replace(item.source(), active=False, pending_delete=True)
+    worker = dataclasses.replace(
+        native, worker_history=WorkerSourceHistory("mcp", "gdrive", "{}", "[]")
+    )
+    rereads = iter(
+        [worker if marked_at == "start" else native, worker if marked_at == "finish" else native]
+    )
+    key = (item.org, item.namespace, item.name)
+
+    async def latest(*_args: Any) -> Any:
+        current = next(rereads)
+        work.current[key] = current
+        return current
+
+    monkeypatch.setattr(cleanup.store, "latest_source", latest)
+    asyncio.run(cleanup.run_once())
+
+    assert len(work.retired) == (0 if marked_at == "start" else 1)
+    assert work.pending == ({item.source_id} if marked_at != "never" else set())
+    assert work.current[key].pending_delete is (marked_at != "never")
 
 
 def test_crash_before_inactivation_never_deletes_active_source(work: Any) -> None:

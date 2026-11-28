@@ -35,6 +35,7 @@ from server.knowledge.domain.sources import (
     MIRRORED_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
+    WorkerSourceHistory,
     items_from_config,
 )
 from server.knowledge.store import documents
@@ -421,6 +422,49 @@ def _source(name: str = "decks", **kw: Any) -> KnowledgeSource:
         credential_enc=kw.pop("credential_enc", seal("knowledge_sources.credential", KEY)),
         **kw,
     )
+
+
+@pytest.mark.parametrize("worker_marked", [False, True], ids=["native", "worker-history"])
+@pytest.mark.parametrize("path", ["document", "turn-state", "extraction-state", "full-request"])
+def test_native_sync_rechecks_worker_history(world: _World, worker_marked: bool, path: str) -> None:
+    source = _source()
+    fresh = source_sync.store._source(
+        {
+            "org": source.org,
+            "namespace": source.namespace,
+            "name": source.name,
+            "source_id": source.source_id,
+            "source_kind": "gdrive",
+            "kind": "mcp" if worker_marked else "",
+            "credential_mode": "shared",
+            "active": True,
+        }
+    )
+    world.sources = [fresh]
+
+    if path == "document":
+        if worker_marked:
+            with pytest.raises(source_sync.SourceGone):
+                asyncio.run(source_sync.require_current(source))
+        else:
+            asyncio.run(source_sync.require_current(source))
+        return
+
+    if path == "turn-state":
+        asyncio.run(source_sync._write_state(source, {}, source_sync.TurnResult()))
+    elif path == "full-request":
+        asyncio.run(source_sync.source_ops.request_full_sync(source))
+    else:
+        asyncio.run(source_sync._write_mined(source, None, [], pending=2))
+
+    if worker_marked:
+        assert source.name not in world.states
+    elif path == "turn-state":
+        assert _detail(world)["status"] == "ok"
+    elif path == "full-request":
+        assert _detail(world)["full"] is True
+    else:
+        assert _detail(world)["pending_extract"] == 2
 
 
 def _detail(world: _World, name: str = "decks") -> dict[str, Any]:
@@ -902,6 +946,34 @@ def test_a_removed_source_s_documents_are_retired_then_the_request_cleared(
     assert world.docs == {}
     assert world.audits[-1]["subject"]["source_name"] == "decks"
     assert not world.sources[-1].pending_delete
+
+
+@pytest.mark.parametrize("marked_at", ["never", "start", "finish"])
+def test_pending_native_retirement_rechecks_worker_history(
+    world: _World, monkeypatch: pytest.MonkeyPatch, marked_at: str
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    native = _source(active=False, pending_delete=True, credential_enc="")
+    worker = dataclasses.replace(
+        native, worker_history=WorkerSourceHistory("mcp", "gdrive", "{}", "[]")
+    )
+    rereads = iter(
+        [worker if marked_at == "start" else native, worker if marked_at == "finish" else native]
+    )
+    world.sources = [native]
+
+    async def latest(*_args: Any) -> KnowledgeSource:
+        current = next(rereads)
+        world.sources = [current]
+        return current
+
+    monkeypatch.setattr(source_sync.store, "latest_source", latest)
+    result = asyncio.run(source_sync.run_sync())
+
+    assert result.retired == (0 if marked_at == "start" else 1)
+    assert bool(world.docs) is (marked_at == "start")
+    assert world.sources[-1].pending_delete is (marked_at != "never")
 
 
 def test_a_pass_leaves_a_mirrored_source_of_a_store_without_a_mirror_turn(world: _World) -> None:

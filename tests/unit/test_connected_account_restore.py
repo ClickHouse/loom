@@ -72,6 +72,13 @@ class _RestoreWorld(_World):
     async def query_one(self, query, params=None, **kwargs):
         if "FROM loom.worker_status" in query:
             return {"n": 0}
+        if query.startswith("SELECT 1 AS present FROM loom.knowledge_sources"):
+            assert "FINAL" not in query and "LIMIT 1" in query
+            if any(
+                row.kind == "mcp" or row.credential_mode == "worker" for row in self.source_history
+            ):
+                return {"present": 1}
+            return None
         if "SELECT count() AS n FROM loom.connected_accounts" in query:
             if params is None:
                 return {"n": len(self.account_history)}

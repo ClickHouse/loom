@@ -8,9 +8,10 @@ from typing import Any
 from unittest.mock import patch
 
 from server.core import pg
+from server.erasure.store import census
 from server.knowledge.app.search import HybridSearchQuery, _common_where
 from server.knowledge.domain.serving import Serving
-from server.knowledge.store import source_access, source_candidates, source_documents
+from server.knowledge.store import source_access, source_candidates, source_documents, sources
 from tests.analyzer.cases._common import MODEL, NS, ORG, SMALL_VEC, rows_by_substring
 from tests.analyzer.corpus import Case, RecordingCH
 
@@ -95,8 +96,26 @@ async def _chunk_count(_ch: RecordingCH, c: dict[str, Any]) -> None:
         )
 
 
+async def _history(ch: RecordingCH, c: dict[str, Any]) -> None:
+    kind = "mcp:" + "1" * 32 if c["worker"] else "notion"
+    await sources.worker_history_exists(ch=ch)
+    await sources.connected_history(ch=ch)
+    await sources.connected_history(owner=(ORG, "reader", kind), ch=ch)
+    await sources.connected_owner_namespaces(ORG, "reader", kind, ch=ch)
+    await sources.erase_connected_owner(ORG, NS, "reader", kind, ch=ch)
+    await census.connected_source_residue(ORG, NS, "reader", kind, ch=ch)
+    await census.connected_restore_residue(ch=ch)
+
+
 def cases() -> list[Case]:
     return [
+        Case(
+            "connected_source_history",
+            sources.__name__,
+            _history,
+            {"worker": (False, True)},
+            rows=rows_by_substring({"SELECT count() AS n": [{"n": 0}]}),
+        ),
         Case("mirror_access_reads", source_access.__name__, _access, {}),
         Case(
             "mirror_chunk_reads",
