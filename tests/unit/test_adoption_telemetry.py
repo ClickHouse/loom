@@ -699,6 +699,10 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
                  [('live.example', 2, 7, 2), ('new.example', 1, 2, NULL)]),
                 (4, 'measured', '2026-11-27', '2026-11-27 01:20:00', '1.3.0', '26.1.0',
                  [('live.example', 3, 5, 1)]),
+                (4, 'a', '2026-11-27', '2026-11-27 01:25:00', '1.3.0', '26.1.0',
+                 [('shared.example', 1, 3, 1)]),
+                (4, 'z', '2026-11-27', '2026-11-27 01:20:00', '1.2.0', '26.1.0',
+                 [('shared.example', 1, 2, 1)]),
                 (4, 'measured', '2026-11-26', '2026-11-26 23:55:00', '1.3.0', '26.1.0',
                  [('live.example', 3, 20, 2)]),
                 (4, 'capped', '2026-11-26', '2026-11-26 23:55:00', '1.3.0', '26.1.0',
@@ -716,7 +720,8 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
 
     directories = [json.loads(row) for row in report["domain_directories"]]
     assert all(
-        row["domains"] == ["live.example", "capped.example", "new.example"] for row in directories
+        row["domains"] == ["live.example", "shared.example", "capped.example", "new.example"]
+        for row in directories
     )
     domain_rows = {
         row["domain"]: row
@@ -737,3 +742,5 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
     }
     assert domain_rows["new.example"]["successful_requests"] == 2
     assert domain_rows["capped.example"]["successful_requests"] == 3
+    assert domain_rows["shared.example"]["active_installations"] == 2
+    assert domain_rows["shared.example"]["loom_version"] == "1.3.0"

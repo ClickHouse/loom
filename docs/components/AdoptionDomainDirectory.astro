@@ -49,7 +49,6 @@ const day = (value?: string | null) => (value ? date.format(Date.parse(value)) :
 const anchor = "#reported-contact-domains";
 const action = path + anchor;
 const refreshParams = new URLSearchParams(Object.entries(state).map(([key, value]) => [key, String(value)]));
-const refreshUrl = `${path}?${refreshParams}`;
 const headers = [
   {
     label: "Domain",
@@ -69,7 +68,7 @@ const headers = [
 ---
 
 <section class="directory" id="reported-contact-domains" aria-labelledby="domains-title"
-  data-refresh-url={refreshUrl} data-directory-available={String(names !== null)}>
+  data-refresh-url={path} data-refresh-params={refreshParams.toString()} data-directory-available={String(names !== null)}>
   <div class="directory-heading">
     <Title type="h2" size="lg" id="domains-title">Domains using Loom</Title>
     {names !== null && <Text size="sm" color="muted">{days}-day directory{fallback && " · latest available"}</Text>}
@@ -146,13 +145,21 @@ const headers = [
 
     refreshing = true;
     try {
-      const response = await fetch(section.dataset.refreshUrl, { signal: AbortSignal.timeout(15_000) });
+      const response = await fetch(section.dataset.refreshUrl, {
+        method: "POST",
+        body: new URLSearchParams(section.dataset.refreshParams),
+        signal: AbortSignal.timeout(40_000),
+      });
       if (!response.ok) return;
       const page = new DOMParser().parseFromString(await response.text(), "text/html");
       const fresh = page.getElementById(section.id);
-      if (fresh?.dataset.directoryAvailable === "true" && fresh.innerHTML !== section.innerHTML &&
-          section.isConnected && canRefresh(section))
-        section.replaceWith(fresh);
+      if (fresh?.dataset.directoryAvailable !== "true" || !section.isConnected || !canRefresh(section)) return;
+
+      const activeDomains = document.getElementById("adoption-active-domains");
+      const freshActiveDomains = page.getElementById("adoption-active-domains");
+      if (freshActiveDomains && activeDomains?.innerHTML !== freshActiveDomains.innerHTML)
+        activeDomains?.replaceWith(freshActiveDomains);
+      if (fresh.innerHTML !== section.innerHTML) section.replaceWith(fresh);
     } catch {
       // The next refresh retries the request.
     } finally {

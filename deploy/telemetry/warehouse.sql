@@ -200,12 +200,12 @@ LIMIT 50;
 
 -- Keep partial counts only while the domain is disclosed and final counts are unavailable.
 CREATE OR REPLACE VIEW loom_product_analytics.loom_adoption_live_domains AS
-SELECT snapshot.day, snapshot.installation_id, snapshot.loom_version,
+SELECT snapshot.day, snapshot.installation_id, snapshot.loom_version, snapshot.observed_at AS reported_at,
        arrayFilter(item -> completed.present = 0 OR (
            has(completed.names, item.domain) AND NOT has(completed.measured, item.domain)
        ), snapshot.domain_activity) AS domain_activity
 FROM (
-    SELECT day, installation_id, loom_version, domain_activity
+    SELECT day, installation_id, loom_version, observed_at, domain_activity
     FROM loom_product_analytics.adoption_domain_snapshots FINAL
     WHERE day BETWEEN toDate(now('UTC')) - 1 AND toDate(now('UTC'))
         AND observed_at BETWEEN now('UTC') - INTERVAL 2 HOUR AND now('UTC')
@@ -290,15 +290,15 @@ FROM (
         sumOrNull(counts.serving_processes) AS serving_processes,
         sum(counts.successful_requests) AS successful_requests,
         groupUniqArrayIf(installation_id, counts.successful_requests > 0) AS active_installation_ids,
-        argMaxOrNullIf(loom_version, installation_id, counts.successful_requests > 0) AS loom_version
+        argMaxOrNullIf(loom_version, tuple(reported_at, installation_id), counts.successful_requests > 0) AS loom_version
     FROM (
-        SELECT day, installation_id, loom_version,
+        SELECT day, installation_id, loom_version, window_end AS reported_at,
                arrayFilter(count -> has(arrayMap(item -> item.domain, user_domains), count.domain),
                            domain_activity) AS domain_activity
         FROM loom_product_analytics.loom_external_adoption_windows
         WHERE schema_version = 3 AND day < today_utc AND window_end = toDateTime(day + 1, 'UTC')
         UNION ALL
-        SELECT day, installation_id, loom_version, domain_activity
+        SELECT day, installation_id, loom_version, reported_at, domain_activity
         FROM loom_product_analytics.loom_adoption_live_domains
     )
     ARRAY JOIN domain_activity AS counts

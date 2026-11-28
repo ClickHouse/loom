@@ -66,6 +66,7 @@ const latestAccounts = accountReports.at(-1);
 const latestInstances = dailyActivityForRange(selfHosted.activity, "serving_processes", cutoff, today).at(-1);
 const overview = [
   {
+    id: "adoption-active-domains",
     label: "Active domains",
     value: directoryNames?.length,
     note:
@@ -221,8 +222,8 @@ const state = Object.fromEntries(
     {tab === "self-hosted" ? <>
       <section aria-label="Self-hosted adoption overview" class="overview">
         <div class="metrics">
-          {overview.map(({ label, value, note }) => (
-            <Panel className="adoption-stat" orientation="vertical" alignItems="start" padding="md" gap="xs" hasBorder fillWidth>
+          {overview.map(({ id, label, value, note }) => (
+            <Panel {id} className="adoption-stat" orientation="vertical" alignItems="start" padding="md" gap="xs" hasBorder fillWidth>
               <BigStat className="metric-value" height="auto" order="titleBottom" size="lg" {label} title={showCount(value)} />
               <Text size="sm" color="muted">{note}</Text>
             </Panel>
