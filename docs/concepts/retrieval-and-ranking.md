@@ -1,3 +1,7 @@
+---
+description: Loom uses keyword and vector search to rank memories and signals when the results do not support an answer.
+---
+
 # Retrieval and ranking
 
 This page explains how `memory.search` finds rows. It runs several retrieval legs over
