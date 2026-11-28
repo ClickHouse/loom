@@ -283,6 +283,16 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   once the pass is done, so a resumed run, or a rerun after an interrupted pass, still
   runs it. `--dialect-folder-pass` lets SQL files of undecided dialect take the dialect
   their directory agrees on.
+- The index phase exits 1 when a write to ClickHouse failed, for example an insert that
+  ran past `LOOM_CH_TIMEOUT_WRITE_S`, and its last lines on stderr name the pass, the
+  tables and how many rows the failed writes left out, then the command to run again.
+  The count is an upper bound, because a write the client gave up on can still have
+  landed. One failed write can drop rows of several files, so it is never counted under
+  the file-error allowance: a run of 100 files or more exits 0 with up to 1% of its files
+  failing, a smaller run with none. The watermark is written either way and an edge pass
+  with a failed write stays owed. The re-run walks the tree again, keeps the rows already
+  in the index and writes the rest; a run stopped after a failed write resumes at that
+  write's batch.
 - `backfill-prs` loads merged-PR history from GitHub, resumable by cursor and bounded by
   GitHub's rate limit (`LOOM_CODE_PR_BACKFILL_MONTHS`, default 12). `backfill-reviews`
   adds inline review comments, `backfill-assignees` requested reviewers, and

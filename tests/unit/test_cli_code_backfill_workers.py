@@ -297,7 +297,9 @@ def _prepare(log: str, opts: dict[str, Any]) -> None:
             _note(log, role=role, event="edges", first=paths[0], live=live)
             self.edges["files"] += len(paths)
             if paths[0] == opts.get("edge_fails"):
-                self.edges["errors"] += 1  # a file's edge write failed in this batch
+                # an edge write failed in this batch, in one file's ingest
+                self.edges["errors"] += 1
+                code_backfill.count_unwritten(self.edges, {"code_edges": 3})
 
     written = Path(opts["root"]) / "written.txt"
 
@@ -456,14 +458,19 @@ def test_a_held_batch_on_real_workers_starts_nothing_more_and_what_ran_beside_it
 
 
 def test_an_edge_batch_that_fails_a_write_leaves_the_pass_owed_for_a_resume_without_workers(
-    tmp_path: Path,
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    """A worker's edge batch returns with a failed file write. The run still ends (the
-    cursor clears, `git_head` is written), but the pass stays owed, so a resume with one
-    process runs it again and only a clean pass clears the record."""
+    """A worker's edge batch returns with a failed write. The run still ends (the
+    cursor clears, `git_head` is written) and exits 1 naming the rows the worker
+    counted, and the pass stays owed, so a resume with one process runs it again and
+    only a clean pass clears the record."""
     first, first_log = _spawn(tmp_path, 2, files=400, edge_fails="f200.py")
     first.join(120)
-    assert first.exitcode == 0  # one failed file in 400 does not fail the run
+    assert first.exitcode == 1  # one failed file in 400 would not fail the run; the rows do
+    assert (
+        "failed writes left up to 3 rows out of the index (second edge pass: code_edges 3)"
+        in capfd.readouterr().err
+    )
     owed = [e["value"] for e in _events(first_log) if e.get("key") == "backfill_edges_owed:index"]
     assert owed == ["workers"]  # recorded, and never cleared
     resume, resume_log = _spawn(tmp_path, 1, files=400)

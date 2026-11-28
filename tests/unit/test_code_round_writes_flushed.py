@@ -122,3 +122,48 @@ async def test_a_failed_round_still_writes_what_it_buffered() -> None:
             repo, "o", "n", PATHS, source=_source, one=one, denylist=None, stop_after=None
         )
     assert sorted(repo.written) == [("code_files", "a.py"), ("code_files", "b.py")]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_write_is_counted_with_the_tables_queued_behind_it() -> None:
+    """The write fails when b.py's stage needs the buffer written, and that stage logs
+    the failure: no file fails, and the rows of both files are gone."""
+
+    class _TimesOutOnce(_Repo):
+        timed_out = False
+
+        async def insert_rows(self, table: str, rows: list[dict[str, Any]]) -> None:
+            if table == "code_edges" and not self.timed_out:
+                self.timed_out = True
+                raise TimeoutError("ClickHouse write statement exceeded 60 s")
+            await super().insert_rows(table, rows)
+
+    async def one(reads: Any, path: str, source: bytes) -> None:
+        await reads.insert_rows("code_symbols", [{"path": path}])
+        await reads.insert_rows("code_edges", [{"path": path}, {"path": path}])
+        await reads.insert_rows("code_files", [{"path": path}])
+        if path == "b.py":
+            with pytest.raises(TimeoutError):
+                await reads.flush()
+
+    repo = _TimesOutOnce()
+    lost = await code_backfill._backfill_batch_rounds(
+        repo,
+        "o",
+        "n",
+        PATHS,
+        source=_source,
+        one=one,
+        denylist=None,
+        git_dir="repo.git",
+        head="a" * 40,
+    )
+    assert lost == {"code_edges": 4, "code_files": 2}
+    assert sorted(repo.written) == [
+        ("code_edges", "c.py"),
+        ("code_edges", "c.py"),
+        ("code_files", "c.py"),
+        ("code_symbols", "a.py"),
+        ("code_symbols", "b.py"),
+        ("code_symbols", "c.py"),
+    ]
