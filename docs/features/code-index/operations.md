@@ -173,6 +173,21 @@ source from the verified Git blob for that revision when available. Lines
 within the requested window that cannot be verified set
 `contexts_partial=true`. The option is available in matches mode.
 
+With `include_body=false`, the windows also show where each match sits. For
+every Python definition holding a match, they cover its decorators, signature
+and docstring, so the contract of that code is in the excerpt. A docstring
+longer than 12 lines keeps its first 9 and last 3 lines. The window before the
+gap carries `docstring_elided` with the `start_line` and `end_line` left out.
+`end_line` is absent when the docstring ends past the first 80 lines of its
+definition. A page adds at most 48 such lines beyond its match windows, in
+match order; a definition that does not fit keeps only its match windows.
+Definitions in other languages keep their match windows.
+
+Over MCP, an excerpt reply names the full ranges to read with
+`loom_code_read` in `next`. When a listed definition's first line or part of
+its docstring is not shown, `next` says so and asks for the full read before
+an edit.
+
 The default returns matching lines. Bodies are read only for the served page
 and must contain the matching line at its retained revision. Page reruns remove
 definitions belonging to earlier pages. If source cannot be verified,
