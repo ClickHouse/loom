@@ -176,12 +176,20 @@ within the requested window that cannot be verified set
 With `include_body=false`, the windows also show where each match sits. For
 every Python definition holding a match, they cover its decorators, signature
 and docstring, so the contract of that code is in the excerpt. A docstring
-longer than 12 lines keeps its first 9 and last 3 lines. The window before the
-gap carries `docstring_elided` with the `start_line` and `end_line` left out.
-`end_line` is absent when the docstring ends past the first 80 lines of its
-definition. A page adds at most 48 such lines beyond its match windows, in
-match order; a definition that does not fit keeps only its match windows.
-Definitions in other languages keep their match windows.
+longer than 12 lines keeps its first 9 and last 3 lines. The window before a
+gap of three or more lines carries `docstring_elided` with the `start_line`
+and `end_line` left out; a shorter gap is shown. `end_line` is absent when the
+docstring's end was not read. A page adds at most 48 such lines beyond its
+match windows, in match order; a definition that does not fit keeps only its
+match windows. Definitions in other languages keep their match windows.
+
+Header lines come from the indexed source the search read. Lines it does not
+hold are read from the verified Git blob after the match windows, for the
+definitions the page's 48 lines can still show. With `deadline_ms`, no file is
+read for a header alone. A header that cannot be verified is not shown and
+does not set `contexts_partial`. Definitions that share a name, such as a
+property's getter and setter, can share one indexed range: a header is shown
+only when the lines read place the match inside the definition they start.
 
 Over MCP, an excerpt reply names the full ranges to read with
 `loom_code_read` in `next`. When a listed definition's first line or part of

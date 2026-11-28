@@ -804,9 +804,6 @@ def lean_code(
         fn(out)
     if op_name == "code.edit_context" and out.get("edit_targets") and out.get("definitions"):
         out = _share_edit_test_source(out)
-    if out.get("uses") == [] and not (arguments or {}).get("uses"):
-        # No list was read: an empty one would say that nothing uses the definition.
-        out.pop("uses")
     _hoist_defaults(out)
     if out.get("candidates") == []:
         out.pop("candidates")

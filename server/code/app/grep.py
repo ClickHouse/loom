@@ -36,6 +36,7 @@ from server.code.app.grep_source import (
     ContextSource,
     collect_contexts,
     match_revisions,
+    match_window_source,
     page_contexts,
     recover_page_context,
     recover_source_chunks,
@@ -495,7 +496,7 @@ async def _grep_page_context(
         _LINE_SCAN_MAX_CHARS,
         match_commits=scan.match_commits,
         complete_contexts=complete_contexts,
-        headers=matches if headers else None,
+        header_hits=matches if headers else None,
     )
     if input.context_lines:
         await recover_page_context(
@@ -514,6 +515,11 @@ async def _grep_page_context(
     page = page_contexts(
         source, matches, context_lines, complete_contexts=complete_contexts, headers=headers
     )
+    if headers:
+        # A cursor's pool keeps match windows: a later page reads its own headers.
+        source = match_window_source(
+            source, scan.matches, context_lines, complete_contexts=complete_contexts
+        )
     return page, source, context_lines, complete_contexts
 
 

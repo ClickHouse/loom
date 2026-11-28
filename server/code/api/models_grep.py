@@ -269,10 +269,11 @@ class CodeGrepOutput(_LessonsOut):
     related: RelatedGrepEvidence | None = None
     # Exact retained source windows for this page, with inclusive line bounds. Without
     # `include_body`, windows also cover the decorators, signature and docstring of each
-    # Python definition holding a match: up to 12 docstring lines per definition and 48
-    # added lines per page. A window's `docstring_elided` {start_line, end_line} names
-    # the docstring lines left out after it; `end_line` is absent when the docstring's
-    # end was not read.
+    # Python definition holding a match: a long docstring keeps its first 9 and last 3
+    # lines, and a page adds at most 48 lines. A header that cannot be verified is not
+    # shown. A window's `docstring_elided` {start_line, end_line} names three or more
+    # docstring lines left out after it; `end_line` is absent when the docstring's end
+    # was not read.
     contexts: list[dict[str, Any]] = Field(default_factory=list)
     contexts_partial: bool = False
     # include_body: distinct enclosing units, in hit order; `lines` names the matching

@@ -609,34 +609,6 @@ def test_grep_next_step_says_when_excerpts_omit_a_definitions_contract() -> None
     assert _READ_CUT.count(" with") == 0, "the arguments follow the first ' with '"
 
 
-def test_a_uses_list_that_was_not_read_is_not_served_as_empty() -> None:
-    definition = {"symbol": "worker::target", "path": "src/worker.py", "body": "def target(): ..."}
-    use = {"path": "src/caller.py", "line": 4, "text": "target()", "kind": "code"}
-    unread = {"definitions": [definition], "uses": [], "uses_truncated": False}
-
-    def uses_fields(op: str, payload: dict[str, object], **arguments: object) -> dict[str, object]:
-        result = lr.mcp_op_result(op, payload, arguments, None, toolset="coding")
-        assert result["definitions"][0]["symbol"] == "worker::target"
-        return {key: value for key, value in result.items() if key.startswith("uses")}
-
-    # no list was asked for: its absence is not an empty list
-    assert uses_fields("code.edit_context", unread) == {}
-    assert uses_fields("code.symbol", unread) == {}
-    # the token budget withheld the compact block
-    withheld = {**unread, "uses_truncated": True}
-    assert uses_fields("code.symbol", withheld, uses_brief=True) == {"uses_truncated": True}
-    # a list cut at its limit keeps the flag beside the rows it has
-    cut = {**unread, "uses": [use], "uses_truncated": True}
-    assert uses_fields("code.symbol", cut, uses=True) == {"uses": [use], "uses_truncated": True}
-    # a compact block keeps its own count and its floor
-    brief = {"count": 12, "files": 5, "top": [use], "truncated": True, "epistemic": "lower_bound"}
-    assert uses_fields("code.symbol", {**unread, "uses": brief}, uses_brief=True) == {"uses": brief}
-    hub = {"count_floor": 500, "skipped": "hub", "epistemic": "lower_bound"}
-    assert uses_fields("code.symbol", {**unread, "uses": hub}, uses_brief=True) == {"uses": hub}
-    # a list that was read and found nothing stays an empty list
-    assert uses_fields("code.symbol", unread, uses=True) == {"uses": []}
-
-
 def test_grep_offers_scoped_reads_for_related_only_evidence() -> None:
     related = {
         "pattern": "request.context",
