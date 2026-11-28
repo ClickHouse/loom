@@ -260,8 +260,9 @@ class CodeSearchOutput(_LessonsOut):
     # Confidence 0-1 that the index holds an answer, not that the first result is the
     # right one: the vector leg's best cosine on the embedder's calibrated scale, or a
     # fixed 0.95 on an exact symbol match and 0.5 on the history route. A question about
-    # other code usually scores lower, not always. 0.5 when the vector leg gave no row,
-    # 0.0 on an abstain with no results. The scale is the served embedder's: a second
+    # other code usually scores lower, not always. 0.5 when the vector leg gave no row
+    # or the confident-hit cosine is not above the abstain threshold, 0.0 on an abstain
+    # with no results. The scale is the served embedder's: a second
     # `vector_model` with no shortlist ranks on its own cosines, which are read on that
     # scale all the same, as its abstention is.
     retrieval_confidence: float = 0.0

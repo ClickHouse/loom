@@ -658,6 +658,11 @@ the rows (`code/domain/index/search_confidence.py`, `code/app/search/calibrate.p
 - **No cosine.** A search with no vector leg (no embedder, a lexical-only request, a
   failed leg), or one whose vector leg returned no row, reads 0.5, which never bands
   `low`.
+- **No scale.** A confident-hit cosine that is not above the abstain threshold leaves
+  no range to read a cosine on: a calibration whose question-to-answer cosines fall
+  into its distractor range, or, with no calibration,
+  `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD` set at or over `LOOM_LLM_RERANK_SKIP_ABOVE`.
+  The search reads 0.5 then too, and `calibration_explanation` says so.
 - **Not abstention.** Abstention is decided apart from the confidence, on the fused
   list: its top cosine under the abstain threshold (`below_threshold`), or a
   route-aware score (that cosine, its margin over the second hit, route agreement and

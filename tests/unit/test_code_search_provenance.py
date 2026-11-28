@@ -361,6 +361,42 @@ def test_a_run_without_a_cosine_reads_medium() -> None:
         assert res.calibration_explanation == "no vector row, best cosine unknown"
 
 
+@pytest.mark.parametrize("confident", [0.5, 0.46])
+def test_a_scale_with_no_range_never_reads_low(confident: float) -> None:
+    # the confident cosine at the abstain threshold, then under it (a calibration whose
+    # question-to-answer cosines fall into its distractor range): every served cosine
+    # is at or over both, so it reads the middle of the scale, not 1.0 and low risk
+    for cosine in (0.55, 0.9):
+        res = _search(
+            _agreeing(cosine), _Embedder(), abstain_threshold=0.5, confident_similarity=confident
+        )
+        assert not res.abstain
+        assert (res.retrieval_confidence, res.retrieval_risk) == (0.5, "medium")
+        assert res.calibration_explanation == (
+            f"best_cosine={cosine:.2f}, abstain_threshold=0.50, "
+            f"confident_similarity={confident:.2f}, "
+            "no scale: confident_similarity is not above abstain_threshold"
+        )
+
+
+def test_the_derived_calibration_can_leave_no_range() -> None:
+    from server.memory.app.embedder_calibration import derive_thresholds
+
+    # question-to-answer cosines (0.50) just over the distractors' (0.48): the abstain
+    # threshold is derived 0.07 over the distractors, the confident cosine is not
+    derived = derive_thresholds([0.8] * 20, [0.50] * 20, [0.48] * 20, embedder_model="m")
+    assert derived.rerank_skip_above < derived.abstain_threshold
+    res = _search(
+        _agreeing(0.9),
+        _Embedder(),
+        abstain_threshold=derived.abstain_threshold,
+        noise_floor=derived.noise_floor,
+        confident_similarity=derived.rerank_skip_above,
+    )
+    assert not res.abstain
+    assert (res.retrieval_confidence, res.retrieval_risk) == (0.5, "medium")
+
+
 def test_the_namespace_calibration_sets_the_scale(monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 

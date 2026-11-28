@@ -78,6 +78,10 @@ def _calibrate(
             f"best_cosine={best_cosine:.2f}, abstain_threshold={abstain_threshold:.2f}, "
             f"confident_similarity={confident_similarity:.2f}"
         )
+        if not search_confidence.has_range(
+            abstain_threshold=abstain_threshold, confident_similarity=confident_similarity
+        ):
+            explanation += ", no scale: confident_similarity is not above abstain_threshold"
     else:
         # the request skipped the vector leg, no embedder is configured, the leg failed
         # or it ran and returned no row (a scope or path filter that admits no embedded

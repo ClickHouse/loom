@@ -26,10 +26,21 @@ def test_one_cosine_reads_differently_on_two_embedders_scales() -> None:
     assert sc.similarity_term(0.55, abstain_threshold=0.64, confident_similarity=0.80) == 0.0
 
 
-def test_a_degenerate_scale_is_a_step_at_the_confident_cosine() -> None:
-    scale = dict(abstain_threshold=0.5, confident_similarity=0.5)
-    assert sc.similarity_term(0.49, **scale) == 0.0
-    assert sc.similarity_term(0.5, **scale) == 1.0
+@pytest.mark.parametrize("confident", [0.5, 0.46])
+def test_a_scale_with_no_range_reads_the_middle_at_every_cosine(confident: float) -> None:
+    # the confident cosine equal to the abstain threshold, then under it: no cosine a
+    # served result can have says anything, so none reads 1.0
+    scale = dict(abstain_threshold=0.5, confident_similarity=confident)
+    assert not sc.has_range(**scale)
+    for cosine in (0.2, 0.46, 0.5, 0.7, 1.0):
+        assert sc.similarity_term(cosine, **scale) == sc.NO_COSINE_CONFIDENCE
+
+
+def test_the_narrowest_scale_with_a_range_is_still_read() -> None:
+    scale = dict(abstain_threshold=0.5, confident_similarity=0.51)
+    assert sc.has_range(**scale)
+    assert sc.similarity_term(0.5, **scale) == 0.0
+    assert sc.similarity_term(0.51, **scale) == 1.0
 
 
 def test_risk_bands() -> None:
