@@ -304,6 +304,23 @@ describe("Library sources", () => {
     ).toEqual(["Check", "Retire"]);
   });
 
+  it("offers no Add and no Rotate where the deployment turned self-service off", async () => {
+    sources.listKnowledgeSources.mockResolvedValue({ ...LISTED, self_service: false });
+    show("admin");
+    await openSources();
+    expect(await screen.findByText("team-notes")).toBeInTheDocument();
+    expect(screen.getByText("Adding document sources is turned off on this deployment.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add a source" })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Actions for team-notes" }));
+    const menu = await screen.findByRole("menu", { name: "Actions for team-notes" });
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((m) => m.textContent),
+    ).toEqual(["Check", "Sync now", "Push notifications", "Retire"]);
+  });
+
   it("keeps the list closed, counted on its button, until it is pressed, and closes again", async () => {
     show("viewer");
     const user = userEvent.setup();
