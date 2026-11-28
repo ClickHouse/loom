@@ -31,14 +31,16 @@ export function scaleLimit(value) {
 
 /**
  * Group dated observations inside [start, end). A gauge uses its last observed level in each period.
+ * Include the end date for a live counter whose current period is still in progress.
  * @param {ReadonlyArray<ChartPoint>} history
  * @param {ChartGrain} grain
- * @param {{start: string, end: string, kind?: ChartKind}} options
+ * @param {{start: string, end: string, kind?: ChartKind, includeCurrent?: boolean}} options
  * @returns {ChartPoint[]}
  */
-export function groupDailySeries(history, grain, { start, end, kind = "additive" }) {
+export function groupDailySeries(history, grain, { start, end, kind = "additive", includeCurrent = false }) {
+  const observationEnd = includeCurrent ? daysBefore(end, -1) : end;
   const reported = history
-    .filter(({ day, value }) => day >= start && day < end && Number.isFinite(value))
+    .filter(({ day, value }) => day >= start && day < observationEnd && Number.isFinite(value))
     .sort((left, right) => left.day.localeCompare(right.day));
   const periods = Map.groupBy(reported, ({ day }) => periodStart(day, grain));
   return Array.from(periods, ([day, rows]) => {

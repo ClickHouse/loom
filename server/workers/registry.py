@@ -175,7 +175,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "adoption_telemetry",
         "server.insights.workers.adoption_telemetry",
         "adoption_telemetry_enabled",
-        3600,
+        300,
         first_pass_due="first_pass_due",
     ),
     _Worker(

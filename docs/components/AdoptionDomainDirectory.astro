@@ -48,6 +48,7 @@ const formatted = (value?: number | null) => (value == null ? "—" : number.for
 const day = (value?: string | null) => (value ? date.format(Date.parse(value)) : "—");
 const anchor = "#reported-contact-domains";
 const action = path + anchor;
+const refreshParams = new URLSearchParams(Object.entries(state).map(([key, value]) => [key, String(value)]));
 const headers = [
   {
     label: "Domain",
@@ -58,15 +59,16 @@ const headers = [
   },
   { label: "Requests", scope: "col" as const, width: "124px" },
   { label: "Active users", scope: "col" as const },
-  { label: "Active instances", scope: "col" as const },
-  ...(withProcesses ? [{ label: "Serving processes", scope: "col" as const }] : []),
+  { label: "Active installations", scope: "col" as const },
+  ...(withProcesses ? [{ label: "Active instances", scope: "col" as const }] : []),
   { label: "Loom version", scope: "col" as const },
   { label: "First seen", scope: "col" as const },
   { label: "Last active", scope: "col" as const },
 ];
 ---
 
-<section class="directory" id="reported-contact-domains" aria-labelledby="domains-title">
+<section class="directory" id="reported-contact-domains" aria-labelledby="domains-title"
+  data-refresh-url={path} data-refresh-params={refreshParams.toString()} data-directory-available={String(names !== null)}>
   <div class="directory-heading">
     <Title type="h2" size="lg" id="domains-title">Domains using Loom</Title>
     {names !== null && <Text size="sm" color="muted">{days}-day directory{fallback && " · latest available"}</Text>}
@@ -123,10 +125,54 @@ const headers = [
           {page < lastPage && <Button {...{ name: "domain_page", value: String(page + 1) }} htmlType="submit" type="secondary" iconRight="chevron-right" label="Next" />}
         </form>}
       </div>
-      {withUsage && <Text size="sm" color="muted">Active instances ran a successful request. Domain activity uses completed daily reports. User and process counts use the latest measured UTC day.</Text>}
+      {withUsage && <Text size="sm" color="muted">Active installations recorded a successful request. The directory includes today's reported activity. Users and active instances use the latest measured UTC day.</Text>}
     </Panel>
   )}
 </section>
+
+<script>
+  function canRefresh(section: HTMLElement) {
+    const search = section.querySelector<HTMLInputElement>('input[name="domain_q"]');
+    return !section.contains(document.activeElement) && (!search || search.value === search.defaultValue);
+  }
+
+  let refreshing = false;
+  window.setInterval(async () => {
+    const section = document.getElementById("reported-contact-domains");
+    if (!section?.dataset.refreshUrl || document.hidden || refreshing || !canRefresh(section)) return;
+    const { top, bottom } = section.getBoundingClientRect();
+    if (top >= window.innerHeight || bottom <= 0) return;
+
+    refreshing = true;
+    try {
+      const response = await fetch(section.dataset.refreshUrl, {
+        method: "POST",
+        headers: { "X-Loom-Adoption-Fragment": "domains" },
+        body: new URLSearchParams(section.dataset.refreshParams),
+        signal: AbortSignal.timeout(40_000),
+      });
+      if (!response.ok) return;
+      const page = new DOMParser().parseFromString(await response.text(), "text/html");
+      const fresh = page.getElementById(section.id);
+      if (fresh?.dataset.directoryAvailable !== "true" || !section.isConnected || !canRefresh(section)) return;
+
+      const activeDomains = document.getElementById("adoption-active-domains");
+      const freshActiveDomains = page.getElementById("adoption-active-domains");
+      if (freshActiveDomains && activeDomains?.innerHTML !== freshActiveDomains.innerHTML)
+        activeDomains?.replaceWith(freshActiveDomains);
+      if (fresh.innerHTML !== section.innerHTML) {
+        const scrollLeft = section.querySelector("table")?.parentElement?.scrollLeft ?? 0;
+        section.replaceWith(fresh);
+        const tableContainer = fresh.querySelector("table")?.parentElement;
+        if (tableContainer) tableContainer.scrollLeft = scrollLeft;
+      }
+    } catch {
+      // The next refresh retries the request.
+    } finally {
+      refreshing = false;
+    }
+  }, 60_000);
+</script>
 
 <style>
   .directory { min-inline-size: 0; }
