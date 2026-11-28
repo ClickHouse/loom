@@ -158,8 +158,8 @@ class PrHistoryMixin(CodeRepoBase):
         """Merged PRs whose description closes / fixes / resolves any of the
         issue numbers: `hasAny(linked_issues, N)` under the
         identity prefix — the bloom_filter index prunes to
-        the PR's granules — newest first, bot authors excluded, reverts
-        marked. Plain WHERE."""
+        the PR's granules — newest first, the higher number among PRs merged
+        in one second, bot authors excluded, reverts marked. Plain WHERE."""
         nums = sorted({int(n) for n in numbers if int(n) > 0})[:16]
         if not nums:
             return []
@@ -174,7 +174,7 @@ class PrHistoryMixin(CodeRepoBase):
               AND tombstoned_at IS NULL
               AND NOT endsWith(author, '[bot]') AND NOT startsWith(author, 'robot-')
               AND hasAny(linked_issues, {nums:Array(UInt32)})
-            ORDER BY merged_at DESC
+            ORDER BY merged_at DESC, pr_number DESC
             LIMIT {limit:UInt32}
             """,
             {
@@ -410,7 +410,8 @@ class PrHistoryMixin(CodeRepoBase):
         pool: int = 30,
         before: Any = None,
     ) -> list[dict[str, Any]]:
-        """Top `pool` merged PRs by lexical score with the files they touched.
+        """Top `pool` merged PRs by lexical score with the files they touched;
+        among equal scores the newer merge, then the higher number.
         `before` pins the history to PRs merged strictly before it."""
         if not tokens:
             return []
@@ -432,7 +433,7 @@ class PrHistoryMixin(CodeRepoBase):
                       {hay}, arrayMap(t -> concat(' ', t, ' '), {{tokens:Array(String)}})
                   )
               {where_before}
-            ORDER BY pr_score DESC, merged_at DESC
+            ORDER BY pr_score DESC, merged_at DESC, pr_number DESC
             LIMIT {{pool:UInt32}}
             """,
             {

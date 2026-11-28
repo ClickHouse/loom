@@ -589,7 +589,7 @@ class FilesMixin(CodeRepoBase):
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND embedding_model = {{model:String}} AND path IN {{paths:Array(String)}}
               AND tombstoned_at IS NULL
-            ORDER BY path, start_line
+            ORDER BY path, start_line, chunk_id
             LIMIT {{limit:UInt32}}
             """,
             {
@@ -616,9 +616,10 @@ class FilesMixin(CodeRepoBase):
     ) -> list[dict[str, Any]]:
         """For each of `paths` (the nearest source files by
         card), the `per_path` chunks closest to the query by exact cosine —
-        the vector leg's unit columns plus `distance`, nearest first. A
-        keyed read of a few files' vectors; no FINAL-free trick needed at
-        this size."""
+        the vector leg's unit columns plus `distance`, nearest first,
+        chunks at one distance in file order (chunks with one text have one
+        vector). A keyed read of a few files' vectors; no FINAL-free trick
+        needed at this size."""
         if not paths:
             return []
         return await self._ch.query_all(
@@ -630,7 +631,7 @@ class FilesMixin(CodeRepoBase):
             WHERE org = {org:String} AND namespace = {ns:String}
               AND embedding_model = {model:String} AND path IN {paths:Array(String)}
               AND embedding_dim > 0 AND tombstoned_at IS NULL
-            ORDER BY distance ASC
+            ORDER BY distance ASC, path, start_line, chunk_id
             LIMIT {per_path:UInt32} BY path
             LIMIT {lim:UInt32}
             """,
@@ -656,8 +657,9 @@ class FilesMixin(CodeRepoBase):
     ) -> list[dict[str, Any]]:
         """Up to `per_path` live chunk rows per path in the shape the fusion
         consumes (unit_from_chunk), skeleton-level units first — the file
-        header / class skeleton is the unit a file-level vote stands for.
-        No vector column."""
+        header / class skeleton is the unit a file-level vote stands for,
+        then by line; the chunk id decides between chunks that start on one
+        line. No vector column."""
         if not paths:
             return []
         return await self._ch.query_all(
@@ -668,7 +670,7 @@ class FilesMixin(CodeRepoBase):
             WHERE org = {org:String} AND namespace = {ns:String}
               AND embedding_model = {model:String} AND tombstoned_at IS NULL
               AND path IN {paths:Array(String)}
-            ORDER BY path, kind = 'class_skeleton' DESC, start_line
+            ORDER BY path, kind = 'class_skeleton' DESC, start_line, chunk_id
             LIMIT {per_path:UInt32} BY path
             """,
             {

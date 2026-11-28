@@ -26,7 +26,7 @@ _TODAY = (
     + "\n"
     + " " * 14
     + """
-            ORDER BY lex_score DESC
+            ORDER BY lex_score DESC, path, start_line, chunk_id
             LIMIT {pool:UInt32}
             """
 )
@@ -72,13 +72,14 @@ def test_lexical_statement_byte_for_byte() -> None:
 def test_a_path_penalty_wraps_the_statement_in_the_cut_on_votes() -> None:
     """The leg's own statement, read `cut_depth` rows deep, inside one that ranks those
     rows, marks the pool with the largest factor / (RRF_K + rank) and returns it with
-    the leg's first rows. Both order rows of one score by their factor."""
+    the leg's first rows. Both order rows of one score by their factor and then by the
+    chunk's place in its file, and equal votes by the rank."""
     from server.code.store.index.sql import path_penalty_sql
 
     sql, params = _statement(noise_penalty=0.35)
     factor, factor_params = path_penalty_sql("path", 0.35, 1.0)
-    order = f"ORDER BY lex_score DESC, {factor} DESC"
-    inner = _TODAY.replace("ORDER BY lex_score DESC", order).replace(
+    order = f"ORDER BY lex_score DESC, {factor} DESC, path, start_line, chunk_id"
+    inner = _TODAY.replace("ORDER BY lex_score DESC, path, start_line, chunk_id", order).replace(
         "LIMIT {pool:UInt32}", "LIMIT {depth:UInt32}"
     )
     assert sql == (
@@ -88,7 +89,7 @@ def test_a_path_penalty_wraps_the_statement_in_the_cut_on_votes() -> None:
                 SELECT *, row_number() OVER (
                     ORDER BY """
         + factor
-        + """ / ({rrf_k:Float64} + lex_rank) DESC
+        + """ / ({rrf_k:Float64} + lex_rank) DESC, lex_rank
                 ) <= {pool:UInt32} AS in_pool
                 FROM (
                     SELECT *, row_number() OVER ("""
