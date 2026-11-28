@@ -48,9 +48,19 @@ def check(track: str, directory: Path) -> dict[str, object]:
             f"--junitxml={report}",
         ]
         result = subprocess.run(command, check=False, timeout=120)
-        suites = ET.parse(report).getroot().findall(".//testsuite") if report.is_file() else []
-        total = sum(int(suite.get("tests", "0")) for suite in suites)
-        skipped = sum(int(suite.get("skipped", "0")) for suite in suites)
+        if not report.is_file():
+            return {"track": track, "passed": False, "error": "missing report"}
+        try:
+            suites = ET.parse(report).getroot().findall(".//testsuite")
+            counts = [
+                (int(suite.get("tests", "-1")), int(suite.get("skipped", "0"))) for suite in suites
+            ]
+            if not counts or any(not 0 <= skipped <= total for total, skipped in counts):
+                raise ValueError("invalid test counts")
+        except (ET.ParseError, ValueError):
+            return {"track": track, "passed": False, "error": "invalid report"}
+        total = sum(total for total, _ in counts)
+        skipped = sum(skipped for _, skipped in counts)
         passed = result.returncode == 0 and total > skipped
         return {"track": track, "tests": total, "skipped": skipped, "passed": passed}
 
@@ -75,7 +85,11 @@ def main() -> None:
     tracks = choices[:-1] if args.track == "all" else [args.track]
     results = []
     for track in tracks:
-        results.append(check(track, directory))
+        try:
+            result = check(track, directory)
+        except subprocess.TimeoutExpired:
+            result = {"track": track, "passed": False, "error": "timeout"}
+        results.append(result)
         (directory / "report.json").write_text(json.dumps(results, indent=2) + "\n")
         if not results[-1]["passed"]:
             raise SystemExit(1)
