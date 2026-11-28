@@ -154,7 +154,9 @@ async def lessons_for_symbol(
             "memory_key": str(row["memory_key"]),
             "namespace": str(row["namespace"]),
             "excerpt": str(row["excerpt"]),
-            "code_state": state,
+            "code_state": (
+                "unknown" if a["memory_id"] in trunk_only and state in ("fresh", "moved") else state
+            ),
             "changed_since": a["changed_since"] if state == "changed" else "",
             "suggestion": suggestion,
         }

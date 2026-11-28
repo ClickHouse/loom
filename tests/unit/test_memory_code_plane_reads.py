@@ -453,7 +453,7 @@ async def test_a_fallback_to_trunks_state_gives_no_positive_guidance(monkeypatch
             monkeypatch, [_link("m1")], [_excerpt("m1", "k1")], branch, ns="code-a-26-8", **kw
         )
 
-        assert lesson["code_state"] == "fresh"  # trunk's check, still shown
+        assert lesson["code_state"] == "unknown"  # trunk's check is not the branch's
 
         assert lesson["use_guidance"]["freshness"]["code"] == "unknown"
 
