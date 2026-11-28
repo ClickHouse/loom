@@ -30,6 +30,20 @@ so "what changed on 2.4" reads the 2.4 namespace. `loom code backfill-prs` loads
 `LOOM_CODE_PR_BACKFILL_MONTHS` (12) of history for a new repository
 ([code index operations](../../operations/code-index-operations.md#first-index)).
 
+## Forgejo hosts
+
+An entry in `LOOM_CODE_REPOS_JSON` with `"forge": "forgejo"` and an HTTPS or SSH
+`git_remote` reads its merged PRs from that host's REST API (`https://<host>/api/v1`)
+into `loom.code_pr_history`; the Repositories page does not set `forge`. The entry's
+`github_token` is then the host's access token (scope `read:repository`; a public
+repository reads without one), never `LOOM_CODE_GITHUB_TOKEN`, which is not sent to a
+Forgejo host. The entry's `repo` is `host/owner/name`, which is also what its PR links
+are built from. `backfill-prs` sorts by close time (`sort=recentclose`), which needs
+Forgejo 12 or later. Review comments, the issue mirror and open-PR heads stay GitHub-only. The API has no target-branch filter and
+no merged-date search, so the branch is matched on each PR's `base.ref` and
+`backfill-prs` walks closed PRs newest close first back to
+`LOOM_CODE_PR_BACKFILL_MONTHS`, resuming at the page it stopped at.
+
 ## Which op answers which question
 
 | Question                                                                  | Op                                                                                       |

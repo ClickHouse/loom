@@ -1,0 +1,557 @@
+{
+  "pull_files": [
+    {
+      "additions": 10,
+      "deletions": 0,
+      "filename": "docs/contributor/customization.md",
+      "previous_filename": null,
+      "status": "changed"
+    }
+  ],
+  "pulls_closed_recentclose": [
+    {
+      "additions": 0,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "10c0d0c6eb4c7794fc4f1c41354f9b6cf648b3a4"
+      },
+      "body": "As per [Drew's blogpost](, redict is now deprecated. The project recommendation is to migrate to Valkey, which we already have listed as one of the al",
+      "changed_files": 0,
+      "closed_at": "2026-11-27T01:18:58+01:00",
+      "created_at": "2026-11-26T23:30:02+01:00",
+      "deletions": 0,
+      "draft": false,
+      "head": {
+        "ref": "refs/pull/2290/head",
+        "sha": "299b83a1e63e4304aa161098f4f4d977fdf97000"
+      },
+      "labels": [],
+      "merge_base": "b013e04e2d69a3ed94ab2889f06d07a00e173bad",
+      "merge_commit_sha": "10c0d0c6eb4c7794fc4f1c41354f9b6cf648b3a4",
+      "merged": true,
+      "merged_at": "2026-11-27T01:18:58+01:00",
+      "number": 2290,
+      "requested_reviewers": [
+        {
+          "login": "grace"
+        }
+      ],
+      "state": "closed",
+      "title": "Remove redict from recommendation page",
+      "updated_at": "2026-11-27T01:19:09+01:00",
+      "user": {
+        "login": "frank"
+      }
+    },
+    {
+      "additions": 10,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad"
+      },
+      "body": "Following this [PR]( I think its useful to have an example of the path and an a description of the actual behavior.",
+      "changed_files": 1,
+      "closed_at": "2026-11-26T14:28:29+01:00",
+      "created_at": "2026-10-14T16:51:20+02:00",
+      "deletions": 0,
+      "draft": false,
+      "head": {
+        "ref": "feature/locale-loading",
+        "sha": "bb4a691912b2faece47c0a796a47b889bc00d139"
+      },
+      "labels": [],
+      "merge_base": "6b64d95baa0d775f46fb872e16d88e8aad8f9b13",
+      "merge_commit_sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad",
+      "merged": true,
+      "merged_at": "2026-11-26T14:28:29+01:00",
+      "number": 2231,
+      "requested_reviewers": [
+        {
+          "login": "alice"
+        }
+      ],
+      "state": "closed",
+      "title": "Add docs for custom locale loading",
+      "updated_at": "2026-11-26T14:28:30+01:00",
+      "user": {
+        "login": "bob"
+      }
+    },
+    {
+      "additions": 6,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad"
+      },
+      "body": "For a future PR",
+      "changed_files": 1,
+      "closed_at": "2026-11-26T13:32:33+01:00",
+      "created_at": "2026-11-15T02:59:37+01:00",
+      "deletions": 5,
+      "draft": true,
+      "head": {
+        "ref": "feature/merged-filter",
+        "sha": "8326ed0cbac4ea898cc0b8ba11a57fd478aaf06c"
+      },
+      "labels": [],
+      "merge_base": "78fdf01ae6f06c0beae28c39a9f7138d0ed25c46",
+      "merge_commit_sha": null,
+      "merged": false,
+      "merged_at": null,
+      "number": 2277,
+      "requested_reviewers": [],
+      "state": "closed",
+      "title": "WIP: docs: add is:merged/unmerged to filters",
+      "updated_at": "2026-11-26T13:32:33+01:00",
+      "user": {
+        "login": "carol"
+      }
+    },
+    {
+      "additions": 0,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad"
+      },
+      "body": "As v19 LTS starts to pop up in discussions of deprecation, it seemed prudent to extend the future release schedule a bit. This maintains quarterly releases with",
+      "changed_files": 0,
+      "closed_at": "2026-11-26T03:42:52+01:00",
+      "created_at": "2026-11-21T03:16:01+01:00",
+      "deletions": 0,
+      "draft": false,
+      "head": {
+        "ref": "refs/pull/2285/head",
+        "sha": "8cf797ad786e1b15d81b3192e22397e51fcfb97f"
+      },
+      "labels": [],
+      "merge_base": "838ac8f1b58670726023754dfbf2a4ff49f2c494",
+      "merge_commit_sha": "9e47968acab7556fd4179982e71d7297b68b3133",
+      "merged": true,
+      "merged_at": "2026-11-26T03:42:52+01:00",
+      "number": 2285,
+      "requested_reviewers": [
+        {
+          "login": "dave"
+        }
+      ],
+      "state": "closed",
+      "title": "chore: extend release schedule by 1 year",
+      "updated_at": "2026-11-26T03:42:54+01:00",
+      "user": {
+        "login": "erin"
+      }
+    },
+    {
+      "additions": 6,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad"
+      },
+      "body": "This PR contains the following updates: | Package | Change | [Age]( | [Confidence]( | |---|---|---|---| | [lint-staged]( | [`17.6.1` → `17.6.2`]( | ![age]( | ![",
+      "changed_files": 2,
+      "closed_at": "2026-11-26T00:10:14+01:00",
+      "created_at": "2026-11-26T00:04:58+01:00",
+      "deletions": 6,
+      "draft": false,
+      "head": {
+        "ref": "refs/pull/2288/head",
+        "sha": "966499fcaebf82a115a44fd8aae62bc04fde3b36"
+      },
+      "labels": [],
+      "merge_base": "d596d9d0f7170482756f03a8053295869aeb6bf7",
+      "merge_commit_sha": "ed5df4e37d977b4c32aea32fa3acd5a5e02258d6",
+      "merged": true,
+      "merged_at": "2026-11-26T00:10:14+01:00",
+      "number": 2288,
+      "requested_reviewers": [
+        {
+          "login": "alice"
+        }
+      ],
+      "state": "closed",
+      "title": "Update dependency lint-staged to v17.6.2",
+      "updated_at": "2026-11-26T00:10:17+01:00",
+      "user": {
+        "login": "frank"
+      }
+    },
+    {
+      "additions": 77,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "10c0d0c6eb4c7794fc4f1c41354f9b6cf648b3a4"
+      },
+      "body": "This PR contains the following updates:\n\n| Update | Change |\n|---|---|\n| lockFileMaintenance | All locks refreshed |\n\n🔧 This Pull Request updates lock",
+      "changed_files": 1,
+      "closed_at": "2026-11-23T11:06:37+01:00",
+      "created_at": "2026-11-23T00:04:11+01:00",
+      "deletions": 251,
+      "draft": false,
+      "head": {
+        "ref": "refs/pull/2287/head",
+        "sha": "94742f3cb0d6ac0d707a2f5a3cb63c14a4a3e98a"
+      },
+      "labels": [],
+      "merge_base": "b5c1cf04195f1953987ee97c84b2b1ae895530a9",
+      "merge_commit_sha": "d596d9d0f7170482756f03a8053295869aeb6bf7",
+      "merged": true,
+      "merged_at": "2026-11-23T11:06:37+01:00",
+      "number": 2287,
+      "requested_reviewers": [
+        {
+          "login": "ivan"
+        }
+      ],
+      "state": "closed",
+      "title": "Lock file maintenance",
+      "updated_at": "2026-11-23T11:07:49+01:00",
+      "user": {
+        "login": "heidi"
+      }
+    },
+    {
+      "additions": 0,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "10c0d0c6eb4c7794fc4f1c41354f9b6cf648b3a4"
+      },
+      "body": "MariaDB 10.6, and PostgreSQL 14, are no longer supported by their upstream maintainers, and so we'll remove support for them from Forgejo as well.  We",
+      "changed_files": 0,
+      "closed_at": "2026-11-23T01:25:36+01:00",
+      "created_at": "2026-11-21T22:36:46+01:00",
+      "deletions": 0,
+      "draft": false,
+      "head": {
+        "ref": "refs/pull/2286/head",
+        "sha": "6a60262d6e30e276d742f0a9c9b21e15e727d4dc"
+      },
+      "labels": [],
+      "merge_base": "838ac8f1b58670726023754dfbf2a4ff49f2c494",
+      "merge_commit_sha": "b5c1cf04195f1953987ee97c84b2b1ae895530a9",
+      "merged": true,
+      "merged_at": "2026-11-23T01:25:36+01:00",
+      "number": 2286,
+      "requested_reviewers": [
+        {
+          "login": "judy"
+        }
+      ],
+      "state": "closed",
+      "title": "chore: update supported databases",
+      "updated_at": "2026-11-23T01:26:19+01:00",
+      "user": {
+        "login": "grace"
+      }
+    },
+    {
+      "additions": 2,
+      "assignees": [],
+      "base": {
+        "ref": "v17.0",
+        "sha": "94ae52ce478342ec468f9174d35fcd28cc238c8b"
+      },
+      "body": "**Backport:** \r\n\r\nAdd missing directives, related to ",
+      "changed_files": 1,
+      "closed_at": "2026-11-19T13:25:18+01:00",
+      "created_at": "2026-11-19T09:48:47+01:00",
+      "deletions": 0,
+      "draft": false,
+      "head": {
+        "ref": "refs/pull/2284/head",
+        "sha": "a4c347ad6f7e23c0a4ad093ea72554e7e90940e9"
+      },
+      "labels": [],
+      "merge_base": "b8f247bf96233d1351e2d781afeca2187b26ceb8",
+      "merge_commit_sha": "94ae52ce478342ec468f9174d35fcd28cc238c8b",
+      "merged": true,
+      "merged_at": "2026-11-19T13:25:18+01:00",
+      "number": 2284,
+      "requested_reviewers": [
+        {
+          "login": "ivan"
+        },
+        {
+          "login": "liam"
+        }
+      ],
+      "state": "closed",
+      "title": "[v17.0] cheat-sheet: Add missing *_KEYS_ACCEPTED directives",
+      "updated_at": "2026-11-19T13:25:30+01:00",
+      "user": {
+        "login": "karl"
+      }
+    },
+    {
+      "additions": 2,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "10c0d0c6eb4c7794fc4f1c41354f9b6cf648b3a4"
+      },
+      "body": "Add missing directives, related to ",
+      "changed_files": 1,
+      "closed_at": "2026-11-19T09:47:50+01:00",
+      "created_at": "2026-11-18T19:15:49+01:00",
+      "deletions": 0,
+      "draft": false,
+      "head": {
+        "ref": "add.missing.ID_TOKEN_KEYS_ACCEPTED",
+        "sha": "931ae4e881edbdcede1c6c727681baf39db0fc88"
+      },
+      "labels": [
+        {
+          "name": "backport/v17.0"
+        }
+      ],
+      "merge_base": "18ce22339c5d06920530000f672b673cf2d6ec74",
+      "merge_commit_sha": "838ac8f1b58670726023754dfbf2a4ff49f2c494",
+      "merged": true,
+      "merged_at": "2026-11-19T09:47:50+01:00",
+      "number": 2281,
+      "requested_reviewers": [
+        {
+          "login": "ivan"
+        }
+      ],
+      "state": "closed",
+      "title": "cheat-sheet: Add missing *_KEYS_ACCEPTED directives",
+      "updated_at": "2026-11-19T13:25:21+01:00",
+      "user": {
+        "login": "liam"
+      }
+    },
+    {
+      "additions": 33,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "10c0d0c6eb4c7794fc4f1c41354f9b6cf648b3a4"
+      },
+      "body": "I noticed the `.volume` was missing in the container file for the podman quadlet example. I have made this mistake before and was hoping to stop a few",
+      "changed_files": 1,
+      "closed_at": "2026-10-26T16:48:52+01:00",
+      "created_at": "2026-10-26T00:10:13+01:00",
+      "deletions": 30,
+      "draft": false,
+      "head": {
+        "ref": "next",
+        "sha": "03e738f779025dcd6613774131dab219cec890dc"
+      },
+      "labels": [
+        {
+          "name": "backport/v15.0"
+        },
+        {
+          "name": "backport/v17.0"
+        }
+      ],
+      "merge_base": "65faeb1c07bbc43cbc3ac32aef19a7671500dd78",
+      "merge_commit_sha": "54a3d8656a1f60b86aef33659ae8334bfe099529",
+      "merged": true,
+      "merged_at": "2026-10-26T16:48:52+01:00",
+      "number": 2251,
+      "requested_reviewers": [
+        {
+          "login": "ivan"
+        }
+      ],
+      "state": "closed",
+      "title": "update docker.md to properly utilize the forgejo-data.volume file for podman",
+      "updated_at": "2026-11-16T18:08:33+01:00",
+      "user": {
+        "login": "mona"
+      }
+    }
+  ],
+  "pulls_closed_recentupdate": [
+    {
+      "additions": 10,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad"
+      },
+      "body": "Following this [PR]( I think its useful to have an example of the path and an a description of the actual behavior.",
+      "changed_files": 1,
+      "closed_at": "2026-11-26T14:28:29+01:00",
+      "created_at": "2026-10-14T16:51:20+02:00",
+      "deletions": 0,
+      "draft": false,
+      "head": {
+        "ref": "feature/locale-loading",
+        "sha": "bb4a691912b2faece47c0a796a47b889bc00d139"
+      },
+      "labels": [],
+      "merge_base": "6b64d95baa0d775f46fb872e16d88e8aad8f9b13",
+      "merge_commit_sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad",
+      "merged": true,
+      "merged_at": "2026-11-26T14:28:29+01:00",
+      "number": 2231,
+      "requested_reviewers": [
+        {
+          "login": "alice"
+        }
+      ],
+      "state": "closed",
+      "title": "Add docs for custom locale loading",
+      "updated_at": "2026-11-26T14:28:30+01:00",
+      "user": {
+        "login": "bob"
+      }
+    },
+    {
+      "additions": 6,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad"
+      },
+      "body": "For a future PR",
+      "changed_files": 1,
+      "closed_at": "2026-11-26T13:32:33+01:00",
+      "created_at": "2026-11-15T02:59:37+01:00",
+      "deletions": 5,
+      "draft": true,
+      "head": {
+        "ref": "feature/merged-filter",
+        "sha": "8326ed0cbac4ea898cc0b8ba11a57fd478aaf06c"
+      },
+      "labels": [],
+      "merge_base": "78fdf01ae6f06c0beae28c39a9f7138d0ed25c46",
+      "merge_commit_sha": null,
+      "merged": false,
+      "merged_at": null,
+      "number": 2277,
+      "requested_reviewers": [],
+      "state": "closed",
+      "title": "WIP: docs: add is:merged/unmerged to filters",
+      "updated_at": "2026-11-26T13:32:33+01:00",
+      "user": {
+        "login": "carol"
+      }
+    },
+    {
+      "additions": 0,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad"
+      },
+      "body": "As v19 LTS starts to pop up in discussions of deprecation, it seemed prudent to extend the future release schedule a bit. This maintains quarterly releases with",
+      "changed_files": 0,
+      "closed_at": "2026-11-26T03:42:52+01:00",
+      "created_at": "2026-11-21T03:16:01+01:00",
+      "deletions": 0,
+      "draft": false,
+      "head": {
+        "ref": "refs/pull/2285/head",
+        "sha": "8cf797ad786e1b15d81b3192e22397e51fcfb97f"
+      },
+      "labels": [],
+      "merge_base": "838ac8f1b58670726023754dfbf2a4ff49f2c494",
+      "merge_commit_sha": "9e47968acab7556fd4179982e71d7297b68b3133",
+      "merged": true,
+      "merged_at": "2026-11-26T03:42:52+01:00",
+      "number": 2285,
+      "requested_reviewers": [
+        {
+          "login": "dave"
+        }
+      ],
+      "state": "closed",
+      "title": "chore: extend release schedule by 1 year",
+      "updated_at": "2026-11-26T03:42:54+01:00",
+      "user": {
+        "login": "erin"
+      }
+    },
+    {
+      "additions": 6,
+      "assignees": [],
+      "base": {
+        "ref": "next",
+        "sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad"
+      },
+      "body": "This PR contains the following updates: | Package | Change | [Age]( | [Confidence]( | |---|---|---|---| | [lint-staged]( | [`17.6.1` → `17.6.2`]( | ![age]( | ![",
+      "changed_files": 2,
+      "closed_at": "2026-11-26T00:10:14+01:00",
+      "created_at": "2026-11-26T00:04:58+01:00",
+      "deletions": 6,
+      "draft": false,
+      "head": {
+        "ref": "refs/pull/2288/head",
+        "sha": "966499fcaebf82a115a44fd8aae62bc04fde3b36"
+      },
+      "labels": [],
+      "merge_base": "d596d9d0f7170482756f03a8053295869aeb6bf7",
+      "merge_commit_sha": "ed5df4e37d977b4c32aea32fa3acd5a5e02258d6",
+      "merged": true,
+      "merged_at": "2026-11-26T00:10:14+01:00",
+      "number": 2288,
+      "requested_reviewers": [
+        {
+          "login": "alice"
+        }
+      ],
+      "state": "closed",
+      "title": "Update dependency lint-staged to v17.6.2",
+      "updated_at": "2026-11-26T00:10:17+01:00",
+      "user": {
+        "login": "frank"
+      }
+    },
+    {
+      "additions": 0,
+      "assignees": [
+        {
+          "login": "grace"
+        }
+      ],
+      "base": {
+        "ref": "next",
+        "sha": "b013e04e2d69a3ed94ab2889f06d07a00e173bad"
+      },
+      "body": "And how it must be set when using the matrix strategy.",
+      "changed_files": 0,
+      "closed_at": "2025-08-11T23:11:41+02:00",
+      "created_at": "2025-08-11T21:57:41+02:00",
+      "deletions": 0,
+      "draft": false,
+      "head": {
+        "ref": "refs/pull/1379/head",
+        "sha": "3b2dbc246edaaa66fb0b2bdf61c261be678260ab"
+      },
+      "labels": [
+        {
+          "name": "backport/v12.0"
+        }
+      ],
+      "merge_base": "a4d2e3e85491c566a9d80246ed6f2f7eb38c5ac5",
+      "merge_commit_sha": "427cbbedcb2e98b7a56d65ff3786f135a878b809",
+      "merged": true,
+      "merged_at": "2025-08-11T23:11:42+02:00",
+      "number": 1379,
+      "requested_reviewers": [
+        {
+          "login": "alice"
+        },
+        {
+          "login": "heidi"
+        }
+      ],
+      "state": "closed",
+      "title": "user: actions: add `jobs.<job_id>.name`",
+      "updated_at": "2026-11-24T00:59:06+01:00",
+      "user": {
+        "login": "grace"
+      }
+    }
+  ]
+}

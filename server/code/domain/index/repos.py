@@ -20,7 +20,7 @@ either:
         "include_contrib": false, "ignore_file": ".loomignore",
         "github_token": "", "org_readable": true,
         "git_extra_branches": "release/*",
-        "git_proxy_identity": "",
+        "git_proxy_identity": "", "forge": "",
         "classification": "standard"}]
 
 Missing per-repo fields fall back to the scalar settings, so a second repo only declares
@@ -138,6 +138,9 @@ class RepoConfig:
     # what the fetch may reach and with which credential. '' = the deployment's
     # settings.code_git_proxy_identity. Not a secret.
     git_proxy_identity: str = ""
+    # `forgejo` when the entry's remote is a Forgejo host: its pull requests are then
+    # read from that host's REST API. '' = the host says (GitHub) or has no PR source.
+    forge: str = ""
 
     @property
     def label(self) -> str:
@@ -155,6 +158,14 @@ class RepoConfig:
             except ValueError:
                 pass
         return "git"
+
+    @property
+    def pr_source(self) -> str:
+        """Where the entry's merged-PR history is read from: `github`, `forgejo`, or ''
+        for a host with no PR source."""
+        if self.forge == "forgejo":
+            return "forgejo"
+        return "github" if self.provider == "github" else ""
 
     @property
     def profile(self) -> str:
@@ -577,6 +588,7 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
             org_readable = False
         git_dir, git_remote = _entry_clone_fields(e, ns, repo_name, base)
         proxy_identity = _entry_git_proxy_identity(e, ns, errors)
+        forge = str(e.get("forge") or "").strip().lower()
         if proxy_identity is None:
             continue
         repos.append(
@@ -590,7 +602,10 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
                 # An entry that names no prefixes indexes its whole tree (the denylist
                 # governs); the scalar's prefixes belong to the scalar entry alone
                 path_prefixes=_prefixes(str(e.get("path_prefixes") or "")) or WHOLE_TREE,
-                github_token=str(e.get("github_token") or base.github_token),
+                # The deployment's GitHub token never goes to another forge's host
+                github_token=str(
+                    e.get("github_token") or ("" if forge == "forgejo" else base.github_token)
+                ),
                 org_readable=org_readable,
                 classification=classification,
                 public=(bool(e["public"]) if "public" in e else base.public)
@@ -622,6 +637,7 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
                 ),
                 ignore_file=(str(e["ignore_file"]) if "ignore_file" in e else base.ignore_file),
                 git_proxy_identity=proxy_identity,
+                forge=forge,
             )
         )
     if not repos:

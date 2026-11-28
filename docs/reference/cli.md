@@ -237,7 +237,7 @@ python scripts/codegen/docs_reference.py
 | `loom code crossref` | SQL/shell test -> implementing C++ reference pass (writes code_test_map method=content_reference; idempotent). | `--org`, `--namespace` |
 | `loom code coverage-import` | Import the newest per-test line coverage run of the configured source (writes code_test_map method=coverage and code_coverage_files). | `--org`, `--namespace`, `--dry-run` |
 | `loom code export-pairs` | Export (query -> acted-on unit, hard negatives) retrieval pairs from real traffic (trace x outcome join) for embedder/reranker fine-tuning. | `--org`, `--namespace`, `--days`, `--out` |
-| `loom code backfill-prs` | Merged-PR history from GitHub. | `--org`, `--namespace`, `--months`, `--max-prs` |
+| `loom code backfill-prs` | Merged-PR history from GitHub or a Forgejo host. | `--org`, `--namespace`, `--months`, `--max-prs` |
 | `loom code repack` | Regenerate context packs for recently merged PRs in the current pack shape. | `--org`, `--namespace`, `--days`, `--limit`, `--dry-run` |
 | `loom code describe` | LLM contextual one-liners for top-PageRank chunks. | `--org`, `--namespace`, `--top-pct`, `--limit`, `--suffix`, `--concurrency` |
 | `loom code answers-purge` | Tombstone cached code.ask answers (after a synthesis-model upgrade, stale weaker-model answers would otherwise be served forever — the cache only self-invalidates on cited-file change). | `--llm-model`, `--all`, `--apply`, `--dry-run`, `--org`, `--namespace` |

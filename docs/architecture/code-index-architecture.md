@@ -509,7 +509,7 @@ What callers see is in [freshness](../features/code-index/freshness.md).
 
 | Table                                                  | Writer                                                      | Holds                                                                                              |
 | ------------------------------------------------------ | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `code_pr_history`, `code_pr_reviews`, `code_gh_items`  | `code_pr_history` (GitHub REST, cursor on `updated_at`)     | Merged PRs with files, review comments, issues. A rate limit or 5xx leaves the cursor unmoved.     |
+| `code_pr_history`, `code_pr_reviews`, `code_gh_items`  | `code_pr_history` (GitHub or Forgejo REST)                  | Merged PRs with files, review comments, issues. A rate limit or 5xx leaves the cursor unmoved.     |
 | `code_context_packs`, `code_review_briefs`             | `code_ingest` at the merge commit, or on demand             | Per-PR context pack and reviewer's brief.                                                          |
 | `code_backport_gaps`                                   | `code_backport_gaps` (nightly; needs `code_pr_history`)     | Per backport-labelled trunk PR, one row per release-branch namespace: covered, owed, not affected. |
 | `code_test_map`, `code_symbol_stats`, `code_unit_risk` | `code_graph_stats` (weekly), `loom code crossref`           | Test↔source map, symbol fan-in, per-unit risk.                                                     |

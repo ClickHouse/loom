@@ -1606,7 +1606,8 @@ settings:
 
   # --- PR history ---
 
-  # Merged-PR history sync (GitHub REST, cursor-resumable). [restart]
+  # Merged-PR history sync (GitHub REST, or the REST API of a Forgejo host;
+  # cursor-resumable). [restart]
   # code_pr_history_enabled: false
 
   # Seconds between PR-history sync passes. [restart]
