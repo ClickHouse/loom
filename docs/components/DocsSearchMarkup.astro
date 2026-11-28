@@ -1,0 +1,14 @@
+---
+const search = await Astro.slots.render("default");
+const trigger = await Astro.slots.render("trigger");
+const triggerPattern = /<button\b[^>]*\bdata-blume-search-open\b[^>]*>[\s\S]*?<\/button>/;
+
+if (!trigger || !triggerPattern.test(search)) {
+  throw new Error("The docs search markup must include a search trigger");
+}
+
+// Keep Blume's dialog and search engine attached to the Click UI trigger.
+const markup = search.replace(triggerPattern, () => trigger);
+---
+
+<Fragment set:html={markup} />

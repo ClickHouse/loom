@@ -46,7 +46,6 @@ import {
   type SearchItem,
 } from "@langchain/langgraph-checkpoint";
 import type { Agent, Body } from "../agent.js";
-import type { OpName } from "../generated/ops.js";
 import { boundProtection, requireAutomaticAllowed, responseRoots, SessionCapture } from "../session-protection.js";
 import type { CallOptions } from "../transport.js";
 
@@ -330,14 +329,15 @@ export class LoomStore extends BaseStore {
     throw new Error("LoomStore does not support this store operation");
   }
 
-  private send<K extends OpName>(name: K, body: Body<K>, scope: Scope) {
-    return this.agent.call(name, body, {}, scope);
-  }
-
   private async run(step: Step, scope: Scope): Promise<Item | SearchItem[] | string[][] | null> {
     let result: Item | SearchItem[] | string[][] | null = null;
     if (step.kind === "get") {
-      const out = await this.send("memory.get", { memory_key: memoryKeyFor(step.namespace, step.key) }, scope);
+      const out = await this.agent.call(
+        "memory.get",
+        { memory_key: memoryKeyFor(step.namespace, step.key) },
+        {},
+        scope,
+      );
       result = out.found
         ? {
             value: asObject(out.value),
@@ -348,9 +348,9 @@ export class LoomStore extends BaseStore {
           }
         : null;
     } else if (step.kind === "delete") {
-      await this.send("memory.delete", { memory_key: step.memoryKey }, scope);
+      await this.agent.call("memory.delete", { memory_key: step.memoryKey }, {}, scope);
     } else if (step.kind === "set") {
-      await this.send("memory.set", step.body, scope);
+      await this.agent.call("memory.set", step.body, {}, scope);
     } else if (step.kind === "search") {
       result = await this.runSearch(step, scope);
     } else {
@@ -364,9 +364,10 @@ export class LoomStore extends BaseStore {
   // The store's memory keys under `prefix`, one `memory.list` page at a time.
   private async *keyPages(prefix: string, tags: string[], scope: Scope): AsyncGenerator<string[]> {
     for (let offset = 0; ; ) {
-      const page = await this.send(
+      const page = await this.agent.call(
         "memory.list",
         { prefix, ...(tags.length ? { tags } : {}), limit: LIST_PAGE, offset, fields: ["memory_key", "expires_at"] },
+        {},
         scope,
       );
       const entries = page.entries ?? [];
@@ -382,7 +383,12 @@ export class LoomStore extends BaseStore {
   // in the order given; one bulk read for all of them.
   private async items(found: Found[], filter: Filter | undefined, scope: Scope): Promise<SearchItem[]> {
     if (!found.length) return [];
-    const { results = {} } = await this.send("memory.bulk_get", { memory_keys: found.map((f) => f.memoryKey) }, scope);
+    const { results = {} } = await this.agent.call(
+      "memory.bulk_get",
+      { memory_keys: found.map((f) => f.memoryKey) },
+      {},
+      scope,
+    );
     const items: SearchItem[] = [];
     const now = Date.now();
     for (const { namespace, key, memoryKey, score } of found) {
@@ -413,7 +419,7 @@ export class LoomStore extends BaseStore {
       });
     const tags = tagsFor(prefix).slice(-1);
     if (query) {
-      const { results } = await this.send(
+      const { results } = await this.agent.call(
         "memory.search",
         {
           query,
@@ -423,6 +429,7 @@ export class LoomStore extends BaseStore {
           scope: "private",
           namespace_scope: "this", // Match the namespace used by memory.bulk_get.
         },
+        {},
         scope,
       );
       const ranked = under(results.map((h) => [h.memory_key, h.similarity]));

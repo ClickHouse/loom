@@ -408,11 +408,9 @@ def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
     assert len(tools) == 23
     flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
-    expected = (
-        {"loom_code_edit_context", "loom_code_grep"}
-        if profile == "compact"
-        else {"loom_code_symbol", "loom_code_grep", "loom_code_search"}
-    )
+    expected = {"loom_code_edit_context", "loom_code_grep"}
+    if profile != "compact":
+        expected.add("loom_code_symbol")
     assert flagged == expected
     assert {"loom_op", "loom_search", "loom_code_search"} <= {tool["name"] for tool in tools}
     edit = next(tool for tool in tools if tool["name"] == "loom_code_edit_context")
@@ -650,12 +648,20 @@ def test_edit_context_says_when_to_use_it_without_ordering() -> None:
         assert "first" not in text.lower()
 
 
-@pytest.mark.parametrize("toolset", ["core", "coding+tracker"])
-def test_other_default_toolsets_keep_the_generic_dispatcher_upfront(monkeypatch, toolset) -> None:
+@pytest.mark.parametrize(
+    ("toolset", "code_tools"),
+    [
+        ("core", set()),
+        ("coding+tracker", {"loom_code_search", "loom_code_symbol", "loom_code_grep"}),
+    ],
+)
+def test_other_default_toolsets_keep_the_generic_dispatcher_upfront(
+    monkeypatch, toolset, code_tools
+) -> None:
     monkeypatch.setattr(settings, "mcp_always_load_tools", "auto")
     tools = asyncio.run(mt._tools_descriptor(toolset=toolset))
-    dispatcher = next(tool for tool in tools if tool["name"] == "loom_op")
-    assert dispatcher["_meta"]["anthropic/alwaysLoad"] is True
+    flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
+    assert flagged == {"loom_op", "loom_search"} | code_tools
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])

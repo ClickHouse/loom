@@ -36,9 +36,9 @@ Replicas sharing that authority report under one UUID. If the worker detail show
 `missing_deployment_id` on a deployment that applies migrations manually, start the
 server once with `LOOM_BOOT_MIGRATE=true` to record its authority. Windows start at midnight
 and noon UTC. The worker allows an hour for ledger rows to arrive before reporting.
-It reports idle windows and retries an unsuccessful delivery while that window is
-still the most recent completed one. An unreachable collector does not interrupt
-the application.
+When it acquires the worker lease, it attempts delivery immediately if the latest
+completed window has no acknowledgement. It reports idle windows and retries a failed
+delivery while that window is still the most recent completed one.
 
 ### What is sent
 
@@ -76,10 +76,11 @@ to omit domains while sending aggregate usage. In a settings file, set
 
 The [collector deployment guide](../../../deploy/telemetry/README.md) covers the
 warehouse and dashboard setup. The public [adoption page](https://loom.clickhouse.com/adoption)
-shows aggregate self-hosted usage and open-source distribution metrics. It also
-lists self-reported contact domain names with successful requests in the last
-90 complete UTC days. Only version 2 reports contribute names to the public
-list. Use the domain-sharing setting above to omit domains from your reports.
+shows aggregate self-hosted usage and open-source distribution metrics. The
+self-hosted summary includes today's completed reporting windows. The public
+list shows self-reported contact domain names from version 2 reports with
+successful requests today or in the previous 90 UTC days. Use the
+domain-sharing setting above to omit domains from your reports.
 `loom_adoption_windows` contains one report per
 `(installation_id, window_start)`. The daily rollup adds request counts and
 uses the peak half-day distinct count for each installation.

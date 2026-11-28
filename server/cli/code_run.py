@@ -14,6 +14,7 @@ from typing import Any
 from server.cli._ch import connect_declared, disconnect, reads
 from server.cli._proc import TERMINATED_EXIT, Terminated, cancel_on_sigterm
 from server.code.app.index.repo_modes import repo_umask
+from server.core.retirement import unfinished
 
 log = logging.getLogger("loom.cli.code")
 
@@ -200,7 +201,8 @@ def _run(name: str, coro: asyncio.Future[int] | Coroutine[Any, Any, int]) -> int
         if isinstance(e, Terminated):
             log.warning("cli.code.%s: terminated", name)
             raise SystemExit(rc) from None
-        if not isinstance(e, KeyboardInterrupt | SystemExit):  # an exit says its own why
+        # An exit says its own why; `_dispatch` prints a failed shutdown in one line.
+        if not isinstance(e, KeyboardInterrupt | SystemExit) and not unfinished(e):
             log.exception("cli.code.%s: failed", name)
         raise
     finally:

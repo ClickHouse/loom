@@ -142,10 +142,20 @@ export function loomConfig() {
   return _loomConfigCache;
 }
 
+/** The token in the token file (`loomTokenPath`), "" when it is missing or empty. */
+function tokenFileToken() {
+  try {
+    return readFileSync(loomTokenPath(), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
 /** The Loom bearer token and the lookup that supplied it (`kind`: "env",
  *  "agent", "option", "config", "file", or "" for none), in this order: env,
- *  an agent's exchanged token, the install option, ~/.loom/config.json,
- *  ~/.loom/token. */
+ *  an agent's exchanged token, the install option, the file
+ *  LOOM_API_KEY_FILE names, ~/.loom/config.json, and with that variable
+ *  unset ~/.loom/token. */
 export function tokenLookup() {
   const fromEnv = (process.env.LOOM_API_KEY || "").trim();
   if (fromEnv) return { token: fromEnv, kind: "env" };
@@ -158,15 +168,13 @@ export function tokenLookup() {
   // `userConfig` values to hook processes as CLAUDE_PLUGIN_OPTION_<KEY>.
   const fromOption = (process.env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
   if (fromOption) return { token: fromOption, kind: "option" };
+  // A file named by environment outranks a saved token, like LOOM_API_KEY.
+  const named = process.env.LOOM_API_KEY_FILE ? tokenFileToken() : "";
+  if (named) return { token: named, kind: "file" };
   const fromCfg = String(loomConfig().token || "").trim();
   if (fromCfg) return { token: fromCfg, kind: "config" };
-  try {
-    const fromFile = readFileSync(loomTokenPath(), "utf8").trim();
-    if (fromFile) return { token: fromFile, kind: "file" };
-  } catch {
-    // no token file; caller decides whether to no-op
-  }
-  return { token: "", kind: "" };
+  const fromFile = tokenFileToken();
+  return { token: fromFile, kind: fromFile ? "file" : "" };
 }
 
 export function resolveToken() {

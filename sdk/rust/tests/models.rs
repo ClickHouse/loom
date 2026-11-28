@@ -51,6 +51,7 @@ fn omitted_response_fields_keep_wire_defaults() {
     assert_eq!(hit.superseded_at, None);
     assert_eq!(hit.created_at, "");
     assert_eq!(hit.code_state, "");
+    assert_eq!(hit.code_changed_since, "");
     assert!(!hit.body_truncated);
     assert_eq!(hit.next, "");
     assert_eq!(hit.source_resource_id, "");
@@ -202,6 +203,7 @@ fn search_preserves_chunk_parent_attribution_and_decision_signals() {
             "valid_at": "valid", "via_path": ["alice", "bob"], "entities": ["bob"],
             "user_id": "owner", "status": "superseded", "superseded_by": "successor",
             "superseded_at": "retired", "created_at": "created", "code_state": "changed",
+            "code_changed_since": "c0ffee",
             "body_truncated": true, "next": "memory.get", "source_resource_id": "resource",
             "source_class": "extracted", "verified": true, "explanation": "citation",
             "session_id": "conversation", "speaker": "alice", "about_other": true,
@@ -241,6 +243,7 @@ fn search_preserves_chunk_parent_attribution_and_decision_signals() {
     assert_eq!(hit.superseded_at.as_deref(), Some("retired"));
     assert_eq!(hit.created_at, "created");
     assert_eq!(hit.code_state, "changed");
+    assert_eq!(hit.code_changed_since, "c0ffee");
     assert!(hit.body_truncated);
     assert_eq!(hit.next, "memory.get");
     assert_eq!(hit.source_resource_id, "resource");
