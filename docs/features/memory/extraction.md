@@ -85,20 +85,20 @@ The rules in `server/memory/domain/durable_facts.py` match sentence shape, not t
 a release changed is kept; whether its CI was green at the time is dropped.
 
 A plugin's session capture (a `source:` tag) is extracted with a prompt of its own, at
-every capture size. It holds no conversation rule or example, and is about 2,700 tokens
-where the conversation prompt is 20,000 to 34,000, because most captures hold nothing to
-keep and the prompt is then what the call costs. What the user states that holds beyond
-the session is kept: a standing rule, a preference, a decision, a fact about their setup.
-What the user asks for the task alone is not. Its schema asks for the fields a coding fact
-uses and for the end of a state the user bounds (`valid_to`, `foresight`), so a freeze
-"until Friday" stops being served after that day. The prompt asks for no `valid_at`,
-`temporal_confidence`, occurrence record or `question_topic` on a session capture's fact.
-The row takes its `valid_at` from the time of the latest turn the fact cites, when the
-capture's messages carry a `timestamp` and the fact's `temporal_anchor` names no other day
-or time of day; else from the call's own `valid_at`; else from the fact's `temporal_anchor`
-when that is not in the future; else from the observation date. From the work, only
-knowledge about the codebase that a later session in the repository can reuse without
-reading the code again is kept:
+every capture size. It holds no conversation rule or example, and is under 9,000
+characters where the conversation prompt is about 57,000 for a short input and 86,000 for
+a longer one, because most captures hold nothing to keep and the prompt is then what the
+call costs. What the user states that holds beyond the session is kept: a standing rule, a
+preference, a decision, a fact about their setup. What the user asks for the task alone is
+not. Its schema asks for the fields a coding fact uses and for the end of a state the user
+bounds (`valid_to`, `foresight`), so a freeze "until Friday" stops being served after that
+day. The prompt asks for no `valid_at`, `temporal_confidence`, occurrence record or
+`question_topic` on a session capture's fact. The row takes its `valid_at` from the time
+of the latest turn the fact cites, when the capture's messages carry a `timestamp` and the
+fact's `temporal_anchor` names no other day or time of day; else from the call's own
+`valid_at`; else from the fact's `temporal_anchor` when that is not in the future; else
+from the observation date. From the work, only knowledge about the codebase that a later
+session in the repository can reuse without reading the code again is kept:
 
 - how a behaviour is reached across definitions or files, as one claim for the whole path;
 - a relation between definitions that reading one of them does not show;
