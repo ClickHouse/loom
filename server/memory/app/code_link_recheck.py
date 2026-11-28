@@ -369,11 +369,13 @@ async def _recheck(
                 renamed = Successor(None, uncertain=True)  # cannot tell: a live link is unsure
             far = new or []
         # moved to another module with an edit: never for a link already missing, nor
-        # one the same-file search left unsure
+        # one the same-file search left unsure, unless the new definitions there were
+        # each compared with it and none is close
+        unsure = renamed.uncertain
         moved_and_edited = (
             bool(far)
             and renamed.definition is None
-            and not renamed.uncertain
+            and (not unsure or renamed.unmatched)
             and r.before.state != "missing"
             and locate(r.before, r.now, r.defs, elsewhere=far) is None
         )
@@ -386,7 +388,8 @@ async def _recheck(
             renamed=renamed.definition,
             renamed_exactly=renamed.exact,
             elsewhere=far,
-            uncertain=renamed.uncertain or mirror_unsure,
+            # not found elsewhere either: as unsure as the same-file search left it
+            uncertain=unsure or renamed.uncertain or mirror_unsure,
             carried=renamed.carried,
             cited=file.cited if file else "",
             head=head,

@@ -61,3 +61,20 @@ def test_superseded_and_chunk_fields_round_trip() -> None:
     )
     bare = _parse_search_hit(base)
     assert (bare.parent_memory_key, bare.superseded_by, bare.superseded_at) == ("", None, None)
+
+
+def test_relocated_code_links_round_trip() -> None:
+    base = {"memory_key": "k", "memory_type": "semantic", "content_excerpt": "x"}
+    base |= {"distance": 0.1, "similarity": 0.9}
+    link = {
+        "code_namespace": "code-a",
+        "path": "src/reader.py",
+        "symbol": "reader::load_rows",
+        "start_line": 12,
+        "end_line": 40,
+        "state": "moved",
+        "was_path": "src/reader.py",
+        "was_symbol": "reader::fetch_rows",
+    }
+    assert _parse_search_hit(base | {"code_moved": [link]}).code_moved == [link]
+    assert _parse_search_hit(base).code_moved == []

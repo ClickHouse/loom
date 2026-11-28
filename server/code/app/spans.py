@@ -142,6 +142,7 @@ _STAGE_ALIASES: dict[str, str] = {
     "fuse": "fusion",
     "history_leg": "history",
     "history_route": "history",
+    "definition_leg": "definition",
     "symbol_leg": "symbol",
     "fan_in_hubs": "fan_in",
     "expand_top_to_file": "bodies",

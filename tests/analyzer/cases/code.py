@@ -49,6 +49,9 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
         [1.0] * len(tokens),
         path_prefix=prefix,
         scope=scope,
+        # the pool cut on the ranking's path penalties
+        noise_penalty=0.35 if c["path_penalties"] else 1.0,
+        prose_penalty=0.25 if c["path_penalties"] else 1.0,
     )
     await repo.vector_search_chunks(ORG, NS, MODEL, SMALL_VEC, path_prefix=prefix, scope=scope)
     await repo.vector_shortlist_ids(
@@ -62,6 +65,13 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
     # The source-only card read behind the concept leg's vocabulary
     await repo.vector_search_cards(
         ORG, NS, MODEL, SMALL_VEC, path_prefix=prefix, pool=5, skip_tests=True
+    )
+    # The definition leg's reads: the named symbols, then the chunks that define them
+    await repo.symbols_named(
+        ORG, NS, ["bulk_update", "combine"], qualified=["Query.combine"], per_name=32
+    )
+    await repo.definition_chunks(
+        ORG, NS, MODEL, [("src/a.py", "pkg.a::Query::combine")], scope=scope
     )
     await repo.symbol_names_for_paths(ORG, NS, ["src/a.py", "src/b.py"])
     await repo.scope_file_count(ORG, NS, MODEL, scope or _scope("globs"), path_prefix=prefix)
@@ -436,6 +446,7 @@ def cases() -> list[Case]:
                 "scope": ("none", "globs", "regex"),
                 "path_prefix": (False, True),
                 "token_gate": ("words", "underscores"),
+                "path_penalties": (False, True),
             },
         ),
         Case(

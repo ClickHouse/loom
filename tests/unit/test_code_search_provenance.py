@@ -338,6 +338,23 @@ def test_track_path_lexical_only_reports_no_vector_side() -> None:
     assert res.tracked["best"]["distance"] is None
 
 
+def test_track_verdict_names_a_row_the_leg_cut_on_its_path_penalty() -> None:
+    lexical = [_lex("a", 40.0) | {"lex_rank": 2}, _lex("b", 10.0) | {"lex_rank": 9}]
+    out = track_verdict(
+        "tests/test_z.py",
+        [_chunk("z1", 55.0, None)],
+        lexical,
+        [],
+        served_ids=["a"],
+        pool=2,
+        vector_ran=False,
+        lexical_ran=True,
+    )
+    assert out["verdict"] == (
+        "beyond pool: lexical 55.00 over floor 10.00, cut on its path penalty"
+    )
+
+
 def test_track_verdict_beyond_full_pools_reports_floor_and_ceiling() -> None:
     lexical = [_lex("a", 40.0), _lex("b", 10.0)]
     vector = [_vec("c", 0.1), _vec("a", 0.2)]
