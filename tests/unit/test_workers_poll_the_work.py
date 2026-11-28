@@ -251,6 +251,7 @@ def cer(monkeypatch: pytest.MonkeyPatch):
     class _Cfg:
         def __init__(self, ns: str) -> None:
             self.org, self.namespace = "o", ns
+            self.embed_reuse_from = ""
 
     monkeypatch.setattr(repos_mod, "configured_repos", lambda: [_Cfg("n1"), _Cfg("n2"), _Cfg("n3")])
     from server.embedding import embedder as emb_mod
