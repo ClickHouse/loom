@@ -2,15 +2,17 @@
 
 With the Loom plugin and code index, Claude Code answered questions about the ClickHouse
 codebase at 6% to 21% lower model cost than without it on all three measured question
-sets. The savings were 20% on 24 answer-graded questions (answer quality 0.84 against
-0.78), 21% on 36 conceptual questions and 6% on 24 multi-hop questions, where tracing a bug
-to its fix on a release branch cost the same both ways.
+sets. This is the coding model's bill for the whole session. It excludes Loom's server-side
+model calls, hosting and indexing, so the result does not establish lower total cost.
 
 ## What was measured
 
+The savings were 20% on 24 answer-graded questions (answer quality 0.84 against 0.78), 21%
+on 36 conceptual questions and 6% on 24 multi-hop questions, where tracing a bug to its
+fix on a release branch cost the same both ways.
+
 Both arms ran Claude Code (`claude-sonnet-5`) on the same checkout: one plain session, one
-with the Loom plugin and the `coding` toolset. Cost is the whole session's model bill and
-excludes Loom's own server-side model calls, hosting and indexing. The comparison measures
+with the Loom plugin and the `coding` toolset. The comparison measures
 the plugin as a whole; it does not separate the code index from memory. Results are
 specific to the tested workloads. With Loom a question takes longer on the clock: the
 plugin's per-prompt search and the MCP round trips add latency. How per-question cost is
