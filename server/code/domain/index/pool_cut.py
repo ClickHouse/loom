@@ -17,7 +17,7 @@ RRF_K = 60.0
 
 # ClickHouse fetches the body columns of an `ORDER BY … LIMIT n` lazily only for n at
 # or under query_plan_max_limit_for_lazy_materialization (10,000 by default).
-MAX_DEPTH = 10_000
+MAX_DEPTH = 10_000  # not a setting: a deeper scan reads the body of every candidate
 
 
 def cut_depth(pool: int, noise_penalty: float, prose_penalty: float) -> int:
