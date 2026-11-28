@@ -219,7 +219,8 @@ def _respelled(written: str, m: _Move) -> str:
     as `written` joins it. A name written inside its module (`get`, `Reader.get`) keeps
     as many segments. One written with its module names the whole new name inside the
     new module, under as many module segments, and under the whole module when it wrote
-    the whole old one: a full dotted name stays one."""
+    the whole old one: a full dotted name stays one, also where no part of it is the
+    module (C and C++)."""
     dotted = written.replace("::", ".")
     old, new = _forms(m.was_path, m.was_name), _forms(m.path, m.name)
     at = next((i for i, f in enumerate(old) if f == dotted or f.endswith("." + dotted)), 0)
@@ -227,7 +228,9 @@ def _respelled(written: str, m: _Move) -> str:
     local = local_name(m.name, m.path).split(".")
     joins = _JOIN.findall(written)
     over = len(joins) + 1 - len(was_local)  # the module segments it wrote
-    if over <= 0:
+    if dotted == old[0]:
+        parts = new[0].split(".")
+    elif over <= 0:
         parts = local[-(len(joins) + 1) :]
     else:
         module = new[min(at, len(new) - 1)].split(".")[: -len(local)]
@@ -414,7 +417,9 @@ def _repathed(
                 continue
             literal = not alive and _inside(quoted, *o.span())
             why.add("quoted_or_literal" if literal else "old_name_remains")
-    if mine and m.path in text:
+    # the new path inside a longer one (`test/src/util.py`, `src/util.pyc`) is another file
+    present = rf"(?<![\w.-])(?<![\w-]/){re.escape(m.path)}(?![\w-]|\.\w)"
+    if mine and re.search(present, text):
         why.add("new_name_present")
     if not alive and any(
         path_matches(m.was_path, f) and not path_matches(m.path, f) for f in files

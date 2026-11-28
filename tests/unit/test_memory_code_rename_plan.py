@@ -348,6 +348,21 @@ def test_a_scope_change_edits_only_the_spellings_that_name_the_old_scope() -> No
     assert _plan(text, links=[moved], defs=defs).reason == "old_name_remains"
 
 
+def test_a_whole_name_with_no_module_part_becomes_the_whole_new_name() -> None:
+    # C++ names carry no path: the whole old name gains the namespace the new one has
+    path = "src/reader.cpp"
+    link = _link(path, "ns::io::Reader::get", was=(path, "ns::Reader::get"))
+    kw: dict[str, Any] = {"links": [link], "defs": [_d(path, "ns::io::Reader::get")]}
+    assert _revised("`ns::Reader::get` retries.", **kw) == "`ns::io::Reader::get` retries."
+    assert _revised("ns.Reader.get() retries.", **kw) == "ns.io.Reader.get() retries."
+    # a shorter spelling still names the new one: nothing to edit
+    assert _plan("`Reader::get` retries.", **kw) == Plan(reason="no_code_token")
+    back = _link(path, "ns::Reader::get", was=(path, "ns::io::Reader::get"))
+    kw = {"links": [back], "defs": [_d(path, "ns::Reader::get")]}
+    assert _revised("`ns::io::Reader::get` retries.", **kw) == "`ns::Reader::get` retries."
+    assert _revised("`io::Reader::get` retries.", **kw) == "`ns::Reader::get` retries."
+
+
 def test_the_module_a_definition_left_withholds_where_no_edit_reaches_it() -> None:
     was, now = "src/io/util.py", "src/net/util.py"
     moved = _link(now, "src.net.util::backoff", was=(was, "src.io.util::backoff"))
@@ -421,6 +436,13 @@ def test_files_and_labels_that_name_the_old_path_withhold() -> None:
     )
     # no file of the memory names the file link's path any more
     assert _plan("`src/reader.py` holds it.", files=[], **kw).reason == "would_unlink"
+    # the new path as a path of its own is there already; inside a longer one it is not
+    for also in ("lib/reader.py:12", "`lib/reader.py`", "./lib/reader.py", "/lib/reader.py."):
+        text = f"`src/reader.py` holds it; see {also}"
+        assert _plan(text, files=["reader.py"], **kw).reason == "new_name_present", text
+    for also in ("test/lib/reader.py", "lib/reader.pyc", "https://example.org/lib/reader.py"):
+        text = f"`src/reader.py` holds it; see {also}"
+        assert _revised(text, files=["reader.py"], **kw) == text.replace("`src/", "`lib/"), text
 
 
 def test_a_text_that_names_nothing_old_holds_whatever_its_links_and_labels_say() -> None:
