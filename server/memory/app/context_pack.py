@@ -14,6 +14,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from server.core.background import gather_or_cancel
@@ -354,14 +355,16 @@ async def _pack_profile(st: _PackState) -> None:
 async def _pack_startup_recall(st: _PackState) -> None:
     """Zero-query startup recall: at session start an agent wants cheap
     pins + recency, not a paid semantic search. Pull pinned memories first,
-    then the most-recent active ones (recency-ordered), dedup, and render
-    the memories block — no embedding round-trip. Fires only for
-    mode='startup' with no query; real queries still go through search."""
+    then the most-recent active ones (recency-ordered), read their code links
+    as a search does, dedup, and render the memories block — no embedding
+    round-trip. Fires only for mode='startup' with no query; real queries still
+    go through search."""
     input = st.input
     default_section_tokens = st.default_section_tokens
     import json as _json
 
     import server.memory.store as memory_repo
+    from server.memory.app.code_link_reads import annotate_hits
 
     def _vtext(v: Any) -> str:
         # Stored values are often JSON-encoded strings ('"…"'); decode those
@@ -402,22 +405,27 @@ async def _pack_startup_recall(st: _PackState) -> None:
         log.warning("context.pack startup recall failed: %s", e)
         return
 
-    seen: set[str] = set()
-    rows: list[Any] = []
-    for r in [*pinned, *recent]:  # pins first, then recency; dedup by key
-        if r.memory_key in seen or r.status not in ("active", "conflicted"):
-            continue
-        seen.add(r.memory_key)
-        rows.append(r)
-        if len(rows) >= k:
-            break
-    if not rows:
+    hits = [
+        SimpleNamespace(
+            row=r, memory_key=r.memory_key, _row_identity=(r.agent, r.user_id, r.session_id)
+        )
+        for r in [*pinned, *recent]  # pins first, then recency
+        if r.status in ("active", "conflicted")
+    ]
+    # Before the dedup by key and the cut to k, so a memory left out for gone code gives its
+    # place to the next listed row; the recent listing is 2k rows and is not read again.
+    await annotate_hits(input, hits)
+    by_key: dict[str, Any] = {}
+    for h in hits:
+        by_key.setdefault(h.memory_key, h)
+    hits = list(by_key.values())[:k]
+    if not hits:
         return
 
     evidence = [
         EvidenceItem(
             citation=f"memory:{input.namespace}/{r.memory_key}",
-            text=_vtext(r.value),
+            text=_code_now(h) + _vtext(r.value),
             source="fact",
             group=f"fact:{input.namespace}",
             score=float(r.confidence or 0.0),
@@ -430,8 +438,10 @@ async def _pack_startup_recall(st: _PackState) -> None:
             ),
             conflict=(r.status == "conflicted"),
             author=author_label([getattr(r, "actor", "")]),
+            code_state=code_change.label(*_code_state_and_commit(h)),
         )
-        for r in rows
+        for h in hits
+        for r in [h.row]
     ]
     packed = pack_evidence(
         evidence,
@@ -441,7 +451,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
             default_section_tokens.get("memories", 300),
         ),
     )
-    row_of = {f"memory:{input.namespace}/{r.memory_key}": r.memory_key for r in rows}
+    row_of = {f"memory:{input.namespace}/{h.memory_key}": h.memory_key for h in hits}
     st.put(
         "memories",
         packed.rendered,
@@ -507,10 +517,19 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
 
 
 def _code_state_and_commit(hit: Any) -> tuple[str, str]:
-    """The hit's code state and the commit of its worst link (`worst_commit`: '' for a
-    state no note names)."""
-    state = str(getattr(hit, "code_state", "") or "")
-    return state, code_change.worst_commit(getattr(hit, "_code_links", None) or [])
+    """The hit's `code_state` and `code_changed_since`."""
+    return (
+        str(getattr(hit, "code_state", "") or ""),
+        str(getattr(hit, "code_changed_since", "") or ""),
+    )
+
+
+def _code_now(hit: Any) -> str:
+    """`(code moved: …) ` ahead of the text of a hit whose code is now at another name or
+    path than it was written against (`code_moved`); '' otherwise. The line's label
+    carries the state."""
+    moved = code_change.note("", moved=getattr(hit, "code_moved", None) or [])
+    return f"{moved.lstrip()} " if moved else ""
 
 
 async def _pack_decisions_from_hits(
@@ -553,7 +572,9 @@ async def _pack_decisions_from_hits(
         made = str(rec.get("made_at") or "")[:10]
         author = _hit_author(actors, input, h)
         line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
-        line += (f" {made}" if made else "") + code_change.note(*_code_state_and_commit(h))
+        line += (f" {made}" if made else "") + code_change.note(
+            *_code_state_and_commit(h), getattr(h, "code_moved", None) or []
+        )
         line += f" {scenario}"
         if outcome:
             line += f" → {rec['stage']}: {outcome}"
@@ -655,7 +676,7 @@ async def _pack_memories(st: _PackState) -> None:
             evidence.append(
                 EvidenceItem(
                     citation=cite,
-                    text=h.content_excerpt,
+                    text=_code_now(h) + h.content_excerpt,
                     source=source,
                     group=group,
                     score=float(getattr(h, "rank_score", 0.0) or 0.0),

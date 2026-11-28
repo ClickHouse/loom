@@ -355,27 +355,6 @@ async def _authority_record(ch: RecordingCH, c: dict[str, Any]) -> None:
     await pg_profile._ch_holds_memory(ch)
 
 
-async def _assistant_service(ch: RecordingCH, c: dict[str, Any]) -> None:
-    """The boot's read of the assistant's service row."""
-    from server.assistant.store import service
-
-    await service.read(ch=ch)
-
-
-async def _answer_digests(ch: RecordingCH, c: dict[str, Any]) -> None:
-    """The assistant's read of the statements its answer's insights.query calls ran."""
-    from server.assistant.store import ledger
-
-    await ledger.query_digests(ORG, NS, "chatcmpl-1", "alice", ch=ch)
-
-
-async def _answer_keys(ch: RecordingCH, c: dict[str, Any]) -> None:
-    """The assistant's read of the memory keys its answer's tool calls were returned."""
-    from server.assistant.store import ledger
-
-    await ledger.returned_keys(ORG, NS, "chatcmpl-1", "alice", ["policy/deploy/freeze"], ch=ch)
-
-
 async def _held_documents(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The delivery pass's read of the search documents ClickHouse already holds."""
     from server.memory.store import pg_publish
@@ -509,9 +488,6 @@ def cases() -> list[Case]:
             {"bare": (False, True)},
         ),
         Case("boot.authority_record", "server.core.pg_profile", _authority_record, {}),
-        Case("boot.assistant_service", "server.assistant.store.service", _assistant_service, {}),
-        Case("assistant.answer_digests", "server.assistant.store.ledger", _answer_digests, {}),
-        Case("assistant.answer_keys", "server.assistant.store.ledger", _answer_keys, {}),
         Case(
             "workers.conflict_resolver",
             "server.memory.store.conflict_resolver",

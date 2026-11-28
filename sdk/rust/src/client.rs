@@ -8,7 +8,7 @@ use std::{
 use reqwest::{
     header::{HeaderMap, HeaderValue, AUTHORIZATION},
     redirect::Policy,
-    Client as HttpClient, Url,
+    Client as HttpClient, RequestBuilder, StatusCode, Url,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
@@ -46,13 +46,13 @@ macro_rules! typed_call {
 /// Clones share a connection pool and may issue requests concurrently.
 #[derive(Clone)]
 pub struct Client {
-    http: HttpClient,
-    base_url: Url,
+    pub(crate) http: HttpClient,
+    pub(crate) base_url: Url,
     authorization: Option<HeaderValue>,
     identity: Value,
     retry: RetryPolicy,
-    pacing: bool,
-    ratelimit_max_wait: Duration,
+    pub(crate) pacing: bool,
+    pub(crate) ratelimit_max_wait: Duration,
     rate_state: Arc<Mutex<HashMap<String, Duration>>>,
 }
 
@@ -211,7 +211,10 @@ impl Client {
     /// Call any dotted wire operation, decoding its response as `T`.
     ///
     /// Known operations use generated identity and retry policies. Unknown operations
-    /// receive bound org/namespace and retry only failures before connection.
+    /// receive the client's org and namespace and are treated as non-idempotent.
+    /// They can retry connection failures and responses that show the handler did
+    /// not run (HTTP 408 or `AUTH_UNAVAILABLE`), subject to the retry policy.
+    /// HTTP 429 uses the client's separate pacing budget.
     pub async fn call<T: DeserializeOwned>(
         &self,
         op: &str,
@@ -296,44 +299,23 @@ impl Client {
         loop {
             attempt += 1;
             let mut request = self
-                .http
-                .post(url.clone())
-                .json(&body)
-                .header("x-request-id", &request_id)
-                .header("x-loom-retry-count", sent.to_string())
-                .header(
-                    "user-agent",
-                    concat!("loom-rust/", env!("CARGO_PKG_VERSION")),
+                .identified(
+                    self.http.post(url.clone()).json(&body),
+                    &request_id,
+                    options.timeout,
                 )
-                .header(
-                    "x-loom-sdk",
-                    concat!("loom-rust/", env!("CARGO_PKG_VERSION")),
-                )
-                .header(
-                    "x-loom-runtime",
-                    format!("rust {} {}", env::consts::OS, env::consts::ARCH),
-                );
+                .header("x-loom-retry-count", sent.to_string());
             if let Some(key) = &idempotency_key {
                 request = request.header("idempotency-key", key);
             }
             if let Some(run_id) = self.identity.get("run_id").and_then(Value::as_str) {
                 request = request.header("x-loom-run-id", run_id);
             }
-            if let Some(timeout) = options.timeout {
-                request = request.timeout(timeout);
-            }
-            if let Some(authorization) = &self.authorization {
-                request = request.header(AUTHORIZATION, authorization);
-            }
             sent += 1;
             let mut metadata = CallMetadata::new(&request_id, sent);
             log::debug!(target: "clickhouse_loom", "{op} attempt={attempt} sent={sent} rid={request_id}");
             let received = async {
-                let response = request.send().await?;
-                let status = response.status();
-                let headers = response.headers().clone();
-                // Keep received headers even if reading the response body fails.
-                metadata.record_response(status.as_u16(), &headers);
+                let (status, headers, response) = send(request, &mut metadata).await?;
                 let bytes = response.bytes().await?;
                 Ok::<_, reqwest::Error>((status, headers, bytes))
             }
@@ -367,7 +349,8 @@ impl Client {
                     }
                     let mut error = ApiError::from_response(status.as_u16(), &headers, &bytes);
                     error.request_id.get_or_insert_with(|| request_id.clone());
-                    if status.as_u16() == 429 && self.pacing && idempotent {
+                    // The server answers a 429 before running any operation.
+                    if status.as_u16() == 429 && self.pacing {
                         let delay = pacing_delay(
                             error.retry_after_s,
                             self.ratelimit_max_wait.saturating_sub(paced),
@@ -381,7 +364,9 @@ impl Client {
                             continue;
                         }
                     }
-                    let allowed = idempotent
+                    // A status retry runs the operation again. Only a declared
+                    // idempotent one is safe, unless the answer proves nothing ran.
+                    let allowed = (idempotent || error.handler_never_ran())
                         && status.as_u16() != 429
                         && retry.statuses.contains(&status.as_u16())
                         && !error.forbids_retry();
@@ -401,6 +386,10 @@ impl Client {
                     .is_some_and(|budget| delay > budget.saturating_sub(slept))
             {
                 log::error!(target: "clickhouse_loom", "{op} failed status={status} elapsed_ms={} attempts={sent} rid={request_id}", started.elapsed().as_millis());
+                let mut error = error;
+                if let Error::Api(api) = &mut error {
+                    api.mark_maybe_applied(idempotent);
+                }
                 return Err(CallFailure {
                     error,
                     metadata: Some(Box::new(metadata)),
@@ -424,6 +413,51 @@ impl Client {
             self.rate_state.lock().await.insert(op.to_owned(), delay);
         }
     }
+
+    /// One request to this server with the SDK identity headers, `X-Request-Id`,
+    /// the credential and a per-call timeout.
+    pub(crate) fn identified(
+        &self,
+        request: RequestBuilder,
+        request_id: &str,
+        timeout: Option<Duration>,
+    ) -> RequestBuilder {
+        let request = request
+            .header("x-request-id", request_id)
+            .header(
+                "user-agent",
+                concat!("loom-rust/", env!("CARGO_PKG_VERSION")),
+            )
+            .header(
+                "x-loom-sdk",
+                concat!("loom-rust/", env!("CARGO_PKG_VERSION")),
+            )
+            .header(
+                "x-loom-runtime",
+                format!("rust {} {}", env::consts::OS, env::consts::ARCH),
+            );
+        let request = match timeout {
+            Some(timeout) => request.timeout(timeout),
+            None => request,
+        };
+        match &self.authorization {
+            Some(authorization) => request.header(AUTHORIZATION, authorization),
+            None => request,
+        }
+    }
+}
+
+/// Send one request and record its status and headers, which the metadata
+/// keeps when the body then fails to arrive.
+pub(crate) async fn send(
+    request: RequestBuilder,
+    metadata: &mut CallMetadata,
+) -> Result<(StatusCode, HeaderMap, reqwest::Response), reqwest::Error> {
+    let response = request.send().await?;
+    let status = response.status();
+    let headers = response.headers().clone();
+    metadata.record_response(status.as_u16(), &headers);
+    Ok((status, headers, response))
 }
 
 impl ClientBuilder {
@@ -539,7 +573,7 @@ impl ClientBuilder {
     }
 }
 
-fn request_id() -> String {
+pub(crate) fn request_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
@@ -551,14 +585,13 @@ fn valid_operation(op: &str) -> bool {
         })
 }
 
-fn pacing_delay(hint: Option<f64>, budget: Duration) -> Duration {
-    let hint = hint
-        .filter(|s| s.is_finite() && *s <= 60.0)
-        .unwrap_or(1.0)
-        .max(0.0);
-    Duration::from_secs_f64(hint)
-        .min(Duration::from_secs(5))
-        .min(budget)
+pub(crate) fn pacing_delay(hint: Option<f64>, budget: Duration) -> Duration {
+    let seconds = hint.filter(|s| s.is_finite()).unwrap_or(1.0).max(0.0);
+    // A shorter wait would resend before the server asked us to.
+    Duration::try_from_secs_f64(seconds)
+        .ok()
+        .filter(|delay| *delay <= budget)
+        .unwrap_or_default()
 }
 
 fn env_value(name: &str) -> Option<String> {
@@ -631,16 +664,19 @@ mod tests {
     }
 
     #[test]
-    fn pacing_caps_hints_and_budget_and_does_not_spin_on_zero() {
+    fn pacing_waits_for_the_hint_only_when_it_fits() {
         for (hint, budget, expected) in [
             (None, 15, 1),
-            (Some(61.0), 15, 1),
-            (Some(60.0), 15, 5),
-            (Some(30.0), 2, 2),
+            (None, 0, 0),
+            (Some(61.0), 15, 0),
+            (Some(60.0), 60, 60),
+            (Some(8.0), 15, 8),
+            (Some(30.0), 2, 0),
             (Some(0.0), 15, 0),
             (Some(1.0), 0, 0),
             (Some(-1.0), 15, 0),
             (Some(f64::NAN), 15, 1),
+            (Some(f64::MAX), 15, 0),
         ] {
             assert_eq!(
                 pacing_delay(hint, Duration::from_secs(budget)),

@@ -1,0 +1,66 @@
+---
+import { Link } from "@clickhouse/click-ui/Link";
+import loomLogo from "../public/loom.svg?raw";
+import { documentationOverview, isDocumentationIndex } from "./documentation-link";
+import { siteLocales, type SiteLocale } from "./site-locales";
+import "./click-ui-dark.css";
+
+interface Props {
+  locale?: string;
+}
+
+const language = Astro.props.locale ?? Astro.currentLocale ?? "en";
+const locale = Object.hasOwn(siteLocales, language) ? (language as SiteLocale) : "en";
+const overview = documentationOverview(locale);
+const pathname = Astro.url.pathname.replace(/\/$/, "");
+---
+
+<Link
+  className="docs-brand"
+  href={overview.href}
+  hrefLang={overview.hreflang}
+  lang="en"
+  dir="ltr"
+  aria-current={pathname === overview.href ? "page" : undefined}
+  data-docs-index={isDocumentationIndex(pathname, locale) ? "" : undefined}
+  weight="semibold"
+>
+  <span class="docs-brand-mark" aria-hidden="true" set:html={loomLogo} />
+  <span><strong>Loom</strong> <span class="docs-brand-section">Docs</span></span>
+</Link>
+
+<style>
+  :global(.docs-brand) {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 0.5rem;
+    min-block-size: 2.75rem;
+    color: var(--blume-foreground);
+    font-size: clamp(1rem, 1.6vw, 1.2rem);
+    letter-spacing: -0.03em;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .docs-brand-mark, .docs-brand-mark :global(svg) {
+    display: block;
+    flex: none;
+    inline-size: 2rem;
+    block-size: 2rem;
+  }
+
+  .docs-brand-section {
+    color: var(--blume-muted-foreground);
+    font-weight: 500;
+  }
+
+  @media (max-width: 24rem) {
+    :global(.docs-brand) { gap: 0.375rem; }
+
+    .docs-brand-mark, .docs-brand-mark :global(svg) {
+      inline-size: 1.625rem;
+      block-size: 1.625rem;
+    }
+  }
+</style>

@@ -698,7 +698,7 @@ def test_loom_period_digest_writes_as_its_command(monkeypatch: pytest.MonkeyPatc
     import argparse
     import asyncio
 
-    from server.cli import app, maintenance
+    from server.cli import dispatch, maintenance
     from server.memory.app import period_digest
     from server.memory.app.provenance import writer_actor
 
@@ -723,7 +723,7 @@ def test_loom_period_digest_writes_as_its_command(monkeypatch: pytest.MonkeyPatc
         rewrite=False,
         dry_run=True,
     )
-    assert app._dispatch(args) == 0
+    assert dispatch._dispatch(args) == 0
     assert seen == ["process:cli:period-digest"]
 
 

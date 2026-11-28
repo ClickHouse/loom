@@ -1,0 +1,18 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import data from "blume:data";
+
+const ui = data.uiByLocale[Astro.currentLocale ?? "en"] ?? data.ui;
+---
+
+<Button
+  className="docs-landing-search"
+  aria-haspopup="dialog"
+  data-loom-docs-landing-search=""
+  htmlType="button"
+  type="secondary"
+>
+  <Icon name="search" size="sm" aria-hidden="true" />
+  {ui.search.placeholder}
+</Button>

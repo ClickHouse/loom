@@ -8,12 +8,16 @@ from dataclasses import replace
 from server.code.domain.anchor import (
     Definition,
     Link,
-    fingerprint,
+    cited_fingerprint,
+    cited_lines,
+    cited_names,
+    code_spans,
     local_name,
     mentions,
     recheck,
     resolve,
 )
+from server.code.domain.anchor_state import fingerprint
 
 
 def _d(path: str, qn: str, body: str = "", line: int = 1) -> Definition:
@@ -174,6 +178,32 @@ def test_recheck_follows_a_rename_the_caller_found_by_shape() -> None:
     )
 
 
+def test_recheck_follows_a_rename_the_caller_found_in_another_file() -> None:
+    link = Link(
+        path="src/a.py", qualified_name="src.a.fetch_rows", body_hash="h1", checked_hash="h1"
+    )
+    there = _d("src/b.py", "src.b.load_rows", "h2", line=7)
+    kept = [_d("src/a.py", "src.a.other", "h9")]
+    # its own file kept, or deleted with it
+    for path_now, here in (("src/a.py", kept), ("", [])):
+        after = recheck(link, path_now=path_now, here=here, renamed=there, head="c2")
+        assert (after.path, after.qualified_name, after.state) == (
+            "src/b.py",
+            "src.b.load_rows",
+            "moved",
+        )
+        assert (after.body_hash, after.start_line, after.checked_path) == ("h2", 7, "")
+    # it left its class on the way: changed whatever its text, its baseline kept
+    carried = recheck(link, path_now="src/a.py", here=kept, renamed=there, carried=True, head="c2")
+    assert (carried.path, carried.state, carried.body_hash, carried.changed_since) == (
+        "src/b.py",
+        "changed",
+        "h1",
+        "c2",
+    )
+    assert carried.carried
+
+
 def test_a_fingerprint_covers_every_overload_in_order_and_every_character() -> None:
     assert fingerprint(["a", "b"]) != fingerprint(["a", "c"]) != fingerprint(["b", "a"])
     inside = "def f(x):\n    if x:\n        return 1\n        return 2"
@@ -224,6 +254,118 @@ def test_recheck_of_a_file_link() -> None:
     assert recheck(link, path_now="docs/b.md", head="c2").path == "docs/b.md"
     assert recheck(link, path_now="", head="c2").state == "missing"
     assert recheck(link, path_now="docs/a.md", head="c2").state == "fresh"
+
+
+def test_a_file_link_follows_the_lines_its_memory_cites() -> None:
+    names = cited_names(mentions("Dates go through `http_date`; `Reader.get` is unused."))
+    assert names == ["http_date"]  # `get` is a word of any file
+    then = [
+        "from werkzeug.http import http_date",
+        "",
+        "def _default(o):",
+        "    if isinstance(o, date):",
+        "        return http_date(o)",
+        "    return str(o)",
+    ]
+    assert cited_lines(then, names) == [then[0], "return http_date(o)"]
+    written = cited_fingerprint(then, names)
+    link = Link(path="src/p.py", body_hash=written, checked_hash=written)
+
+    # another line edited, the cited ones shifted and indented again: as it was
+    shifted = [
+        then[0],
+        "import uuid",
+        *then[1:4],
+        "            return http_date(o)",
+        "    return 0",
+    ]
+    as_it_was = cited_fingerprint(shifted, names)
+    assert recheck(link, path_now="src/p.py", cited=as_it_was, head="c2") == link
+    assert recheck(link, path_now="lib/p.py", cited=as_it_was, head="c2").state == "moved"
+
+    edited = [line.replace("http_date(o)", "http_date(o).lower()") for line in then]
+    changed = recheck(link, path_now="src/p.py", cited=cited_fingerprint(edited, names), head="c3")
+    assert (changed.state, changed.changed_since, changed.body_hash) == ("changed", "c3", written)
+    # edited again it is still changed since c3, and so it reads once every cited line went
+    assert recheck(changed, path_now="src/p.py", cited="h4", head="c4").changed_since == "c3"
+    assert recheck(link, path_now="src/p.py", cited="", head="c4").state == "changed"
+    back = recheck(changed, path_now="src/p.py", cited=written, head="c5")
+    assert (back.state, back.changed_since) == ("fresh", "")
+
+
+def test_a_file_link_written_against_no_cited_line_takes_the_first_it_finds() -> None:
+    # a rule about the file as a whole cites nothing: no edit to the file changes it
+    rule = "Changelog entries go in CHANGES.rst only for user-visible changes."
+    assert cited_names(mentions(rule)) == []
+    assert cited_fingerprint(["Version 3.1.0", "-   one entry"], []) == ""
+    link = Link(path="CHANGES.rst")
+    assert recheck(link, path_now="CHANGES.rst", cited="", head="c2") == link
+    # a name the file did not hold yet: the lines that bring it are its baseline
+    found = recheck(link, path_now="CHANGES.rst", cited="h1", head="c2")
+    assert (found.state, found.body_hash, found.checked_hash) == ("fresh", "h1", "h1")
+    assert recheck(found, path_now="CHANGES.rst", cited="h2", head="c3").state == "changed"
+    # written against the lines of one name: those that bring a second one change it
+    names = ["http_date", "dump_delta"]
+    then = ["from http import http_date", "def dump(o):", "    return http_date(o)"]
+    written = cited_fingerprint(then, names)
+    one = Link(path="d.py", body_hash=written, checked_hash=written)
+    both = cited_fingerprint([*then, "register(dump_delta)"], names)
+    brought = recheck(one, path_now="d.py", cited=both, head="c2")
+    assert (brought.state, brought.changed_since, brought.body_hash) == ("changed", "c2", written)
+
+
+def test_a_file_link_leaves_out_a_name_on_many_lines_of_its_file() -> None:
+    names = cited_names(mentions("Handlers here must never return `None`; see `MAX_ROWS`."))
+    assert names == ["None", "MAX_ROWS"]
+    handler = ["def {0}(req, key=None):", "    if key is None:", "        return None"]
+    then = [line.format(name) for name in ("get", "put", "drop") for line in handler]
+    then.append("LIMIT = min(n, MAX_ROWS)")
+    assert cited_lines(then, ["None"]) == []  # on nine lines: a word of this file
+    assert cited_lines(then, names) == [then[-1]]
+    written = cited_fingerprint(then, names)
+    link = Link(path="handlers.py", body_hash=written, checked_hash=written)
+    edited = [line.replace("key=None", "key=None, force=None") for line in then]
+    as_it_was = cited_fingerprint(edited, names)
+    assert recheck(link, path_now="handlers.py", cited=as_it_was, head="c2") == link
+    # on eight lines or fewer it is cited: an edit to one of them changes the link
+    few = then[3:]
+    assert len(cited_lines(few, ["None"])) == 6
+    cited = Link(path="handlers.py", body_hash=cited_fingerprint(few, ["None"]))
+    less = cited_fingerprint(few[1:], ["None"])
+    assert recheck(cited, path_now="handlers.py", cited=less, head="c2").state == "changed"
+
+
+def test_a_name_that_crosses_eight_lines_changes_the_lines_a_file_link_follows() -> None:
+    names = ["MAX_ROWS", "handler"]
+    then = ["LIMIT = min(1, MAX_ROWS)", *(f"    return handler(req, {i})" for i in range(9))]
+    assert cited_lines(then, names) == [then[0]]  # `handler` is on nine lines
+    written = cited_fingerprint(then, names)
+    link = Link(path="h.py", body_hash=written, checked_hash=written)
+    # one of the nine goes: the name is followed on its eight lines, no cited line edited
+    assert len(cited_lines(then[:-1], names)) == 9
+    eight = cited_fingerprint(then[:-1], names)
+    assert recheck(link, path_now="h.py", cited=eight, head="c2").state == "changed"
+    # a ninth line takes all of them out again
+    followed = Link(path="h.py", body_hash=eight, checked_hash=eight)
+    assert recheck(followed, path_now="h.py", cited=written, head="c3").state == "changed"
+
+
+def test_the_rules_of_cited_lines_are_under_the_fingerprint_version() -> None:
+    text = "Dates go through `http_date`; `Reader.get` and max_rows never return `None`."
+    lines = [
+        "from werkzeug.http import http_date, http_date_utc",
+        "MAX = max_rows   or 5",
+        *(f"def h{i}(key=None): return get(key)" for i in range(9)),
+        "\treturn  http_date(o)",
+    ]
+    assert (
+        cited_fingerprint(lines, cited_names(mentions(text)))
+        == "bff22e1a1f44b6b0c9625678baf0bcfc5269cbca0f510f7b560060857029acf9"
+    ), (
+        "the names a memory cites or the lines that hold them changed: stored file links "
+        "are hashed under the old rules, so bump `_RULES` in "
+        "server/code/domain/declaration.py and they are re-hashed"
+    )
 
 
 def test_a_rename_keeps_an_earlier_change_and_rebaselines_only_a_current_link() -> None:
@@ -384,3 +526,83 @@ def test_a_go_package_renamed_in_place_keeps_the_link() -> None:
     here = [_d("pkg/x.go", "pkg.rows::B::Read", "h2")]
     after = recheck(link, path_now="pkg/x.go", here=here, head="c2")
     assert (after.state, after.qualified_name) == ("changed", "pkg.rows::B::Read")
+
+
+def _spans(text: str) -> list[str]:
+    """Each name `text` writes as code, as the text spells it there."""
+    return [text[s.start - len(s.receiver) : s.end] for s in code_spans(text)[0]]
+
+
+def test_code_spans_are_the_names_written_as_code_where_they_are() -> None:
+    text = "`Reader.get` calls ns::load_rows, then cfg.read_rows() and flush_all(); `load()` too"
+    spans, quoted = code_spans(text)
+    assert [(s.name, text[s.start : s.end]) for s in spans] == [
+        ("Reader.get", "Reader.get"),
+        ("ns::load_rows", "ns::load_rows"),
+        ("cfg.read_rows", "cfg.read_rows"),
+        ("flush_all", "flush_all"),
+        ("load", "load"),
+    ]
+    assert quoted == []
+
+
+def test_a_word_of_the_prose_is_no_code_span() -> None:
+    # `mentions` reads these inside a memory's files; a rewrite may not
+    assert _spans("read_rows retries and fetchRows does not; Reader.get is hot") == []
+
+
+def test_a_receiver_is_kept_apart_from_the_name_it_precedes() -> None:
+    text = "`self.read_rows` and this.fetchRows() leak"
+    spans, _ = code_spans(text)
+    assert [(s.receiver, s.name) for s in spans] == [("self.", "read_rows"), ("this.", "fetchRows")]
+    assert [text[s.start : s.end] for s in spans] == ["read_rows", "fetchRows"]
+
+
+def test_quoted_code_names_nothing() -> None:
+    fenced = "run:\n```python\nload_rows()\n```\nthen `load_rows`"
+    spans, quoted = code_spans(fenced)
+    assert [s.name for s in spans] == ["load_rows"] and fenced[spans[0].start :].startswith("load")
+    assert [fenced[a:b] for a, b in quoted] == ["```python\nload_rows()\n```"]
+    for text, held in (
+        ("see https://example.org/api/load_rows() for it", "https://example.org/api/load_rows()"),
+        ('the "ns::load_rows" key', '"ns::load_rows"'),
+        ("the 'load_rows()' key", "'load_rows()'"),
+        ("`rows = load_rows(conn)`", "`rows = load_rows(conn)`"),
+        ("`python tools/load_rows.py`", "`python tools/load_rows.py`"),
+    ):
+        spans, quoted = code_spans(text)
+        assert spans == [] and [text[a:b] for a, b in quoted] == [held], text
+    # an unclosed fence quotes the rest; an apostrophe inside a word opens no quote
+    assert code_spans("```\nload_rows()")[0] == []
+    assert _spans("it doesn't call `load_rows` when the reader isn't ready") == ["load_rows"]
+
+
+def test_a_name_joined_to_something_longer_is_no_code_span() -> None:
+    for text in (
+        "pass --load_rows() to enable",
+        "pass --mode=`fast_path`",
+        "in tools/load_rows() and tools/`load_rows`",
+        "ping @`load_rows` or #load_rows()",
+        "the file `load_rows`.py and ns::load_rows.py",
+        "x.ns::load_rows and ns::load_rows.attr()",
+        "`load_rows`'s rows",
+    ):
+        assert _spans(text) == [], text
+    # the end of a sentence joins nothing
+    assert _spans("It calls `load_rows`. Then ns::load_rows.") == ["load_rows", "ns::load_rows"]
+
+
+def test_a_pytest_node_id_holds_no_code_span() -> None:
+    assert _spans("tests/test_io.py::TestReader::test_read fails; `TestReader` is slow") == [
+        "TestReader"
+    ]
+
+
+def test_reading_code_spans_is_linear_in_the_text() -> None:
+    from tests.unit.step_count import steps
+
+    def work(n: int) -> int:
+        text = " ".join(f'`read_rows_{i}` a.b.c{i}-d "q{i}" A::b{i} http://x/{i}' for i in range(n))
+        return steps(lambda: code_spans(text))
+
+    assert work(1600) / work(200) < 12

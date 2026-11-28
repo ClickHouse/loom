@@ -174,11 +174,11 @@ class CodeIndexStatusOutput(BaseModel):
     # unreadable. 0 everywhere == converged.
     clone_head: str = ""
     # When the ingest pass last fetched this entry's mirror (the `clone_head`
-    # row's updated_at, ISO-8601 UTC; '' unknown) and whether that is older
-    # than `code_fetch_stale_after_seconds`. The lags below are counted
-    # against the local mirror and read 0 for as long as it stalls.
+    # row's updated_at, ISO-8601 UTC; '' with no fetch on record). The lags below
+    # are counted against the local mirror and read 0 for as long as it stalls.
     clone_fetched_at: str = ""
-    # True when `clone_fetched_at` is older than `code_fetch_stale_after_seconds`.
+    # True when the last fetch, or with none on record the `git_head` write, is
+    # older than `code_fetch_stale_after_seconds`.
     fetch_overdue: bool = False
     # First-parent commits between `git_head` and `clone_head`; -1 when either is unknown.
     fast_tier_lag: int = -1
@@ -232,8 +232,8 @@ class CodeIndexStatusOutput(BaseModel):
     unit_risk_rows: int = 0
     # The newest risk-table stamp (ISO-8601 UTC); '' when no row is written.
     unit_risk_at: str = ""
-    # Live chunks, those carrying a vector, and their ratio (0..1; reference fixtures
-    # unembedded by design are outside the denominator). Below
+    # Live chunks, those carrying a vector, and their ratio (0..1; rows unembedded by design,
+    # reference fixtures and `embed_exclude` paths, are outside the denominator). Below
     # LOOM_CODE_READY_EMBED_COVERAGE the search is lexical-only and code.search says so.
     chunks_total: int = 0
     # Live chunks that carry an embedding vector.

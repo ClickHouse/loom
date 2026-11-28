@@ -1,0 +1,155 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import { InputElement, InputWrapper } from "@clickhouse/click-ui/InputWrapper";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Table } from "@clickhouse/click-ui/Table";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
+import AdoptionState from "./AdoptionState.astro";
+
+interface DomainActivity {
+  active_accounts: number | null;
+  successful_requests: number;
+  active_installations: number;
+  serving_processes?: number | null;
+  day: string;
+  loom_version: string | null;
+  first_seen: string | null;
+  last_seen: string | null;
+}
+
+interface Props {
+  names: string[] | null;
+  ranked: boolean;
+  metrics?: Record<string, DomainActivity>;
+  days: number;
+  fallback: boolean;
+  path: string;
+  state: Record<string, string | number>;
+}
+
+const { names, ranked, metrics = {}, days, fallback, path, state } = Astro.props;
+const pageSize = 12;
+const query = String(state.domain_q ?? "");
+const byName = state.domain_sort === "name";
+const searched = query.toLowerCase();
+const matching = (names ?? []).filter((domain) => domain.toLowerCase().includes(searched));
+if (byName) matching.sort((left, right) => left.localeCompare(right, "en"));
+const lastPage = Math.max(1, Math.ceil(matching.length / pageSize));
+const page = Math.min(lastPage, Math.max(1, Number(state.domain_page) || 1));
+const offset = (page - 1) * pageSize;
+const displayed = matching.slice(offset, offset + pageSize);
+const number = new Intl.NumberFormat("en-US");
+const date = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+const total = names?.length ?? 0;
+const withUsage = Object.keys(metrics).length > 0;
+const withProcesses = Object.values(metrics).some(({ serving_processes }) => Number.isFinite(serving_processes));
+const formatted = (value?: number | null) => (value == null ? "—" : number.format(value));
+const day = (value?: string | null) => (value ? date.format(Date.parse(value)) : "—");
+const anchor = "#reported-contact-domains";
+const action = path + anchor;
+const headers = [
+  {
+    label: "Domain",
+    scope: "col" as const,
+    overflowMode: "wrap" as const,
+    width: "18%",
+    "aria-sort": byName || !ranked ? ("ascending" as const) : undefined,
+  },
+  { label: "Requests", scope: "col" as const, width: "124px" },
+  { label: "Active users", scope: "col" as const },
+  { label: "Active installations", scope: "col" as const },
+  ...(withProcesses ? [{ label: "Active instances", scope: "col" as const }] : []),
+  { label: "Loom version", scope: "col" as const },
+  { label: "First seen", scope: "col" as const },
+  { label: "Last active", scope: "col" as const },
+];
+---
+
+<section class="directory" id="reported-contact-domains" aria-labelledby="domains-title">
+  <div class="directory-heading">
+    <Title type="h2" size="lg" id="domains-title">Domains using Loom</Title>
+    {names !== null && <Text size="sm" color="muted">{days}-day directory{fallback && " · latest available"}</Text>}
+  </div>
+  {names === null ? (
+    <Text size="sm" color="muted">Domain reporting is unavailable for this period.</Text>
+  ) : total === 0 ? (
+    <Text size="sm" color="muted">No domains reported activity in this period.</Text>
+  ) : (
+    <Panel className="directory-panel" orientation="vertical" alignItems="start" padding="md" gap="md" hasBorder fillWidth>
+      <div class="directory-controls">
+        <form class="directory-search" method="post" action={action} role="search" aria-label="Reported domains">
+          <AdoptionState state={state} omit={["domain_q", "domain_page"]} />
+          <InputWrapper id="adoption-domain-search" label="Find a domain" orientation="vertical">
+            <InputElement id="adoption-domain-search" name="domain_q" type="search" defaultValue={query} maxLength={253} spellCheck={false} autoComplete="off" autoCapitalize="off" enterKeyHint="search" />
+          </InputWrapper>
+          <Button type="secondary" htmlType="submit" label="Search" />
+        </form>
+        {ranked && total > 1 && <form method="post" action={action} class="directory-order" aria-label="Domain sort order">
+          <AdoptionState state={state} omit={["domain_sort", "domain_page"]} />
+          <Button {...{ name: "domain_sort", value: "usage" }} type={byName ? "empty" : "secondary"} htmlType="submit" aria-pressed={!byName} label="By activity" />
+          <Button {...{ name: "domain_sort", value: "name" }} type={byName ? "secondary" : "empty"} htmlType="submit" aria-pressed={byName} label="A–Z" />
+        </form>}
+      </div>
+      {displayed.length > 0 ? (
+        <Table
+          aria-label="Domain usage"
+          mobileLayout="scroll"
+          size="sm"
+          headers={headers}
+          rows={displayed.map((domain) => {
+            const row = Object.hasOwn(metrics, domain) ? metrics[domain] : undefined;
+            return {
+              id: domain,
+              items: [
+                { label: domain, dir: "ltr" },
+                { label: formatted(row?.successful_requests), title: formatted(row?.successful_requests) },
+                { label: formatted(row?.active_accounts), ...(row?.day && { title: day(row.day) + " UTC" }) },
+                { label: formatted(row?.active_installations) },
+                ...(withProcesses ? [{ label: formatted(row?.serving_processes), ...(row?.day && { title: day(row.day) + " UTC" }) }] : []),
+                { label: row?.loom_version ?? "—" },
+                { label: day(row?.first_seen) },
+                { label: day(row?.last_seen) },
+              ],
+            };
+          })}
+        />
+      ) : <Text size="sm" color="muted">No domains match your search.</Text>}
+      <div class="directory-pagination">
+        {displayed.length > 0 && <Text size="sm" color="muted">{number.format(offset + 1)}–{number.format(offset + displayed.length)} of {number.format(matching.length)} domains</Text>}
+        {lastPage > 1 && <form method="post" action={action} aria-label="Domain pages" class="page-links">
+          <AdoptionState state={state} omit={["domain_page"]} />
+          {page > 1 && <Button {...{ name: "domain_page", value: String(page - 1) }} htmlType="submit" type="secondary" iconLeft="chevron-left" label="Previous" />}
+          {page < lastPage && <Button {...{ name: "domain_page", value: String(page + 1) }} htmlType="submit" type="secondary" iconRight="chevron-right" label="Next" />}
+        </form>}
+      </div>
+      {withUsage && <Text size="sm" color="muted">Active installations recorded a successful request. Domain activity uses completed daily reports. User and instance counts use the latest measured UTC day.</Text>}
+    </Panel>
+  )}
+</section>
+
+<style>
+  .directory { min-inline-size: 0; }
+  .directory-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin-block-end: 0.85rem; }
+  .directory :global(.directory-panel) { min-inline-size: 0; }
+  .directory-controls, .directory-search, .directory-order, .directory-pagination, .page-links {
+    display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem 0.75rem;
+  }
+  .directory-controls, .directory-pagination { inline-size: 100%; justify-content: space-between; }
+  .directory-search { flex: 0 1 28rem; min-inline-size: 0; flex-wrap: nowrap; }
+  .directory-search > :first-child { min-inline-size: 0; flex: 1; }
+  .directory-search :global(input) { min-inline-size: 0; }
+  .directory-order { gap: 0.25rem; }
+  .directory-pagination { align-items: center; }
+  .directory :global(table) { min-inline-size: 52rem; }
+  .directory :global(th:first-child), .directory :global(td:first-child) {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 1;
+    min-inline-size: 9.5rem;
+    background: var(--surface);
+    overflow-wrap: anywhere;
+    box-shadow: 1px 0 var(--line);
+  }
+  .directory :global(td) { font-variant-numeric: tabular-nums; }
+</style>

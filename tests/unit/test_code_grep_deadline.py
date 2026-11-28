@@ -25,6 +25,7 @@ import pytest
 from server.code.app.ttl_cache import clear_all
 from server.code.domain import deadline as code_deadline
 from server.code.domain.index import grep_sql
+from server.code.domain.search_scope import SearchScope
 from server.settings import settings
 from tests.unit.clock_fake import ManualClock
 
@@ -338,10 +339,8 @@ async def test_cursor_keeps_scan_coverage_and_recovers_from_page_deadline(
     monkeypatch.setattr(grep_source, "fill_verified_ranges", fill_second_page)
     monkeypatch.setattr(search_cursor, "enabled", lambda: True)
     monkeypatch.setattr(search_cursor, "put_pool", lambda *args, **_: cursor_pool.update(args[3]))
-    monkeypatch.setattr(search_cursor, "encode", lambda **_: "cursor")
-    monkeypatch.setattr(search_cursor, "decode", lambda *_, **__: {"o": 1, "r": "pool"})
-    monkeypatch.setattr(search_cursor, "expired", lambda _: False)
 
+    scope = SearchScope()
     first = await grep._grep_lines(
         _Repo(),
         "org",
@@ -349,7 +348,7 @@ async def test_cursor_keeps_scan_coverage_and_recovers_from_page_deadline(
         deadline,
         route="grep",
         started=9,
-        scope=None,
+        scope=scope,
         line_re=None,
         budget=code_deadline.Budget(200, started=9),
     )
@@ -365,6 +364,7 @@ async def test_cursor_keeps_scan_coverage_and_recovers_from_page_deadline(
         _Repo(),
         "grep",
         clock.monotonic(),
+        scope=scope,
     )
     assert (
         cursor_pool["partial"] is scan_partial

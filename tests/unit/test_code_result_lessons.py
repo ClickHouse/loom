@@ -357,6 +357,73 @@ async def test_a_lesson_whose_code_changed_names_the_commit(
     assert "changed_since" not in rows[1]
 
 
+def _moved_link(**over: Any) -> dict[str, Any]:
+    """A link row written against `a::fetch_rows`, now `a::load_rows` in a.py."""
+    from server.memory.store.code_links import LINK_COLS
+
+    was = {"path": "a.py", "name": "a::fetch_rows"}
+    row = {
+        "code_namespace": "code-repo",
+        "path": "a.py",
+        "qualified_name": "a::load_rows",
+        "start_line": 12,
+        "end_line": 40,
+        "state": "moved",
+        "complete": 1,
+        "checked_commit": "a" * 40,
+        "anchored_path": was["path"],
+        "anchored_name": was["name"],
+        "former": [was],
+    }
+    return LINK_COLS | row | over
+
+
+_MOVED = {
+    "code_namespace": "code-repo",
+    "path": "a.py",
+    "symbol": "a::load_rows",
+    "start_line": 12,
+    "end_line": 40,
+    "state": "moved",
+    "was_path": "a.py",
+    "was_symbol": "a::fetch_rows",
+}
+
+
+@pytest.mark.asyncio
+async def test_a_lesson_whose_code_moved_names_where_it_is_now(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app.code_link_reads import relocated
+
+    listed = [link.model_dump() for link in relocated([_moved_link()])]
+    moved = dict(_hit("rule/moved", state="moved"), code_moved=listed)
+    fresh = dict(_hit("rule/fresh", state="fresh"), code_moved=[])  # as the listing sends
+    rows = await _lessons(monkeypatch, {"a.py": [moved, fresh]}, ["a.py"])
+    # a link's non-empty fields: the row is served within a token cap
+    assert rows[0]["code_moved"] == [_MOVED]
+    assert "code_moved" not in rows[1]
+
+
+def test_a_lesson_for_a_source_window_names_only_the_moved_code_in_it() -> None:
+    inside = _moved_link()
+    outside = _moved_link(qualified_name="a::other", start_line=200, end_line=220)
+    listed = [
+        {"code_namespace": "code-repo", "path": "a.py", "symbol": q, "was_path": "a.py"}
+        for q in ("a::load_rows", "a::other")
+    ]
+    hit = dict(_hit("rule/moved", state="moved"), code_moved=listed)
+    hit["source_links"] = [inside, outside]
+    spans = path_lessons.SourceSpans({}, {"a.py": {"a" * 40}}, {"a.py": [(10, 20)]})
+    lesson = path_lessons._source_lesson(hit, "a.py", spans)
+    assert lesson is not None and lesson["code_moved"] == [_MOVED]
+    # a pinned row whose links miss the window is served unresolved, naming no place
+    pinned = dict(hit, pinned=True, source_links=[outside])
+    lesson = path_lessons._source_lesson(pinned, "a.py", spans)
+    assert lesson is not None and lesson["code_state"] == "unresolved"
+    assert "code_moved" not in lesson
+
+
 @pytest.mark.asyncio
 async def test_another_file_of_the_same_name_brings_no_row(
     monkeypatch: pytest.MonkeyPatch,

@@ -46,8 +46,8 @@ toolchain.
 application's dependencies. The crate name is `clickhouse-loom`; Rust imports it
 as `clickhouse_loom`.
 
-Runtime deps: reqwest with Rustls, serde, serde_json, Tokio, rand, uuid, httpdate,
-log and derive_more.
+The repository build uses reqwest with Rustls and HTTP/2. It also depends on
+serde, serde_json, Tokio, rand, uuid, httpdate, log and derive_more.
 
 ## Use
 
@@ -266,23 +266,52 @@ when recall credit was not disclosed. An omitted risk label is empty in
 `SearchHit.governed` and `SearchResponse.term_leg`; `retrieval_risk` describes the
 other hits.
 
+The typed error methods and the retry behavior below apply to the SDK installed
+from this checkout. The published `0.1.1` crate exposes the raw `ApiError`
+fields, including `category` and `retryable`.
+
 ```rust
 use clickhouse_loom::Error;
 
 match bot.get("deploy_window").await {
     Err(Error::Api(error)) => {
-        eprintln!("{} {} {:?} {:?}", error.status, error.code, error.category, error.retryable);
+        eprintln!("{} {} {:?} {}", error.status, error.code, error.kind(), error.category());
     }
     Err(error) => eprintln!("{error}"),
     Ok(memory) => println!("found={}", memory.found),
 }
 ```
 
-API errors preserve the server's code, message, optional category and retryable
-flag, retry hints, request ID and raw detail. Unknown error codes and categories
-remain strings. An error response without a JSON body still carries the HTTP
-status. `Error::Transport` reports HTTP transport failures; `Error::Protocol`
-reports an invalid successful response.
+API errors preserve the server's code, message, optional category and
+retryable flag, retry hints, request ID and raw detail. Unknown error codes and
+categories remain strings in those fields. An error response without a JSON
+body still carries the HTTP status. `Error::Transport` reports HTTP transport
+failures; `Error::Protocol` reports an invalid successful response.
+
+`ApiError::kind` is the typed class of an API error. A known code picks it;
+otherwise the HTTP status does: 400 and 422 are `Validation`, 401 and 403
+`Auth`, 404 `NotFound`, and 409 and 412 `PreconditionFailed`. HTTP 429 is
+always `RateLimited`. HTTP 5xx is `BackendUnavailable` unless the code is
+`IDEMPOTENT_IN_PROGRESS`. If neither the code nor the status supplies a kind,
+`kind()` returns `Other`; inspect `code` for more detail.
+
+`Error::category` and `Error::retryable` give the class in effect: the category
+and flag the server declared, else the SDK's own class. By status alone, 401
+and 403 are `Auth`; 408 and 429 are `Capacity` and retryable; 502, 503 and 504
+are `Dependency` and retryable; any other 5xx is `Internal` and any other
+status `Input`, neither retryable. A code the SDK never retries, such as
+`ANALYSIS_UNAVAILABLE` or `PUBLICATION_PENDING`, keeps its own category and is
+never retryable. A 5xx on an operation that is not declared idempotent is not
+retryable when its body names no flag, since the call may have written;
+`AUTH_UNAVAILABLE` shows that nothing ran. A transport failure is
+`Dependency`: retryable when the server was never reached, otherwise not, since
+the call may have run. An invalid response is `Internal`.
+
+A `PreconditionFailed` can carry the live row's hash in `current_sha256()`.
+Use it to check which revision the server rejected the request against. For a definition's approval,
+show the current text again and never resend the hash unseen. A `WrongCell`
+answer names the `org` and the `cell` to call instead; `cell` is empty when the
+server does not know it.
 
 ## Per-call options and metadata
 
@@ -338,13 +367,18 @@ metadata.
 
 ## Retries and logging
 
-Operation policies come from the full server registry. Retries after dispatch
-require declared idempotence, including HTTP status retries, incomplete responses
-and 429 pacing. `RetryTimeouts::Always` does not enable nonidempotent operations.
+Operation policies come from the full server registry. A 429 is paced on
+every operation: the server answers it before running anything. Other retries
+after dispatch require declared idempotence, for HTTP status retries and
+incomplete responses, unless the answer shows nothing ran. HTTP 408 and
+`AUTH_UNAVAILABLE` are retried on any operation. `RetryTimeouts::Always` does
+not enable nonidempotent operations.
 
 Calls do not follow redirects. Retry and pacing defaults are:
 
 - Up to 3 attempts on connection failures, HTTP 408 and HTTP 500–599.
+  For a nonidempotent operation, only HTTP 408 and `AUTH_UNAVAILABLE`
+  qualify for status retries under this budget.
   Configuration errors and the SDK's excluded error codes stop retries;
   `retryable=false` alone does not stop a status retry.
 - Exponential backoff starts at 100 ms, doubles to a 5 second ceiling, and uses
@@ -354,9 +388,10 @@ Calls do not follow redirects. Retry and pacing defaults are:
 - Declared idempotent writes generate one UUID idempotency key per call and reuse it
   across retries and pacing. Timeouts and incomplete responses retry these
   writes by default. `get` and `search` do not retry those failures by default.
-- Pacing is enabled separately from retries. A 429 waits at most 5 seconds per
-  round, with a 15 second total sleep budget per call. Missing, invalid or
-  over-cap hints use 1 second; a zero hint returns the error immediately.
+- Pacing is enabled separately from retries. On a 429, the client waits for the
+  server's hint if it fits the remaining sleep budget (15 seconds per call by
+  default). Missing or invalid hints use 1 second. A zero hint or a wait
+  beyond the remaining budget returns the 429 without resending.
   Each pacing round starts a fresh retry budget. Recorded `X-RateLimit-*`
   headers can also delay a subsequent call to the same operation.
 
@@ -391,16 +426,18 @@ To disable both automatic retries and 429 waiting, use
 The SDK logs through the `log` facade under the `clickhouse_loom` target:
 completed calls at INFO, retries and rate-limit waits at WARN, final failures at
 ERROR and attempts at DEBUG. Your application's logging configuration routes
-these records. Records contain the operation, request ID, attempts and timing.
-Tokens, request bodies, server addresses and server error text are not logged.
-Every request carries SDK identity headers, `X-Request-Id` and a cumulative
-`X-Loom-Retry-Count` starting at 0.
+these records. Records contain the operation or route, request ID, attempts
+and timing. Tokens, request bodies, server addresses and server error text are
+not logged. Every operation call carries SDK identity headers, `X-Request-Id`
+and a cumulative `X-Loom-Retry-Count` starting at 0.
 
 A final transport failure may follow a committed write. An independent call
 generates a different idempotency key; read the result before submitting it again.
 `Client` is `Clone`, `Send` and `Sync`. Clones share the HTTP connection pool
-and rate state and can make concurrent calls. Dropping a call future or applying
-an external timeout stops requests, retry sleeps and pacing sleeps in that future.
+and rate state and can make concurrent calls. When built from this repository,
+the SDK negotiates HTTP/2 over ALPN for `https` connections and falls back to
+HTTP/1.1. Plain `http` uses HTTP/1.1. Dropping a call future or applying an
+external timeout stops requests, retry sleeps and pacing sleeps in that future.
 There are no detached retry tasks. Cancellation does not roll back a write or
 guarantee the server stops processing it.
 
@@ -436,9 +473,56 @@ omitted target fields to the client identity.
 `memory.recall` and `memory.brief` default only their required agent; optional
 filters use server defaults. `code.grep` omits `include_body` unless supplied,
 so the server chooses its default from `mode`. Unknown operations receive
-bound org and namespace only and retry connection failures before dispatch.
-They do not retry HTTP errors, timeouts, incomplete responses or 429 responses.
+bound org and namespace only. They retry connection failures before dispatch
+and an answer that shows nothing ran (HTTP 408, `AUTH_UNAVAILABLE`); a 429 is
+paced. They do not retry other HTTP errors, timeouts or incomplete responses.
 The server validates fields and authorizes every operation.
+
+## Routes outside the op registry
+
+The SDK built from this repository provides `request` and `request_json` for
+routes outside the registry, such as `/v1/whoami`,
+`/v1/me/service_accounts.create` and `/v1/knowledge.upload`:
+
+```rust
+use clickhouse_loom::RouteRequest;
+use serde_json::{json, Value};
+
+let me: Value = bot.request_json(RouteRequest::get("/v1/whoami")).await?;
+let chosen: Value = bot
+    .request_json(RouteRequest::post("/v1/me/set-default-namespace").json(&json!({"namespace": "eng"})))
+    .await?;
+let stored: Value = bot
+    .request_json(
+        RouteRequest::post("/v1/knowledge.upload")
+            .query("org", "dev")
+            .query("namespace", "local")
+            .query("filename", "guide.pdf")
+            .query("content_type", "application/pdf")
+            .bytes("application/pdf", std::fs::read("guide.pdf")?),
+    )
+    .await?;
+```
+
+`RouteRequest::new` takes any `Method`; `get`, `post` and `delete` name the
+common ones. The path starts with `/` and is resolved on the server the client
+is bound to. `json` sends a serializable body and `bytes` sends raw bytes with
+their media type as the `Content-Type` header; each replaces the body set
+before it. The body and query go out as given: no bound identity is added, and
+a route takes the org, namespace and other fields it needs from them.
+
+`request` returns the whole response of a status below 400 with its status and
+headers; a redirect is returned, not followed. `request_json` decodes the body
+as the requested type; an empty body decodes as an empty object and an invalid
+one is `Error::Protocol`. A status of 400 or higher is `Error::Api`. The SDK
+resends only on a 429, after the server's hint and within the client's pacing
+budget. The HTTP transport does not retry requests. A refused HTTP/2 stream
+returns `Error::Transport`.
+
+`request_with_options` and `request_json_with_options` accept `CallOptions`
+and return `CallResult` or `CallFailure`. Only `timeout` and `request_id`
+apply; a write key is refused. The blocking client provides the same four
+methods without `.await`.
 
 ## Capability probe
 

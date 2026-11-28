@@ -35,6 +35,7 @@ from server.code.app.spans import (
     with_stage_ms,
 )
 from server.code.domain import deadline as code_deadline
+from server.code.domain.search_scope import SearchScope
 from server.code.domain.units import remaining_token_budget
 from server.code.store.index import CodeRepo
 from server.core.ch import caller_shaped
@@ -87,11 +88,15 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         )
         return not_covered
 
+    scope = _scope_of(input)
+
     # A continuation is a point read of the pool an earlier call ranked: no thresholds, no
     # embedder, no legs. When the pool row is gone (not landed, expired) the page is
     # re-searched and says so.
     if input.cursor:
-        page, fallback, offset = await _serve_search_page(input, org, ns, repo, started)
+        page, fallback, offset = await _serve_search_page(
+            input, org, ns, repo, started, scope=scope
+        )
         if page is not None:
             return page
         return await _page_by_research(input, offset=offset, reason=fallback)
@@ -138,10 +143,6 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
     # The annotation's path reads start inside the search, on the ranked pool's head; the
     # served units are annotated from them below
     prefetch = code_risk.RiskPrefetch(repo, org, ns, top_k=input.top_k) if annotate else None
-
-    # Constrained search: validated once here; unset fields give the empty scope and the
-    # legs' statements are unchanged.
-    scope = _scope_of(input)
 
     # A repeated search is a point read: the key covers every field that shapes the result; a
     # hit replays the stored response with the current freshness block and the memo's own
@@ -230,6 +231,7 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         started=started,
         embedding_model=embedding_model,
         memo_key=memo_key if memo_on else None,
+        scope=scope,
     )
 
 
@@ -280,6 +282,7 @@ async def _finish_search(
     started: float,
     embedding_model: str,
     memo_key: str | None,
+    scope: SearchScope,
 ) -> CodeSearchOutput:
     """The trace row, the span, the cursor and the output of a searched answer; memoized
     under `memo_key` unless it is transient."""
@@ -330,6 +333,7 @@ async def _finish_search(
         run_id=trace_run_id,
         embedding_model=embedding_model,
         indexed_commit=str(as_of.get("commit") or ""),
+        scope=scope,
     )
     out = CodeSearchOutput(
         results=res.units,
@@ -501,6 +505,7 @@ def _issue_search_cursor(
     run_id: str,
     embedding_model: str,
     indexed_commit: str,
+    scope: SearchScope,
 ) -> str:
     """Store the ranked pool (fire-and-forget) and return the cursor for
     the page after the served one; "" when nothing remains, the search
@@ -513,6 +518,8 @@ def _issue_search_cursor(
     if not paging.enabled() or res.abstain or res.failure_reason or len(pool) <= served:
         return ""
     ph = _search_params_hash(input, embedding_model)
+    # Older replicas carry the opaque pool id through to the next cursor.
+    pool_id = f"{run_id}.{paging.search_scope_digest(scope)}"
     payload = paging.search_pool_payload(
         query=input.query,
         route=res.route,
@@ -532,18 +539,18 @@ def _issue_search_cursor(
     paging.put_pool(
         org,
         ns,
-        paging.pool_key("s", run_id),
+        paging.pool_key("s", pool_id),
         payload,
         indexed_commit=indexed_commit,
         route=res.route,
     )
     return paging.encode(
-        kind="s", run_id=run_id, offset=served, params=ph, indexed_commit=indexed_commit
+        kind="s", run_id=pool_id, offset=served, params=ph, indexed_commit=indexed_commit
     )
 
 
 async def _serve_search_page(
-    input: CodeSearchInput, org: str, ns: str, repo: CodeRepo, started: float
+    input: CodeSearchInput, org: str, ns: str, repo: CodeRepo, started: float, *, scope: SearchScope
 ) -> tuple[CodeSearchOutput | None, str, int]:
     """(page, "", offset) served from the pool row, or (None, reason, offset)
     when the row could not be read — the caller re-searches and discloses
@@ -560,11 +567,17 @@ async def _serve_search_page(
         fields = paging.decode(input.cursor, kind="s", params=ph)
     except paging.CursorError as e:
         raise ValidationError(f"invalid cursor: {e}") from e
+    pool_id = str(fields["r"])
+    saved_scope = pool_id.partition(".")[2]
+    if not saved_scope:
+        return None, "search_scope_unrecorded", 0
+    if saved_scope != paging.search_scope_digest(scope):
+        raise ValidationError("invalid cursor: it was issued with different search filters")
     offset = int(fields["o"])
     if paging.expired(fields):
         return None, "expired", offset
     with code_span("search.page_read"):
-        row = await _read_pool_settling(org, ns, paging.pool_key("s", str(fields["r"])), fields)
+        row = await _read_pool_settling(org, ns, paging.pool_key("s", pool_id), fields)
     if row is None:
         return None, "pool_not_found", offset
     payload = row["payload"]
@@ -603,7 +616,7 @@ async def _serve_search_page(
     if has_more:
         next_cursor = paging.encode(
             kind="s",
-            run_id=str(fields["r"]),
+            run_id=pool_id,
             offset=next_offset,
             params=ph,
             indexed_commit=row["indexed_commit"],
@@ -715,6 +728,9 @@ async def _page_by_research(
     out.tokens_returned += history_tokens
     out.route = f"{out.route}+page_fallback"
     out.as_of = paging.disclose(out.as_of, page_commit="", offset=offset, fallback=reason)
+    if reason == "search_scope_unrecorded":
+        restart = "Pagination restarted at the first page using the supplied search filters."
+        out.note = f"{out.note}\n{restart}" if out.note else restart
     set_code_span_attributes(page_offset=offset, page_fallback=reason)
     return out
 

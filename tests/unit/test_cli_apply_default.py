@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from server.cli import app
+from server.cli import app, dispatch
 from server.cli._apply import APPLY_HINT, add_apply_flags, dry_run_hint
 
 # (argv without the write switch) for every --apply-gated command
@@ -59,7 +59,7 @@ def test_dispatch_prints_the_hint_on_stderr(capsys: pytest.CaptureFixture[str]) 
     args = p.parse_args([])
     args.cmd = "demo-cmd"
     args.func = lambda a: print('{"ok": true}') or 0
-    assert app._dispatch(args) == 0
+    assert dispatch._dispatch(args) == 0
     out = capsys.readouterr()
     assert out.out == '{"ok": true}\n' and APPLY_HINT in out.err
 

@@ -10,19 +10,19 @@ const publicPagesFile = new URL("./public-pages.json", import.meta.url);
 const publicPages = new Map(Object.entries(JSON.parse(readFileSync(publicPagesFile, "utf8"))));
 const homeLocales = JSON.parse(readFileSync(new URL("./home-locales.json", import.meta.url), "utf8"));
 const productDates = JSON.parse(readFileSync(new URL(".blume-content/.product-dates.json", docs), "utf8"));
-const adoptionDestination = "/docs/adoption";
+const adoptionDestinations = new Set(["/docs/adoption", "/docs/adoption/open-source"]);
 const snapshotPath = "/api/oss-snapshot";
 const telemetryFunctions = [
-  ["/api/v1/adoption", "adoption-collector.mjs"],
-  [snapshotPath, "oss-snapshot.mjs"],
+  { path: "/api/v1/adoption", handler: "adoption-collector.mjs", modules: [] },
+  { path: snapshotPath, handler: "oss-snapshot.mjs", modules: ["oss-sources.mjs"] },
 ];
 
 if (!Array.isArray(config.routes)) throw new Error("Vercel build manifest has no routes.");
 const siteRoutes = [...publicPages].map(([path, destination]) => {
   const src = path === "/" ? "^/$" : `^${path}/?$`;
-  if (destination === adoptionDestination) {
+  if (adoptionDestinations.has(destination)) {
     // Vercel resolves the destination without matching another route.
-    const adoption = config.routes.find(({ src, dest }) => src === `^${adoptionDestination}$` && dest === "_render");
+    const adoption = config.routes.find(({ src, dest }) => src === `^${destination}$` && dest === "_render");
     if (!adoption || !existsSync(new URL(`functions/${adoption.dest}.func/`, output))) {
       throw new Error("Missing adoption render function.");
     }
@@ -33,10 +33,12 @@ const siteRoutes = [...publicPages].map(([path, destination]) => {
   return { src, dest: destination };
 });
 
-const telemetryRoutes = telemetryFunctions.map(([path, handler]) => {
+const telemetryRoutes = telemetryFunctions.map(({ path, handler, modules }) => {
   const directory = new URL(`functions${path}.func/`, output);
   mkdirSync(directory, { recursive: true });
-  copyFileSync(new URL(`lib/${handler}`, docs), new URL(handler, directory));
+  for (const module of [handler, ...modules]) {
+    copyFileSync(new URL(`lib/${module}`, docs), new URL(module, directory));
+  }
   const functionConfig = {
     runtime: "nodejs24.x",
     handler,

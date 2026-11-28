@@ -1,0 +1,120 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import BlumeSearch from "blume/components/layout/Search.astro";
+import { EN_UI, type UIStrings } from "blume/core/i18n-ui.ts";
+import type { Navigation } from "blume/core/types.ts";
+import DocsSearchMarkup from "./DocsSearchMarkup.astro";
+import { frameCopy } from "./site-frame-copy";
+import { siteLocales, type SiteLocale } from "./site-locales";
+
+interface Props {
+  assistantEnabled?: boolean;
+  navigation?: Navigation;
+  popularPages?: { icon?: string; label: string; route: string }[];
+  strings?: UIStrings["search"];
+  locale?: string;
+  version?: string | null;
+}
+
+const label = Astro.props.strings?.button ?? EN_UI.search.button;
+const language = Astro.currentLocale ?? Astro.props.locale ?? "en";
+const locale = Object.hasOwn(siteLocales, language) ? (language as SiteLocale) : "en";
+const product = frameCopy[locale].product;
+---
+
+<DocsSearchMarkup>
+  <BlumeSearch {...Astro.props} />
+  <Button
+    slot="trigger"
+    className="docs-search-trigger"
+    aria-haspopup="dialog"
+    aria-keyshortcuts="Meta+K Control+K"
+    aria-label={label}
+    data-blume-search-open=""
+    data-blume-tooltip={label}
+    data-label={label}
+    data-loom-docs-search-trigger=""
+    htmlType="button"
+    type="secondary"
+  >
+    <Icon name="search" size="sm" aria-hidden="true" />
+    <span class="docs-search-label">{label}</span>
+  </Button>
+</DocsSearchMarkup>
+
+<Link className="docs-product-link" href={siteLocales[locale].href} aria-label={`${product} · ClickHouse Loom`}>
+  {product}
+  <Icon className="docs-product-arrow" name="arrow-right" size="xs" aria-hidden="true" />
+</Link>
+
+<script>
+  document.addEventListener("click", ({ target }) => {
+    if (!(target instanceof Element)) return;
+    const search = target.closest<HTMLButtonElement>("[data-loom-docs-landing-search]");
+    if (!search) return;
+    const trigger = document.querySelector<HTMLButtonElement>("[data-loom-docs-search-trigger]");
+    const dialog = trigger?.closest("blume-search")?.querySelector<HTMLDialogElement>("[data-blume-search-dialog]");
+    if (!trigger || !dialog || dialog.open) return;
+    search.focus();
+    trigger.click();
+    if (dialog.open) {
+      dialog.addEventListener("close", () => {
+        if (search.isConnected) search.focus({ preventScroll: true });
+      }, { once: true });
+    }
+  });
+</script>
+
+<style is:global>
+  [data-blume-header] .docs-search-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.5rem;
+    min-inline-size: 10rem;
+    min-block-size: 2.75rem;
+    padding-inline: 0.75rem;
+    border-radius: var(--blume-radius);
+    color: var(--blume-muted-foreground);
+    background: var(--blume-muted);
+    font-weight: 500;
+  }
+
+  [data-blume-header] .docs-product-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-block-size: 2.75rem;
+    padding-inline: 0.625rem;
+    color: var(--blume-muted-foreground);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  [data-blume-header] .docs-product-link:is(:hover, :focus-visible) {
+    color: var(--blume-foreground);
+  }
+
+  @media (max-width: 72rem) {
+    [data-blume-header] .docs-search-trigger {
+      justify-content: center;
+      min-inline-size: 2.75rem;
+      padding-inline: 0;
+    }
+
+    .docs-search-label { display: none; }
+  }
+
+  @media (max-width: 24rem) {
+    [data-blume-header] { gap: 0.25rem; }
+
+    [data-blume-header] .docs-product-link {
+      padding-inline: 0.25rem;
+      font-size: 0.8125rem;
+    }
+
+    .docs-product-arrow { display: none; }
+  }
+</style>

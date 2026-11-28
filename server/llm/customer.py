@@ -55,7 +55,7 @@ _attribution: contextvars.ContextVar[Attribution | None] = contextvars.ContextVa
 _system: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "loom_model_call_system", default=False
 )
-# Inside a `loom` command (server/cli/app.py), which names its namespace or none.
+# Inside a `loom` command (server/cli/dispatch.py), which names its namespace or none.
 _cli: contextvars.ContextVar[bool] = contextvars.ContextVar("loom_model_call_cli", default=False)
 
 # Not an org: the identity tuple's "none", and an org-wide token's wildcard.

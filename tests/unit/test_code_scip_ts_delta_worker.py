@@ -124,7 +124,7 @@ async def test_first_run_is_full_and_the_delta_is_applied(
 
     harness_calls: list[tuple[str, str]] = []
 
-    async def fake_harness(co, base, head, delta_path, projects=()):
+    async def fake_harness(co, base, head, delta_path, projects=(), **_):
         harness_calls.append((base, head))
         delta_path.write_text(
             json.dumps(
@@ -178,7 +178,7 @@ async def test_no_typescript_change_in_window_advances_the_watermark(
     async def fake_git(cwd, *args, **kw):
         return None
 
-    async def fake_harness(co, base, head, delta_path, projects=()):
+    async def fake_harness(co, base, head, delta_path, projects=(), **_):
         assert base == "a" * 40  # a seeded watermark: the window, not a full index
         # no delta file: the harness saw no TypeScript change
 
@@ -213,7 +213,7 @@ async def test_a_lockfile_change_in_the_window_is_named(
     async def fake_git(cwd, *args, **kw):
         return None
 
-    async def fake_harness(co, base, head, delta_path, projects=()):
+    async def fake_harness(co, base, head, delta_path, projects=(), **_):
         return None  # no TypeScript change in the window
 
     asked: list[tuple[str, str]] = []

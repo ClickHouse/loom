@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 from server.code.app import memory_links as code
-from server.code.domain.anchor import NO_BASELINE
+from server.code.domain.anchor import NO_BASELINE, cited_fingerprint, recheck
 from server.code.domain.declaration import fingerprint_version
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app import code_link_policy as policy
+from server.memory.app import code_links as links
 from server.memory.store import code_links as store
 from server.memory.store.code_links import Former, LinkRow
 
@@ -29,10 +33,14 @@ async def refingerprint(
         rows, nxt = await store.stale_fingerprints(
             org, cns, version, after=after, limit=_REFINGERPRINT_PAGE
         )
+        cited = await links.cited(org, [a["memory_id"] for a in rows if not a["qualified_name"]])
         rehashed = []
         for a in rows:
             try:
-                fields = await _rehashed(a, files) if a["qualified_name"] else {}
+                if a["qualified_name"]:
+                    fields = await _rehashed(a, files)
+                else:
+                    fields = await _file_rehashed(a, cited.get(a["memory_id"], []), files)
             except code.ParseFailed as e:
                 failed.add(e.path)
                 continue
@@ -103,6 +111,47 @@ async def _rehashed(a: LinkRow, files: link_pass.RepoReads) -> dict[str, Any]:
     return out
 
 
+async def _file_rehashed(
+    a: LinkRow, names: Sequence[str], files: link_pass.RepoReads
+) -> dict[str, Any]:
+    """A file link's hashes under the current rules: those of the lines that hold one of
+    `names`, which its memory cites, at the commit it was written at and at the one it
+    was last read at, and the state they give. One written against no cited line keeps
+    the first it took. One whose written lines cannot be read takes the lines last read
+    when it matched them, and stays changed when it did not. One whose last read lines
+    cannot be read keeps its state, as a symbol link does."""
+
+    async def cited_at(commit: str, path: str) -> str | None:
+        """The fingerprint of the cited lines of `path` at `commit`, '' when it holds
+        none; None when the mirror lost the commit or the commit has no such file."""
+        file = await files.at(commit, path) if commit and await files.has(commit) else None
+        # matching lines is CPU work: off the loop
+        return await asyncio.to_thread(cited_fingerprint, file.lines, names) if file else None
+
+    link = link_pass.link_of(a)
+    written = await cited_at(a["anchored_commit"], link.anchored_path) or ""
+    first = written or await cited_at(a["baseline_commit"], a["baseline_path"]) or ""
+    read = await cited_at(a["checked_commit"], link.path)
+    checked = read or ""
+    took = not first and link.matched_baseline()
+    baseline = first or (checked if took else NO_BASELINE)
+    out = {"anchored_hash": written, "body_hash": baseline, "checked_hash": checked}
+    if took and checked:
+        # the next re-hash reads the baseline where this one took it
+        out |= {"baseline_commit": a["checked_commit"], "baseline_path": link.path}
+    # a file that is gone stays gone; lines that cannot be read show no change
+    if a["state"] != "missing" and read is not None:
+        after = recheck(
+            replace(link, body_hash=baseline),
+            path_now=link.path,
+            cited=checked,
+            head=a["checked_commit"],
+        )
+        if after.state != a["state"]:
+            out |= {"state": after.state, "changed_since": after.changed_since}
+    return out
+
+
 def baseline_source(a: LinkRow) -> tuple[str, str, str]:
     """(commit, path, qualified name) of the text `a`'s baseline hashes: the anchor,
     unless a rename moved the baseline onto the renamed text."""
@@ -118,8 +167,9 @@ def _baseline_of(f: Former) -> tuple[str, str, str]:
 
 def _owes(a: LinkRow, fields: dict[str, Any]) -> bool:
     """A re-hash leaves link `a` due for its policy, as a recheck would: it newly reads
-    changed, or stays changed and was judged (a re-hash drops every judgement)."""
-    if fields.get("state", a["state"]) != "changed":
+    changed, or stays changed and was judged (a re-hash drops every judgement). A file
+    link is never due."""
+    if not a["qualified_name"] or fields.get("state", a["state"]) != "changed":
         return False
     return "state" in fields or (bool(fields) and bool(a["judged_hash"]))
 

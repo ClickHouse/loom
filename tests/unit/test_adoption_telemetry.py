@@ -8,48 +8,519 @@ import pytest
 
 from server.insights.workers import adoption_telemetry
 from server.settings import Settings, settings
-from server.workers import pass_context
+from server.workers import pass_context, status_store, supervisor
 from server.workers.registry import enabled_workers
 from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, run
 
 
-def test_domain_sharing_is_enabled_by_default() -> None:
-    assert Settings.model_fields["adoption_telemetry_share_domains"].default is True
+def test_adoption_has_one_setting_and_is_enabled_by_default() -> None:
+    assert {name for name in Settings.model_fields if name.startswith("adoption_telemetry_")} == {
+        "adoption_telemetry_enabled"
+    }
+    assert Settings.model_fields["adoption_telemetry_enabled"].default is True
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-def test_public_adoption_query_lists_only_recent_active_public_domains() -> None:
+def test_public_adoption_query_covers_current_and_complete_periods() -> None:
     telemetry = ROOT / "deploy" / "telemetry"
+    clock = "toDateTime('2026-11-27 18:00:00', 'UTC')"
+    warehouse = (telemetry / "warehouse.sql").read_text().strip().removesuffix(";")
     setup = [
-        (telemetry / "warehouse.sql").read_text().strip().removesuffix(";"),
+        warehouse.replace("now('UTC')", clock),
         """
         INSERT INTO loom_product_analytics.adoption_enrollments (installation_id, is_internal)
         VALUES ('internal', 1)
         """,
         """
         INSERT INTO loom_product_analytics.adoption_reports
-            (installation_id, window_start, window_end, day, schema_version, user_domains)
-        WITH toDate(now('UTC')) - days_ago AS report_day
+            (installation_id, window_start, window_end, day, schema_version, loom_version,
+             clickhouse_version, requests, successful_requests, memory_requests, user_domains)
+        WITH
+            toDate('2026-11-27') - days_ago AS report_day,
+            toDateTime(report_day, 'UTC') + toIntervalHour(if(instance = 'unfinished', 12, 0)) AS report_start
         SELECT
-            instance, toDateTime(report_day, 'UTC'), toDateTime(report_day, 'UTC') + INTERVAL 12 HOUR,
-            report_day, version, [(domain, toUInt64(1), requests)]
+            instance, report_start, report_start + INTERVAL 12 HOUR,
+            report_day, version, if(instance = 'smoke', '0.0.0-smoke', '1.0.0'),
+            if(instance = 'smoke', '0.0.0-smoke', '26.0.0'), request_count, request_count, request_count,
+            [(domain, toUInt64(1), request_count)]
         FROM VALUES(
-            'instance String, days_ago UInt16, version UInt8, domain String, requests UInt64',
+            'instance String, days_ago Int16, version UInt8, domain String, request_count UInt64',
             ('present', 1, 2, 'active.example', 1),
+            ('present', 3, 2, 'zeta.example', 8),
+            ('present', 30, 2, 'near-cutoff.example', 1),
+            ('present', 31, 2, 'midrange.example', 1),
             ('duplicate', 2, 2, 'active.example', 2),
+            ('previous', 31, 2, 'previous.example', 3),
             ('boundary', 90, 2, 'boundary.example', 1),
+            ('boundary', 57, 2, 'boundary.example', 8),
+            ('boundary', 1, 2, 'boundary.example', 0),
             ('expired', 91, 2, 'old.example', 1),
-            ('incomplete', 0, 2, 'today.example', 1),
+            ('today', 0, 2, 'today.example', 5),
+            ('unfinished', 0, 2, 'unfinished.example', 99),
+            ('future', -1, 2, 'future.example', 1),
             ('legacy', 1, 1, 'private.example', 1),
             ('idle', 1, 2, 'idle.example', 0),
-            ('internal', 1, 2, 'internal.example', 1)
+            ('internal', 1, 2, 'internal.example', 1),
+            ('smoke', 1, 2, 'smoke.example', 1)
+        )
+        """,
+        """
+        INSERT INTO loom_product_analytics.oss_metrics (day, source, artifact, metric, value)
+        VALUES
+            (toDate('2026-11-26'), 'crates.io', 'clickhouse-loom', 'sdk_downloads', 2),
+            (toDate('2026-11-26'), 'crates.io', 'unrelated', 'sdk_downloads', 9)
+        """,
+    ]
+
+    [report] = run(setup, (telemetry / "public-adoption.sql").read_text())
+
+    totals = {
+        row["comparison"]: row
+        for row in map(json.loads, report["totals"])
+        if row["range_days"] == 30
+    }
+    assert set(totals) == {"current", "current_complete", "previous_complete"}
+    assert totals["current"]["memory_requests"] == 18
+    assert totals["current"]["last_reported"] == "2026-11-27"
+    assert totals["current_complete"]["memory_requests"] == 13
+    assert totals["current_complete"]["last_reported"] == "2026-11-26"
+    assert totals["current"]["days_reported"] == totals["current_complete"]["days_reported"] == 4
+    assert totals["previous_complete"]["memory_requests"] == 12
+
+    assert [json.loads(row) for row in report["domain_directories"]] == [
+        {
+            "range_days": 30,
+            "domains": ["zeta.example", "today.example", "active.example", "near-cutoff.example"],
+        },
+        {
+            "range_days": 90,
+            "domains": [
+                "boundary.example",
+                "zeta.example",
+                "today.example",
+                "active.example",
+                "previous.example",
+                "midrange.example",
+                "near-cutoff.example",
+            ],
+        },
+    ]
+    [rust] = [json.loads(row) for row in report["oss"]]
+    assert (rust["source"], rust["artifact"], rust["metric"], rust["value"]) == (
+        "crates.io",
+        "clickhouse-loom",
+        "sdk_downloads",
+        2,
+    )
+
+    growth = [json.loads(row) for row in report["growth"]]
+    for grain in ("day", "week", "month"):
+        bucketed = sorted(
+            (row for row in growth if row["grain"] == grain), key=lambda row: row["period"]
+        )
+        assert sum(row["first_active"] for row in bucketed) == 6
+        assert bucketed[-1]["cumulative_active"] == 6
+    assert max(row["period"] for row in growth if row["grain"] == "day") == "2026-11-26"
+
+    activity = [json.loads(row) for row in report["activity"]]
+    assert sum(row["memory_requests"] for row in activity if row["grain"] == "day") == 27
+    reported = {(row["grain"], row["period"]) for row in activity}
+    observed = {(row["grain"], row["period"]) for row in growth}
+    assert reported <= observed
+    assert any(row["grain"] == "week" and row["first_active"] == 0 for row in growth)
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_complete_adoption_day_adds_missing_successful_requests_to_reported_attempts() -> None:
+    warehouse = (
+        (ROOT / "deploy" / "telemetry" / "warehouse.sql").read_text().strip().removesuffix(";")
+    )
+    rows = run(
+        [
+            warehouse.replace("now('UTC')", "toDateTime('2026-11-27 18:00:00', 'UTC')"),
+            """
+            INSERT INTO loom_product_analytics.adoption_reports
+                (installation_id, window_start, window_end, day, schema_version, loom_version, clickhouse_version,
+                 requests, successful_requests, server_errors, daily_successful_requests)
+            VALUES
+                ('missing-half', '2026-11-26 12:00:00', '2026-11-27 00:00:00', '2026-11-26',
+                 3, '1.2.3', '26.1.0', 20, 10, 10, 25),
+                ('both-halves', '2026-11-26 00:00:00', '2026-11-26 12:00:00', '2026-11-26',
+                 2, '1.2.3', '26.1.0', 20, 10, 10, NULL),
+                ('both-halves', '2026-11-26 12:00:00', '2026-11-27 00:00:00', '2026-11-26',
+                 3, '1.2.3', '26.1.0', 20, 12, 3, 20),
+                ('legacy', '2026-11-26 00:00:00', '2026-11-26 12:00:00', '2026-11-26',
+                 2, '1.2.3', '26.1.0', 5, 3, 1, NULL)
+            """,
+        ],
+        """
+        SELECT installation_id, requests, successful_requests, server_errors
+        FROM loom_product_analytics.loom_external_adoption_daily
+        """,
+    )
+
+    assert {
+        row["installation_id"]: (row["requests"], row["successful_requests"], row["server_errors"])
+        for row in rows
+    } == {"both-halves": (40, 22, 13), "legacy": (5, 3, 1), "missing-half": (35, 25, 10)}
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_domain_lifecycle_survives_installation_changes_and_reports_only_comparable_periods() -> (
+    None
+):
+    warehouse = (
+        (ROOT / "deploy" / "telemetry" / "warehouse.sql").read_text().strip().removesuffix(";")
+    )
+    setup = [
+        warehouse.replace("now('UTC')", "toDateTime('2026-06-08 06:00:00', 'UTC')"),
+        """
+        INSERT INTO loom_product_analytics.adoption_reports
+            (installation_id, window_start, window_end, day, schema_version, loom_version,
+             clickhouse_version, requests, successful_requests, user_domains, daily_successful_requests)
+        WITH toDateTime('2026-04-27', 'UTC') + toIntervalHour(number * 12) AS start
+        SELECT 'coverage', start, start + INTERVAL 12 HOUR, toDate(start), multiIf(number = 44, 1, number = 17, 3, 2),
+               '1.0.0', '26.0.0', 0, 0, [], if(number = 17, 0, NULL)
+        FROM numbers(84)
+        WHERE number != 16
+        """,
+        """
+        INSERT INTO loom_product_analytics.adoption_reports
+            (installation_id, window_start, window_end, day, schema_version, loom_version,
+             clickhouse_version, requests, successful_requests, user_domains)
+        WITH toDateTime(report_day, 'UTC') + toIntervalHour(hours) AS start
+        SELECT installation, start, start + INTERVAL 12 HOUR, toDate(start), schema,
+               '1.0.0', '26.0.0', volume, volume, [(domain, toUInt64(1), volume)]
+        FROM VALUES(
+            'installation String, report_day String, domain String, volume UInt64, hours UInt8, schema UInt8',
+            ('old-team', '2026-05-04', 'gmail.com', 12000, 0, 2),
+            ('new-team', '2026-05-11', 'gmail.com', 12000, 0, 2),
+            ('new-team', '2026-05-11', 'gmail.com', 1000000, 12, 1),
+            ('returning', '2026-05-04', 'returning.example', 1, 0, 2),
+            ('returning', '2026-06-01', 'returning.example', 1, 0, 2),
+            ('new', '2026-06-01', 'new.example', 1, 0, 2)
+        )
+        """,
+    ]
+    rows = run(
+        setup,
+        "SELECT * FROM loom_product_analytics.public_adoption_lifecycle WHERE grain = 'week'",
+    )
+    by_period = {(row["entity"], int(row["min_requests"]), row["bucket"]): row for row in rows}
+
+    def activity(entity: str, threshold: int, period: str) -> tuple[int, ...]:
+        row = by_period[entity, threshold, period]
+        assert row["complete_coverage"] == 1
+        return tuple(int(row[state]) for state in ("new", "retained", "reactivated", "inactive"))
+
+    assert activity("deployment", 0, "2026-05-11") == (1, 0, 0, 2)
+    assert activity("domain", 0, "2026-05-11") == (0, 1, 0, 1)
+    assert activity("domain", 50_000, "2026-05-11") == (0, 1, 0, 0)
+    assert activity("domain", 1_000_000, "2026-05-11") == (0, 0, 0, 0)
+    assert activity("domain", 0, "2026-06-01") == (1, 0, 1, 0)
+    assert {row["bucket"] for row in rows if row["entity"] == "domain"} == {
+        "2026-05-04",
+        "2026-05-11",
+        "2026-06-01",
+    }
+    assert {row["bucket"] for row in rows if row["entity"] == "deployment"} == {
+        "2026-05-04",
+        "2026-05-11",
+        "2026-05-18",
+        "2026-05-25",
+        "2026-06-01",
+    }
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_public_adoption_query_publishes_only_measured_company_activity() -> None:
+    telemetry = ROOT / "deploy" / "telemetry"
+    clock = "toDateTime('2026-11-27 18:00:00', 'UTC')"
+    warehouse = (telemetry / "warehouse.sql").read_text().strip().removesuffix(";")
+    setup = [
+        warehouse.replace("now('UTC')", clock),
+        """
+        INSERT INTO loom_product_analytics.adoption_enrollments (installation_id, is_internal)
+        VALUES ('internal', 1)
+        """,
+        """
+        INSERT INTO loom_product_analytics.adoption_reports
+            (installation_id, window_start, window_end, day, schema_version, loom_version,
+             clickhouse_version, requests, successful_requests, user_domains,
+             active_accounts, serving_processes, daily_successful_requests, domain_activity)
+        WITH
+            toDate('2026-11-27') - days_ago AS report_day,
+            toDateTime(report_day, 'UTC') + toIntervalHour(hours) AS report_start,
+            if(instance = 'previous', NULL, measured) AS processes,
+            multiIf(instance = 'morning-only', 63, instance = 'old-id' AND days_ago = 1 AND hours = 12,
+                    request_count + 5, request_count) AS domain_requests
+        SELECT
+            instance, report_start, report_start + INTERVAL 12 HOUR, report_day, schema,
+            loom, clickhouse, request_count, request_count,
+            if(instance = 'quiet' AND schema = 3, [], [(domain, toUInt64(87), domain_requests)]),
+            measured, processes, if(schema = 3, domain_requests, NULL),
+            if(isNull(published), [], [(domain, assumeNotNull(published), domain_requests, processes)])
+        FROM VALUES(
+            'instance String, days_ago Int16, schema UInt8, hours UInt8, loom String,
+             clickhouse String, domain String, request_count UInt64, measured Nullable(UInt64), published Nullable(UInt64)',
+            ('internal', 372, 2, 0, '0.1.0', '25.11', 'internal.example', 3, NULL, NULL),
+            ('smoke-loom', 371, 2, 0, '0.0.0-smoke', '25.11', 'smoke.example', 3, NULL, NULL),
+            ('smoke-ch', 371, 2, 0, '0.1.0', '0.0.0-smoke', 'smoke.example', 3, NULL, NULL),
+            ('old-id', 370, 1, 0, '1.0.0', '25.12', 'private.example', 3, NULL, NULL),
+            ('old-id', 100, 3, 12, '1.0.0', '25.12', 'long-running.example', 100, 1, 1),
+            ('previous', 51, 3, 12, '1.1.0', '26.1.0', 'previous.example', 50, 2, 2),
+            ('legacy-overlap', 9, 1, 0, '1.1.0', '26.1.0', 'legacy-only.example', 99, NULL, NULL),
+            ('legacy-overlap', 9, 2, 12, '1.1.0', '26.1.0', 'legacy-only.example', 0, NULL, NULL),
+            ('quiet', 7, 2, 0, '1.1.0', '26.1.0', 'quiet.example', 8, NULL, NULL),
+            ('morning-only', 6, 3, 12, '1.1.0', '26.1.0', 'gmail.com', 0, 1, 1),
+            ('legacy', 4, 1, 0, '1.0.0', '25.12', 'private.example', 3, NULL, NULL),
+            ('old-id', 3, 3, 12, '1.0.1', '25.12.1', 'long-running.example', 25, 4, 4),
+            ('names-only', 3, 2, 12, '1.1.0', '26.1.0', 'names-only.example', 3, 999, 999),
+            ('quiet', 2, 3, 12, '1.1.0', '26.1.0', 'quiet.example', 0, 0, NULL),
+            ('old-id', 1, 2, 0, '1.1.0', '26.1.0', 'long-running.example', 5, NULL, NULL),
+            ('old-id', 1, 3, 12, '1.1.0', '26.1.0', 'long-running.example', 12, 4, 4),
+            ('second-id', 1, 3, 12, '1.1.0', '26.0.0', 'long-running.example', 20, 7, 7),
+            ('names-only', 1, 2, 12, '1.1.0', '26.1.0', 'names-only.example', 17, NULL, NULL),
+            ('legacy', 1, 1, 0, '1.0.2', '26.1.5', 'private.example', 0, NULL, NULL),
+            ('noon', 1, 3, 0, '1.2.0', '26.1.0', 'long-running.example', 0, 999, 999),
+            ('internal', 1, 3, 12, '1.2.0', '26.1.0', 'long-running.example', 99, 99, 99),
+            ('smoke-ch', 1, 3, 12, '1.2.0', '0.0.0-smoke', 'long-running.example', 99, 99, 99),
+            ('unfinished', 0, 3, 12, '1.2.0', '26.1.0', 'long-running.example', 99, 99, 99)
         )
         """,
     ]
 
     [report] = run(setup, (telemetry / "public-adoption.sql").read_text())
 
-    assert report["domains"] == ["active.example", "boundary.example"]
+    [first_observation] = map(json.loads, report["first_observation"])
+    assert first_observation == {
+        "day": "2025-11-22",
+        "loom_version": "1.0.0",
+        "clickhouse_version": "25.12",
+    }
+    assert all("verified_companies" not in json.loads(row) for row in report["totals"])
+    [morning_activity] = [
+        row
+        for row in map(json.loads, report["activity"])
+        if row["grain"] == "day" and row["period"] == "2026-11-21"
+    ]
+    assert (morning_activity["operations"], morning_activity["active"]) == (63, 1)
+
+    directories = {
+        row["range_days"]: row["domains"] for row in map(json.loads, report["domain_directories"])
+    }
+    assert directories[30] == [
+        "gmail.com",
+        "long-running.example",
+        "names-only.example",
+        "quiet.example",
+    ]
+    assert directories[90] == [
+        "gmail.com",
+        "long-running.example",
+        "previous.example",
+        "names-only.example",
+        "quiet.example",
+    ]
+    company_metrics = {
+        (row["range_days"], row["domain"]): (
+            row["day"],
+            row["active_accounts"],
+            row["successful_requests"],
+            row["active_installations"],
+            row["loom_version"],
+            row["first_seen"],
+            row["last_seen"],
+            row["serving_processes"],
+        )
+        for row in map(json.loads, report["domain_accounts"])
+    }
+    assert company_metrics == {
+        (30, "long-running.example"): (
+            "2026-11-26",
+            11,
+            62,
+            2,
+            "1.1.0",
+            "2026-08-19",
+            "2026-11-26",
+            11,
+        ),
+        (90, "long-running.example"): (
+            "2026-11-26",
+            11,
+            62,
+            2,
+            "1.1.0",
+            "2026-08-19",
+            "2026-11-26",
+            11,
+        ),
+        (30, "gmail.com"): ("2026-11-21", 1, 63, 1, "1.1.0", "2026-11-21", "2026-11-21", 1),
+        (90, "gmail.com"): ("2026-11-21", 1, 63, 1, "1.1.0", "2026-11-21", "2026-11-21", 1),
+        (90, "previous.example"): (
+            "2026-10-07",
+            2,
+            50,
+            1,
+            "1.1.0",
+            "2026-10-07",
+            "2026-10-07",
+            None,
+        ),
+    }
+    companies = {
+        (row["grain"], row["period"]): (row["companies"], row["days_reported"])
+        for row in map(json.loads, report["company_trends"])
+    }
+    assert companies["day", "2026-11-21"] == (1, 1)
+    assert ("day", "2026-11-23") not in companies
+    assert companies["day", "2026-11-24"] == (2, 1)
+    assert companies["day", "2026-11-25"] == (0, 1)
+    assert companies["week", "2026-11-23"] == (2, 3)
+
+    accounts = {
+        (row["grain"], row["period"]): (
+            row["active_accounts"],
+            row["accounts_days_reported"],
+            row["account_reporting_installations"],
+        )
+        for row in map(json.loads, report["activity"])
+    }
+    assert accounts["day", "2026-11-23"] == (None, 0, 0)
+    assert accounts["day", "2026-11-25"] == (0, 1, 1)
+    assert accounts["day", "2026-11-26"] == (11, 1, 2)
+    assert accounts["week", "2026-11-23"] == (11, 3, 2)
+    processes = {
+        (row["grain"], row["period"]): (
+            row["serving_processes"],
+            row["processes_days_reported"],
+            row["process_reporting_installations"],
+        )
+        for row in map(json.loads, report["activity"])
+    }
+    assert processes["day", "2026-10-07"] == (None, 0, 0)
+    assert processes["day", "2026-11-25"] == (0, 1, 1)
+    assert processes["week", "2026-11-23"] == (11, 3, 2)
+
+    current_versions = [
+        (row["loom_version"], row["clickhouse_version"], row["active_installations"])
+        for row in map(json.loads, report["versions"])
+    ]
+    assert current_versions == [
+        ("1.1.0", "26.1.0", 5),
+        ("1.0.0", "25.12", 1),
+        ("1.1.0", "26.0.0", 1),
+    ]
+    versions = {
+        (row["grain"], row["period"], row["product"], row["version"]): row["active_installations"]
+        for row in map(json.loads, report["version_trends"])
+    }
+    assert all(
+        version not in {"0.0.0-smoke", "1.2.0", "1.0.2", "26.1.5"} for _, _, _, version in versions
+    )
+    assert all((grain, period) != ("day", "2026-11-25") for grain, period, _, _ in versions)
+    assert versions["day", "2026-11-24", "loom", "1.0.1"] == 1
+    assert ("week", "2026-11-23", "loom", "1.0.1") not in versions
+    assert versions["week", "2026-11-23", "loom", "1.1.0"] == 3
+    assert versions["day", "2026-11-26", "clickhouse", "26.1.0"] == 2
+    assert versions["month", "2026-11-01", "loom", "1.1.0"] == 6
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_public_adoption_coverage_distinguishes_observed_days_from_complete_days() -> None:
+    warehouse = (
+        (ROOT / "deploy" / "telemetry" / "warehouse.sql").read_text().strip().removesuffix(";")
+    )
+    rows = run(
+        [
+            warehouse.replace("now('UTC')", "toDateTime('2026-11-24 18:00:00', 'UTC')"),
+            """
+            INSERT INTO loom_product_analytics.adoption_reports
+                (installation_id, window_start, window_end, day, schema_version, loom_version, clickhouse_version)
+            WITH toDateTime('2026-11-09', 'UTC') + toIntervalDay(number) + toIntervalHour(hours) AS start
+            SELECT if(hours = 0, 'morning', 'afternoon'), start, start + INTERVAL 12 HOUR,
+                   toDate(start), 2, '1.2.3', '26.1.0'
+            FROM numbers(14)
+            ARRAY JOIN [0, 12] AS hours
+            WHERE hours = 0 OR number >= 7
+            """,
+            """
+            INSERT INTO loom_product_analytics.adoption_reports
+                (installation_id, window_start, window_end, day, schema_version, loom_version, clickhouse_version,
+                 daily_successful_requests)
+            VALUES ('final-only', '2026-11-23 12:00:00', '2026-11-24 00:00:00', '2026-11-23',
+                    3, '1.2.3', '26.1.0', 0)
+            """,
+        ],
+        """
+        SELECT * FROM (
+            SELECT 'activity' AS series, grain, period, days_reported, complete_days_reported
+            FROM loom_product_analytics.public_adoption_activity
+            UNION ALL
+            SELECT 'domain' AS series, grain, period, days_reported, complete_days_reported
+            FROM loom_product_analytics.public_adoption_company_activity
+        )
+        WHERE (grain = 'week' AND period < toDate('2026-11-23'))
+           OR (grain = 'day' AND period = toDate('2026-11-23'))
+        """,
+    )
+
+    assert {
+        (row["series"], row["grain"], row["period"]): (
+            row["days_reported"],
+            row["complete_days_reported"],
+        )
+        for row in rows
+    } == {
+        ("activity", "week", "2026-11-09"): (7, 0),
+        ("activity", "week", "2026-11-16"): (7, 7),
+        ("activity", "day", "2026-11-23"): (1, 0),
+        ("domain", "week", "2026-11-09"): (7, 0),
+        ("domain", "week", "2026-11-16"): (7, 7),
+        ("domain", "day", "2026-11-23"): (1, 1),
+    }
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_public_adoption_activity_keeps_sparse_closed_opening_periods() -> None:
+    warehouse = (
+        (ROOT / "deploy" / "telemetry" / "warehouse.sql").read_text().strip().removesuffix(";")
+    )
+    clock = "toDateTime('2026-12-01 18:00:00', 'UTC')"
+    rows = run(
+        [
+            warehouse.replace("now('UTC')", clock),
+            """
+            INSERT INTO loom_product_analytics.adoption_reports
+                (installation_id, window_start, window_end, day, schema_version, loom_version, clickhouse_version)
+            VALUES
+                ('external', '2026-11-25 00:00:00', '2026-11-25 12:00:00', '2026-11-25', 2, '1.2.3', '26.1.0'),
+                ('external', '2026-11-26 00:00:00', '2026-11-26 12:00:00', '2026-11-26', 2, '1.2.3', '26.1.0')
+            """,
+        ],
+        """
+        SELECT grain, period, period_end, days_reported, forecast_eligible, operations
+        FROM loom_product_analytics.public_adoption_activity
+        WHERE grain IN ('month', 'week')
+        ORDER BY period
+        """,
+    )
+
+    assert rows == [
+        {
+            "grain": grain,
+            "period": period,
+            "period_end": period_end,
+            "days_reported": 2,
+            "forecast_eligible": 0,
+            "operations": 0,
+        }
+        for grain, period, period_end in [
+            ("month", "2026-11-01", "2026-12-01"),
+            ("week", "2026-11-23", "2026-11-30"),
+        ]
+    ]
 
 
 async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,16 +532,43 @@ async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.Mo
     monkeypatch.setattr(adoption_telemetry, "get_http_client", http)
 
     assert "adoption_telemetry" not in {worker.name for worker in enabled_workers()}
+    assert not await adoption_telemetry.first_pass_due()
     await adoption_telemetry.run_pass()
     ch.assert_not_called()
     http.assert_not_called()
 
 
-def test_adoption_worker_uses_the_configured_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_adoption_worker_checks_hourly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
-    monkeypatch.setattr(settings, "adoption_telemetry_interval_seconds", 120)
     worker = next(worker for worker in enabled_workers() if worker.name == "adoption_telemetry")
-    assert worker.interval_seconds == 120
+    assert worker.interval_seconds == 3600
+
+
+@pytest.mark.parametrize(
+    ("cursor", "due"),
+    [
+        ("", True),
+        ("2026-11-23T00:00:00+00:00", True),
+        ("2026-11-23T12:00:00+00:00", False),
+    ],
+)
+async def test_boot_reports_unacknowledged_windows_without_a_stagger(
+    monkeypatch: pytest.MonkeyPatch, cursor: str, due: bool
+) -> None:
+    monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
+    monkeypatch.setattr(
+        adoption_telemetry, "utc_now", lambda: datetime(2026, 11, 24, 12, 59, tzinfo=UTC)
+    )
+    monkeypatch.setattr(status_store, "resume_cursor", AsyncMock(return_value=cursor))
+    monkeypatch.setattr(status_store, "last_pass_finished", AsyncMock(return_value=None))
+    worker = next(worker for worker in enabled_workers() if worker.name == "adoption_telemetry")
+
+    delay, state = await supervisor._begin_loop(worker)
+
+    assert state.cursor == cursor
+    assert (delay, state.trigger) == (
+        (0, "first_pass") if due else (supervisor.first_pass_delay(worker), "boot")
+    )
 
 
 async def test_missing_deployment_id_surfaces_status_without_delivery(
@@ -98,12 +596,11 @@ async def test_missing_deployment_id_surfaces_status_without_delivery(
     ],
     ids=["redirect", "wrong-acknowledgement", "oversized-acknowledgement"],
 )
-@pytest.mark.parametrize("share_domains", [False, True])
 async def test_delivery_retries_without_recounting_after_ack(
-    monkeypatch: pytest.MonkeyPatch, rejection: httpx.Response | None, share_domains: bool
+    monkeypatch: pytest.MonkeyPatch,
+    rejection: httpx.Response | None,
 ) -> None:
     monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
-    monkeypatch.setattr(settings, "adoption_telemetry_share_domains", share_domains)
     monkeypatch.setattr(
         adoption_telemetry, "utc_now", lambda: datetime(2026, 11, 24, 3, tzinfo=UTC)
     )
@@ -113,24 +610,20 @@ async def test_delivery_retries_without_recounting_after_ack(
     monkeypatch.setattr(adoption_telemetry, "get_client", object)
     restricted_pairs = {("test", "restricted")}
 
-    def configured_pairs() -> set[tuple[str, str]]:
-        assert share_domains
-        return restricted_pairs
-
-    monkeypatch.setattr(adoption_telemetry, "configured_restricted_pairs", configured_pairs)
+    monkeypatch.setattr(adoption_telemetry, "configured_restricted_pairs", lambda: restricted_pairs)
 
     async def report(
         start: datetime,
         end: datetime,
         installation_id: UUID,
         *,
-        restricted: set[tuple[str, str]] | None,
+        restricted: set[tuple[str, str]],
         ch: object,
     ) -> dict[str, str]:
         assert installation_id != deployment_id
         assert start == datetime(2026, 11, 23, 12, tzinfo=UTC)
         assert end == datetime(2026, 11, 24, tzinfo=UTC)
-        assert restricted == (restricted_pairs if share_domains else None)
+        assert restricted == restricted_pairs
         return {"installation_id": str(installation_id), "window_start": start.isoformat()}
 
     aggregate = AsyncMock(side_effect=report)

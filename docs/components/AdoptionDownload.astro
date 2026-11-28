@@ -1,0 +1,19 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import AdoptionState from "./AdoptionState.astro";
+
+interface Props {
+  path: string;
+  state: Record<string, string | number>;
+  dataset: string;
+  label: string;
+}
+
+const { path, state, dataset, label } = Astro.props;
+---
+
+<form method="post" action={path} class="csv-download">
+  <AdoptionState state={state} />
+  <input type="hidden" name="csv" value={dataset} />
+  <Button type="empty" htmlType="submit" iconLeft="download" label={label} />
+</form>

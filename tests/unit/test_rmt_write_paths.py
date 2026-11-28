@@ -75,7 +75,7 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     ),
     "assistant_service": (
         "insert_once",
-        "one row (id 0) the boot writes under the assistant.service lease, each step "
+        "retained provisioning metadata (id 0); root-key rotation preserves it by "
         "re-inserting it whole at the next version",
     ),
     "sql_access": ("builder", "test_sql_surface.py"),

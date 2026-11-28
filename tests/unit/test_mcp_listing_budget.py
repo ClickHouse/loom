@@ -11,6 +11,7 @@ import re
 
 import pytest
 
+from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import (
     _MCP_ATOMIC_OPS,
@@ -137,6 +138,25 @@ def test_input_schema_keeps_every_argument_and_field_description():
     assert "title" in tasks["loom_task_create"]["inputSchema"]["properties"]
     # the input model's class docstring is not an argument: gone where a curated description exists
     assert "description" not in by["loom_memory_update"]["inputSchema"]
+
+
+@pytest.mark.parametrize("profile", SCHEMA_PROFILES)
+def test_code_read_line_pair_schema_enforces_line_bounds(profile):
+    tool = next(t for t in _listing("coding", False, profile) if t["name"] == "loom_code_read")
+    schema = tool["inputSchema"]
+    properties = schema["properties"]
+    batch = next(
+        choice for choice in properties["ranges"]["anyOf"] if choice["items"].get("type") == "array"
+    )
+    pair = batch["items"]
+    assert batch["maxItems"] == 32
+    assert (pair["minItems"], pair["maxItems"]) == (2, 2)
+    assert pair["items"] == {"type": "integer", "minimum": 1, "exclusiveMaximum": 2**32}
+    assert properties["start_line"]["type"] == ["integer", "string"]
+    assert schema["$defs"]["CodeReadRangeInput"]["properties"]["start_line"]["type"] == [
+        "integer",
+        "string",
+    ]
 
 
 # ---------------------------------------------------------------- reference lint
@@ -371,11 +391,23 @@ def test_a_listing_build_leaves_the_source_texts_as_written():
 
 @pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
 def test_listed_tool_names_is_what_the_listing_shows(toolset: str, code: bool, monkeypatch):
-    """A refusal names ops by listed_tool_names; it must be the listing's own set."""
+    """A refusal names ops by listed_tool_names; it must be the listing's own set,
+    on a connection bound to a repository too."""
     listing = {t["name"] for t in _listing(toolset, code)}
     monkeypatch.setattr(settings, "mcp_toolset", toolset)
     monkeypatch.setattr(settings, "mcp_code_tools", code)
     assert mt.listed_tool_names(None) == listing
+    bound = set_code_scope("acme/code-repo")
+    try:
+        for profile in (None, *SCHEMA_PROFILES):
+            shown = {t["name"] for t in _listing(toolset, code, profile)}
+            assert mt.listed_tool_names(None, profile) == shown
+            # only a `coding` connection whose URL asks for the compact profile
+            # narrows the listing to the code tools
+            assert shown <= listing
+            assert (shown == listing) != (toolset == "coding" and profile == "compact")
+    finally:
+        reset_code_scope(bound)
 
 
 @pytest.mark.parametrize("toolset", ["core", "all", "readonly"])
@@ -453,6 +485,17 @@ def test_compact_coding_grep_advertises_common_args_and_help_lists_the_rest():
     assert advanced <= set(help_row["optional"])
 
 
+def test_compact_coding_grep_context_bounds_apply_to_the_advertised_type():
+    def radius(profile):
+        tool = next(t for t in _listing("coding", True, profile) if t["name"] == "loom_code_grep")
+        return tool["inputSchema"]["properties"]["context_lines"]
+
+    compact = radius("compact")
+    assert compact["type"] == "integer"
+    assert (compact["minimum"], compact["maximum"], compact["default"]) == (0, 20, 0)
+    assert radius("standard") == radius("full") == {**compact, "type": ["integer", "string"]}
+
+
 # ---------------------------------------------------------------- one revision policy
 
 
@@ -526,6 +569,58 @@ def test_listing_budget_chars_over_four():
     for toolset, code in _TOOLSETS:
         for t in _listing(toolset, code):
             assert len(t["description"]) // 4 <= 480, f"{toolset}: {t['name']} is over budget"
+
+
+def test_the_listing_of_code_tools_alone_stays_within_its_budget():
+    """A `coding` connection bound to a repository whose URL asks for the compact
+    profile: its listing, and the routing its startup instructions and primer carry."""
+    from server.transport.mcp_primer import _coding_instructions
+
+    defaults = {"org": "acme", "namespace": "home", "agent": "a"}
+    bound = set_code_scope("acme/code-repo")
+    try:
+        assert _tok({"tools": _listing("coding", False, "compact")}) <= 3_700
+        routing = _coding_instructions("coding", defaults, schema_profile="compact")
+        assert len(routing) // 4 <= 200
+    finally:
+        reset_code_scope(bound)
+
+
+def test_a_plugin_connection_lists_every_tool_in_the_compact_shapes():
+    """A coding-agent plugin's URL names `schema_profile=plugin`. Bound to a repository
+    or not, it lists every tool of the roster in the compact shapes and loads the
+    pre-edit read and the literal search up front: the memory tools stay listed for
+    the client's tool search."""
+    from server.transport.mcp_schemas import PLUGIN_SCHEMA_PROFILE, resolve_schema_profile
+
+    assert PLUGIN_SCHEMA_PROFILE not in SCHEMA_PROFILES, "only a URL names it"
+    assert resolve_schema_profile("plugin", "standard") == "plugin"
+    assert resolve_schema_profile(None, "plugin") == "standard"
+    unbound = _listing("coding", False, "plugin")
+    scope = set_code_scope("acme/code-repo")
+    try:
+        bound = _listing("coding", False, "plugin")
+        code_only = {t["name"] for t in _listing("coding", False, "compact")}
+        assert not mt.lists_follow_code_scope("coding", "plugin")
+    finally:
+        reset_code_scope(scope)
+    assert bound == unbound, "the listing does not follow the repository header"
+    names = {t["name"] for t in bound}
+    assert names == {t["name"] for t in _listing("coding", False)}
+    assert {"loom_search", "loom_memory_set", "loom_op"} <= names - code_only
+    compact = {t["name"]: t for t in _listing("coding", False, "compact")}
+    upfront = [t for t in bound if t.get("_meta", {}).get("anthropic/alwaysLoad")]
+    assert {t["name"] for t in upfront} == {"loom_code_edit_context", "loom_code_grep"}
+    assert _tok(upfront) <= 700
+    for tool in bound:
+        if tool["name"] != "loom_code_grep":
+            assert tool == compact[tool["name"]], tool["name"]
+    # grep keeps `namespace`, which the session's start names for the checkout, and
+    # leaves out what `path_globs` expresses and the several-repository presence check
+    grep = next(t for t in bound if t["name"] == "loom_code_grep")["inputSchema"]["properties"]
+    listed = set(compact["loom_code_grep"]["inputSchema"]["properties"])
+    assert set(grep) == listed - {"namespaces", "path_prefix", "langs"}
+    assert "namespace" in grep and "path_globs" in grep
 
 
 def test_tracker_toolset_lists_the_tracker_record_bisect_pr_check_and_impact_within_its_own_budget():

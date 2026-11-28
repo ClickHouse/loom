@@ -110,7 +110,11 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipTsDeltaResu
         result.skipped.append(f"{cfg.namespace}: git_head not seeded")
         return
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK) or ""
-    if target == scip_commit or await refusal_held(repo, cfg, WATERMARK, target, result):
+    shape = _delta_shape(cfg)  # one read for the harness and its hold
+    paths = bool(shape["paths"])
+    if target == scip_commit or await refusal_held(
+        repo, cfg, WATERMARK, scip_commit, target, result, shape
+    ):
         return  # compiler tier is current, or its delta at target was refused
     checkout, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
@@ -127,7 +131,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipTsDeltaResu
         result.lockfile_changed.append(note)
         logger.warning("code_scip_ts_delta: %s", note)
 
-    env = await asyncio.to_thread(_harness_env, Path("unused"))
+    env = await asyncio.to_thread(_harness_env, Path("unused"), (), paths)
     await prepare_dependencies(checkout, cfg.scip_ts_projects, env, force=lockfile_changed)
 
     with tempfile.TemporaryDirectory(prefix="scip_ts_delta_") as tmp:
@@ -138,9 +142,12 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipTsDeltaResu
             target,
             delta_path,
             cfg.scip_ts_projects,
+            paths=paths,
         )
         try:
-            delta = await open_tier_delta(repo, cfg, WATERMARK, target, delta_path)
+            delta = await open_tier_delta(
+                repo, cfg, WATERMARK, scip_commit, target, delta_path, shape
+            )
         except FileNotFoundError:
             # the harness exits 0 with no delta when no TypeScript file changed
             logger.info("code_scip_ts_delta: %s no TypeScript changes in window", cfg.namespace)
@@ -169,8 +176,14 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipTsDeltaResu
     )
 
 
-def _harness_env(delta_path: Path, projects: tuple[str, ...] = ()) -> dict[str, str]:
-    """The harness's environment (sync: resolves the binary's path)."""
+def _delta_shape(cfg: RepoConfig) -> dict[str, object]:
+    """What, besides the window, shapes the delta the harness writes (`refusal_held`)."""
+    return {"projects": list(cfg.scip_ts_projects), "paths": settings.code_scip_ts_paths}
+
+
+def _harness_env(delta_path: Path, projects: tuple[str, ...], paths: bool) -> dict[str, str]:
+    """The harness's environment (sync: resolves the binary's path); `paths` is the
+    pass's read of `code_scip_ts_paths` (`_delta_shape`)."""
     # `.absolute()`, never `.resolve()`: an npm-installed scip-typescript is a
     # symlink under node_modules/.bin, and the pnpm shim the harness needs
     # sits beside the LINK, not beside its target
@@ -183,7 +196,7 @@ def _harness_env(delta_path: Path, projects: tuple[str, ...] = ()) -> dict[str, 
         "PYTHON": sys.executable,  # converter needs the server's venv (protobuf runtime)
         "DELTA_OUT": str(delta_path),
         "SCIP_TYPESCRIPT": str(binary),
-        "SCIP_TS_PATHS": "1" if settings.code_scip_ts_paths else "0",
+        "SCIP_TS_PATHS": "1" if paths else "0",
         "NODE_HEAP_MB": str(settings.code_scip_ts_node_heap_mb),
         "HOME": str(Path.home()),
     }
@@ -216,11 +229,17 @@ async def _lockfile_changed(checkout: Path, base: str, head: str) -> bool:
 
 
 async def _run_harness(
-    checkout: Path, base: str, head: str, delta_path: Path, projects: tuple[str, ...] = ()
+    checkout: Path,
+    base: str,
+    head: str,
+    delta_path: Path,
+    projects: tuple[str, ...],
+    *,
+    paths: bool,
 ) -> None:
     """`run_typescript_delta.sh` in DELTA_OUT mode: index, convert, write
     the JSON delta — no upload, no watermark read (the worker owns both)."""
-    env = await asyncio.to_thread(_harness_env, delta_path, projects)
+    env = await asyncio.to_thread(_harness_env, delta_path, projects, paths)
     binary = await asyncio.to_thread(resolve_binary, settings.code_scip_typescript_path)
     returncode, out = await run_harness(
         _HARNESS,

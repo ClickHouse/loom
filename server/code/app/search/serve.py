@@ -197,8 +197,11 @@ def _explain_score(
 
 
 def _work_explain(work: dict[str, int]) -> str:
-    """score_explanation fragments read off the work counters: the long-question trim."""
+    """score_explanation fragments read off the work counters: the long-question trim
+    and the definition leg."""
     out = ""
+    if "named_definitions" in work:
+        out += f", named_definitions={work['named_definitions']}"
     if "query_trimmed_tokens_in" in work:
         out += (
             f", query_trimmed(tokens_in={work['query_trimmed_tokens_in']}, "

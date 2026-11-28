@@ -8,8 +8,8 @@ model, which then reads Loom's source or guesses field names for a few turns.
 carries instead: each field error (loc, type, msg), every unknown key with the
 field it most likely meant (nested models too: `target.memory_keys` →
 `target.keys`), the op's required and optional args, and one example call —
-the caller's own arguments with those keys renamed and any missing required
-arg filled with a placeholder.
+an argument template for missing fields or a validated correction for
+misspelled keys.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from server.core.errors import ValidationError as LoomValidationError
 from server.transport.arg_check import IDENTITY_KEYS, TRANSPORT_KEYS, did_you_mean, unknown_args
@@ -102,42 +102,81 @@ def _placeholder(model: type[BaseModel], field: str) -> Any:
     return "…"
 
 
-def _short(value: Any) -> Any:
-    if isinstance(value, str) and len(value) > 40:
-        return value[:37] + "…"
-    if isinstance(value, list):
-        return [_short(v) for v in value[:2]] + (["…"] if len(value) > 2 else [])
-    if isinstance(value, dict):
-        return {k: _short(v) for k, v in value.items()}
-    return value
-
-
-def _renamed(value: dict[str, Any], near: dict[str, str | None], prefix: str) -> dict[str, Any]:
+def _renamed(
+    value: dict[str, Any], near: dict[str, str | None], prefix: str
+) -> dict[str, Any] | None:
     out: dict[str, Any] = {}
-    for k, v in value.items():
-        path = f"{prefix}{k}"
-        if path in near:
-            target = near[path]
+    for key, item in value.items():
+        name = key
+        address = f"{prefix}{key}"
+        if address in near:
+            target = near[address]
             if target is None:
-                continue
-            k = target.rsplit(".", 1)[-1]
-        out[k] = v
+                return None
+            scope, _, name = target.rpartition(".")
+            if scope != prefix.removesuffix("."):
+                return None
+        if name in out:
+            return None
+        out[name] = item
     return out
 
 
-def example(model: type[BaseModel], arguments: Any, near: dict[str, str | None]) -> dict[str, Any]:
-    """The caller's arguments with unknown keys renamed to the field they
-    meant (or dropped), identity keys left to the server's defaults, and a
-    placeholder for each missing required arg."""
-    args = arguments if isinstance(arguments, dict) else {}
+def example(
+    model: type[BaseModel],
+    arguments: dict[str, Any],
+    near: dict[str, str | None],
+    *,
+    fill_missing: bool = True,
+) -> dict[str, Any] | None:
+    """Keep supplied values while correcting names and filling missing slots."""
     skip = IDENTITY_KEYS | TRANSPORT_KEYS
-    call = _renamed({k: v for k, v in args.items() if k not in skip}, near, "")
+    if any(target in skip for target in near.values()):
+        return None
+    call = _renamed({k: v for k, v in arguments.items() if k not in skip}, near, "")
+    if call is None:
+        return None
     for field, value in list(call.items()):
         if isinstance(value, dict) and _nested_model(model, field) is not None:
-            call[field] = _renamed(value, near, f"{field}.")
-    for field in required_args(model):
-        call.setdefault(field, _placeholder(model, field))
-    return {k: _short(v) for k, v in call.items()}
+            renamed = _renamed(value, near, f"{field}.")
+            if renamed is None:
+                return None
+            call[field] = renamed
+    if fill_missing:
+        for field in required_args(model):
+            call.setdefault(field, _placeholder(model, field))
+    return call
+
+
+def _retry_example(
+    model: type[BaseModel],
+    arguments: Any,
+    near: dict[str, str | None],
+    errors: list[dict[str, Any]],
+) -> tuple[dict[str, Any], str] | None:
+    if not isinstance(arguments, dict):
+        return None
+    has_correction = any(near.values())
+    if not has_correction:
+        fillable = {(field,) for field in required_args(model)}
+        if not errors or any(
+            error.get("type") != "missing" or tuple(error.get("loc") or ()) not in fillable
+            for error in errors
+        ):
+            return None
+    call = example(model, arguments, near, fill_missing=not has_correction)
+    if call is None:
+        return None
+    shown = json.dumps(call, ensure_ascii=False, default=str)
+    if len(shown) > _MAX_EXAMPLE_CHARS:
+        return None
+    if has_correction:
+        identity = {k: v for k, v in arguments.items() if k in IDENTITY_KEYS}
+        try:
+            model.model_validate({**identity, **call})
+        except ValidationError:
+            return None
+    return call, shown
 
 
 def _error_line(e: dict[str, Any]) -> str:
@@ -146,14 +185,16 @@ def _error_line(e: dict[str, Any]) -> str:
     return f"{loc}: {msg} [{e.get('type') or 'invalid'}]"
 
 
-def feedback(op: Any, arguments: Any, errors: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+def feedback(
+    op: Any, arguments: Any, errors: list[dict[str, Any]], *, include_example: bool = True
+) -> tuple[str, dict[str, Any]]:
     """`(message, data)` for a call whose arguments failed validation: the
     message is the whole correction in one line-per-part block; `data`
     carries the same parts typed, plus pydantic's `errors`."""
     model = op.input_model
     near = guesses(model, arguments)
     req, opt = required_args(model), optional_args(model)
-    call = example(model, arguments, near)
+    retry = _retry_example(model, arguments, near, errors) if include_example else None
     lines = [f"{op.name}: invalid arguments."]
     lines += [_error_line(e) for e in errors[:_MAX_ERRORS]]
     if len(errors) > _MAX_ERRORS:
@@ -164,9 +205,6 @@ def feedback(op: Any, arguments: Any, errors: list[dict[str, Any]]) -> tuple[str
     if opt:
         more = f" (+{len(opt) - _MAX_OPTIONAL})" if len(opt) > _MAX_OPTIONAL else ""
         lines.append("optional: " + ", ".join(opt[:_MAX_OPTIONAL]) + more)
-    shown = json.dumps(call, ensure_ascii=False, default=str)
-    if len(shown) <= _MAX_EXAMPLE_CHARS:
-        lines.append(f"example: {shown}")
     data = {
         # HTTP's code for the same request (a 422 `detail.code`).
         "code": LoomValidationError.code,
@@ -176,8 +214,11 @@ def feedback(op: Any, arguments: Any, errors: list[dict[str, Any]]) -> tuple[str
         "required": req,
         "optional": opt,
         "unknown": near,
-        "example": call,
     }
+    if retry is not None:
+        call, shown = retry
+        lines.append(f"example: {shown}")
+        data["example"] = call
     return "\n".join(lines), data
 
 

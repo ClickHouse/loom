@@ -201,7 +201,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.coverage.unwatch`](operations/code.md#codecoverageunwatch) | Cancel a coverage watch on a commit. | viewer | idempotent | no |  |
 | [`code.coverage.watch`](operations/code.md#codecoveragewatch) | Ask for a task-inbox message when the index covers a commit, instead of polling for it. | viewer | idempotent | no |  |
 | [`code.coverage_claim`](operations/code.md#codecoverage_claim) | Is this already tested? | viewer | read | no |  |
-| [`code.edit_context`](operations/code.md#codeedit_context) | Read source, tests, and notes. | viewer | read | no |  |
+| [`code.edit_context`](operations/code.md#codeedit_context) | Before editing, read source, tests and notes. | viewer | read | no |  |
 | [`code.enclosing`](operations/code.md#codeenclosing) | Batched `path:line` -> enclosing function. | viewer | read | yes |  |
 | [`code.examples`](operations/code.md#codeexamples) | Real call sites of a symbol, ranked test-covered-first — a current, tested usage example beats the deprecated one grep finds first. | viewer | read | no |  |
 | [`code.files`](operations/code.md#codefiles) | Which indexed files have this NAME — an rg-style glob (`tests/queries/0_stateless/05138_*`, `/*Parquet*.cpp`), a basename stem (`05138_with_fill` matches the stem exactly or as its leading prefix… | viewer | read | no |  |
@@ -216,7 +216,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.outline`](operations/code.md#codeoutline) | "What is in this file?" — the question a whole-file read answers at the price of the whole file. | viewer | read | yes |  |
 | [`code.path_guards`](operations/code.md#codepath_guards) | The conditions that stand on the call path from `from_symbol` to `to_symbol`: the verify(reaches) chain, and for each hop the guards the call site sits under inside its caller… | viewer | read | no |  |
 | [`code.pr_check`](operations/code.md#codepr_check) | A PR draft asks whether a PR like it already exists. | viewer | read | no |  |
-| [`code.read`](operations/code.md#coderead) | Read inclusive, one-based indexed lines. | viewer | read | no |  |
+| [`code.read`](operations/code.md#coderead) | Read indexed lines. | viewer | read | no |  |
 | [`code.recent_commits`](operations/code.md#coderecent_commits) | List the most recently indexed commits of a repository, decorated with subject and time from the clone. | viewer | read | yes |  |
 | [`code.refresh`](operations/code.md#coderefresh) | CI calls this right after a merge lands: run one ingest pass now instead of waiting for the poll interval. | writer | write | no | yes |
 | [`code.reindex`](operations/code.md#codereindex) | Operator repair: move the git watermark (e.g. back N commits after a bad pass, or to a specific sha). | admin | write | no | yes |

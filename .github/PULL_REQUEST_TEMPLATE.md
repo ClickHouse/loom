@@ -60,3 +60,4 @@ the change goes here with the command that reproduces it.
 - [ ] Docs under `docs/` describe the system as it now is, and this description names any operator steps and wire changes.
 - [ ] Repository text has no dates, people, host names, internal namespaces, ticket or decision numbers; the history goes in this description (`tests/unit/test_public_copy.py`).
 - [ ] Commits are signed off (`git commit -s`), as CONTRIBUTING.md asks.
+- [ ] I signed the Contributor License Agreement (CLA) if CLA assistant requested a signature.
