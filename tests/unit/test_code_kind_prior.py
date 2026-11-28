@@ -115,6 +115,21 @@ def test_test_intent_skips_the_prior() -> None:
     assert explain == "kind_prior=default:skip_test_intent"
 
 
+def test_a_test_word_past_the_opening_of_a_report_keeps_the_prior() -> None:
+    header = _u("src/Interpreters/Cache/QueryResultCache.h", "file_header", 0.031)
+    impl = _u("src/Interpreters/Cache/QueryResultCache.cpp", "function", 0.030)
+    report = (
+        "The query cache returns a stale result after the table is altered. Reading the "
+        "entry checks the key and the expiry and never the schema version, so a column "
+        "added between two runs is missing from the second answer although the statement "
+        "text is equal. It happens with every storage engine we tried and with the cache "
+        "size at its default. The stateless test that covers eviction passes."
+    )
+    out, explain = _apply_kind_prior([header, impl], report, _KIND_PRIOR_TABLES["default"])
+    assert out[0].kind == "function"
+    assert explain == "kind_prior=default"
+
+
 @pytest.mark.parametrize(
     "q,kind",
     [

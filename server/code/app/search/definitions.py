@@ -8,8 +8,7 @@ import logging
 import re
 from typing import Any
 
-from server.code.app.search.priors import _noise_path
-from server.code.app.search.window import _has_test_intent
+from server.code.app.search.priors import _noise_path, asks_for_tests
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.idents import spelled_names
 from server.code.domain.search_scope import SearchScope
@@ -109,7 +108,7 @@ async def _definition_leg(
                 per_name=_SYMBOLS_PER_NAME,
             )
             wanted = named_definitions(
-                names, symbols, path_prefix=path_prefix, asks_tests=_has_test_intent(query)
+                names, symbols, path_prefix=path_prefix, asks_tests=asks_for_tests(query)
             )
             found = await repo.definition_chunks(
                 org, ns, model, [d for name in wanted for d in name], scope=scope
