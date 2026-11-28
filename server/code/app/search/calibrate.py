@@ -19,14 +19,9 @@ def _calibrate(
     abstain_threshold: float,
 ) -> bool:
     """Calibrate the fused list and decide abstention on it, before any
-    prior reorders it; returns whether the two content legs agreed.
-
-    `fused` and the lexical rows read here are the leg's own first rows
-    (`st.lexical_head`), not the pool it cut on the path penalties: the
-    penalties are priors, and no prior decides abstention. They order the
-    leg's rows of one score, which have no order of their own."""
+    prior reorders it; returns whether the two content legs agreed."""
     result, constrained, fuzzy_hit = st.result, st.constrained, st.fuzzy_hit
-    lexical_rows, vector_rows = st.lexical_head, st.vector_rows
+    lexical_rows, vector_rows = st.lexical_rows, st.vector_rows
     card_gate, card_stats, concept_stats = st.card_gate, st.card_stats, st.concept_stats
     # similarity signal for calibration: cosine of the top vector hit when the
     # vector leg ran; else the lexical top presence stands in at the floor.

@@ -113,9 +113,8 @@ def track_verdict(
       'served at rank r'               — a chunk of the file is in the response
       'rank r in <leg> pool'           — a leg returned it; fusion/priors/top_k cut it
       'no lexeme match[; ...]'         — no query token occurs in any chunk's lexemes
-      'beyond pool: ...'               — scored, but under the lexical pool floor (or
-                                         over it and cut on its path penalty) / past
-                                         the vector pool ceiling (numbers given)
+      'beyond pool: ...'               — scored, but under the lexical pool floor /
+                                         past the vector pool ceiling (numbers given)
     `best` is the chunk that came closest, with both leg ranks and raw scores."""
     if not rows:
         return {"path": path, "verdict": "not indexed", "chunks": 0, "pool": pool}
@@ -171,12 +170,6 @@ def track_verdict(
         if lexical_ran:
             if lex_score <= 0.0:
                 parts.append("no lexeme match")
-            elif lex_pool_full and lex_score > lex_floor:
-                # over the floor and still out: the leg cut it on the penalty of its path
-                parts.append(
-                    f"beyond pool: lexical {lex_score:.2f} over floor {lex_floor:.2f}, "
-                    "cut on its path penalty"
-                )
             elif lex_pool_full:
                 parts.append(f"beyond pool: lexical {lex_score:.2f} under floor {lex_floor:.2f}")
             else:

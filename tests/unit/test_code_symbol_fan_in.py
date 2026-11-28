@@ -9,20 +9,10 @@ from typing import Any
 import pytest
 
 from server.code.app import fan_in as code_fan_in
-from server.code.app.search.priors import _COHERENCE_FRAC, _apply_fusion_signals, pool_penalties
+from server.code.app.search.priors import _COHERENCE_FRAC, _apply_fusion_signals
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CODE_SYMBOL_STATS_COLS, build_row
 from server.code.workers.graph_stats import compute_symbol_stats
-
-
-def _signals(
-    ranked: list[CodeUnit], query: str, *, prose: bool = False, **kw: Any
-) -> list[CodeUnit]:
-    """The ranking's call: the path factors are the query's own (`pool_penalties`),
-    with the prose penalty only when `prose` (a search not constrained to paths)."""
-    return _apply_fusion_signals(
-        ranked, query, path_penalties=pool_penalties(query, prose_eligible=prose), **kw
-    )
 
 
 def _agg(sid: str, qn: str, calls: int, nontest: int, files: int) -> dict[str, Any]:
@@ -309,13 +299,13 @@ def test_fusion_prior_lifts_hub_under_cap_and_skips_tests_and_noise() -> None:
         score=0.031,
         fan_in=1706,
     )
-    off = _signals([leaf, hub], "zzz qqq")
+    off = _apply_fusion_signals([leaf, hub], "zzz qqq")
     assert [u.unit_id for u in off] == ["l", "h"]  # cap 0 (stats not read): order unchanged
-    on = _signals([leaf, hub, noisy], "zzz qqq", prior_cap=0.25)
+    on = _apply_fusion_signals([leaf, hub, noisy], "zzz qqq", prior_cap=0.25)
     assert on[0].unit_id == "h"
     by = {u.unit_id: u for u in on}
     # the whole cap, times its own coherence share of the pool max, nothing more
     assert by["h"].score <= 0.030 * 1.25 * (1 + _COHERENCE_FRAC) + 1e-9
     assert by["t"].score < by["l"].score  # noise path: penalised, never boosted
-    intent = _signals([leaf, hub], "how are the tests wired", prior_cap=0.25)
+    intent = _apply_fusion_signals([leaf, hub], "how are the tests wired", prior_cap=0.25)
     assert [u.unit_id for u in intent] == ["l", "h"]  # test intent: prior skipped
