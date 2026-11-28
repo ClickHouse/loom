@@ -4,11 +4,18 @@ from __future__ import annotations
 
 from server.code.app.search.priors import (
     _COHERENCE_FRAC,
+    _INTENT_HEAD_LEXEMES,
     _NOISE_PENALTY,
     _STEM_BOOST_CAP,
     _apply_fusion_signals,
+    asks_for_docs,
+    asks_for_tests,
 )
 from server.code.domain.units import CodeUnit
+from server.settings import settings
+
+# Plain words of one lexeme each: the text of a question of a chosen length.
+_WORDS = [c + v for c in "bdfghjklmn" for v in ("ala", "ele", "ili", "olo", "ulu", "ara")]
 
 
 def _u(path: str, score: float, symbol: str = "") -> CodeUnit:
@@ -159,6 +166,51 @@ def test_prose_penalty_skips_documentation_questions() -> None:
         [notes, impl], "where is the cache documentation", prose_penalty=0.25
     )
     assert out[0].path == notes.path
+
+
+def _question(lexemes: int, word: str, at: int) -> str:
+    """A question of `lexemes` lexemes whose lexeme at index `at` is `word`."""
+    words = _WORDS[:lexemes]
+    words[at] = word
+    return " ".join(words)
+
+
+def test_a_question_up_to_the_issue_body_length_is_read_whole() -> None:
+    cap = settings.code_search_query_max_tokens
+    assert asks_for_tests(_question(cap, "tests", cap - 1))
+    assert asks_for_docs(_question(cap, "docs", cap - 1))
+    assert not asks_for_tests(_question(cap, "docs", cap - 1))
+
+
+def test_an_issue_body_asks_for_tests_or_docs_only_in_its_opening() -> None:
+    longer = settings.code_search_query_max_tokens + 1
+    assert asks_for_tests(_question(longer, "tests", _INTENT_HEAD_LEXEMES - 1))
+    assert not asks_for_tests(_question(longer, "tests", _INTENT_HEAD_LEXEMES))
+    assert asks_for_docs(_question(longer, "changelog", 0))
+    assert not asks_for_docs(_question(longer, "changelog", longer - 1))
+
+
+def test_every_question_is_read_whole_with_the_long_question_trim_off(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "code_search_query_max_tokens", 0)
+    assert asks_for_tests(_question(60, "tests", 59))
+    assert asks_for_docs(_question(60, "docs", 59))
+
+
+def test_a_report_that_mentions_a_test_and_a_release_keeps_both_path_penalties() -> None:
+    """A pasted report names a test or a release where the fault showed; its fix is
+    in source. A long prompt that opens with the request still gets what it asks for."""
+    test = _u("tests/migrations/test_writer.py", 0.031)
+    notes = _u("docs/releases/4.2.txt", 0.031)
+    impl = _u("django/db/migrations/serializer.py", 0.030)
+    body = " ".join(_WORDS[:56])
+    report = _apply_fusion_signals(
+        [test, notes, impl], f"{body} pytest 7.1 after the release", prose_penalty=0.25
+    )
+    assert report[0].path == impl.path
+    request = _apply_fusion_signals(
+        [test, notes, impl], f"write tests and docs for {body}", prose_penalty=0.25
+    )
+    assert request[-1].path == impl.path
 
 
 def test_prose_paths_are_matched_by_file_not_by_directory_word() -> None:

@@ -86,6 +86,15 @@ def test_window_counter_and_skip_reasons() -> None:
     assert (
         _saturation_skip_reason(route="hybrid", path_prefix="", query="how are parts merged") == ""
     )
+    # a long report that mentions a test past its opening does not ask for tests
+    report = (
+        "Merges stop being scheduled after a part is moved to another disk. The selector "
+        "skips every part whose disk is not the default one, the queue stays empty and "
+        "the number of parts grows until inserts are throttled. Restarting the server "
+        "brings the merges back for a while. Seen with two disks in one volume and with "
+        "a tiered policy alike; the flaky integration test for moves shows it as well."
+    )
+    assert _saturation_skip_reason(route="hybrid", path_prefix="", query=report) == ""
 
 
 def test_inline_identifier_in_relevance_window_skips_saturation() -> None:
