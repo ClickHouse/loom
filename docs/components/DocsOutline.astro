@@ -13,12 +13,22 @@ interface Props {
 const { headings, title, variant } = Astro.props;
 const mobile = variant === "mobile";
 const Outline = mobile ? "details" : "div";
+const markdown = Astro.url.pathname.replace(/\/$/, "") + ".md";
+const markdownLabels: Record<string, string> = {
+  en: "View as Markdown",
+  es: "Ver en Markdown",
+  ja: "Markdown で表示",
+  ko: "Markdown으로 보기",
+  "pt-BR": "Ver em Markdown",
+  "zh-CN": "查看 Markdown",
+};
+const markdownLabel = markdownLabels[Astro.currentLocale ?? "en"] ?? markdownLabels.en;
 ---
 
 {(headings.length > 0 || (mobile && Astro.slots.has("default"))) && (
   <Outline class:list={[
     "docs-outline",
-    mobile && "group mx-auto mb-6 max-w-content rounded-blume border border-border xl:hidden",
+    mobile && "docs-outline-mobile group mx-auto mb-6 max-w-content rounded-blume border border-border xl:hidden",
   ]}>
     {mobile ? (
       <summary class="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
@@ -41,13 +51,30 @@ const Outline = mobile ? "details" : "div";
         </ul>
       </blume-toc>
     )}
-    <slot />
+    <div class:list={["docs-outline-actions", mobile && "border-border border-t p-2"]}>
+      <Link className="docs-markdown-link" href={markdown} size="sm">
+        {markdownLabel}
+      </Link>
+      <slot />
+    </div>
   </Outline>
 )}
 
 <style>
   .docs-outline :global(a:not(:hover, :focus, [aria-current="location"])) {
     color: var(--click-global-color-text-muted);
+  }
+
+  .docs-outline-mobile blume-toc {
+    max-block-size: min(18rem, 40dvh);
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .docs-outline-actions :global(.docs-markdown-link) {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 2.25rem;
   }
 
   .docs-outline :global(a[aria-current="location"]) {

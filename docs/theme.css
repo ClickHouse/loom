@@ -1,21 +1,16 @@
 :root {
   --loom-docs-gutter: clamp(1rem, 3.2vw, 4rem);
-  --loom-docs-header-height: 4.5rem;
-  --loom-docs-toolbar-height: 3.5rem;
+  --loom-docs-header-height: 4rem;
   --loom-docs-navigation: clamp(14rem, 16vw, 17rem);
   --loom-docs-outline: clamp(13.5rem, 14vw, 16rem);
   --loom-docs-column-gutter: clamp(1.75rem, 3.2vw, 4rem);
   --loom-docs-top: clamp(1.5rem, 2vw, 2.5rem);
-}
-
-:root:has([data-docs-product-header]) {
-  --loom-docs-header-height: calc(var(--site-header-height) + 1px + var(--loom-docs-toolbar-height));
   scroll-padding-block-start: calc(var(--loom-docs-header-height) + 0.75rem);
 }
 
 :root:not([data-theme="light"]) {
   color-scheme: dark;
-  --blume-background: var(--click-global-color-background-default, #1f1f1c);
+  --blume-background: color-mix(in srgb, var(--click-global-color-background-default, #1f1f1c) 68%, black);
   --blume-foreground: var(--click-global-color-text-default, #ffffff);
   --blume-muted: var(--click-global-color-background-muted, #282828);
   --blume-muted-foreground: var(--click-global-color-text-muted, #b3b6bd);
@@ -27,7 +22,7 @@
   --blume-code-background: var(--click-global-color-background-muted, #282828);
   --blume-radius: 0.5rem;
   --blume-content-width: 100%;
-  --loom-docs-header-surface: color-mix(in srgb, var(--blume-background) 79%, black);
+  --loom-docs-header-surface: color-mix(in srgb, var(--click-global-color-background-default, #1f1f1c) 79%, black);
 }
 
 :root:not([data-theme="light"]) .loom-logo-background,
@@ -43,22 +38,16 @@
 [data-blume-header] {
   block-size: var(--loom-docs-header-height);
   background: var(--loom-docs-header-surface, var(--blume-background));
-  border-block-end: 1px solid var(--blume-border);
+  border-block-end: 1px solid var(--click-global-color-stroke-default, var(--blume-border));
 }
 
-[data-docs-product-header] ~ [data-blume-header] {
-  inset-block-start: calc(var(--site-header-height) + 1px);
-  block-size: var(--loom-docs-toolbar-height);
-  background: var(--blume-background);
-}
-
-@media (max-width: 78rem) {
-  :root:has([data-docs-product-header]:not([data-menu-ready])) {
-    --loom-docs-header-height: var(--loom-docs-toolbar-height);
+@media (max-width: 58rem) {
+  [data-blume-header] > nav {
+    display: none;
   }
 
-  [data-docs-product-header]:not([data-menu-ready]) ~ [data-blume-header] {
-    inset-block-start: 0;
+  [data-blume-nav-drawer] > nav.md\:hidden {
+    display: block;
   }
 }
 
@@ -75,10 +64,6 @@
   [data-blume-header] {
     grid-template-columns: max-content minmax(0, 1fr) auto;
     column-gap: clamp(0.75rem, 1.8vw, 2rem);
-  }
-
-  [data-docs-product-header] ~ [data-blume-header] {
-    column-gap: 0;
   }
 
   [data-blume-doc-grid] {
@@ -156,12 +141,7 @@
   border-inline-start: 1px solid var(--blume-border);
 }
 
-[data-blume-header]
-  :is(
-    [data-blume-search-open],
-    [data-blume-nav-toggle],
-    [data-blume-dropdown]:has([data-blume-locale-choice]) > summary
-  ) {
+[data-blume-header] :is([data-blume-nav-toggle], [data-blume-dropdown]:has([data-blume-locale-choice]) > summary) {
   min-block-size: 2.75rem;
   min-inline-size: 2.75rem;
   border-radius: var(--blume-radius);
@@ -223,6 +203,101 @@
   font-size: clamp(2.125rem, 4vw, 3.75rem);
   font-weight: 660;
   letter-spacing: -0.052em;
+  text-align: center;
+}
+
+:root:has([data-docs-overview]) #blume-content {
+  inline-size: 100%;
+  max-inline-size: 72rem;
+  margin-inline: auto;
+  padding-block-start: clamp(3rem, 6vw, 5rem);
+}
+
+:root:has([data-docs-overview]) #blume-content .prose {
+  max-inline-size: none;
+}
+
+:root:has([data-docs-overview]) .prose > h1 + p {
+  max-inline-size: 58ch;
+  margin-inline: auto;
+  color: var(--blume-muted-foreground);
+  font-size: clamp(1rem, 1.8vw, 1.125rem);
+  text-align: center;
+}
+
+:root:has([data-docs-overview]) :is([data-blume-toc], .docs-outline) {
+  display: none;
+}
+
+:root:not(:has([data-docs-overview])) #blume-content .prose > h1 + p {
+  color: var(--blume-muted-foreground);
+  font-size: 1.125rem;
+  line-height: 1.6;
+}
+
+.docs-landing-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  inline-size: min(100%, 30rem);
+  min-block-size: 3rem;
+  margin: 1.75rem auto 0;
+  padding: 0.65rem 1rem 0.65rem 2.75rem;
+  border: 1px solid var(--blume-border);
+  border-radius: var(--click-button-radii-all, 0.25rem);
+  background: var(--blume-muted);
+  color: var(--blume-muted-foreground);
+  text-align: start;
+  cursor: pointer;
+}
+
+.docs-landing-search:is(:hover, :focus-visible) {
+  border-color: var(--blume-accent);
+  color: var(--blume-foreground);
+}
+
+.docs-landing-search::before,
+.docs-landing-search::after {
+  position: absolute;
+  content: "";
+}
+
+.docs-landing-search::before {
+  inset-inline-start: 1rem;
+  inset-block-start: 0.875rem;
+  inline-size: 0.8125rem;
+  block-size: 0.8125rem;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+.docs-landing-search::after {
+  inset-inline-start: 1.65rem;
+  inset-block-start: 1.58rem;
+  inline-size: 0.375rem;
+  border-block-end: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+
+:root:has([data-docs-overview])
+  .prose
+  > p:has(> a[href$="/getting-started/quickstart"] + a[href$="/playground/source-change"]) {
+  justify-content: center;
+  margin-block-end: clamp(2.5rem, 5vw, 4.5rem);
+}
+
+@media (min-width: 64rem) {
+  :root:has([data-docs-overview]) [data-blume-doc-grid] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :root:has([data-docs-overview]) [data-blume-nav-drawer] {
+    display: none;
+  }
+
+  :root:has([data-docs-overview]) #blume-content {
+    --loom-docs-card-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .prose :where(h2) {
@@ -299,7 +374,7 @@
   )
   + ul {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: var(--loom-docs-card-columns, repeat(2, minmax(0, 1fr)));
   gap: 0.75rem;
   padding: 0;
   list-style: none;

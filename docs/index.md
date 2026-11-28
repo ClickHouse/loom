@@ -2,13 +2,15 @@
 seo:
   description: Install Loom, connect agents to shared memory, and find guides for deploying and operating Loom.
   title: Agent memory and code search documentation
-mode: wide
+mode: center
 pagination: false
 ---
 
 # Loom documentation
 
-Install Loom, connect your agents, and give them access to shared memory, cited documents, and indexed code.
+Set up Loom and connect your agents to shared memory, cited documents, and indexed code.
+
+<button aria-haspopup="dialog" class="docs-landing-search" data-loom-docs-landing-search type="button">Search documentation</button>
 
 [Install Loom](getting-started/quickstart.md)
 [Try the playground](https://loom.clickhouse.com/playground/source-change)
