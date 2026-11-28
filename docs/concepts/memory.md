@@ -651,9 +651,9 @@ counts the served memories that name code (a backticked or qualified name, a cal
 | `code_unlinked_name_unresolved`  | lists no `files`, and each name is defined nowhere on trunk or more than once.                                                                                                                                             |
 | `code_unlinked_pending`          | waits for its link; each sample says what it `waits_for`: `link_pass` (the worker has not read this write), `index` (no index yet, or a file that does not parse) or `trunk` (a qualified name trunk does not define yet). |
 
-The counts are of the 2,000 served memories last written (all under `keys` when given),
-and only in an org that indexes a repository; a raw tool observation, which is never
-linked, is not counted. How far each repository's links trail its
+The counts are of the 2,000 served memories last written (of those under `keys` when
+given), and only in an org that indexes a repository; a raw tool observation, which is
+never linked, is not counted. How far each repository's links trail its
 index is a gauge, and a health warning when it lasts
 ([monitoring](../operations/monitoring.md#what-to-alert-on)).
 
@@ -698,9 +698,9 @@ says. A sentence ends after `.`, `!` or `?` and a space (not after a one-letter 
 such as `e.g.`), at a blank line and before a list item; a line break alone does not end
 one. The words that mark a sentence as
 being about the name are English, and `call` or `calls` is not one: it is read as calling
-the code. The finding reads the 2,000 memories whose `moved` link was last checked (all
-under `keys` when given), in the repositories the caller may read, and no high-sensitivity
-memory; a link whose code also changed is listed under `code_links_stale`. Neither the
+the code. The finding reads the 2,000 memories whose `moved` link was last checked (of
+those under `keys` when given), in the repositories the caller may read, and no
+high-sensitivity memory; a link whose code also changed is listed under `code_links_stale`. Neither the
 memory's key, tags, `files`, entities and concepts nor a line number written in its text
 is edited.
 

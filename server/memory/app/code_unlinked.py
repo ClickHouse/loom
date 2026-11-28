@@ -80,8 +80,8 @@ async def unlinked(
     read), the last written first: each with its memory_key and
     memory_id and, under `pending`, what it `waits_for` (`index`: its repository's first
     index or a file that does not parse; `trunk`: a qualified name trunk does not define
-    yet; `link_pass`: the pass to read it). Read of the memories under `keys` when given,
-    of the `SCANNED` last written otherwise. A memory whose repository the caller may not
+    yet; `link_pass`: the pass to read it). Read of the `SCANNED` last written, among
+    those under `keys` when given. A memory whose repository the caller may not
     read counts as naming none: its cause must not tell what that repository holds.
     Nothing is read, and nothing counted, in an org that indexes no repository."""
     out: dict[str, list[dict[str, str]]] = {cause: [] for cause in CAUSES}
