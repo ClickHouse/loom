@@ -1,4 +1,3 @@
-import json
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
@@ -87,7 +86,7 @@ async def test_obsolete_claim_is_fenced_without_pruning_unexpired_receipts(conne
     assert "state = 'cancelled'" in retire
     assert (org, namespace, source, candidates) == ("org", "team", _SOURCE.source_id, ["old"])
     assert connection.execute.await_count == 3
-    scope_filter = json.loads(connection.fetch.await_args.args[-1])
+    scope_filter = connection.fetch.await_args.args[-1]
     assert "actor" not in scope_filter
     assert scope_filter["source_generation"] == 3
     assert scope_filter["destination_id"] == "copy"

@@ -83,7 +83,7 @@ class ScheduleAuthority:
     session_id: str
 
 
-def _row_binding(row: dict) -> ScheduleBinding:
+def _row_binding(row: Record) -> ScheduleBinding:
     return ScheduleBinding(
         row["org"],
         row["namespace"],
@@ -111,7 +111,7 @@ async def enqueue_due_on(conn: Connection, authority: ScheduleAuthority) -> int:
     row = await conn.fetchrow(_CURRENT, *key)
     if row is None or row["user_id"] != authority.owner or row["paused"]:
         return 0
-    current = _row_binding(dict(row))
+    current = _row_binding(row)
     if current != binding:
         return 0
     schedule = PeriodicSchedule(current, row["interval_seconds"], row["next_due_at"])

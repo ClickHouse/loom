@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import asdict, replace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -15,6 +14,7 @@ from tests.integration.test_pg_authority import pg_authority as pg_authority
 from tests.integration.test_pg_authority import pg_conn as pg_conn
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from datetime import datetime
 
     from asyncpg import Connection, Record
@@ -81,7 +81,6 @@ async def _assert_pending(conn: Connection, entry: RefreshEntry) -> None:
 
     scope = entry.task.scope
     row = dict(await _row(conn, entry))
-    row["task"] = json.loads(row["task"])
     assert row == {
         "org": scope.org,
         "namespace": scope.namespace,
@@ -148,7 +147,7 @@ async def _assert_checkpoint_rolls_back(
             await refresh.checkpoint(pg_conn, current, receipt)
             staged = await _row(pg_conn, entry)
             assert staged["state"] == "completed"
-            assert json.loads(staged["receipt"]) == asdict(receipt)
+            assert staged["receipt"] == asdict(receipt)
             raise _RollbackCheckpoint
 
 
@@ -574,7 +573,7 @@ async def _assert_reclaimed_checkpoint(
         await refresh.checkpoint(conn, second, receipt)
     row = await _row(conn, entry)
     assert row["state"] == "completed" and row["attempts"] == 2
-    assert json.loads(row["receipt"]) == asdict(receipt)
+    assert row["receipt"] == asdict(receipt)
 
 
 @pytest.mark.asyncio
@@ -943,7 +942,20 @@ async def _erase_refresh_owner(conn: Connection, entry: RefreshEntry) -> None:
     assert await _refresh_rows_for_owner(conn, scope.org, entry.user_id) == (0, 0, 0)
 
 
+@pytest.fixture
+async def connected_clickhouse() -> AsyncIterator[None]:
+    from server.core.ch import get_client
+
+    ch = get_client()
+    await ch.connect()
+    try:
+        yield
+    finally:
+        await ch.disconnect()
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("connected_clickhouse")
 async def test_user_erasure_discovers_and_removes_refresh_only_metadata(
     pg_conn: Connection,
 ) -> None:

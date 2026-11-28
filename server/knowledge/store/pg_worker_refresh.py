@@ -118,7 +118,7 @@ class WorkerCompletion:
     authorize: Callable[[Connection, LiveLease], Awaitable[CompletionAuthority | None]]
 
 
-def _metadata(entry: RefreshEntry) -> str:
+def _metadata(entry: RefreshEntry) -> dict[str, Any]:
     if (
         entry.worker_id.int == 0
         or not entry.user_id
@@ -127,16 +127,11 @@ def _metadata(entry: RefreshEntry) -> str:
         or entry.due.utcoffset() is None
     ):
         raise RefreshRejected("invalid refresh queue metadata")
-    return json.dumps(
-        {"version": 1, "task": asdict(entry.task)},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    return {"version": 1, "task": asdict(entry.task)}
 
 
-def _task(value: str) -> DocumentTask:
+def _task(metadata: dict[str, Any]) -> DocumentTask:
     try:
-        metadata = json.loads(value)
         if metadata["version"] != 1:
             raise RefreshRejected("unsupported refresh queue metadata")
         item = metadata["task"]
@@ -305,8 +300,7 @@ async def checkpoint(conn: Connection, lease: LiveLease, receipt: CompletionRece
         or receipt.observation.kind is not ObservationKind.PRESENT
     ):
         raise RefreshRejected("receipt does not authorize an accepted copy")
-    payload = json.dumps(asdict(receipt), ensure_ascii=False, separators=(",", ":"))
-    if await conn.fetchval(_CHECKPOINT, *_lease_params(lease), payload) is None:
+    if await conn.fetchval(_CHECKPOINT, *_lease_params(lease), asdict(receipt)) is None:
         raise RefreshRejected("refresh lease is no longer current")
 
 
@@ -345,7 +339,7 @@ async def replay_completion(conn: Connection, completion: WorkerCompletion) -> b
     if locked is None or locked != row:
         return False
     try:
-        raw = json.loads(locked["receipt"])
+        raw = locked["receipt"]
         receipt = CompletionReceipt(
             raw["idempotency_key"],
             Observation(

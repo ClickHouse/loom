@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
@@ -82,11 +81,11 @@ class QueueAssignment:
     worker_id: UUID
     scope: RefreshScope
 
-    def scope_filter(self) -> str:
+    def scope_filter(self) -> dict[str, str | int]:
         fields = asdict(self.scope)
         # The scheduling actor may differ for two valid requests for one assignment.
         del fields["actor"]
-        return json.dumps(fields, separators=(",", ":"))
+        return fields
 
 
 async def reserve_on(

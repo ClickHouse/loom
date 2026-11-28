@@ -1,4 +1,3 @@
-import json
 import unittest
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
@@ -35,8 +34,8 @@ class TestRefreshReceipt(unittest.IsolatedAsyncioTestCase):
         )
         self.conn = AsyncMock(is_in_transaction=Mock(return_value=True))
         self.conn.fetchrow.return_value = {
-            "task": json.dumps({"version": 1, "task": asdict(task)}),
-            "receipt": json.dumps(asdict(self.receipt)),
+            "task": {"version": 1, "task": asdict(task)},
+            "receipt": asdict(self.receipt),
             "user_id": "alice",
             "claimable_at": self.lease.expires_at,
         }
