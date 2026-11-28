@@ -7,13 +7,16 @@ those paths every pass and a bootstrap cursor moves past files it never wrote.""
 
 from __future__ import annotations
 
+import argparse
+import asyncio
 import types
 from typing import Any
 
 import pytest
 
 from server.cli import code_backfill
-from server.code.app.index import bootstrap, reconcile
+from server.code.app.index import bootstrap, gitrepo, ingest, reconcile
+from server.code.app.index.ingest_stats import FileIngestStats
 from server.settings import settings
 from tests.unit.code_fixtures import repo_config
 
@@ -39,6 +42,18 @@ class _Repo:
 
     async def name_candidates(self, *a: Any, **k: Any) -> dict[str, Any]:
         return {}
+
+
+class _TimesOutOnce(_Repo):
+    """The first `code_edges` INSERT runs past the write limit."""
+
+    timed_out = False
+
+    async def insert_rows(self, table: str, rows: list[dict[str, Any]]) -> None:
+        if table == "code_edges" and not self.timed_out:
+            self.timed_out = True
+            raise TimeoutError("ClickHouse write statement exceeded 60 s")
+        await super().insert_rows(table, rows)
 
 
 PATHS = ["a.py", "b.py", "c.py"]
@@ -129,15 +144,6 @@ async def test_a_failed_write_is_counted_with_the_tables_queued_behind_it() -> N
     """The write fails when b.py's stage needs the buffer written, and that stage logs
     the failure: no file fails, and the rows of both files are gone."""
 
-    class _TimesOutOnce(_Repo):
-        timed_out = False
-
-        async def insert_rows(self, table: str, rows: list[dict[str, Any]]) -> None:
-            if table == "code_edges" and not self.timed_out:
-                self.timed_out = True
-                raise TimeoutError("ClickHouse write statement exceeded 60 s")
-            await super().insert_rows(table, rows)
-
     async def one(reads: Any, path: str, source: bytes) -> None:
         await reads.insert_rows("code_symbols", [{"path": path}])
         await reads.insert_rows("code_edges", [{"path": path}, {"path": path}])
@@ -167,3 +173,70 @@ async def test_a_failed_write_is_counted_with_the_tables_queued_behind_it() -> N
         ("code_symbols", "b.py"),
         ("code_symbols", "c.py"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_run_counts_the_rows_a_failed_write_left_out_of_either_pass(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The command's own batches. In the index phase the write fails in b.py's ingest,
+    so b.py is one error; in the edge pass it fails as the round ends, where no file
+    fails. Each pass's counters hold the rows of both files of the round."""
+
+    async def show_file(git_dir: str, head: str, path: str, max_bytes: int = 0) -> bytes:
+        return b"x = 1\n"
+
+    async def ingest_file(
+        reads: Any, org: str, ns: str, *, path: str, edges_only: bool = False, **kw: Any
+    ) -> FileIngestStats:
+        await reads.insert_rows("code_edges", [{"path": path}, {"path": path}])
+        if not edges_only:
+            await reads.insert_rows("code_files", [{"path": path}])
+            if path == "b.py":
+                await reads.flush()  # as a read that could see the buffered rows does
+        return FileIngestStats(path=path)
+
+    monkeypatch.setattr(gitrepo, "show_file", show_file)
+    monkeypatch.setattr(ingest, "ingest_file", ingest_file)
+    repo = _TimesOutOnce()
+    run = code_backfill._Run(
+        repo=repo,
+        cfg=types.SimpleNamespace(git_dir="repo.git", embed_reuse_from=""),
+        args=argparse.Namespace(),
+        org="o",
+        ns="n",
+        head="a" * 40,
+        model_name="m",
+        embedder=None,
+        denylist=None,
+        sem=asyncio.Semaphore(1),
+    )
+    assert await run.batch(PATHS) == ""
+    assert run.counters == {
+        "files": 2,
+        "chunks": 0,
+        "symbols": 0,
+        "edges": 0,
+        "errors": 1,
+        "moved": 0,
+        "embed_reused": 0,
+        "unwritten:code_edges": 4,
+        "unwritten:code_files": 2,
+    }
+    assert sorted(repo.written) == [
+        ("code_edges", "c.py"),
+        ("code_edges", "c.py"),
+        ("code_files", "c.py"),
+    ]
+    assert capsys.readouterr().err == (
+        "  ! b.py: TimeoutError: ClickHouse write statement exceeded 60 s\n"
+    )
+
+    repo.timed_out, repo.written = False, []
+    await run.edge_batch(PATHS)
+    assert run.edges == {"files": 3, "edges": 0, "errors": 0, "unwritten:code_edges": 4}
+    assert sorted(repo.written) == [("code_edges", "c.py"), ("code_edges", "c.py")]
+    assert capsys.readouterr().err == (
+        "  ! write as the round of a.py ended: "
+        "TimeoutError: ClickHouse write statement exceeded 60 s\n"
+    )

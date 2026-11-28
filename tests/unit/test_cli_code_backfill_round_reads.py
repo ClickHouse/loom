@@ -104,5 +104,4 @@ def test_an_oversize_record_moves_the_counter_an_ingest_would() -> None:
     for recorded in (FileIngestStats(path="a.png", excluded="binary"), False):
         code_backfill._count_record(counters, recorded)
     code_backfill._count_record(counters, FileIngestStats(path="a.json", error="skipped: …"))
-    # the record that failed is a file row the index lacks
-    assert counters == {"files": 1, "errors": 1, "excluded": 1, "unwritten:code_files": 1}
+    assert counters == {"files": 1, "errors": 1, "excluded": 1}

@@ -34,8 +34,6 @@ def _count_record(counters: dict[str, int], recorded: FileIngestStats | Literal[
     """Count an oversize file's record as `_Run.one` counts an ingested file."""
     key = "errors" if recorded is False else "excluded" if recorded.excluded else "files"
     counters[key] = counters.get(key, 0) + 1
-    if recorded is False:
-        count_unwritten(counters, {"code_files": 1})  # the record of the file was not written
 
 
 def _edge_source(
@@ -439,15 +437,17 @@ async def _backfill_run(args: argparse.Namespace, stack: contextlib.AsyncExitSta
         elif owed == "workers":
             print("--workers: batches were written side by side; the edge pass binds them")
         second = await _second_edge_pass(run, paths, workers)
-    lost = {"index phase": unwritten(counters)}
+    # By pass, read before the edge pass's rows join the run's counters below.
+    lost = {"index phase": unwritten(counters), "second edge pass": unwritten(second or {})}
     if held:
         # The batches written before the hold are compacted, republished and recorded.
         await _close_index(repo, counters, org, ns, model_name, started, head, mode)
         _say_unwritten(head, lost)
         return 1
     if second is not None:
-        lost["second edge pass"] = unwritten(second)
         counters["edges_second_pass"] = second["edges"]
+        # The run's counters, printed and recorded, hold both passes' errors and rows
+        # left out; the lines on stderr split the rows by pass.
         counters["errors"] += second["errors"]
         count_unwritten(counters, lost["second edge pass"])
         if not paths_file and not second["errors"] and not lost["second edge pass"]:
@@ -476,9 +476,9 @@ async def _backfill_run(args: argparse.Namespace, stack: contextlib.AsyncExitSta
         _note(phase="index", head=head[:12], total_paths=len(paths), **counters)
         if not args.embed:
             print("run: loom code backfill --phase embed")
-    return backfill_index_exit_code(
-        counters["files"], counters["errors"], _say_unwritten(head, lost)
-    )
+    left_out = sum(unwritten(counters).values())
+    _say_unwritten(head, lost)
+    return backfill_index_exit_code(counters["files"], counters["errors"], left_out)
 
 
 def prefix_coverage_note(all_paths: list[str], prefixes: tuple[str, ...], *, top: int = 6) -> str:
@@ -797,8 +797,9 @@ async def _backfill_batch_rounds(
     Returns table -> rows the rounds' failed writes left out. A write is sent when a
     later read or write of the round needs the buffer written, so its failure raises
     in that file's ingest, where it is one file's error or a stage's logged failure;
-    the rows it dropped belong to any file of the round. A write that fails as a
-    round ends raises here."""
+    the rows it dropped belong to any file of the round. The write as a round ends
+    is sent here, in no file's ingest: its failure is printed and counted, and the
+    batch goes on."""
     from server.code.app.index.pass_budget import git_text_source
     from server.code.app.index.round_reads import RoundReads, round_size, rounds
 
@@ -812,6 +813,13 @@ async def _backfill_batch_rounds(
                 if size > 0:
                     await reads.prefetch(sources, denylist)
                 await gather_or_cancel(*(one(reads, p, sources[p]) for p in rnd if p in sources))
+                try:
+                    await reads.flush()
+                except Exception as e:  # noqa: BLE001 — counted in `unwritten`; the run reports it
+                    print(
+                        f"  ! write as the round of {rnd[0]} ended: {type(e).__name__}: {e}",
+                        file=sys.stderr,
+                    )
             add_counters(lost, reads.unwritten)
     return lost
 
@@ -835,24 +843,24 @@ async def _backfill_head(git_dir: str, cfg: Any, args: argparse.Namespace) -> st
     return await gitrepo.head_sha(git_dir, cfg.git_branch)
 
 
-def _say_unwritten(head: str, lost: dict[str, dict[str, int]]) -> int:
+def _say_unwritten(head: str, lost: dict[str, dict[str, int]]) -> None:
     """Say on stderr what the run's failed writes left out of the index, by pass and
-    table, and the command that writes it; the rows left out (0: every write landed).
-    The count is an upper bound: a write the client gave up on can still have landed."""
+    table, and the command that writes it; nothing when every write landed. The count
+    is an upper bound: a write the client gave up on can still have landed."""
     rows = sum(n for by_table in lost.values() for n in by_table.values())
-    if rows:
-        passes = "; ".join(
-            f"{name}: " + ", ".join(f"{table} {n}" for table, n in by_table.items())
-            for name, by_table in lost.items()
-            if by_table
-        )
-        print(
-            f"backfill at {head[:12]}: failed writes left up to {rows} rows out of the index "
-            f"({passes})\nre-run to write them (rows already in the index are kept): "
-            + shlex.join(["loom", *sys.argv[1:]]),
-            file=sys.stderr,
-        )
-    return rows
+    if not rows:
+        return
+    passes = "; ".join(
+        f"{name}: " + ", ".join(f"{table} {n}" for table, n in by_table.items())
+        for name, by_table in lost.items()
+        if by_table
+    )
+    print(
+        f"backfill at {head[:12]}: failed writes left up to {rows} rows out of the index "
+        f"({passes})\nre-run to write them (rows already in the index are kept): "
+        + shlex.join(["loom", *sys.argv[1:]]),
+        file=sys.stderr,
+    )
 
 
 def backfill_index_exit_code(files: int, errors: int, unwritten_rows: int = 0) -> int:
