@@ -39,7 +39,10 @@ A document the converter cannot parse or convert (a string that is not UTF-8,
 say) is skipped: it is named once on stderr (`scip_to_delta: warning: skipped
 document …`) and counted in the summary line. It is listed in the delta's
 `skipped_files` when it is one of the files the delta converts (a window's
-own, or any in a full run). The rest of the index converts. The server keeps
+own, or any in a full run). The rest of the index converts. In a run over
+every document (no `--changed-files`), a failed document whose path cannot be
+read (one that is not UTF-8, say) fails the run: the server would read its
+file as gone. The server keeps
 that file's compiler rows and marks them stale until a later delta converts
 it. With
 `SCIP_STOP_ON_FAILED_DOCUMENT=1` (the server sets it from

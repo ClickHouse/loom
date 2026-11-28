@@ -835,12 +835,12 @@ def _top_level_records(data: bytes):
 
 def _document_path(payload) -> str:
     """A serialized Document's relative_path (field 1), read without parsing
-    its occurrences; "" when it cannot be read."""
+    its occurrences; "" when it cannot be read, a path that is not UTF-8 among them."""
     try:
         for field, value in _top_level_records(payload):
             if field == 1:
-                return bytes(value).decode("utf-8", "replace")
-    except (IndexError, ValueError):
+                return bytes(value).decode("utf-8")
+    except (IndexError, ValueError):  # UnicodeDecodeError is a ValueError
         pass
     return ""
 
@@ -849,16 +849,20 @@ class _Skips:
     """The documents one run skipped: one python-protobuf refuses (a string field that
     is not UTF-8, say) or one that fails to convert. Each is named once on stderr, the
     delta lists the named ones (`skipped_files`: the server keeps their rows and marks
-    them stale) and counts all of them. With `stop` the failure fails the run instead."""
+    them stale) and counts all of them. With `stop` the failure fails the run instead.
+    So does one whose path cannot be read in a run over every document (`whole`): the
+    server reads a file such a delta does not name as gone and retires its rows."""
 
-    def __init__(self, stop: bool = False) -> None:
-        self.stop = stop
+    def __init__(self, stop: bool = False, whole: bool = False) -> None:
+        self.stop, self.whole = stop, whole
         self.labels: set[str] = set()
         self.paths: set[str] = set()
 
     def add(self, path: str, err: Exception, index: int) -> None:
         if self.stop:
             raise err
+        if self.whole and not path:
+            raise ValueError(f"document {index} failed and its path cannot be read") from err
         # a document whose path cannot be read is told apart by its place in the index
         label = path or f"<document {index}>"
         if label in self.labels:
@@ -1272,7 +1276,7 @@ class DeltaStream:
     ) -> None:
         scip_pb2 = _ensure_scip_pb2()
         data = _read_index(index_path)
-        self._skips = _Skips(stop_on_failed_document)
+        self._skips = _Skips(stop_on_failed_document, whole=changed is None)
         self._changed = changed
         self._run = _prepare(
             data, scip_pb2, source_root, exclude_generated, path_prefix, self._skips

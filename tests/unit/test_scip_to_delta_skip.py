@@ -114,6 +114,26 @@ def test_the_server_logs_the_converters_warning_line() -> None:
     assert _converter().SKIPPED_WARNING == SKIPPED_WARNING
 
 
+def test_a_run_over_every_document_fails_on_one_whose_path_cannot_be_read(
+    tmp_path: Path,
+) -> None:
+    """The server reads a file a full run's delta does not name as gone: a failed document
+    whose path cannot be recovered (here not UTF-8) fails the run, and no delta is written.
+    A window, which names its own files, counts it and converts."""
+    index = _bad_utf8_index(tmp_path)
+    raw = index.read_bytes()
+    assert raw.count(b"src/bad.cpp") == 1
+    index.write_bytes(raw.replace(b"src/bad.cpp", b"src/\xffad.cpp"))
+    out = tmp_path / "delta.json"
+    proc = _run(index, out)
+    assert proc.returncode != 0
+    assert "document 1 failed and its path cannot be read" in proc.stderr, proc.stderr
+    assert not out.exists()
+    delta = _converter().convert(str(index), {"src/a.cpp"}, [], "h" * 40, "b" * 40, source_root="")
+    assert [f["path"] for f in delta["files"]] == ["src/a.cpp"]
+    assert delta["skipped_files"] == [] and delta["stats"]["skipped_failed"] == 1
+
+
 def test_a_document_that_fails_to_convert_is_skipped_and_listed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
