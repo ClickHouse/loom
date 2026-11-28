@@ -103,11 +103,12 @@ class SearchMixin(CodeRepoBase):
         scope: SearchScope | None = None,
     ) -> list[dict[str, Any]]:
         """The chunk each `(path, qualified name)` definition starts in, in the shape
-        the fusion consumes. A chunk's `scope` is the qualified name of the function or
-        class it holds, the key the symbol table shares with it. A keyed read of the
+        `unit_from_chunk` reads. A chunk's `scope` is the qualified name of the function
+        or class it holds, the key the symbol table shares with it. A keyed read of the
         definitions' files; `scope` adds a constrained search's predicates, so a
-        definition outside them is not returned. The two IN lists admit a name defined
-        in another listed file; the caller keeps the pairs it asked for."""
+        definition outside them is not returned. The path list and the name list are
+        matched apart, so a name defined in another listed file comes back too; the
+        caller keeps the pairs it asked for."""
         if not definitions:
             return []
         scope_sql, scope_params = _scope_sql(scope)

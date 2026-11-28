@@ -32,7 +32,7 @@ def named_definitions(
     symbols: list[dict[str, Any]],
     *,
     path_prefix: str = "",
-    asks_tests: bool = True,
+    asks_tests: bool,
 ) -> list[list[tuple[str, str]]]:
     """The `(path, qualified name)` definitions of each of `names` that says where it is
     defined, from their symbol rows, in the order the query mentions the names. A name
@@ -127,8 +127,8 @@ async def _definition_leg(
 
 def _held_definitions(rows: list[dict[str, Any]], ranked: list[CodeUnit]) -> list[CodeUnit]:
     """The units of the definition rows no other leg found, in the leg's order. They
-    stay out of the priors, which read the whole pool, so the other units score as
-    they do without the leg."""
+    stay out of the stages that order the ranking, which read the whole pool, so the
+    other units score as they do without the leg."""
     pooled = {u.unit_id for u in ranked}
     held = [unit_from_chunk(row) for row in rows if str(row["chunk_id"]) not in pooled]
     for u in held:
@@ -142,9 +142,11 @@ def _place_definitions(
     """Serve the named definitions directly after the first unit of `ranked`, at its
     score: those the ranking holds in its order, then `held`. A definition says what
     the query names, not what it asks about, so it is level with the best answer and
-    never above it; one that is already first stays first. Run after the priors that
-    score a unit against the query: they multiply a score by a path, a kind and a named
-    identifier, and would move a definition raised before them past the first unit."""
+    never above it; one that is already first stays first. Run last in the ranking:
+    the priors, the outcome boost, the reranker and the personal tie-break each order
+    units by a score gap, and would move a definition placed before them past the
+    first unit. So they order the ranking as they do without the leg, and a held
+    definition is not read by them."""
     named = {str(row["chunk_id"]) for row in rows}
     if not named or not ranked:
         return ranked

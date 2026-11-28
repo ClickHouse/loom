@@ -46,9 +46,9 @@ async def _rank_units(
     user_recent_dirs: list[str] | None,
 ) -> list[CodeUnit]:
     """Turn the fused rows into units and apply the relevance priors in
-    order: provenance, fan-in, fusion signals, kind prior, the named definitions'
-    place, outcome boost, rerank, the personal tie-break. Their explanation parts
-    land on `st`."""
+    order: provenance, fan-in, fusion signals, kind prior, outcome boost, rerank,
+    the personal tie-break, and last the named definitions' place. Their explanation
+    parts land on `st`."""
     result, work, constrained, shape = st.result, st.work, st.constrained, st.shape
     lexical_rows, vector_rows, history_rows = st.lexical_rows, st.vector_rows, st.history_rows
     card_rows, concept_rows, hyde_rows = st.card_rows, st.concept_rows, st.hyde_rows
@@ -62,8 +62,7 @@ async def _rank_units(
         u = unit_from_chunk(row, score=score)
         u.via, u.lexical_rank, u.vector_rank = prov.get(u.unit_id, (only.get(u.unit_id, ""), 0, 0))
         ranked.append(u)
-    # the named definitions no other leg found: annotated with the pool, placed after
-    # the priors
+    # the named definitions no other leg found: annotated with the pool, placed last
     held = _held_definitions(st.definition_rows, ranked)
     # chunk -> the symbols it defines (a function chunk carries one); the fan-in
     # annotation below maps through it
@@ -109,9 +108,10 @@ async def _rank_units(
     kind_explain = ""
     if kind_table is not None:
         ranked, kind_explain = _apply_kind_prior(ranked, query, kind_table)
-    ranked = _place_definitions(ranked, held, st.definition_rows)
     if risk_prefetch is not None:  # The path reads run beside what follows
-        risk_prefetch.start(_diversify(list(ranked), top_k) + history_units)
+        # with the definitions where they are served, whatever the stages below reorder
+        head = _place_definitions(ranked, held, st.definition_rows)
+        risk_prefetch.start(_diversify(head, top_k) + history_units)
 
     # ---- outcome-driven boost (automatic): units that
     # agents actually opened/used rank above units they grep past. Capped
@@ -143,6 +143,10 @@ async def _rank_units(
     tiebreak_applied = False
     if user_recent_dirs:
         ranked, tiebreak_applied = _user_tiebreak(ranked, user_recent_dirs)
+
+    # ---- the named definitions, after every stage that orders the ranking: each of
+    # them decides on a score gap, and a definition level with the first unit has none
+    ranked = _place_definitions(ranked, held, st.definition_rows)
 
     st.fan_in_explain, st.fusion_signals = fan_in_explain, fusion_signals
     st.kind_explain, st.tiebreak_applied = kind_explain, tiebreak_applied

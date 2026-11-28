@@ -46,6 +46,23 @@ _PLURAL_RE = re.compile(r"\(e?s\)")  # "model(s)" is a plural, not a call
 _HUMP_RE = re.compile(r"[a-z0-9][A-Z]|[A-Z]{2}[a-z]{2}")
 # The object or class the code is written inside. It names no owner and no definition.
 _RECEIVERS = frozenset({"self", "cls", "this", "super", "Self"})
+_RUN_RE = re.compile(r"\S+")
+_WORD_RE = re.compile(r"\w")
+_EXTENSION_RE = re.compile(r"\.\w+(?![\w(])")  # `query.py`, not the call `obj.save()`
+
+
+def _path_runs(query: str) -> list[tuple[int, int]]:
+    """The span of each whitespace-free run that is a path: a run with two slashes
+    (`pkg/db/models`, a URL), with a file extension after its slash (`models/query.py`)
+    or with nothing on one side of it (`tests/`). Any other single slash separates two
+    alternatives (`bulk_create()/bulk_update()`)."""
+    runs = []
+    for run in _RUN_RE.finditer(query):
+        head, slash, tail = run.group(0).rpartition("/")
+        two_sided = _WORD_RE.search(head) and _WORD_RE.search(tail)
+        if slash and ("/" in head or not two_sided or _EXTENSION_RE.search(tail)):
+            runs.append(run.span())
+    return runs
 
 
 def spelled_names(query: str, limit: int) -> list[tuple[str, ...]]:
@@ -56,16 +73,23 @@ def spelled_names(query: str, limit: int) -> list[tuple[str, ...]]:
     (`Query.combine`, `DB::Field`) or code-shaped (an underscore or a capital inside:
     `bulk_update`, `executeStep`). A plain word is never one, so an ordinary word that
     is also a symbol name is not looked up. A path component (`models/query.py`) is not
-    a name either. A receiver is dropped (`self.save_base()` spells `save_base`) and is
+    a name either, where one of two alternatives (`select_related/prefetch_related`)
+    is. A receiver is dropped (`self.save_base()` spells `save_base`) and is
     no name by itself (`super()`); any other owner stays as written, so `json.dumps()`
     does not spell `dumps`. A member of something that is not a name
     (`get_parser()._actions`, `rows[0]->name`) has an owner the text does not spell,
     and is no name."""
     found: dict[tuple[str, ...], None] = {}
+    paths, at = _path_runs(query), 0
     for m in _SPELLED_RE.finditer(query):
         ahead, after = query[max(m.start() - 2, 0) : m.start()], query[m.end() : m.end() + 4]
         before = ahead[-1:]
-        if before == "/" or after.startswith("/") or ahead.endswith((".", "::", "->")):
+        if ahead.endswith((".", "::", "->")):
+            continue
+        while at < len(paths) and paths[at][1] <= m.start():
+            at += 1
+        in_path = at < len(paths) and paths[at][0] <= m.start()
+        if in_path and (before == "/" or after.startswith("/")):
             continue
         parts = tuple(_ACCESS_RE.split(m.group(0)))
         lead = 0

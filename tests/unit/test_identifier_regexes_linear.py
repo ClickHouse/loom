@@ -22,6 +22,9 @@ CASES = [
     pytest.param(embedded_idents, "ab" + "A" * 27 + "_", id="code-search-camel"),
     # a dotted run that ends as a path: every part is a place a match could restart
     pytest.param(lambda s: spelled_names(s, 32), "a." * 20000 + "b/", id="code-search-spelled"),
+    # a run of slashes: each name is looked up in the paths once
+    pytest.param(lambda s: spelled_names(s, 32), "a_b/" * 20000 + "c", id="code-search-paths"),
+    pytest.param(lambda s: spelled_names(s, 32), "a_b/c " * 20000, id="code-search-slashes"),
     # a run of receivers: each is dropped once
     pytest.param(lambda s: spelled_names(s, 32), "self." * 20000 + "b", id="code-search-receivers"),
     pytest.param(extract_anchors, "Ab" + "0" * 25 + "_", id="tracker-anchors"),
