@@ -383,7 +383,7 @@
     }
   },
   "reviewed_source_sha256": {
-    "integrations/claude-code-plugin/hooks/loom-code-shunt.mjs": "121f0c296ec03b57ccef871b2fbfb9df13b1c0bb7a731a2e65b0e3154b058cbe",
+    "integrations/claude-code-plugin/hooks/loom-code-shunt.mjs": "7eff9317d444f5a3f5ea18cc31f288e8d4bec2311e75a38b33f39ecf00669f24",
     "integrations/claude-code-plugin/hooks/loom-flush.mjs": "81fe4926c6b1cb944e363af3fbb2d072f86c2508ce437c1b652a30c8aba98a91",
     "integrations/claude-code-plugin/hooks/loom-namespace-health.mjs": "bbef4979b8606df851e77a86687b7d3c88b84de8bdfc6f88d9ff5c3bc2d5203c",
     "integrations/claude-code-plugin/hooks/loom-prompt-pack.mjs": "6cd0c69a6e5ae322d44b28e714339e816e57e7547ac757fc6605157b24b5f852",
@@ -398,7 +398,7 @@
     "integrations/claude-code-plugin/lib/session-brief.mjs": "3aee492198a400ed0fa5fee733b4a4e04463efcc4d0b22ff760e1b765a76e28b",
     "integrations/claude-code-plugin/lib/session-start.mjs": "63ed14793cf0fb6a1df0df9e70652e86a76c95114c3003fe83bdba48e2e7a12e",
     "integrations/claude-code-plugin/lib/task-inbox.mjs": "33fbb1040e9b6db936928a66e4b90555a556220415f4e6394f6d2cd67821dcfc",
-    "integrations/codex-plugin/hooks/loom-code-shunt.mjs": "121f0c296ec03b57ccef871b2fbfb9df13b1c0bb7a731a2e65b0e3154b058cbe",
+    "integrations/codex-plugin/hooks/loom-code-shunt.mjs": "7eff9317d444f5a3f5ea18cc31f288e8d4bec2311e75a38b33f39ecf00669f24",
     "integrations/codex-plugin/hooks/loom-flush.mjs": "81fe4926c6b1cb944e363af3fbb2d072f86c2508ce437c1b652a30c8aba98a91",
     "integrations/codex-plugin/hooks/loom-namespace-health.mjs": "bbef4979b8606df851e77a86687b7d3c88b84de8bdfc6f88d9ff5c3bc2d5203c",
     "integrations/codex-plugin/hooks/loom-prompt-pack.mjs": "6cd0c69a6e5ae322d44b28e714339e816e57e7547ac757fc6605157b24b5f852",
