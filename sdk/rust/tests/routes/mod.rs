@@ -189,9 +189,8 @@ async fn a_429_with_no_wait_to_take_is_returned() {
             .is_err()
     );
 
-    // The last wait is cut to what is left of the budget, then the 429 stands.
+    // After one wait, the next hint no longer fits the remaining budget.
     let server = Server::new(vec![
-        refused(json!(0.05)),
         refused(json!(0.05)),
         refused(json!(0.05)),
         unused_response(),
@@ -206,8 +205,8 @@ async fn a_429_with_no_wait_to_take_is_returned() {
         .request_json_with_options::<Value>(route(), CallOptions::default())
         .await
         .unwrap_err();
-    assert_eq!(attempts_of(failure), 3);
-    for _ in 0..3 {
+    assert_eq!(attempts_of(failure), 2);
+    for _ in 0..2 {
         server.request().await;
     }
     assert!(
