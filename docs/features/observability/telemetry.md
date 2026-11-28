@@ -87,9 +87,10 @@ to omit domains while sending aggregate usage. In a settings file, set
 `adoption_telemetry_share_domains: false`.
 
 Daily usage counts for reported contact domains are public by default when domain
-sharing is enabled. To share domain names alone, set
+sharing is enabled. To omit public domain activity from future reports, set
 `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY=false` on every server and worker
 replica. In a settings file, set `adoption_telemetry_share_domain_activity: false`.
+Reports send contact and request counts to the collector to qualify and order the domain names.
 Only standard namespaces with a contact domain shared in the same report contribute
 to the public domain activity counts.
 
