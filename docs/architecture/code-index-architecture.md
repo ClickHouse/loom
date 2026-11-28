@@ -579,12 +579,16 @@ spelling to structural code operations.
 
 Python import spellings use the bounded short-name candidate read after an exact
 symbol miss. Read-side matching preserves dotted module scopes and treats a package's
-`__init__.py` as implicit. Only Python source rows participate; ambiguous or incomplete
-candidate sets decline. The response discloses `resolved_by: python_module` while
-retaining stored names and ids. Extraction and its stamp do not change.
+`__init__.py` as implicit. After these matches, a dotted name can bind a same-name,
+single-hop relative import from one indexed initializer. The resolver reads the
+complete initializer and destination from the same indexed Git revision, capped at
+16 KiB and 256 KiB respectively. It checks the declaration's line and declines
+competing bindings or unsupported executable syntax. Only Python source rows
+participate. Ambiguous or incomplete candidates stay unresolved.
+`resolved_by: python_module` accompanies the stored name and id.
 
-Memory code links use the same Python import spellings when resolving named
-definitions. A package-level name such as `pkg.json.dumps` can anchor the definition
+Memory code links accept dotted names for the defining module or package initializer.
+A package-level name such as `pkg.json.dumps` can anchor the definition
 in `pkg/json/__init__.py`; its stored qualified name remains intact. Constructor
 names remain explicit, and ambiguous matches stay unlinked unless the memory's
 file scope selects one definition.
