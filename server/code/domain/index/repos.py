@@ -380,8 +380,9 @@ def configured_repos() -> list[RepoConfig]:
 
 
 def known_repo_count() -> int:
-    """How many entries this process knows are configured (no I/O): the operator's, and
-    the self-service registry's once it is read. Zero means no repository job is owed
+    """How many entries this process knows are configured (no store read; a `realpath`
+    and a stat of each entry's clone dir): the operator's, and the self-service
+    registry's once it is read. Zero means no repository job is owed
     (`sandbox.job_owed`)."""
     return len(_operator_entries() if registry_unread() else configured_repos())
 
@@ -538,7 +539,7 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
     seen: set[str] = set()
     # A fork and its upstream derive the same clone dir; in one clone each fetch would
     # move the other's branch refs.
-    clone_holders: dict[str, tuple[str, str]] = {}
+    clone_holders: dict[str | tuple[int, int], tuple[str, str]] = {}
     for i, e in enumerate(entries):
         if not isinstance(e, dict) or not e.get("namespace"):
             errors[f"entry:{i}"] = f"code repo entry missing 'namespace', skipped: {e!r}"
@@ -634,8 +635,22 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
     return repos
 
 
+def _clone_keys(git_dir: str) -> list[str | tuple[int, int]]:
+    """The keys one clone dir is held under: its canonical path, and its
+    `(st_dev, st_ino)` once it exists, so two spellings of one directory (a case alias
+    on a case-insensitive volume, a symlink, a bind mount) share a key. A directory
+    that cannot be read keeps the path key alone."""
+    keys: list[str | tuple[int, int]] = [os.path.realpath(git_dir)]
+    try:
+        st = os.stat(git_dir)
+    except OSError:
+        return keys
+    keys.append((st.st_dev, st.st_ino))
+    return keys
+
+
 def _clone_taken(
-    holders: dict[str, tuple[str, str]],
+    holders: dict[str | tuple[int, int], tuple[str, str]],
     git_dir: str,
     git_remote: str,
     ns: str,
@@ -644,11 +659,14 @@ def _clone_taken(
     """Whether an earlier entry holds `git_dir` with another `git_remote` (both after
     `_entry_clone_fields` applies the defaults); records the entry's config error when
     one does. The first entry claims a clone; branches share it by spelling the remote
-    the same way. Only this check treats two spellings of a directory as one (symlinks
-    and `..` resolved); the mirror sweep, its lock files and `trunk_entry` compare
-    `git_dir` as written."""
-    held_remote, held_ns = holders.setdefault(os.path.realpath(git_dir), (git_remote, ns))
+    the same way. Only this check treats two spellings of a directory as one (the same
+    canonical path, or the same directory by identity once it exists); the mirror
+    sweep, its lock files and `trunk_entry` compare `git_dir` as written."""
+    keys = _clone_keys(git_dir)
+    held_remote, held_ns = next((holders[k] for k in keys if k in holders), (git_remote, ns))
     if held_remote == git_remote:
+        for k in keys:
+            holders.setdefault(k, (held_remote, held_ns))
         return False
     errors[f"git_dir:{ns}"] = (
         f"code repo {ns} skipped: its clone {git_dir} is held by {held_ns} with another "

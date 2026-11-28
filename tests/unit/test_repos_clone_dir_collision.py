@@ -5,6 +5,7 @@ clone dir, and one clone would let each fetch move the other's refs."""
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -126,3 +127,37 @@ def test_a_symlink_to_a_held_clone_is_the_same_clone(
     got = cfg(_two_repositories("widgets.git", "alias.git"))
     assert "code-widgets-upstream" not in got
     assert "git_dir:code-widgets-upstream" in repos._config_errors
+
+
+def test_a_case_alias_of_a_held_clone_is_the_same_clone(
+    cfg, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    # One directory, as on a case-insensitive volume: the lookup of either spelling
+    # finds `Widget.git`, so `os.stat` reports the same identity for both.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "Widget.git").mkdir()
+    real_stat = os.stat
+
+    def stat(path, *args, **kwargs):
+        if os.path.basename(path).lower() == "widget.git":
+            path = tmp_path / "Widget.git"
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat)
+    got = cfg(_two_repositories("Widget.git", "widget.git"))
+    assert "code-widgets-fork" in got
+    assert "code-widgets-upstream" not in got
+    assert "code-widgets-fork" in repos._config_errors["git_dir:code-widgets-upstream"]
+
+
+def test_a_missing_spelling_of_a_held_clone_is_the_same_clone(
+    cfg, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    # `os.stat` fails on the missing component while the canonical path collapses `..`:
+    # the entry has no identity yet but still names the held directory.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "widgets.git").mkdir()
+    got = cfg(_two_repositories("widgets.git", "missing/../widgets.git"))
+    assert "code-widgets-fork" in got
+    assert "code-widgets-upstream" not in got
+    assert "code-widgets-fork" in repos._config_errors["git_dir:code-widgets-upstream"]
