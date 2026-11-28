@@ -5614,6 +5614,37 @@ async def test_a_changed_file_that_does_not_parse_adds_no_definition(monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("at_head", ["not-indexed", "unparsed", "deleted"])
+async def test_a_file_loses_its_definitions_only_when_it_is_deleted(
+    monkeypatch, at_head: str
+) -> None:
+    # z.py had a definition of the removed one's shape. Deleted with z.py, it may be what
+    # b.py's is; in a z.py still there that the ingest does not index, it is not known
+    # to have left, and b.py's is followed
+    twin = _LONG_ROWS.replace("fetch_rows", "drain_rows")
+    commits = {
+        ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,
+        ("c0", "pkg/z.py"): twin,
+        ("c1", "pkg/a.py"): _KEEP,
+        ("c1", "pkg/b.py"): _LONG_ROWS.replace("fetch_rows", "warm_up"),
+    } | ({} if at_head == "deleted" else {("c1", "pkg/z.py"): twin + "\n\nX = 1\n"})
+    files, row = _renaming_world(monkeypatch, commits)
+    indexed = code_links.code.indexed_names
+
+    async def indexed_names(scope, commit, path):
+        if (commit, path) == ("c1", "pkg/z.py"):
+            if at_head == "unparsed":
+                raise code_links.code.ParseFailed(path, "syntax")
+            return None  # over the byte cap, or binary
+        return await indexed(scope, commit, path)
+
+    monkeypatch.setattr(code_links.code, "indexed_names", indexed_names)
+    followed = ("moved", "pkg/b.py", "pkg.b::warm_up")
+    unsure = ("unresolved", "pkg/a.py", "pkg.a::fetch_rows")
+    assert await _followed(files, row) == [unsure if at_head == "deleted" else followed]
+
+
+@pytest.mark.asyncio
 async def test_a_file_the_ingest_refuses_adds_no_renamed_definition(monkeypatch) -> None:
     commits = {
         ("c0", "pkg/a.py"): _KEEP + "\n\n" + _LONG_ROWS,

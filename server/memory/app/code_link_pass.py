@@ -310,14 +310,17 @@ class RepoReads:
     ) -> None:
         """Add to `found` what the file `old` at `base`, `now` at `head` ('' = deleted),
         gained, lost and kept, by the name inside its module. Its text at `base` is
-        fingerprinted only when it lost a name."""
+        fingerprinted only when it lost a name. A file still there that the ingest does
+        not index adds nothing: none of its names is known to have left it."""
 
         def local(qualified_name: str, path: str) -> str:
             return unnumbered(local_name(qualified_name, path))
 
-        names = await self._indexed_names(scope, head, now) if now else None
+        names = await self._indexed_names(scope, head, now) if now else set()
+        if names is None:
+            return
         before = {local(name, old) for name in await self.names(base, old) or ()}
-        after = {local(name, now) for name in names or ()}
+        after = {local(name, now) for name in names}
         here = await self.at(head, now) if after else None
         there = await self.at(base, old) if before - after else None
         if here is not None:
