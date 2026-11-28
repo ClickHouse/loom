@@ -18,7 +18,7 @@ import asyncio
 import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -145,36 +145,45 @@ async def _link_org(
             out += [_awaiting(r, cns) for r, _ in unparsed]
             waiting = {r["mid"] for r, _ in unparsed}
             memories = [r for r in memories if r["mid"] not in waiting]
-        out += rows_out + store.tombstones(gone)
+        if not await _insert_at_head(org, cns, rows_out + store.tombstones(gone)):
+            # its pending scan, under the lease, links them at its own head
+            result.errors.append(f"link {org}/{cns}: a recheck is ahead of these links")
+            out += [_awaiting(r, cns) for r in memories]
+            continue
         result.linked += len(rows_out)
         result.unlinked += len(gone)
         linked += [r["mid"] for r in memories]
-    await _insert_at_head(out)
+    await store.insert(out)
     if linked and rereads:
         read = {r["mid"]: r["inputs"] for memories in todo.values() for r in memories}
         await _relink_rewritten(org, linked, read, result, rereads - 1)
 
 
-async def _insert_at_head(inserted: list[LinkRow]) -> None:
-    """Insert `inserted` while holding each linked repository's recheck lease, and only if
-    its indexed head is still the one the links were built at. A pass that checked a later
-    head ran before the lease and would never have seen them: LeaseBusy, the queue
-    retries and builds at the new head. A pass that starts after reads them
+async def _insert_at_head(org: str, cns: str, inserted: list[LinkRow]) -> bool:
+    """Insert one repository's `inserted` links under its recheck lease, if its indexed
+    head is still the one they were built at. False, nothing inserted, when a pass holds
+    the lease or checked a later head: it never saw these links, and the caller leaves
+    them to its pending scan. A pass that starts after the insert reads them
     (docs/architecture/code-index-architecture.md)."""
-    heads: dict[tuple[str, str], set[str]] = defaultdict(set)
-    for r in inserted:
-        if r["path"] and r["state"] != "pending" and r["tombstoned_at"] is None:
-            heads[r["org"], r["code_namespace"]].add(r["checked_commit"])
-    async with AsyncExitStack() as held:
-        for key in sorted(heads):
-            await held.enter_async_context(
-                link_pass.repository_locks.lease(link_pass.lock_name(*key))
-            )
+    built = {
+        r["checked_commit"]
+        for r in inserted
+        if r["path"] and r["state"] != "pending" and r["tombstoned_at"] is None
+    }
+    if not built:
+        if inserted:
+            await store.insert(inserted)
+        return True
+    try:
+        async with link_pass.repository_locks.lease(link_pass.lock_name(org, cns)):
             with sequential_reads():
-                now = await code.indexed_head(*key)
-            if heads[key] != {now}:
-                raise LeaseBusy(f"{key[0]}/{key[1]} moved to {now} while its links were built")
-        await store.insert(inserted)
+                now = await code.indexed_head(org, cns)
+            if built != {now}:
+                return False
+            await store.insert(inserted)
+    except LeaseBusy:
+        return False
+    return True
 
 
 async def _relink_rewritten(
@@ -210,8 +219,9 @@ async def link_each(
 ) -> tuple[list[LinkRow], list[LinkRow], list[tuple[dict[str, Any], str]]]:
     """`_link`, and the memories it could not link, each with the file it names that does
     not parse; the others are linked all the same."""
+    head = await code.indexed_head(org, cns)  # one head for the batch, as its insert checks
     try:
-        return *await _link(org, cns, memories, existing, files), []
+        return *await _link(org, cns, memories, existing, files, head), []
     except code.ParseFailed:
         pass
     rows: list[LinkRow] = []
@@ -219,7 +229,7 @@ async def link_each(
     unparsed: list[tuple[dict[str, Any], str]] = []
     for m in memories:
         try:
-            made, dropped = await _link(org, cns, [m], existing, files)
+            made, dropped = await _link(org, cns, [m], existing, files, head)
         except code.ParseFailed as e:
             unparsed.append((m, e.path))
             continue
@@ -234,11 +244,12 @@ async def _link(
     memories: list[dict[str, Any]],
     existing: dict[str, list[LinkRow]],
     files: link_pass.RepoReads,
+    head: str | None = None,
 ) -> tuple[list[LinkRow], list[LinkRow]]:
     """The link rows of `memories` (one repository's) at its indexed head, and their
     existing links that no longer hold. Before the repository's first index each memory
     gets a `*` marker instead, resolved once the index exists."""
-    head = await code.indexed_head(org, cns)
+    head = await code.indexed_head(org, cns) if head is None else head
     if not head:
         markers = [_awaiting(r, cns) for r in memories]
         old = [a for r in memories for a in existing.get(r["mid"], [])]

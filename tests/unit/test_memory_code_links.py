@@ -6129,7 +6129,14 @@ def _made(**kw: Any) -> dict[str, Any]:
 class _Table:
     """A link table and the recheck lease, recording what happens in what order."""
 
-    def __init__(self, monkeypatch, *, indexed: str = "c1", busy: bool = False) -> None:
+    def __init__(
+        self,
+        monkeypatch,
+        *,
+        indexed: str = "c1",
+        busy: bool = False,
+        busy_names: frozenset[str] | set[str] = frozenset(),
+    ) -> None:
         from contextlib import asynccontextmanager
 
         from server.memory.store.key_write_lock import LeaseBusy
@@ -6138,7 +6145,7 @@ class _Table:
 
         @asynccontextmanager
         async def lease(name):
-            if busy:
+            if busy or name in busy_names:
                 raise LeaseBusy(name)
             self.events.append(("take", name))
             try:
@@ -6161,7 +6168,7 @@ class _Table:
 @pytest.mark.asyncio
 async def test_links_are_inserted_inside_their_repositorys_recheck_lease(monkeypatch) -> None:
     table = _Table(monkeypatch)
-    await code_links._insert_at_head([_made(), _made(memory_id="m2")])
+    assert await code_links._insert_at_head("o", "code-a", [_made(), _made(memory_id="m2")])
     lock = code_link_pass.lock_name("o", "code-a")
     # a pass starts only after the release, so its snapshot holds both links; one that
     # ended before the take is the next test
@@ -6173,21 +6180,15 @@ async def test_links_are_inserted_inside_their_repositorys_recheck_lease(monkeyp
 
 @pytest.mark.asyncio
 async def test_links_built_before_a_pass_moved_the_head_are_not_inserted(monkeypatch) -> None:
-    from server.memory.store.key_write_lock import LeaseBusy
-
     table = _Table(monkeypatch, indexed="c2")  # a pass checked c2 after these were built at c1
-    with pytest.raises(LeaseBusy):
-        await code_links._insert_at_head([_made()])
+    assert not await code_links._insert_at_head("o", "code-a", [_made()])
     assert table.rows == [] and table.events[-1][0] == "release"
 
 
 @pytest.mark.asyncio
 async def test_links_wait_for_a_pass_that_holds_the_lease(monkeypatch) -> None:
-    from server.memory.store.key_write_lock import LeaseBusy
-
     table = _Table(monkeypatch, busy=True)
-    with pytest.raises(LeaseBusy):
-        await code_links._insert_at_head([_made()])
+    assert not await code_links._insert_at_head("o", "code-a", [_made()])
     assert table.rows == []
 
 
@@ -6195,8 +6196,67 @@ async def test_links_wait_for_a_pass_that_holds_the_lease(monkeypatch) -> None:
 async def test_rows_that_name_no_checked_path_take_no_lease(monkeypatch) -> None:
     table = _Table(monkeypatch, busy=True)
     gone = _made(tombstoned_at=datetime(2026, 1, 1))
-    await code_links._insert_at_head([gone, _made(path="", qualified_name="*", state="pending")])
+    rows = [gone, _made(path="", qualified_name="*", state="pending")]
+    assert await code_links._insert_at_head("o", "code-a", rows)
     assert len(table.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_busy_repository_leaves_the_others_linked_and_waits_for_its_pass(
+    monkeypatch,
+) -> None:
+    table = _Table(monkeypatch, busy_names={code_link_pass.lock_name("o", "code-b")})
+
+    def memory(mid: str, tag: str) -> dict[str, Any]:
+        return {
+            "org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-",
+            "memory_key": mid, "mid": mid, "sha": "s", "value": "v", "tags": [tag],
+            "files": ["a.py"], "status": "active", "tombstoned_at": None,
+        }  # fmt: skip
+
+    async def link_each(org, cns, memories, existing, files):
+        return [_made(code_namespace=cns, memory_id=r["mid"]) for r in memories], [], []
+
+    async def none(*a, **k):
+        return []
+
+    async def nothing(*a, **k):
+        return None
+
+    monkeypatch.setattr(code_links.store, "for_memories", none)
+    monkeypatch.setattr(code_links, "link_each", link_each)
+    monkeypatch.setattr(code_links, "_relink_rewritten", nothing)
+    monkeypatch.setattr(
+        code_links, "code_namespace_for", lambda org, ns, tags: "code-" + tags[0][-1]
+    )
+    monkeypatch.setattr(code_links, "mentions", lambda text: [])
+    result = code_link_pass.PassResult()
+    await code_links._link_org("o", [memory("ma", "repo:a"), memory("mb", "repo:b")], result)
+    by_state = {(r["memory_id"], r["code_namespace"]): r["state"] for r in table.rows}
+    # repository a is linked; b's memory is parked on the `*` marker its pass resolves
+    assert by_state == {("ma", "code-a"): "fresh", ("mb", "code-b"): "pending"}
+    assert [r["qualified_name"] for r in table.rows if r["memory_id"] == "mb"] == ["*"]
+    assert (result.linked, len(result.errors)) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_one_batch_is_built_at_one_head_when_a_file_does_not_parse(monkeypatch) -> None:
+    heads = iter(["c1", "c2", "c3"])
+    seen: list[str | None] = []
+
+    async def indexed_head(org, cns):
+        return next(heads)
+
+    async def link(org, cns, memories, existing, files, head=None):
+        seen.append(head)
+        if len(memories) > 1:
+            raise code_links.code.ParseFailed("a.py", "bad")
+        return [], []
+
+    monkeypatch.setattr(code_links.code, "indexed_head", indexed_head)
+    monkeypatch.setattr(code_links, "_link", link)
+    await code_links.link_each("o", "code-a", [{"mid": "m1"}, {"mid": "m2"}], {}, None)
+    assert seen == ["c1", "c1", "c1"]
 
 
 @pytest.mark.asyncio
