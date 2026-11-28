@@ -140,8 +140,8 @@ For removal, held-memory exceptions and model-backed revision, see the
 ## Bring a lesson's text up to a rename
 
 When a definition is renamed or moved with nothing else changed, its link follows it and
-reads `moved`. The lesson's text still says the old name. Loom does not rewrite it;
-`namespace.validate` lists what a rewrite would be:
+reads `moved`. A lesson that wrote the old name, module or path still says it. Loom does
+not rewrite it; `namespace.validate` lists what a rewrite would be:
 
 1. Call `namespace.validate` on the memory namespace (with `keys` to check the lessons
    one session wrote) and read the `code_rename_edits` finding. Each sample is one lesson

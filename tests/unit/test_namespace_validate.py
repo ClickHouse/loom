@@ -502,7 +502,7 @@ async def test_rename_edits_are_listed_with_their_totals_by_outcome(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A memory whose link followed a rename is listed with the edits its text allows,
-    or the reason it gets none; the totals count every memory read, not only the
+    or the reason it gets none; the totals count every memory listed, not only the
     samples. Information: it never makes a namespace unhealthy, even under `strict`."""
     from server.memory.app import code_renames
 

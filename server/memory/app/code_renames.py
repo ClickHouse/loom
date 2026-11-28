@@ -1,10 +1,11 @@
 """The edits that bring a namespace's memories up to renames their links followed, for
 namespace.validate.
 
-A link in state `moved` is at its code, and its memory's text still names the old
+A link in state `moved` is at its code, and its memory's text may still name the old
 definition or path. This reads each such memory, its links and the index at the head,
 and plans its edits (`server.memory.domain.code_rename`): the old and new token with
 their positions and the hash to apply them against, or the one reason none is offered.
+A memory whose text names nothing old is not listed.
 Nothing is written: a principal applies an edit with memory.update and
 `if_match_sha256`.
 """
@@ -40,11 +41,12 @@ async def planned(
     org: str, namespace: str, keys: Sequence[str] | None = None
 ) -> list[dict[str, Any]]:
     """One row per served memory of the namespace (under `keys` when given) that holds
-    a `moved` link into a repository the caller may read, the newest checked first, of
-    the `SCANNED` newest: its memory_key and memory_id, and either its `edits` (each a
-    `start`, `end`, `old` and `new` over the text) with the `content_sha256` they are
-    of, or the `reason` it gets none (`code_rename.REASONS`). A high-sensitivity memory
-    is not read: an edit quotes its text."""
+    a `moved` link into a repository the caller may read and whose text names an old
+    name or path, the newest checked first, of the `SCANNED` newest: its memory_key and
+    memory_id, and either its `edits` (each a `start`, `end`, `old` and `new` over the
+    text) with the `content_sha256` they are of, or the `reason` it gets none
+    (`code_rename.REASONS` but `UNNAMED`). A high-sensitivity memory is not read: an
+    edit quotes its text."""
     moved = await code_link_reads.stale_links(
         org, namespace, keys, limit=SCANNED, states=("moved",)
     )
@@ -107,6 +109,8 @@ def _rows(memories: Sequence[_Linked], index: dict[str, _Index]) -> list[dict[st
         plan = code_rename.plan(
             link_pass.claim_of(head["value"]), head, links, by_name, gone=gone, rules=rules
         )
+        if plan.reason == code_rename.UNNAMED:
+            continue  # its text holds as it is
         row: dict[str, Any] = {"memory_key": str(head["memory_key"]), "memory_id": str(head["mid"])}
         if plan.reason:
             row["reason"] = plan.reason

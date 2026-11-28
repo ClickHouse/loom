@@ -604,8 +604,8 @@ linked, is not counted. How far each repository's links trail its
 index is a gauge, and a health warning when it lasts
 ([monitoring](../operations/monitoring.md#what-to-alert-on)).
 
-A `moved` link is at its code, and the memory's text still names the old definition or
-path. `namespace.validate` lists each such memory under the `info` finding
+A `moved` link is at its code, and the memory's text may still name the old definition or
+path. `namespace.validate` lists each memory whose text does under the `info` finding
 `code_rename_edits`, with either the `edits` its text allows (replace `old` with `new` at
 characters `start` to `end`) and the `content_sha256` they are of, or the one `reason` no
 edit is offered. The finding's `totals` count the memories by `edits` and by reason. Loom
@@ -620,31 +620,33 @@ spelling the text uses: `Reader.get` becomes `Reader.fetch`, a full dotted name 
 full new one, and `self.get` keeps its receiver. The whole memory gets no edit for the
 first of these reasons that applies:
 
-| Reason                   | The memory                                                                                                                                                                                              |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `not_text`               | has a value that is not one string.                                                                                                                                                                     |
-| `link_not_settled`       | has a link that is pending, `changed`, `unresolved` or `missing`, that its renamed class carried, or that is hashed under older fingerprint rules.                                                      |
-| `incomplete`             | names more code than the link caps keep.                                                                                                                                                                |
-| `overloaded`             | is linked to a definition the index numbers among several of one name.                                                                                                                                  |
-| `quoted_or_literal`      | holds the old name or path in a fenced block, a URL, a quoted string or a backticked span that is more than one name.                                                                                   |
-| `prose_occurrence`       | writes the old name as a bare word of the prose.                                                                                                                                                        |
-| `old_name_remains`       | would still hold the old name or path where no edit reaches: a plain word, a part of a longer name, a path before a line number, or a path whose file still exists.                                     |
-| `names_several`          | writes one name that two of its links were written against.                                                                                                                                             |
-| `receiver_form`          | writes the name as `self.name`, `cls.name` or `this.name`, and its `files` do not name the defining file.                                                                                               |
-| `old_name_still_defined` | spells the old name in a way that still names a definition on the indexed trunk.                                                                                                                        |
-| `new_name_present`       | already holds the new name or path.                                                                                                                                                                     |
-| `dated_claim`            | is dated (`valid_to`, `invalid_at` or `temporal_anchor`), or the sentence to edit holds a commit hash, a version tag, a year, a month, or a pull request or issue number.                               |
-| `about_naming`           | would be edited in a sentence about the name or the place: it holds `rename`, `formerly`, `used to`, `was called`, `replaced`, `moved from`, `deprecated`, `legacy`, `before`, `previously` or `named`. |
-| `named_in_key_or_tags`   | holds the old name or path in its `memory_key` or a tag.                                                                                                                                                |
-| `named_in_files`         | lists the old path in `files`, which `memory.update` keeps.                                                                                                                                             |
-| `would_unlink`           | would lose a link once revised: the new name is not one definition on the indexed trunk, or the revised text no longer names a definition or file it is linked to.                                      |
-| `no_code_token`          | names no old name or path: the bare name still holds after a move, or the link is back where the text says.                                                                                             |
+| Reason                   | The memory                                                                                                                                                                                                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `not_text`               | has a value that is not one string.                                                                                                                                                                                                                              |
+| `link_not_settled`       | has a link that is pending, `changed`, `unresolved` or `missing`, that its renamed class carried, or that is hashed under older fingerprint rules.                                                                                                               |
+| `incomplete`             | names more code than the link caps keep.                                                                                                                                                                                                                         |
+| `overloaded`             | is linked to a definition the index numbers among several of one name.                                                                                                                                                                                           |
+| `quoted_or_literal`      | holds the old name or path in a fenced block, a URL, a quoted string or a backticked span that is more than one name.                                                                                                                                            |
+| `prose_occurrence`       | writes the old name as a bare word of the prose.                                                                                                                                                                                                                 |
+| `old_name_remains`       | would still hold the old name or path where no edit reaches: a plain word, a part of a longer name, the dotted module the definition left (two segments or more), a path before a line number, or a path whose file still exists.                                |
+| `names_several`          | writes one name that two of its links were written against.                                                                                                                                                                                                      |
+| `receiver_form`          | writes the name as `self.name`, `cls.name` or `this.name`, and its `files` do not name the defining file.                                                                                                                                                        |
+| `old_name_still_defined` | spells the old name in a way that still names a definition on the indexed trunk.                                                                                                                                                                                 |
+| `new_name_present`       | already holds the new name or path.                                                                                                                                                                                                                              |
+| `dated_claim`            | is dated (`valid_to`, `invalid_at` or `temporal_anchor`), or the sentence to edit holds a commit hash, a version tag, a year, a month, or a pull request or issue number.                                                                                        |
+| `about_naming`           | would be edited in a sentence about the name or the place: it holds `name`, `names`, `named`, `naming`, a word that starts with `renam` or `alias`, `called`, `formerly`, `used to`, `replaced`, `moved from`, `deprecated`, `legacy`, `before` or `previously`. |
+| `named_in_key_or_tags`   | holds the old name or path in its `memory_key` or a tag.                                                                                                                                                                                                         |
+| `named_in_files`         | lists the old path in `files`, which `memory.update` keeps.                                                                                                                                                                                                      |
+| `would_unlink`           | would lose a link once revised: the new name is not one definition on the indexed trunk, or the revised text no longer names a definition or file it is linked to.                                                                                               |
 
-The words that mark a sentence as being about the name are English. The finding reads the
-2,000 memories whose `moved` link was last checked (all under `keys` when given), in the
-repositories the caller may read, and no high-sensitivity memory; a link whose code also
-changed is listed under `code_links_stale`. Neither the memory's key, tags, `files`,
-entities and concepts nor a line number written in its text is edited.
+A memory whose text names no old name or path is not listed: its bare name still holds
+after a move, or the link is back where the text says. The words that mark a sentence as
+being about the name are English, and `call` or `calls` is not one: it is read as calling
+the code. The finding reads the 2,000 memories whose `moved` link was last checked (all
+under `keys` when given), in the repositories the caller may read, and no high-sensitivity
+memory; a link whose code also changed is listed under `code_links_stale`. Neither the
+memory's key, tags, `files`, entities and concepts nor a line number written in its text
+is edited.
 
 ## Time
 

@@ -54,6 +54,8 @@ REASONS = (
     "would_unlink",  # the revised memory would not link to all the code it links to now
     "no_code_token",  # the text names no old name or path: nothing to edit
 )
+# the reason of a memory whose text holds as it is
+UNNAMED = REASONS[-1]
 
 # what makes a sentence a statement about a point in time: a commit, a version tag, a
 # year, a month, a pull request or issue
@@ -66,10 +68,11 @@ _DATED = re.compile(
     r"|#\d+\b|\b(?:pr|mr|gh)[- ]?\d+\b|\b(?:issue|pull request)s? \d+",
     re.IGNORECASE,
 )
-# what makes a sentence a statement about the name or the place (English only)
+# what makes a sentence a statement about the name or the place (English only). Not
+# `call` or `calls`: far more often the code is called than named.
 _NAMING = re.compile(
-    r"\b(?:renam\w+|formerly|used to|was called|replaced|moved from|deprecated|legacy"
-    r"|before|previously|named)\b",
+    r"\b(?:nam(?:e|es|ed|ing)|renam\w+|called|alias\w*|formerly|used to|replaced"
+    r"|moved from|deprecated|legacy|before|previously)\b",
     re.IGNORECASE,
 )
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n")
@@ -157,15 +160,15 @@ def plan(
     files = [str(f) for f in memory.get("files") or []]
     spans, quoted = code_spans(text)
     edits: dict[tuple[int, int], Edit] = {}
-    for m in (_move(a) for a in links if a["state"] == "moved"):
-        if m is None:
-            continue
+    moves = [m for a in links if a["state"] == "moved" and (m := _move(a))]
+    for m in moves:
         alive = m.was_path not in gone
         why |= _in_labels(memory, m, alive)
         if m.name:
             why |= _renamed(text, m, spans, quoted, by_name, files, edits)
         if m.was_path != m.path:
             why |= _repathed(text, m, quoted, files, alive, edits)
+    why |= _old_modules(text, moves, list(edits), quoted)
     if edits:
         why |= _about(text, memory, edits.values())
         why |= _unlinked(revised(text, list(edits.values())), links, by_name, files)
@@ -173,7 +176,7 @@ def plan(
         if reason in why:
             return Plan(reason=reason)
     if not edits:
-        return Plan(reason="no_code_token")
+        return Plan(reason=UNNAMED)
     return Plan(edits=tuple(sorted(edits.values())), sha256=served_content_sha256(text))
 
 
@@ -304,6 +307,39 @@ def _left_over(
                 why.add("prose_occurrence" if code_shaped(spelling) else "old_name_remains")
             elif o.end() != theirs.end:
                 why.add("old_name_remains")  # `Reader.get` still holds the old `Reader`
+    return why
+
+
+def _modules(path: str, qualified_name: str) -> set[str]:
+    """The dotted spellings of the module a definition is in: whole, and from each of
+    its segments on."""
+    local = "." + local_name(qualified_name, path)
+    out: set[str] = set()
+    for form in _forms(path, qualified_name):
+        parts = form.removesuffix(local).split(".") if form.endswith(local) else []
+        out.update(".".join(parts[i:]) for i in range(len(parts)))
+    return out
+
+
+def _old_modules(
+    text: str,
+    moves: Sequence[_Move],
+    edited: Sequence[tuple[int, int]],
+    quoted: Sequence[tuple[int, int]],
+) -> set[str]:
+    """Why a module a definition of `moves` left withholds the memory: `text` writes it,
+    over more than one segment, outside the `edited` spans (an import, a sentence about
+    the place), so the revised text would name both places. One segment is as often a
+    word of the prose."""
+    why: set[str] = set()
+    for m in moves:
+        left = _modules(m.was_path, m.was_name) - _modules(m.path, m.name) if m.name else set()
+        for module in (x for x in left if "." in x):
+            spelled = re.escape(module).replace(r"\.", r"(?:\.|::)")
+            for o in re.finditer(rf"(?<!\w){spelled}(?!\w)", text):
+                if not _inside(edited, *o.span()):
+                    literal = _inside(quoted, *o.span())
+                    why.add("quoted_or_literal" if literal else "old_name_remains")
     return why
 
 
