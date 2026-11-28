@@ -1574,6 +1574,101 @@ async def test_validate_counts_only_repositories_the_caller_may_read(env) -> Non
     assert (memory_only.count, memory_only.samples) == (0, [])
 
 
+async def test_validate_lists_the_edit_a_followed_rename_allows_and_an_update_applies_it(
+    env,
+) -> None:
+    """After a rename the link follows, the memory's text still says the old name. The
+    report lists the edit its spelling allows, or why none is offered, and writes
+    nothing; memory.update with the listed hash applies it, the link pass links the
+    revised memory where the code is, and a caller who may not read the repository is
+    told nothing."""
+    from fastapi import HTTPException
+
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.identity.api.models_namespace_catalog import NamespaceValidateInput
+    from server.identity.app.namespace_validate import handle_namespace_validate
+    from server.memory.api.models_crud import MemoryUpdateInput
+    from server.memory.app.update import handle_memory_update
+    from server.operations.base import Role
+
+    repo = env
+    path = "src/widgets/io.py"
+    src = "def fetch_rows(conn, n):\n    rows = conn.read(n)\n    return [r for r in rows if r]\n"
+    c1 = repo.commit({path: src})
+    await _index(TRUNK, repo, c1, [path])
+    text = "`fetch_rows` drops empty rows"
+    mid = await _remember(MEM, "fetch-rows", text)
+    # a word of the prose links inside the memory's files, and is never edited
+    await _remember(MEM, "fetch-rows-prose", "fetch_rows drops empty rows", files=[path])
+    await _pass()
+    c2 = repo.commit({path: src.replace("fetch_rows", "load_rows")})
+    await _index(TRUNK, repo, c2, [path])
+    await _pass()
+
+    async def renames_for(namespaces: tuple[str, ...]) -> Any:
+        set_current_auth(
+            AuthInfo(
+                subject="it@example.com",
+                org=ORG,
+                namespaces=namespaces,
+                roles=(Role.VIEWER,),
+                is_service_account=False,
+            )
+        )
+        try:
+            report = await handle_namespace_validate(NamespaceValidateInput(org=ORG, namespace=MEM))
+        finally:
+            set_current_auth(None)
+        return next(f for f in report.findings if f.check == "code_rename_edits")
+
+    listed = await renames_for((MEM, TRUNK))
+    assert listed.count == 2 and listed.totals == {"edits": 1, "prose_occurrence": 1}
+    by_key = {s["memory_key"]: s for s in listed.samples}
+    assert by_key["fetch-rows-prose"]["reason"] == "prose_occurrence"
+    offered = by_key["fetch-rows"]
+    assert offered["memory_id"] == mid
+    assert offered["edits"] == [{"start": 1, "end": 11, "old": "fetch_rows", "new": "load_rows"}]
+    # the listed hash is the one memory.get serves: the report cites the same revision
+    cited = {e.memory_key: e.content_sha256 for e in listed.evidence}
+    assert offered["content_sha256"] == cited["fetch-rows"]
+    # nothing was written
+    assert (await _row(mid)).value == text
+    hidden = await renames_for((MEM,))
+    assert (hidden.count, hidden.samples, hidden.totals) == (0, [], {})
+
+    (edit,) = offered["edits"]
+    revised = text[: edit["start"]] + edit["new"] + text[edit["end"] :]
+    applied = await handle_memory_update(
+        MemoryUpdateInput(
+            org=ORG,
+            namespace=MEM,
+            memory_key="fetch-rows",
+            value=revised,
+            if_match_sha256=offered["content_sha256"],
+        )
+    )
+    assert applied.updated and (await _row(mid)).value == "`load_rows` drops empty rows"
+    # the same edit against the value it was planned from is refused once that is gone
+    with pytest.raises(HTTPException) as refused:
+        await handle_memory_update(
+            MemoryUpdateInput(
+                org=ORG,
+                namespace=MEM,
+                memory_key="fetch-rows",
+                value=revised,
+                if_match_sha256=offered["content_sha256"],
+            )
+        )
+    assert refused.value.status_code == 409
+    await _pass()
+    (link,) = await _links(mid)
+    assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "fresh")
+    after = await renames_for((MEM, TRUNK))
+    assert after.totals == {"prose_occurrence": 1}
+    assert [s["memory_key"] for s in after.samples] == ["fetch-rows-prose"]
+
+
 async def test_validate_counts_unlinked_code_memories_by_cause(env) -> None:
     """A memory that names code and holds no link reads as one whose code is current;
     the report counts each under why it has none, from the rows the pass stored and the

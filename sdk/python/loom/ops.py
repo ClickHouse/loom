@@ -18189,6 +18189,7 @@ class NamespaceValidateFinding(TypedDict, total=False):
     count: Required[int]
     samples: NotRequired[list[dict[str, Any]]]
     detail: Required[str]
+    totals: NotRequired[dict[str, int]]
 
 
 class ObserveCrystallizeInput(TypedDict, total=False):

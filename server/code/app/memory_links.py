@@ -10,6 +10,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import batched
 from typing import Any
 
 from server.code.app.index import gitrepo, mirrors
@@ -409,11 +410,14 @@ async def live_paths(org: str, namespace: str, refs: list[str]) -> dict[str, str
     """ref -> the live path it names: itself when indexed, else the one live path whose
     basename it is. Unresolved or ambiguous refs are absent."""
     repo = CodeRepo()
-    present = await repo.live_paths_present(org, namespace, refs)
-    out = {r: r for r in refs if r in present}
-    bare = [r for r in refs if r not in out and "/" not in r]
-    named = await repo.live_paths_by_basename(org, namespace, bare) if bare else {}
-    out.update((r, paths[0]) for r, paths in named.items() if len(paths) == 1)
+    out: dict[str, str] = {}
+    # the store answers for at most 500 paths of one read
+    for some in batched(sorted(set(refs)), 500):
+        present = await repo.live_paths_present(org, namespace, list(some))
+        out.update((r, r) for r in some if r in present)
+        bare = [r for r in some if r not in present and "/" not in r]
+        named = await repo.live_paths_by_basename(org, namespace, bare) if bare else {}
+        out.update((r, paths[0]) for r, paths in named.items() if len(paths) == 1)
     return out
 
 
