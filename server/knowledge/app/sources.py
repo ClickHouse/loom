@@ -345,6 +345,17 @@ async def _require_source_namespace(org: str, namespace: str) -> None:
         raise refusal
 
 
+def _require_self_service() -> None:
+    """Refuse an op that takes a member's credential while the operator has turned
+    self-service document sources off, before any probe or write."""
+    if not settings.knowledge_source_self_service_enabled:
+        raise ValidationError(
+            "adding a document source or rotating its credential is off on this "
+            "deployment (LOOM_KNOWLEDGE_SOURCE_SELF_SERVICE_ENABLED); ask the operator",
+            code="SELF_SERVICE_OFF",
+        )
+
+
 def _require_kind(kind: str) -> None:
     if kind not in domain.KINDS:
         raise ValidationError(
@@ -451,6 +462,7 @@ async def handle_knowledge_source_list(
         accepts_sources=await _source_refusal(input.org, input.namespace) is None,
         sources=entries,
         enabled=bool(settings.knowledge_source_sync_enabled),
+        self_service=bool(settings.knowledge_source_self_service_enabled),
     )
 
 
@@ -505,6 +517,7 @@ async def handle_knowledge_source_inspect(
 
 
 async def handle_knowledge_source_add(input: KnowledgeSourceAddInput) -> KnowledgeSourceAddOutput:
+    _require_self_service()
     name = domain.normalize_name(input.name)
     if not domain.valid_name(name):
         raise ValidationError(
@@ -719,6 +732,7 @@ async def handle_knowledge_source_check(
 async def handle_knowledge_source_rotate(
     input: KnowledgeSourceRotateInput,
 ) -> KnowledgeSourceRotateOutput:
+    _require_self_service()
     src = await _source_or_404(input.org, input.namespace, input.name)
     _require_served(src)
     _require_supported_recording_provider(src)

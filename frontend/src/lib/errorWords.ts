@@ -71,7 +71,8 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   MODEL_CALLS_DISABLED:
     "Model calls are off for this org; an org admin can turn them on in Admin › Guardrails unless a platform admin locked them:",
   SANDBOX_UNAVAILABLE: "Adding repositories is turned off on this deployment:",
-  SELF_SERVICE_OFF: "Adding repositories is turned off on this deployment:",
+  // Shared by repositories, tracker sources and document sources: the server's words name the action.
+  SELF_SERVICE_OFF: "The operator turned this off:",
   REPO_EXISTS: "This repository is already indexed:",
   REPO_QUOTA: "The repository limit is reached:",
 };

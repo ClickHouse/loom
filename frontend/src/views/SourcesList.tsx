@@ -56,7 +56,7 @@ const TONE_STATE: Record<SyncTone, BadgeState> = { ok: "success", warn: "warning
 
 type State =
   | { kind: "loading" }
-  | { kind: "ready"; sources: KnowledgeSource[]; enabled: boolean; accepts: boolean }
+  | { kind: "ready"; sources: KnowledgeSource[]; enabled: boolean; accepts: boolean; selfService: boolean }
   | { kind: "absent" }
   | { kind: "refused" }
   | { kind: "error"; error: unknown };
@@ -162,7 +162,13 @@ export function SourcesList({
       try {
         const r = await listKnowledgeSources(id, { signal });
         if (!live()) return;
-        setState({ kind: "ready", sources: r.sources, enabled: r.enabled, accepts: r.accepts_sources !== false });
+        setState({
+          kind: "ready",
+          sources: r.sources,
+          enabled: r.enabled,
+          accepts: r.accepts_sources !== false,
+          selfService: r.self_service !== false,
+        });
       } catch (e) {
         if (!live()) return;
         if (isOpAbsent(e)) setState({ kind: "absent" });
@@ -182,7 +188,9 @@ export function SourcesList({
     const retire: RowMenuItem = { label: "Retire", icon: "trash", danger: true, onSelect: act("retire") };
     // A place that takes no new source refuses a sync and a rotation: Check and Retire remain.
     const closed = state.kind === "ready" && !state.accepts;
-    const items = closed ? [check, retire] : [check, sync, rotate, retire];
+    // With self-service off the deployment refuses a rotation too; a sync still runs.
+    const rotates = state.kind === "ready" && state.selfService;
+    const items = closed ? [check, retire] : rotates ? [check, sync, rotate, retire] : [check, sync, retire];
     if (!closed && ["gdrive", "notion", "linear"].includes(s.kind)) {
       items.splice(2, 0, { label: "Push notifications", icon: "refresh", onSelect: act("push") });
     }
@@ -195,7 +203,7 @@ export function SourcesList({
   // The Library's section hides while its list loads, on an empty place that takes
   // no source or that this caller cannot add to, and from a non-admin when the list failed.
   const empty = state.kind === "ready" && state.sources.length === 0;
-  const closedAndEmpty = empty && !state.accepts;
+  const closedAndEmpty = empty && (!state.accepts || !state.selfService);
   const nothingForReader = empty && !manageable;
   const loading = state.kind === "loading";
   const failedForReader = state.kind !== "ready" && !loading && !manageable;
@@ -223,7 +231,10 @@ export function SourcesList({
           {manageable && state.sources.length > 0 ? "; retire these when they are no longer needed." : "."}
         </p>
       )}
-      {state.kind === "ready" && state.accepts && state.sources.length === 0 && (
+      {state.kind === "ready" && state.accepts && !state.selfService && (
+        <p className="text-xs text-text-muted">Adding document sources is turned off on this deployment.</p>
+      )}
+      {state.kind === "ready" && state.accepts && state.selfService && state.sources.length === 0 && (
         <p className="text-xs text-text-muted">
           No document sources.{" "}
           {manageable
@@ -238,7 +249,7 @@ export function SourcesList({
           ))}
         </ul>
       )}
-      {manageable && state.kind === "ready" && state.accepts && (
+      {manageable && state.kind === "ready" && state.accepts && state.selfService && (
         <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
           Add a source
         </Button>

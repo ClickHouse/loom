@@ -27176,6 +27176,8 @@ pub struct KnowledgeSourceListOutput {
     pub enabled: bool,
     #[serde(default = "default_1249")]
     pub accepts_sources: bool,
+    #[serde(default = "default_1250")]
+    pub self_service: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27227,18 +27229,18 @@ impl KnowledgeSourceListInput {
 #[non_exhaustive]
 pub struct KnowledgeSourceParsedLink {
     pub link: String,
-    #[serde(default = "default_1250")]
-    pub kind: String,
     #[serde(default = "default_1251")]
-    pub item: std::collections::HashMap<String, Value>,
+    pub kind: String,
     #[serde(default = "default_1252")]
+    pub item: std::collections::HashMap<String, Value>,
+    #[serde(default = "default_1253")]
     pub unreadable: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct KnowledgeSourceParseLinksOutput {
-    #[serde(default = "default_1253")]
+    #[serde(default = "default_1254")]
     pub links: Vec<KnowledgeSourceParsedLink>,
 }
 
@@ -27289,25 +27291,25 @@ impl KnowledgeSourceParseLinksInput {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct PushStatusOutput {
-    #[serde(default = "default_1254")]
-    pub enabled: bool,
     #[serde(default = "default_1255")]
-    pub status: String,
+    pub enabled: bool,
     #[serde(default = "default_1256")]
-    pub provider: String,
+    pub status: String,
     #[serde(default = "default_1257")]
-    pub generation: String,
+    pub provider: String,
     #[serde(default = "default_1258")]
-    pub callback_url: String,
+    pub generation: String,
     #[serde(default = "default_1259")]
-    pub provider_id: String,
+    pub callback_url: String,
     #[serde(default = "default_1260")]
-    pub challenge_fingerprint: String,
+    pub provider_id: String,
     #[serde(default = "default_1261")]
-    pub verification_token: String,
+    pub challenge_fingerprint: String,
     #[serde(default = "default_1262")]
-    pub channels: Integer,
+    pub verification_token: String,
     #[serde(default = "default_1263")]
+    pub channels: Integer,
+    #[serde(default = "default_1264")]
     pub expires_at: f64,
 }
 impl std::fmt::Debug for PushStatusOutput {
@@ -27552,7 +27554,7 @@ impl PushStatusInput {
 #[non_exhaustive]
 pub struct KnowledgeSourceRemoveOutput {
     pub name: String,
-    #[serde(default = "default_1264")]
+    #[serde(default = "default_1265")]
     pub documents_pending: Integer,
 }
 
@@ -27615,9 +27617,9 @@ impl KnowledgeSourceRemoveInput {
 #[non_exhaustive]
 pub struct KnowledgeSourceRotateOutput {
     pub name: String,
-    #[serde(default = "default_1265")]
-    pub probe: KnowledgeSourceProbe,
     #[serde(default = "default_1266")]
+    pub probe: KnowledgeSourceProbe,
+    #[serde(default = "default_1267")]
     pub rotated_at: String,
 }
 
@@ -27669,7 +27671,7 @@ impl KnowledgeSourceRotateInput {
 #[non_exhaustive]
 pub struct KnowledgeSourceSyncNowOutput {
     pub name: String,
-    #[serde(default = "default_1267")]
+    #[serde(default = "default_1268")]
     pub enabled: bool,
 }
 
@@ -27732,17 +27734,17 @@ impl KnowledgeSourceSyncNowInput {
 #[non_exhaustive]
 pub struct KnowledgeSourceUpdateOutput {
     pub name: String,
-    #[serde(default = "default_1268")]
-    pub items: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_1269")]
-    pub include: Vec<String>,
+    pub items: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_1270")]
-    pub config: std::collections::HashMap<String, Value>,
+    pub include: Vec<String>,
     #[serde(default = "default_1271")]
-    pub added: Vec<std::collections::HashMap<String, Value>>,
+    pub config: std::collections::HashMap<String, Value>,
     #[serde(default = "default_1272")]
-    pub removed: Vec<std::collections::HashMap<String, Value>>,
+    pub added: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_1273")]
+    pub removed: Vec<std::collections::HashMap<String, Value>>,
+    #[serde(default = "default_1274")]
     pub probe: KnowledgeSourceProbe,
 }
 
@@ -27858,9 +27860,9 @@ impl KnowledgeSourceUpdateInput {
 pub struct CitedChunk {
     pub source_uri: String,
     pub chunk_idx: Integer,
-    #[serde(default = "default_1275")]
-    pub revision: Integer,
     #[serde(default = "default_1276")]
+    pub revision: Integer,
+    #[serde(default = "default_1277")]
     pub locator: Option<std::collections::HashMap<String, Value>>,
 }
 
@@ -27869,12 +27871,12 @@ pub struct CitedChunk {
 pub struct SynthesizeCalculation {
     pub columns: Vec<QueryResultColumn>,
     pub rows: Vec<Vec<Value>>,
-    #[serde(default = "default_1283")]
-    pub row_ids: Vec<Vec<Integer>>,
     #[serde(default = "default_1284")]
+    pub row_ids: Vec<Vec<Integer>>,
+    #[serde(default = "default_1285")]
     pub truncated: bool,
     pub complete: bool,
-    #[serde(default = "default_1285")]
+    #[serde(default = "default_1286")]
     pub incomplete: Vec<String>,
     pub receipt: QueryReceipt,
     pub citation: String,
@@ -27888,23 +27890,23 @@ pub struct KnowledgeSynthesizeOutput {
     pub chunks_read: Integer,
     pub documents: Integer,
     pub reduce_rounds: Integer,
-    #[serde(default = "default_1274")]
+    #[serde(default = "default_1275")]
     pub citations: Vec<String>,
-    #[serde(default = "default_1277")]
-    pub cited_chunks: Vec<CitedChunk>,
     #[serde(default = "default_1278")]
-    pub unsupported_citations: Vec<String>,
+    pub cited_chunks: Vec<CitedChunk>,
     #[serde(default = "default_1279")]
-    pub truncated: bool,
+    pub unsupported_citations: Vec<String>,
     #[serde(default = "default_1280")]
-    pub abstain: bool,
+    pub truncated: bool,
     #[serde(default = "default_1281")]
-    pub abstain_reason: String,
+    pub abstain: bool,
     #[serde(default = "default_1282")]
+    pub abstain_reason: String,
+    #[serde(default = "default_1283")]
     pub clarification: String,
-    #[serde(default = "default_1286")]
-    pub calculations: Vec<SynthesizeCalculation>,
     #[serde(default = "default_1287")]
+    pub calculations: Vec<SynthesizeCalculation>,
+    #[serde(default = "default_1288")]
     pub model: String,
 }
 
@@ -28020,13 +28022,13 @@ impl KnowledgeSynthesizeInput {
 #[non_exhaustive]
 pub struct KnowledgeUpdateMetadataOutput {
     pub updated: bool,
-    #[serde(default = "default_1288")]
-    pub title: String,
     #[serde(default = "default_1289")]
-    pub description: String,
+    pub title: String,
     #[serde(default = "default_1290")]
-    pub tags: Vec<String>,
+    pub description: String,
     #[serde(default = "default_1291")]
+    pub tags: Vec<String>,
+    #[serde(default = "default_1292")]
     pub chunks_reindexed: Integer,
 }
 
@@ -28138,13 +28140,13 @@ pub struct KnowledgeUpsertOutput {
     pub chunks_superseded: Integer,
     pub embedding_model: String,
     pub embedding_dim: Integer,
-    #[serde(default = "default_1292")]
-    pub duplicate_of_uri: String,
     #[serde(default = "default_1293")]
-    pub duplicate_chunk_count: Integer,
+    pub duplicate_of_uri: String,
     #[serde(default = "default_1294")]
-    pub namespace: String,
+    pub duplicate_chunk_count: Integer,
     #[serde(default = "default_1295")]
+    pub namespace: String,
+    #[serde(default = "default_1296")]
     pub source_uri: String,
 }
 
@@ -28329,26 +28331,26 @@ pub struct LearningEntry {
     pub memory_type: String,
     pub proposed_value: Value,
     pub supporter_count: Integer,
-    #[serde(default = "default_1296")]
-    pub supporter_sessions: Integer,
     #[serde(default = "default_1297")]
+    pub supporter_sessions: Integer,
+    #[serde(default = "default_1298")]
     pub supporter_writers: Integer,
     pub confidence_avg: f64,
     pub supporters: Vec<String>,
     pub rationale: String,
-    #[serde(default = "default_1298")]
-    pub source_kind: String,
     #[serde(default = "default_1299")]
-    pub source_resource_id: String,
+    pub source_kind: String,
     #[serde(default = "default_1300")]
+    pub source_resource_id: String,
+    #[serde(default = "default_1301")]
     pub agent: String,
     pub status: LearningEntryStatus,
     pub proposed_at: String,
-    #[serde(default = "default_1301")]
-    pub decided_at: Option<String>,
     #[serde(default = "default_1302")]
-    pub decided_by: String,
+    pub decided_at: Option<String>,
     #[serde(default = "default_1303")]
+    pub decided_by: String,
+    #[serde(default = "default_1304")]
     pub decision_reason: String,
 }
 
@@ -28551,11 +28553,11 @@ pub enum LearningsReviewOutputNewStatus {
 pub struct LearningsReviewOutput {
     pub candidate_id: String,
     pub new_status: LearningsReviewOutputNewStatus,
-    #[serde(default = "default_1304")]
-    pub promoted_to_shared: bool,
     #[serde(default = "default_1305")]
-    pub promoted_to_knowledge: bool,
+    pub promoted_to_shared: bool,
     #[serde(default = "default_1306")]
+    pub promoted_to_knowledge: bool,
+    #[serde(default = "default_1307")]
     pub knowledge_source_uri: String,
     pub decided_at: String,
 }
@@ -28759,7 +28761,7 @@ impl MemoryAgentsListInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct AggregateRow {
-    #[serde(default = "default_1307")]
+    #[serde(default = "default_1308")]
     pub group: std::collections::HashMap<String, String>,
     pub metric: f64,
 }
@@ -28767,9 +28769,9 @@ pub struct AggregateRow {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryAggregateOutput {
-    #[serde(default = "default_1308")]
-    pub rows: Vec<AggregateRow>,
     #[serde(default = "default_1309")]
+    pub rows: Vec<AggregateRow>,
+    #[serde(default = "default_1310")]
     pub sql_executed: String,
 }
 
@@ -28937,15 +28939,15 @@ impl MemoryAggregateInput {
 pub struct BulkSetResult {
     pub memory_key: String,
     pub version: Integer,
-    #[serde(default = "default_1310")]
-    pub memory_id: String,
     #[serde(default = "default_1311")]
-    pub conflict_verdict: String,
+    pub memory_id: String,
     #[serde(default = "default_1312")]
-    pub peers: Vec<MemorySetPeer>,
+    pub conflict_verdict: String,
     #[serde(default = "default_1313")]
-    pub next: String,
+    pub peers: Vec<MemorySetPeer>,
     #[serde(default = "default_1314")]
+    pub next: String,
+    #[serde(default = "default_1315")]
     pub pinned_blocker_id: String,
 }
 
@@ -28953,29 +28955,29 @@ pub struct BulkSetResult {
 #[non_exhaustive]
 pub struct MemoryBulkSetOutput {
     pub written: Vec<BulkSetResult>,
-    #[serde(default = "default_1315")]
-    pub skipped_pinned: Vec<String>,
     #[serde(default = "default_1316")]
-    pub skipped_locked: Vec<String>,
+    pub skipped_pinned: Vec<String>,
     #[serde(default = "default_1317")]
-    pub skipped_blacklisted: Vec<String>,
+    pub skipped_locked: Vec<String>,
     #[serde(default = "default_1318")]
-    pub merged: Vec<String>,
+    pub skipped_blacklisted: Vec<String>,
     #[serde(default = "default_1319")]
-    pub value_updates_linked: Integer,
+    pub merged: Vec<String>,
     #[serde(default = "default_1320")]
-    pub rejected_pinned: Vec<String>,
+    pub value_updates_linked: Integer,
     #[serde(default = "default_1321")]
-    pub duplicates: Vec<String>,
+    pub rejected_pinned: Vec<String>,
     #[serde(default = "default_1322")]
-    pub conflicted: Vec<String>,
+    pub duplicates: Vec<String>,
     #[serde(default = "default_1323")]
-    pub unchecked: Integer,
+    pub conflicted: Vec<String>,
     #[serde(default = "default_1324")]
-    pub retyped: Vec<String>,
+    pub unchecked: Integer,
     #[serde(default = "default_1325")]
-    pub identity_duplicates: std::collections::HashMap<String, String>,
+    pub retyped: Vec<String>,
     #[serde(default = "default_1326")]
+    pub identity_duplicates: std::collections::HashMap<String, String>,
+    #[serde(default = "default_1327")]
     pub stage_ms: std::collections::HashMap<String, f64>,
 }
 
@@ -29125,18 +29127,18 @@ pub enum ApplyRowStatus {
 #[non_exhaustive]
 pub struct ApplyRow {
     pub memory_key: String,
-    #[serde(default = "default_1334")]
-    pub memory_id: String,
     #[serde(default = "default_1335")]
-    pub agent: String,
+    pub memory_id: String,
     #[serde(default = "default_1336")]
-    pub user_id: String,
+    pub agent: String,
     #[serde(default = "default_1337")]
+    pub user_id: String,
+    #[serde(default = "default_1338")]
     pub session_id: String,
     pub status: ApplyRowStatus,
-    #[serde(default = "default_1338")]
-    pub version: Option<Integer>,
     #[serde(default = "default_1339")]
+    pub version: Option<Integer>,
+    #[serde(default = "default_1340")]
     pub detail: String,
 }
 
@@ -29146,21 +29148,21 @@ pub struct MemoryApplyOutput {
     pub action: String,
     pub dry_run: bool,
     pub target: String,
-    #[serde(default = "default_1327")]
-    pub matched: Integer,
     #[serde(default = "default_1328")]
-    pub applied: Integer,
+    pub matched: Integer,
     #[serde(default = "default_1329")]
-    pub would_apply: Integer,
+    pub applied: Integer,
     #[serde(default = "default_1330")]
-    pub refused: Integer,
+    pub would_apply: Integer,
     #[serde(default = "default_1331")]
-    pub noop: Integer,
+    pub refused: Integer,
     #[serde(default = "default_1332")]
-    pub failed: Integer,
+    pub noop: Integer,
     #[serde(default = "default_1333")]
+    pub failed: Integer,
+    #[serde(default = "default_1334")]
     pub truncated: bool,
-    #[serde(default = "default_1340")]
+    #[serde(default = "default_1341")]
     pub rows: Vec<ApplyRow>,
 }
 
@@ -29894,137 +29896,137 @@ pub enum MemoryAskOutputDeepFirst {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryAskOutput {
-    #[serde(default = "default_1341")]
-    pub answer: String,
     #[serde(default = "default_1342")]
-    pub source: MemoryAskOutputSource,
+    pub answer: String,
     #[serde(default = "default_1343")]
-    pub abstain: bool,
+    pub source: MemoryAskOutputSource,
     #[serde(default = "default_1344")]
-    pub abstain_reason: String,
+    pub abstain: bool,
     #[serde(default = "default_1345")]
-    pub memory_keys: Vec<String>,
+    pub abstain_reason: String,
     #[serde(default = "default_1346")]
-    pub results: Vec<MemorySearchHit>,
+    pub memory_keys: Vec<String>,
     #[serde(default = "default_1347")]
-    pub cited_sessions: Vec<String>,
+    pub results: Vec<MemorySearchHit>,
     #[serde(default = "default_1348")]
-    pub next: String,
+    pub cited_sessions: Vec<String>,
     #[serde(default = "default_1349")]
-    pub synth_model: String,
+    pub next: String,
     #[serde(default = "default_1350")]
-    pub route_tier: MemoryAskOutputRouteTier,
+    pub synth_model: String,
     #[serde(default = "default_1351")]
-    pub route_reason: String,
+    pub route_tier: MemoryAskOutputRouteTier,
     #[serde(default = "default_1352")]
-    pub llm_cache_hits: Integer,
+    pub route_reason: String,
     #[serde(default = "default_1353")]
-    pub llm_cache_misses: Integer,
+    pub llm_cache_hits: Integer,
     #[serde(default = "default_1354")]
-    pub llm_cache: bool,
+    pub llm_cache_misses: Integer,
     #[serde(default = "default_1355")]
-    pub llm_cache_saved_usd: f64,
+    pub llm_cache: bool,
     #[serde(default = "default_1356")]
-    pub temporal_consistency: Option<f64>,
+    pub llm_cache_saved_usd: f64,
     #[serde(default = "default_1357")]
-    pub citation_concentration: Option<f64>,
+    pub temporal_consistency: Option<f64>,
     #[serde(default = "default_1358")]
-    pub escalated: bool,
+    pub citation_concentration: Option<f64>,
     #[serde(default = "default_1359")]
-    pub gate_mode: String,
+    pub escalated: bool,
     #[serde(default = "default_1360")]
-    pub gate_kept: Integer,
+    pub gate_mode: String,
     #[serde(default = "default_1361")]
-    pub gate_dropped: Integer,
+    pub gate_kept: Integer,
     #[serde(default = "default_1362")]
-    pub pending_extraction: Integer,
+    pub gate_dropped: Integer,
     #[serde(default = "default_1363")]
-    pub pending_evidence: Integer,
+    pub pending_extraction: Integer,
     #[serde(default = "default_1364")]
-    pub retrieval_query: String,
+    pub pending_evidence: Integer,
     #[serde(default = "default_1365")]
-    pub facets: Vec<String>,
+    pub retrieval_query: String,
     #[serde(default = "default_1366")]
-    pub facet_memories_added: Integer,
+    pub facets: Vec<String>,
     #[serde(default = "default_1367")]
-    pub consistency: MemoryAskOutputConsistency,
+    pub facet_memories_added: Integer,
     #[serde(default = "default_1368")]
-    pub consistency_score: f64,
+    pub consistency: MemoryAskOutputConsistency,
     #[serde(default = "default_1369")]
-    pub consistency_note: String,
+    pub consistency_score: f64,
     #[serde(default = "default_1370")]
-    pub identifier_chase_hops: Integer,
+    pub consistency_note: String,
     #[serde(default = "default_1371")]
-    pub identifier_chase_added: Integer,
+    pub identifier_chase_hops: Integer,
     #[serde(default = "default_1372")]
-    pub premise_conflict: String,
+    pub identifier_chase_added: Integer,
     #[serde(default = "default_1373")]
-    pub premise_note: String,
+    pub premise_conflict: String,
     #[serde(default = "default_1374")]
-    pub premise_verdict: String,
+    pub premise_note: String,
     #[serde(default = "default_1375")]
-    pub attribution_note: String,
+    pub premise_verdict: String,
     #[serde(default = "default_1376")]
-    pub depth: MemoryAskOutputDepth,
+    pub attribution_note: String,
     #[serde(default = "default_1377")]
-    pub deep_fired: bool,
+    pub depth: MemoryAskOutputDepth,
     #[serde(default = "default_1378")]
-    pub decomposed: Vec<String>,
+    pub deep_fired: bool,
     #[serde(default = "default_1379")]
-    pub decomposed_parts: Integer,
+    pub decomposed: Vec<String>,
     #[serde(default = "default_1380")]
-    pub superseded_dropped: Integer,
+    pub decomposed_parts: Integer,
     #[serde(default = "default_1381")]
-    pub stale_sentences_masked: Integer,
+    pub superseded_dropped: Integer,
     #[serde(default = "default_1382")]
-    pub entity_followed: Vec<String>,
+    pub stale_sentences_masked: Integer,
     #[serde(default = "default_1383")]
-    pub when_evidence_turns: Integer,
+    pub entity_followed: Vec<String>,
     #[serde(default = "default_1384")]
-    pub decompose_failed: Integer,
+    pub when_evidence_turns: Integer,
     #[serde(default = "default_1385")]
-    pub pool_k: Integer,
+    pub decompose_failed: Integer,
     #[serde(default = "default_1386")]
-    pub grounding: MemoryAskOutputGrounding,
+    pub pool_k: Integer,
     #[serde(default = "default_1387")]
-    pub deep_reason: String,
+    pub grounding: MemoryAskOutputGrounding,
     #[serde(default = "default_1388")]
-    pub deep_keys: Vec<String>,
+    pub deep_reason: String,
     #[serde(default = "default_1389")]
-    pub deep_chars: Integer,
+    pub deep_keys: Vec<String>,
     #[serde(default = "default_1390")]
-    pub code_hits: Integer,
+    pub deep_chars: Integer,
     #[serde(default = "default_1391")]
-    pub pool_facts: Integer,
+    pub code_hits: Integer,
     #[serde(default = "default_1392")]
-    pub pool_chunks: Integer,
+    pub pool_facts: Integer,
     #[serde(default = "default_1393")]
-    pub prompt_blocks: std::collections::HashMap<String, Integer>,
+    pub pool_chunks: Integer,
     #[serde(default = "default_1394")]
-    pub deep_selector: MemoryAskOutputDeepSelector,
+    pub prompt_blocks: std::collections::HashMap<String, Integer>,
     #[serde(default = "default_1395")]
-    pub deep_first: MemoryAskOutputDeepFirst,
+    pub deep_selector: MemoryAskOutputDeepSelector,
     #[serde(default = "default_1396")]
-    pub synth_calls: Integer,
+    pub deep_first: MemoryAskOutputDeepFirst,
     #[serde(default = "default_1397")]
-    pub synth_input_tokens: Integer,
+    pub synth_calls: Integer,
     #[serde(default = "default_1398")]
-    pub synth_cached_input_tokens: Integer,
+    pub synth_input_tokens: Integer,
     #[serde(default = "default_1399")]
-    pub synth_cache_write_tokens: Integer,
+    pub synth_cached_input_tokens: Integer,
     #[serde(default = "default_1400")]
-    pub synth_cost_usd: f64,
+    pub synth_cache_write_tokens: Integer,
     #[serde(default = "default_1401")]
-    pub context_tokens_est: Integer,
+    pub synth_cost_usd: f64,
     #[serde(default = "default_1402")]
-    pub context_trimmed: Integer,
+    pub context_tokens_est: Integer,
     #[serde(default = "default_1403")]
-    pub summary_hits: Integer,
+    pub context_trimmed: Integer,
     #[serde(default = "default_1404")]
-    pub knowledge_hits: Integer,
+    pub summary_hits: Integer,
     #[serde(default = "default_1405")]
-    pub timeline_rows: Integer,
+    pub knowledge_hits: Integer,
     #[serde(default = "default_1406")]
+    pub timeline_rows: Integer,
+    #[serde(default = "default_1407")]
     pub count_recomputed: bool,
 }
 
@@ -30979,36 +30981,36 @@ pub struct MemoryAutoRetirement {
     pub reason: String,
     pub memory_id: String,
     pub memory_key: String,
-    #[serde(default = "default_1407")]
-    pub agent: String,
     #[serde(default = "default_1408")]
-    pub user_id: String,
+    pub agent: String,
     #[serde(default = "default_1409")]
-    pub session_id: String,
+    pub user_id: String,
     #[serde(default = "default_1410")]
-    pub superseded_by: String,
+    pub session_id: String,
     #[serde(default = "default_1411")]
-    pub superseded_by_key: String,
+    pub superseded_by: String,
     #[serde(default = "default_1412")]
-    pub label: String,
+    pub superseded_by_key: String,
     #[serde(default = "default_1413")]
-    pub unconfirmed: bool,
+    pub label: String,
     #[serde(default = "default_1414")]
-    pub judge_verdict: String,
+    pub unconfirmed: bool,
     #[serde(default = "default_1415")]
-    pub judge_confidence: Option<f64>,
+    pub judge_verdict: String,
     #[serde(default = "default_1416")]
-    pub judge_model: String,
+    pub judge_confidence: Option<f64>,
     #[serde(default = "default_1417")]
+    pub judge_model: String,
+    #[serde(default = "default_1418")]
     pub judge_prompt_version: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryAutoRetirementsOutput {
-    #[serde(default = "default_1418")]
-    pub rows: Vec<MemoryAutoRetirement>,
     #[serde(default = "default_1419")]
+    pub rows: Vec<MemoryAutoRetirement>,
+    #[serde(default = "default_1420")]
     pub next_cursor: Option<String>,
 }
 
@@ -31102,9 +31104,9 @@ impl MemoryAutoRetirementsInput {
 #[non_exhaustive]
 pub struct BacklinkVersion {
     pub version: Integer,
-    #[serde(default = "default_1421")]
-    pub status: String,
     #[serde(default = "default_1422")]
+    pub status: String,
+    #[serde(default = "default_1423")]
     pub created_at: String,
 }
 
@@ -31112,7 +31114,7 @@ pub struct BacklinkVersion {
 #[non_exhaustive]
 pub struct BacklinkDigest {
     pub session_id: String,
-    #[serde(default = "default_1424")]
+    #[serde(default = "default_1425")]
     pub date: String,
 }
 
@@ -31120,9 +31122,9 @@ pub struct BacklinkDigest {
 #[non_exhaustive]
 pub struct BacklinkEdge {
     pub memory_key: String,
-    #[serde(default = "default_1426")]
-    pub relation: String,
     #[serde(default = "default_1427")]
+    pub relation: String,
+    #[serde(default = "default_1428")]
     pub created_at: String,
 }
 
@@ -31130,7 +31132,7 @@ pub struct BacklinkEdge {
 #[non_exhaustive]
 pub struct BacklinkRelated {
     pub memory_key: String,
-    #[serde(default = "default_1431")]
+    #[serde(default = "default_1432")]
     pub shared_entities: Vec<String>,
 }
 
@@ -31138,19 +31140,19 @@ pub struct BacklinkRelated {
 #[non_exhaustive]
 pub struct MemoryBacklinksOutput {
     pub memory_key: String,
-    #[serde(default = "default_1420")]
+    #[serde(default = "default_1421")]
     pub found: bool,
-    #[serde(default = "default_1423")]
+    #[serde(default = "default_1424")]
     pub versions: Vec<BacklinkVersion>,
-    #[serde(default = "default_1425")]
+    #[serde(default = "default_1426")]
     pub digests: Vec<BacklinkDigest>,
-    #[serde(default = "default_1428")]
-    pub links_in: Vec<BacklinkEdge>,
     #[serde(default = "default_1429")]
-    pub links_out: Vec<BacklinkEdge>,
+    pub links_in: Vec<BacklinkEdge>,
     #[serde(default = "default_1430")]
+    pub links_out: Vec<BacklinkEdge>,
+    #[serde(default = "default_1431")]
     pub evidence_count: Integer,
-    #[serde(default = "default_1432")]
+    #[serde(default = "default_1433")]
     pub related: Vec<BacklinkRelated>,
 }
 
@@ -31255,36 +31257,36 @@ impl MemoryBacklinksInput {
 #[non_exhaustive]
 pub struct BriefEvidence {
     pub memory_key: String,
-    #[serde(default = "default_1437")]
-    pub source: String,
     #[serde(default = "default_1438")]
-    pub source_class: String,
+    pub source: String,
     #[serde(default = "default_1439")]
-    pub verified: bool,
+    pub source_class: String,
     #[serde(default = "default_1440")]
-    pub when: String,
+    pub verified: bool,
     #[serde(default = "default_1441")]
-    pub session_id: String,
+    pub when: String,
     #[serde(default = "default_1442")]
+    pub session_id: String,
+    #[serde(default = "default_1443")]
     pub excerpt: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryBriefOutput {
-    #[serde(default = "default_1433")]
-    pub query: String,
     #[serde(default = "default_1434")]
-    pub answer: String,
+    pub query: String,
     #[serde(default = "default_1435")]
-    pub abstained: bool,
+    pub answer: String,
     #[serde(default = "default_1436")]
+    pub abstained: bool,
+    #[serde(default = "default_1437")]
     pub grounding: String,
-    #[serde(default = "default_1443")]
-    pub evidence: Vec<BriefEvidence>,
     #[serde(default = "default_1444")]
-    pub unknowns: Vec<String>,
+    pub evidence: Vec<BriefEvidence>,
     #[serde(default = "default_1445")]
+    pub unknowns: Vec<String>,
+    #[serde(default = "default_1446")]
     pub next_reads: Vec<String>,
 }
 
@@ -31698,9 +31700,9 @@ pub struct MemoryBulkGetOutputMemoryGetOutput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryBulkGetOutput {
-    #[serde(default = "default_1446")]
-    pub results: std::collections::HashMap<String, MemoryBulkGetOutputMemoryGetOutput>,
     #[serde(default = "default_1447")]
+    pub results: std::collections::HashMap<String, MemoryBulkGetOutputMemoryGetOutput>,
+    #[serde(default = "default_1448")]
     pub missing: Vec<String>,
 }
 
@@ -32213,7 +32215,7 @@ pub struct MemoryClearOutput {
     pub cleared_at: String,
     pub rows_affected: std::collections::HashMap<String, Integer>,
     pub total: Integer,
-    #[serde(default = "default_1448")]
+    #[serde(default = "default_1449")]
     pub locked_skipped: Integer,
 }
 
@@ -32301,21 +32303,21 @@ pub struct MemoryConsolidateResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryConsolidateOutput {
-    #[serde(default = "default_1449")]
-    pub consolidated: Vec<MemoryConsolidateResult>,
     #[serde(default = "default_1450")]
-    pub examined: Integer,
+    pub consolidated: Vec<MemoryConsolidateResult>,
     #[serde(default = "default_1451")]
-    pub clusters_found: Integer,
+    pub examined: Integer,
     #[serde(default = "default_1452")]
-    pub clusters_failed: Integer,
+    pub clusters_found: Integer,
     #[serde(default = "default_1453")]
-    pub clusters_refused_lossy: Integer,
+    pub clusters_failed: Integer,
     #[serde(default = "default_1454")]
-    pub skipped_in_flight: Integer,
+    pub clusters_refused_lossy: Integer,
     #[serde(default = "default_1455")]
-    pub tokens_in: Integer,
+    pub skipped_in_flight: Integer,
     #[serde(default = "default_1456")]
+    pub tokens_in: Integer,
+    #[serde(default = "default_1457")]
     pub tokens_out: Integer,
 }
 
@@ -32456,7 +32458,7 @@ impl MemoryConsolidateInput {
 #[non_exhaustive]
 pub struct MemoryCopyToOutput {
     pub copied: bool,
-    #[serde(default = "default_1457")]
+    #[serde(default = "default_1458")]
     pub target_memory_id: String,
     pub target_namespace: String,
     pub target_key: String,
@@ -32567,11 +32569,11 @@ impl MemoryCopyToInput {
 #[non_exhaustive]
 pub struct MemoryCrossPromoteOutput {
     pub promoted: bool,
-    #[serde(default = "default_1458")]
+    #[serde(default = "default_1459")]
     pub target_memory_id: String,
     pub target_namespace: String,
     pub target_key: String,
-    #[serde(default = "default_1459")]
+    #[serde(default = "default_1460")]
     pub cross_promoted_from_memory_id: String,
 }
 
@@ -32654,23 +32656,23 @@ pub struct DedupCollapsePair {
 #[non_exhaustive]
 pub struct MemoryDedupCollapseOutput {
     pub namespace: String,
-    #[serde(default = "default_1460")]
-    pub prefix: String,
     #[serde(default = "default_1461")]
-    pub dry_run: bool,
+    pub prefix: String,
     #[serde(default = "default_1462")]
-    pub pairs: Integer,
+    pub dry_run: bool,
     #[serde(default = "default_1463")]
-    pub canonical_live: Integer,
+    pub pairs: Integer,
     #[serde(default = "default_1464")]
-    pub orphans: Integer,
+    pub canonical_live: Integer,
     #[serde(default = "default_1465")]
-    pub mirror_stale: Integer,
+    pub orphans: Integer,
     #[serde(default = "default_1466")]
-    pub restamped: Integer,
+    pub mirror_stale: Integer,
     #[serde(default = "default_1467")]
-    pub truncated: bool,
+    pub restamped: Integer,
     #[serde(default = "default_1468")]
+    pub truncated: bool,
+    #[serde(default = "default_1469")]
     pub sample: Vec<DedupCollapsePair>,
 }
 
@@ -32769,7 +32771,7 @@ pub struct DedupDuplicate {
     pub memory_id: String,
     pub memory_key: String,
     pub agent: String,
-    #[serde(default = "default_1471")]
+    #[serde(default = "default_1472")]
     pub created_at: Option<String>,
 }
 
@@ -32777,12 +32779,12 @@ pub struct DedupDuplicate {
 #[non_exhaustive]
 pub struct DedupCluster {
     pub canonical_id: String,
-    #[serde(default = "default_1469")]
-    pub canonical_key: String,
     #[serde(default = "default_1470")]
+    pub canonical_key: String,
+    #[serde(default = "default_1471")]
     pub canonical_agent: String,
     pub dup_count: Integer,
-    #[serde(default = "default_1472")]
+    #[serde(default = "default_1473")]
     pub duplicates: Vec<DedupDuplicate>,
 }
 
@@ -32854,11 +32856,11 @@ pub struct MemoryDedupResolveOutput {
     pub canonical_key: String,
     pub duplicate_key: String,
     pub decision: String,
-    #[serde(default = "default_1473")]
-    pub canonical_tombstoned: bool,
     #[serde(default = "default_1474")]
-    pub duplicate_tombstoned: bool,
+    pub canonical_tombstoned: bool,
     #[serde(default = "default_1475")]
+    pub duplicate_tombstoned: bool,
+    #[serde(default = "default_1476")]
     pub ignored_args: Vec<String>,
 }
 
@@ -32996,17 +32998,17 @@ pub struct LostName {
 pub struct DefinitionEntry {
     pub memory_key: String,
     pub promoted_at: String,
-    #[serde(default = "default_1476")]
-    pub capped: bool,
     #[serde(default = "default_1477")]
-    pub term: Option<String>,
+    pub capped: bool,
     #[serde(default = "default_1478")]
-    pub aliases: Vec<String>,
+    pub term: Option<String>,
     #[serde(default = "default_1479")]
-    pub verdict: Option<DefinitionEntryVerdict>,
+    pub aliases: Vec<String>,
     #[serde(default = "default_1480")]
-    pub lapse_reason: Option<DefinitionEntryLapseReason>,
+    pub verdict: Option<DefinitionEntryVerdict>,
     #[serde(default = "default_1481")]
+    pub lapse_reason: Option<DefinitionEntryLapseReason>,
+    #[serde(default = "default_1482")]
     pub lost: Vec<LostName>,
 }
 
@@ -33067,15 +33069,15 @@ impl MemoryDefinitionsListInput {
 #[non_exhaustive]
 pub struct MemoryDeleteVersionOutput {
     pub tombstoned: bool,
-    #[serde(default = "default_1482")]
-    pub version: Integer,
     #[serde(default = "default_1483")]
-    pub found: bool,
+    pub version: Integer,
     #[serde(default = "default_1484")]
-    pub reason: String,
+    pub found: bool,
     #[serde(default = "default_1485")]
-    pub dependents_tombstoned: Integer,
+    pub reason: String,
     #[serde(default = "default_1486")]
+    pub dependents_tombstoned: Integer,
+    #[serde(default = "default_1487")]
     pub dependents_downgraded: Integer,
 }
 
@@ -33202,21 +33204,21 @@ pub struct DemonstrationRow {
 pub struct MemoryDemonstrateOutput {
     pub query: String,
     pub demonstrations: Vec<DemonstrationRow>,
-    #[serde(default = "default_1487")]
-    pub votes: std::collections::HashMap<String, f64>,
     #[serde(default = "default_1488")]
-    pub predicted_label: String,
+    pub votes: std::collections::HashMap<String, f64>,
     #[serde(default = "default_1489")]
-    pub margin: f64,
+    pub predicted_label: String,
     #[serde(default = "default_1490")]
-    pub abstain: bool,
+    pub margin: f64,
     #[serde(default = "default_1491")]
-    pub abstain_reason: String,
+    pub abstain: bool,
     #[serde(default = "default_1492")]
-    pub few_shot_block: String,
+    pub abstain_reason: String,
     #[serde(default = "default_1493")]
-    pub examined: Integer,
+    pub few_shot_block: String,
     #[serde(default = "default_1494")]
+    pub examined: Integer,
+    #[serde(default = "default_1495")]
     pub labelled: Integer,
 }
 
@@ -33356,7 +33358,7 @@ impl MemoryDemonstrateInput {
 pub struct MemoryDemoteOutput {
     pub demoted: bool,
     pub was_reversible: bool,
-    #[serde(default = "default_1495")]
+    #[serde(default = "default_1496")]
     pub tombstoned_at: Option<String>,
 }
 
@@ -33418,15 +33420,15 @@ impl MemoryDemoteInput {
 pub struct DigestRow {
     pub session_id: String,
     pub summary_text: String,
-    #[serde(default = "default_1496")]
-    pub key_facts: Vec<String>,
     #[serde(default = "default_1497")]
-    pub derived_from: Vec<String>,
+    pub key_facts: Vec<String>,
     #[serde(default = "default_1498")]
-    pub valid_at: Option<String>,
+    pub derived_from: Vec<String>,
     #[serde(default = "default_1499")]
-    pub created_at: Option<String>,
+    pub valid_at: Option<String>,
     #[serde(default = "default_1500")]
+    pub created_at: Option<String>,
+    #[serde(default = "default_1501")]
     pub version: Integer,
 }
 
@@ -33434,7 +33436,7 @@ pub struct DigestRow {
 #[non_exhaustive]
 pub struct MemoryDigestsOutput {
     pub rows: Vec<DigestRow>,
-    #[serde(default = "default_1501")]
+    #[serde(default = "default_1502")]
     pub truncated: bool,
 }
 
@@ -33559,17 +33561,17 @@ pub struct MemoryEvidenceItem {
     pub evidence_id: String,
     pub support_type: String,
     pub scope: MemoryEvidenceItemScope,
-    #[serde(default = "default_1505")]
-    pub role: String,
     #[serde(default = "default_1506")]
-    pub observed_at: Option<String>,
+    pub role: String,
     #[serde(default = "default_1507")]
-    pub content: String,
+    pub observed_at: Option<String>,
     #[serde(default = "default_1508")]
-    pub char_start: Integer,
+    pub content: String,
     #[serde(default = "default_1509")]
-    pub char_end: Integer,
+    pub char_start: Integer,
     #[serde(default = "default_1510")]
+    pub char_end: Integer,
+    #[serde(default = "default_1511")]
     pub span: String,
 }
 
@@ -33577,23 +33579,23 @@ pub struct MemoryEvidenceItem {
 #[non_exhaustive]
 pub struct MemoryEvidenceOutput {
     pub found: bool,
-    #[serde(default = "default_1502")]
-    pub memory_key: String,
     #[serde(default = "default_1503")]
-    pub memory_id: String,
+    pub memory_key: String,
     #[serde(default = "default_1504")]
+    pub memory_id: String,
+    #[serde(default = "default_1505")]
     pub value: String,
-    #[serde(default = "default_1511")]
-    pub items: Vec<MemoryEvidenceItem>,
     #[serde(default = "default_1512")]
-    pub truncated: bool,
+    pub items: Vec<MemoryEvidenceItem>,
     #[serde(default = "default_1513")]
-    pub cited: Integer,
+    pub truncated: bool,
     #[serde(default = "default_1514")]
-    pub lexical: Integer,
+    pub cited: Integer,
     #[serde(default = "default_1515")]
-    pub window: Integer,
+    pub lexical: Integer,
     #[serde(default = "default_1516")]
+    pub window: Integer,
+    #[serde(default = "default_1517")]
     pub derived: Integer,
 }
 
@@ -33698,26 +33700,26 @@ impl MemoryEvidenceInput {
 #[non_exhaustive]
 pub struct EvidenceChunk {
     pub session_id: String,
-    #[serde(default = "default_1517")]
+    #[serde(default = "default_1518")]
     pub chunk_index: Integer,
     pub content: String,
-    #[serde(default = "default_1518")]
-    pub content_sha256: String,
     #[serde(default = "default_1519")]
-    pub agent: String,
+    pub content_sha256: String,
     #[serde(default = "default_1520")]
-    pub user_id: String,
+    pub agent: String,
     #[serde(default = "default_1521")]
-    pub parent_memory_key: String,
+    pub user_id: String,
     #[serde(default = "default_1522")]
-    pub memory_keys: Vec<String>,
+    pub parent_memory_key: String,
     #[serde(default = "default_1523")]
-    pub line_start: Integer,
+    pub memory_keys: Vec<String>,
     #[serde(default = "default_1524")]
-    pub line_end: Integer,
+    pub line_start: Integer,
     #[serde(default = "default_1525")]
-    pub created_at: String,
+    pub line_end: Integer,
     #[serde(default = "default_1526")]
+    pub created_at: String,
+    #[serde(default = "default_1527")]
     pub source_url: String,
 }
 
@@ -33726,17 +33728,17 @@ pub struct EvidenceChunk {
 pub struct EvidenceDigest {
     pub session_id: String,
     pub summary_text: String,
-    #[serde(default = "default_1528")]
-    pub agent: String,
     #[serde(default = "default_1529")]
-    pub user_id: String,
+    pub agent: String,
     #[serde(default = "default_1530")]
-    pub key_facts: Vec<String>,
+    pub user_id: String,
     #[serde(default = "default_1531")]
-    pub derived_from: Vec<String>,
+    pub key_facts: Vec<String>,
     #[serde(default = "default_1532")]
-    pub valid_at: String,
+    pub derived_from: Vec<String>,
     #[serde(default = "default_1533")]
+    pub valid_at: String,
+    #[serde(default = "default_1534")]
     pub created_at: String,
 }
 
@@ -33746,28 +33748,28 @@ pub struct EvidenceEdge {
     pub from_key: String,
     pub to_key: String,
     pub relation: String,
-    #[serde(default = "default_1535")]
-    pub confidence: f64,
     #[serde(default = "default_1536")]
-    pub explanation: String,
+    pub confidence: f64,
     #[serde(default = "default_1537")]
+    pub explanation: String,
+    #[serde(default = "default_1538")]
     pub created_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryExportEvidenceOutput {
-    #[serde(default = "default_1527")]
+    #[serde(default = "default_1528")]
     pub chunks: Vec<EvidenceChunk>,
-    #[serde(default = "default_1534")]
+    #[serde(default = "default_1535")]
     pub digests: Vec<EvidenceDigest>,
-    #[serde(default = "default_1538")]
-    pub edges: Vec<EvidenceEdge>,
     #[serde(default = "default_1539")]
-    pub has_more: bool,
+    pub edges: Vec<EvidenceEdge>,
     #[serde(default = "default_1540")]
-    pub next_cursor: String,
+    pub has_more: bool,
     #[serde(default = "default_1541")]
+    pub next_cursor: String,
+    #[serde(default = "default_1542")]
     pub held_high: Integer,
 }
 
@@ -33960,15 +33962,15 @@ impl ExposureSummaryInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryExtractionRetryMineOutput {
-    #[serde(default = "default_1542")]
-    pub requeued: Vec<String>,
     #[serde(default = "default_1543")]
-    pub not_failed: Vec<String>,
+    pub requeued: Vec<String>,
     #[serde(default = "default_1544")]
-    pub model_calls_off: Vec<String>,
+    pub not_failed: Vec<String>,
     #[serde(default = "default_1545")]
-    pub expired: Vec<String>,
+    pub model_calls_off: Vec<String>,
     #[serde(default = "default_1546")]
+    pub expired: Vec<String>,
+    #[serde(default = "default_1547")]
     pub unknown: Vec<String>,
 }
 
@@ -34029,20 +34031,20 @@ pub struct ExtractionQueueRow {
     pub content_chars: Integer,
     pub written: Integer,
     pub last_error: String,
-    #[serde(default = "default_1547")]
-    pub enqueued_at: Option<String>,
     #[serde(default = "default_1548")]
+    pub enqueued_at: Option<String>,
+    #[serde(default = "default_1549")]
     pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryExtractionStatusOutput {
-    #[serde(default = "default_1549")]
-    pub batches: Vec<ExtractionQueueRow>,
     #[serde(default = "default_1550")]
-    pub pending: Integer,
+    pub batches: Vec<ExtractionQueueRow>,
     #[serde(default = "default_1551")]
+    pub pending: Integer,
+    #[serde(default = "default_1552")]
     pub failed: Integer,
 }
 
@@ -34190,13 +34192,13 @@ impl MemoryExtractionStatusInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryExtractionStatusMineOutput {
-    #[serde(default = "default_1552")]
-    pub batches: Vec<ExtractionQueueRow>,
     #[serde(default = "default_1553")]
-    pub unknown: Vec<String>,
+    pub batches: Vec<ExtractionQueueRow>,
     #[serde(default = "default_1554")]
-    pub pending: Integer,
+    pub unknown: Vec<String>,
     #[serde(default = "default_1555")]
+    pub pending: Integer,
+    #[serde(default = "default_1556")]
     pub failed: Integer,
 }
 
@@ -34317,39 +34319,39 @@ pub struct MemoryForFileHit {
     pub memory_key: String,
     pub memory_type: String,
     pub value: String,
-    #[serde(default = "default_1556")]
-    pub value_truncated: bool,
     #[serde(default = "default_1557")]
-    pub tags: Vec<String>,
+    pub value_truncated: bool,
     #[serde(default = "default_1558")]
-    pub confidence: f64,
+    pub tags: Vec<String>,
     #[serde(default = "default_1559")]
-    pub pinned: bool,
+    pub confidence: f64,
     #[serde(default = "default_1560")]
-    pub status: String,
+    pub pinned: bool,
     #[serde(default = "default_1561")]
-    pub agent: String,
+    pub status: String,
     #[serde(default = "default_1562")]
-    pub updated_at: Option<String>,
+    pub agent: String,
     #[serde(default = "default_1563")]
-    pub namespace: String,
+    pub updated_at: Option<String>,
     #[serde(default = "default_1564")]
-    pub actor: String,
+    pub namespace: String,
     #[serde(default = "default_1565")]
-    pub supersedes_key: String,
+    pub actor: String,
     #[serde(default = "default_1566")]
-    pub supersedes: String,
+    pub supersedes_key: String,
     #[serde(default = "default_1567")]
-    pub supersedes_kind: MemoryForFileHitSupersedesKind,
+    pub supersedes: String,
     #[serde(default = "default_1568")]
-    pub matched_files: Vec<String>,
+    pub supersedes_kind: MemoryForFileHitSupersedesKind,
     #[serde(default = "default_1569")]
-    pub source_resource_id: String,
+    pub matched_files: Vec<String>,
     #[serde(default = "default_1570")]
-    pub verification: MemoryForFileHitVerification,
+    pub source_resource_id: String,
     #[serde(default = "default_1571")]
-    pub code_state: MemoryForFileHitCodeState,
+    pub verification: MemoryForFileHitVerification,
     #[serde(default = "default_1572")]
+    pub code_state: MemoryForFileHitCodeState,
+    #[serde(default = "default_1573")]
     pub code_moved: Vec<CodeLink>,
 }
 
@@ -34359,11 +34361,11 @@ pub struct MemoryForFileOutput {
     pub path: String,
     pub total: Integer,
     pub hits: Vec<MemoryForFileHit>,
-    #[serde(default = "default_1573")]
-    pub rendered: String,
     #[serde(default = "default_1574")]
-    pub tokens_estimate: Integer,
+    pub rendered: String,
     #[serde(default = "default_1575")]
+    pub tokens_estimate: Integer,
+    #[serde(default = "default_1576")]
     pub truncated: bool,
 }
 
@@ -34471,61 +34473,61 @@ impl MemoryForFileInput {
 #[non_exhaustive]
 pub struct MemoryGetByIdOutput {
     pub found: bool,
-    #[serde(default = "default_1576")]
-    pub memory_id: String,
     #[serde(default = "default_1577")]
-    pub namespace: String,
+    pub memory_id: String,
     #[serde(default = "default_1578")]
-    pub agent: String,
+    pub namespace: String,
     #[serde(default = "default_1579")]
-    pub user_id: String,
+    pub agent: String,
     #[serde(default = "default_1580")]
-    pub session_id: String,
+    pub user_id: String,
     #[serde(default = "default_1581")]
-    pub memory_key: String,
+    pub session_id: String,
     #[serde(default = "default_1582")]
-    pub memory_type: Option<String>,
+    pub memory_key: String,
     #[serde(default = "default_1583")]
-    pub value: Value,
+    pub memory_type: Option<String>,
     #[serde(default = "default_1584")]
-    pub confidence: Option<f64>,
+    pub value: Value,
     #[serde(default = "default_1585")]
-    pub version: Option<Integer>,
+    pub confidence: Option<f64>,
     #[serde(default = "default_1586")]
-    pub created_at: Option<String>,
+    pub version: Option<Integer>,
     #[serde(default = "default_1587")]
-    pub expires_at: Option<String>,
+    pub created_at: Option<String>,
     #[serde(default = "default_1588")]
-    pub valid_at: Option<String>,
+    pub expires_at: Option<String>,
     #[serde(default = "default_1589")]
-    pub valid_to: Option<String>,
+    pub valid_at: Option<String>,
     #[serde(default = "default_1590")]
-    pub pinned: bool,
+    pub valid_to: Option<String>,
     #[serde(default = "default_1591")]
-    pub content_sha256: String,
+    pub pinned: bool,
     #[serde(default = "default_1592")]
-    pub verified_by: String,
+    pub content_sha256: String,
     #[serde(default = "default_1593")]
-    pub verified_at: Option<String>,
+    pub verified_by: String,
     #[serde(default = "default_1594")]
-    pub verification: String,
+    pub verified_at: Option<String>,
     #[serde(default = "default_1595")]
-    pub sensitivity: String,
+    pub verification: String,
     #[serde(default = "default_1596")]
-    pub actor: String,
+    pub sensitivity: String,
     #[serde(default = "default_1597")]
-    pub source_class: String,
+    pub actor: String,
     #[serde(default = "default_1598")]
-    pub lock_mode: String,
+    pub source_class: String,
     #[serde(default = "default_1599")]
-    pub lock_reason: String,
+    pub lock_mode: String,
     #[serde(default = "default_1600")]
-    pub lock_until: Option<String>,
+    pub lock_reason: String,
     #[serde(default = "default_1601")]
-    pub locked_by: String,
+    pub lock_until: Option<String>,
     #[serde(default = "default_1602")]
-    pub on_expire: String,
+    pub locked_by: String,
     #[serde(default = "default_1603")]
+    pub on_expire: String,
+    #[serde(default = "default_1604")]
     pub expire_reason: String,
 }
 
@@ -34601,41 +34603,41 @@ pub struct MemoryHealthTopRow {
     pub memory_type: String,
     pub recall_count: Integer,
     pub used_count: Integer,
-    #[serde(default = "default_1606")]
-    pub harm_count: Integer,
     #[serde(default = "default_1607")]
+    pub harm_count: Integer,
+    #[serde(default = "default_1608")]
     pub last_recalled_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryHealthStaleness {
-    #[serde(default = "default_1609")]
-    pub by_age: std::collections::HashMap<String, Integer>,
     #[serde(default = "default_1610")]
-    pub with_validity_end: Integer,
+    pub by_age: std::collections::HashMap<String, Integer>,
     #[serde(default = "default_1611")]
-    pub with_validity_end_share: f64,
+    pub with_validity_end: Integer,
     #[serde(default = "default_1612")]
-    pub with_expiry: Integer,
+    pub with_validity_end_share: f64,
     #[serde(default = "default_1613")]
-    pub expiring_7d: Integer,
+    pub with_expiry: Integer,
     #[serde(default = "default_1614")]
-    pub pinned: Integer,
+    pub expiring_7d: Integer,
     #[serde(default = "default_1615")]
-    pub days_since_reinforced_p50: Integer,
+    pub pinned: Integer,
     #[serde(default = "default_1616")]
+    pub days_since_reinforced_p50: Integer,
+    #[serde(default = "default_1617")]
     pub days_since_reinforced_p90: Integer,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryHealthFootprint {
-    #[serde(default = "default_1618")]
-    pub value_chars: Integer,
     #[serde(default = "default_1619")]
-    pub value_tokens_est: Integer,
+    pub value_chars: Integer,
     #[serde(default = "default_1620")]
+    pub value_tokens_est: Integer,
+    #[serde(default = "default_1621")]
     pub tokens_per_row_est: f64,
 }
 
@@ -34645,19 +34647,19 @@ pub struct MemoryHealthOutput {
     pub live: Integer,
     pub recalled_ever: Integer,
     pub used_ever: Integer,
-    #[serde(default = "default_1604")]
+    #[serde(default = "default_1605")]
     pub harmed_ever: Integer,
     pub silent: Integer,
     pub silent_older: Integer,
     pub silent_share: f64,
     pub silent_after_days: Integer,
-    #[serde(default = "default_1605")]
+    #[serde(default = "default_1606")]
     pub by_type: Vec<MemoryHealthTypeRow>,
-    #[serde(default = "default_1608")]
+    #[serde(default = "default_1609")]
     pub top_recalled: Vec<MemoryHealthTopRow>,
-    #[serde(default = "default_1617")]
+    #[serde(default = "default_1618")]
     pub staleness: MemoryHealthStaleness,
-    #[serde(default = "default_1621")]
+    #[serde(default = "default_1622")]
     pub footprint: MemoryHealthFootprint,
 }
 
@@ -34777,51 +34779,51 @@ impl MemoryHealthInput {
 pub struct MemoryHistoryRow {
     pub memory_id: String,
     pub version: Integer,
-    #[serde(default = "default_1622")]
-    pub version_text: String,
     #[serde(default = "default_1623")]
+    pub version_text: String,
+    #[serde(default = "default_1624")]
     pub value: Value,
     pub confidence: f64,
-    #[serde(default = "default_1624")]
-    pub source_trace: String,
     #[serde(default = "default_1625")]
+    pub source_trace: String,
+    #[serde(default = "default_1626")]
     pub pinned: bool,
     pub created_at: String,
-    #[serde(default = "default_1626")]
-    pub expires_at: Option<String>,
     #[serde(default = "default_1627")]
-    pub tombstoned_at: Option<String>,
+    pub expires_at: Option<String>,
     #[serde(default = "default_1628")]
-    pub redacted_at: Option<String>,
+    pub tombstoned_at: Option<String>,
     #[serde(default = "default_1629")]
-    pub redaction_reason: String,
+    pub redacted_at: Option<String>,
     #[serde(default = "default_1630")]
-    pub content_sha256: String,
+    pub redaction_reason: String,
     #[serde(default = "default_1631")]
-    pub actor: String,
+    pub content_sha256: String,
     #[serde(default = "default_1632")]
-    pub source_class: String,
+    pub actor: String,
     #[serde(default = "default_1633")]
-    pub agent: String,
+    pub source_class: String,
     #[serde(default = "default_1634")]
-    pub written_at: Option<String>,
+    pub agent: String,
     #[serde(default = "default_1635")]
-    pub status: String,
+    pub written_at: Option<String>,
     #[serde(default = "default_1636")]
-    pub conflict_with: Vec<String>,
+    pub status: String,
     #[serde(default = "default_1637")]
-    pub tags: Vec<String>,
+    pub conflict_with: Vec<String>,
     #[serde(default = "default_1638")]
-    pub verified_at: Option<String>,
+    pub tags: Vec<String>,
     #[serde(default = "default_1639")]
-    pub verified_by: String,
+    pub verified_at: Option<String>,
     #[serde(default = "default_1640")]
-    pub verified_sha256: String,
+    pub verified_by: String,
     #[serde(default = "default_1641")]
-    pub lock_mode: String,
+    pub verified_sha256: String,
     #[serde(default = "default_1642")]
-    pub lock_reason: String,
+    pub lock_mode: String,
     #[serde(default = "default_1643")]
+    pub lock_reason: String,
+    #[serde(default = "default_1644")]
     pub lock_until: Option<String>,
 }
 
@@ -34931,13 +34933,13 @@ impl MemoryHistoryInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryImportTotals {
-    #[serde(default = "default_1644")]
-    pub written: Integer,
     #[serde(default = "default_1645")]
-    pub held: Integer,
+    pub written: Integer,
     #[serde(default = "default_1646")]
-    pub skipped: Integer,
+    pub held: Integer,
     #[serde(default = "default_1647")]
+    pub skipped: Integer,
+    #[serde(default = "default_1648")]
     pub refused: Integer,
 }
 
@@ -35020,11 +35022,11 @@ pub struct MemoryImportResult {
     pub index: Integer,
     pub key: String,
     pub outcome: MemoryImportResultOutcome,
-    #[serde(default = "default_1648")]
-    pub reason: MemoryImportResultReason,
     #[serde(default = "default_1649")]
-    pub held_by: String,
+    pub reason: MemoryImportResultReason,
     #[serde(default = "default_1650")]
+    pub held_by: String,
+    #[serde(default = "default_1651")]
     pub note: MemoryImportResultNote,
 }
 
@@ -35033,7 +35035,7 @@ pub struct MemoryImportResult {
 pub struct MemoryImportOutput {
     pub totals: MemoryImportTotals,
     pub results: Vec<MemoryImportResult>,
-    #[serde(default = "default_1651")]
+    #[serde(default = "default_1652")]
     pub dry_run: bool,
 }
 
@@ -35226,9 +35228,9 @@ pub struct MemoryImportCuratedRow {
     pub section_heading: String,
     pub bytes_written: Integer,
     pub verdict: String,
-    #[serde(default = "default_1652")]
-    pub rejection_reason: String,
     #[serde(default = "default_1653")]
+    pub rejection_reason: String,
+    #[serde(default = "default_1654")]
     pub pinned_blocker_id: Option<String>,
 }
 
@@ -35320,21 +35322,21 @@ impl MemoryImportCuratedInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryImportEvidenceOutput {
-    #[serde(default = "default_1654")]
-    pub chunks_written: Integer,
     #[serde(default = "default_1655")]
-    pub links_written: Integer,
+    pub chunks_written: Integer,
     #[serde(default = "default_1656")]
-    pub digests_written: Integer,
+    pub links_written: Integer,
     #[serde(default = "default_1657")]
-    pub embedding_model: String,
+    pub digests_written: Integer,
     #[serde(default = "default_1658")]
-    pub embedding_dim: Integer,
+    pub embedding_model: String,
     #[serde(default = "default_1659")]
-    pub edited: Vec<String>,
+    pub embedding_dim: Integer,
     #[serde(default = "default_1660")]
-    pub skipped: Integer,
+    pub edited: Vec<String>,
     #[serde(default = "default_1661")]
+    pub skipped: Integer,
+    #[serde(default = "default_1662")]
     pub unchecked: Integer,
 }
 
@@ -35671,7 +35673,7 @@ pub struct InspectRow {
     pub memory_key: String,
     pub memory_id: String,
     pub version: Integer,
-    #[serde(default = "default_1671")]
+    #[serde(default = "default_1672")]
     pub content_sha256: String,
     pub memory_type: String,
     pub status: String,
@@ -35682,9 +35684,9 @@ pub struct InspectRow {
     pub actor: String,
     pub updated_at: String,
     pub sensitivity: String,
-    #[serde(default = "default_1672")]
-    pub versions: Integer,
     #[serde(default = "default_1673")]
+    pub versions: Integer,
+    #[serde(default = "default_1674")]
     pub excerpt: String,
 }
 
@@ -35692,27 +35694,27 @@ pub struct InspectRow {
 #[non_exhaustive]
 pub struct InspectView {
     pub definition: String,
-    #[serde(default = "default_1662")]
-    pub refs: Vec<String>,
     #[serde(default = "default_1663")]
-    pub live_rows: Integer,
+    pub refs: Vec<String>,
     #[serde(default = "default_1664")]
-    pub by_type: Vec<InspectCount>,
+    pub live_rows: Integer,
     #[serde(default = "default_1665")]
-    pub by_status: Vec<InspectCount>,
+    pub by_type: Vec<InspectCount>,
     #[serde(default = "default_1666")]
-    pub by_source_class: Vec<InspectCount>,
+    pub by_status: Vec<InspectCount>,
     #[serde(default = "default_1667")]
-    pub top_tags: Vec<InspectCount>,
+    pub by_source_class: Vec<InspectCount>,
     #[serde(default = "default_1668")]
-    pub categories: Vec<InspectCount>,
+    pub top_tags: Vec<InspectCount>,
     #[serde(default = "default_1669")]
-    pub first_updated_at: Option<String>,
+    pub categories: Vec<InspectCount>,
     #[serde(default = "default_1670")]
+    pub first_updated_at: Option<String>,
+    #[serde(default = "default_1671")]
     pub last_updated_at: Option<String>,
-    #[serde(default = "default_1674")]
-    pub newest: Vec<InspectRow>,
     #[serde(default = "default_1675")]
+    pub newest: Vec<InspectRow>,
+    #[serde(default = "default_1676")]
     pub complete: bool,
 }
 
@@ -35728,32 +35730,32 @@ pub struct InspectCall {
 #[non_exhaustive]
 pub struct InspectActivity {
     pub window_seconds: Integer,
-    #[serde(default = "default_1676")]
-    pub calls: Vec<InspectCall>,
     #[serde(default = "default_1677")]
-    pub first_at: Option<String>,
+    pub calls: Vec<InspectCall>,
     #[serde(default = "default_1678")]
-    pub last_at: Option<String>,
+    pub first_at: Option<String>,
     #[serde(default = "default_1679")]
+    pub last_at: Option<String>,
+    #[serde(default = "default_1680")]
     pub gap: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct InspectSettings {
-    #[serde(default = "default_1680")]
-    pub guide_revision: Integer,
     #[serde(default = "default_1681")]
-    pub guide_summary: String,
+    pub guide_revision: Integer,
     #[serde(default = "default_1682")]
-    pub categories_registered: Integer,
+    pub guide_summary: String,
     #[serde(default = "default_1683")]
-    pub extraction_policy: Option<String>,
+    pub categories_registered: Integer,
     #[serde(default = "default_1684")]
-    pub extraction_policy_unavailable: String,
+    pub extraction_policy: Option<String>,
     #[serde(default = "default_1685")]
-    pub extraction_instructions: String,
+    pub extraction_policy_unavailable: String,
     #[serde(default = "default_1686")]
+    pub extraction_instructions: String,
+    #[serde(default = "default_1687")]
     pub extraction_instructions_refs: Vec<String>,
 }
 
@@ -35769,7 +35771,7 @@ pub struct MemoryInspectOutput {
     pub others: InspectView,
     pub activity: InspectActivity,
     pub settings: InspectSettings,
-    #[serde(default = "default_1687")]
+    #[serde(default = "default_1688")]
     pub skipped: Vec<String>,
 }
 
@@ -35863,7 +35865,7 @@ pub struct MemoryKeyRef {
 #[non_exhaustive]
 pub struct MemoryKeysOutput {
     pub keys: Vec<MemoryKeyRef>,
-    #[serde(default = "default_1688")]
+    #[serde(default = "default_1689")]
     pub truncated: bool,
 }
 
@@ -35966,9 +35968,9 @@ pub struct LineageCandidate {
     pub decided_at: String,
     pub decided_by: String,
     pub match_confidence: LineageCandidateMatchConfidence,
-    #[serde(default = "default_1697")]
-    pub seeded_from_thread_id: String,
     #[serde(default = "default_1698")]
+    pub seeded_from_thread_id: String,
+    #[serde(default = "default_1699")]
     pub seeded_from_msg_id: String,
 }
 
@@ -35986,25 +35988,25 @@ pub struct LineageAuditEvent {
 pub struct MemoryLineageOutput {
     pub found: bool,
     pub memory_key: String,
-    #[serde(default = "default_1689")]
-    pub promotion_event: String,
     #[serde(default = "default_1690")]
-    pub promoted_by: String,
+    pub promotion_event: String,
     #[serde(default = "default_1691")]
-    pub promoted_at: Option<String>,
+    pub promoted_by: String,
     #[serde(default = "default_1692")]
-    pub rationale: String,
+    pub promoted_at: Option<String>,
     #[serde(default = "default_1693")]
-    pub source_trace: String,
+    pub rationale: String,
     #[serde(default = "default_1694")]
-    pub source_resource_id: String,
+    pub source_trace: String,
     #[serde(default = "default_1695")]
-    pub mechanism: MemoryLineageOutputMechanism,
+    pub source_resource_id: String,
     #[serde(default = "default_1696")]
+    pub mechanism: MemoryLineageOutputMechanism,
+    #[serde(default = "default_1697")]
     pub supporters: Vec<LineageSupporter>,
-    #[serde(default = "default_1699")]
-    pub candidate: Option<LineageCandidate>,
     #[serde(default = "default_1700")]
+    pub candidate: Option<LineageCandidate>,
+    #[serde(default = "default_1701")]
     pub audit_chain: Vec<LineageAuditEvent>,
 }
 
@@ -36133,11 +36135,11 @@ pub struct MemoryLinkOutput {
     pub from_key: String,
     pub to_key: String,
     pub relation: String,
-    #[serde(default = "default_1701")]
-    pub confidence: f64,
     #[serde(default = "default_1702")]
-    pub conflict_opened: bool,
+    pub confidence: f64,
     #[serde(default = "default_1703")]
+    pub conflict_opened: bool,
+    #[serde(default = "default_1704")]
     pub relation_defaulted: bool,
 }
 
@@ -36451,17 +36453,17 @@ pub struct MemoryListEntry {
 pub struct MemoryListOutput {
     pub entries: Vec<MemoryListEntry>,
     pub truncated: bool,
-    #[serde(default = "default_1704")]
-    pub total: Integer,
     #[serde(default = "default_1705")]
-    pub today: Integer,
+    pub total: Integer,
     #[serde(default = "default_1706")]
-    pub namespace_version: String,
+    pub today: Integer,
     #[serde(default = "default_1707")]
-    pub unchanged: bool,
+    pub namespace_version: String,
     #[serde(default = "default_1708")]
-    pub hidden: Integer,
+    pub unchanged: bool,
     #[serde(default = "default_1709")]
+    pub hidden: Integer,
+    #[serde(default = "default_1710")]
     pub hidden_hint: String,
 }
 
@@ -36847,19 +36849,19 @@ impl MemoryListInput {
 #[non_exhaustive]
 pub struct MemoryLockOutput {
     pub locked: bool,
-    #[serde(default = "default_1710")]
-    pub reason: String,
     #[serde(default = "default_1711")]
-    pub memory_id: String,
+    pub reason: String,
     #[serde(default = "default_1712")]
-    pub version: Option<Integer>,
+    pub memory_id: String,
     #[serde(default = "default_1713")]
-    pub lock_mode: String,
+    pub version: Option<Integer>,
     #[serde(default = "default_1714")]
-    pub lock_until: Option<String>,
+    pub lock_mode: String,
     #[serde(default = "default_1715")]
-    pub locked_by: String,
+    pub lock_until: Option<String>,
     #[serde(default = "default_1716")]
+    pub locked_by: String,
+    #[serde(default = "default_1717")]
     pub previous_mode: String,
 }
 
@@ -37018,21 +37020,21 @@ pub struct MemoryMoveOutput {
     pub from_key: String,
     pub to_key: String,
     pub redirected: bool,
-    #[serde(default = "default_1717")]
-    pub memory_id: String,
     #[serde(default = "default_1718")]
-    pub version: Integer,
+    pub memory_id: String,
     #[serde(default = "default_1719")]
-    pub content_sha256: String,
+    pub version: Integer,
     #[serde(default = "default_1720")]
-    pub advisories: Vec<String>,
+    pub content_sha256: String,
     #[serde(default = "default_1721")]
-    pub dry_run: bool,
+    pub advisories: Vec<String>,
     #[serde(default = "default_1722")]
-    pub memory_type: String,
+    pub dry_run: bool,
     #[serde(default = "default_1723")]
-    pub value_preview: String,
+    pub memory_type: String,
     #[serde(default = "default_1724")]
+    pub value_preview: String,
+    #[serde(default = "default_1725")]
     pub sensitivity: String,
 }
 
@@ -37244,7 +37246,7 @@ impl MemoryMoveInput {
 pub struct MemoryOutcomeOutput {
     pub recorded: bool,
     pub evidence_count_after: Integer,
-    #[serde(default = "default_1725")]
+    #[serde(default = "default_1726")]
     pub quarantined: bool,
 }
 
@@ -37487,13 +37489,13 @@ impl MemoryOutcomeRunInput {
 #[non_exhaustive]
 pub struct OutlineSession {
     pub session_id: String,
-    #[serde(default = "default_1727")]
-    pub date: String,
     #[serde(default = "default_1728")]
-    pub headline: String,
+    pub date: String,
     #[serde(default = "default_1729")]
-    pub key_facts: Integer,
+    pub headline: String,
     #[serde(default = "default_1730")]
+    pub key_facts: Integer,
+    #[serde(default = "default_1731")]
     pub rows: Integer,
 }
 
@@ -37501,7 +37503,7 @@ pub struct OutlineSession {
 #[non_exhaustive]
 pub struct OutlineHub {
     pub entity: String,
-    #[serde(default = "default_1733")]
+    #[serde(default = "default_1734")]
     pub degree: Integer,
 }
 
@@ -37509,28 +37511,28 @@ pub struct OutlineHub {
 #[non_exhaustive]
 pub struct OutlineCommunity {
     pub community_id: Integer,
-    #[serde(default = "default_1735")]
-    pub label: String,
     #[serde(default = "default_1736")]
-    pub size: Integer,
+    pub label: String,
     #[serde(default = "default_1737")]
+    pub size: Integer,
+    #[serde(default = "default_1738")]
     pub computed_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryOutlineOutput {
-    #[serde(default = "default_1726")]
+    #[serde(default = "default_1727")]
     pub rows_by_type: std::collections::HashMap<String, Integer>,
-    #[serde(default = "default_1731")]
-    pub sessions: Vec<OutlineSession>,
     #[serde(default = "default_1732")]
+    pub sessions: Vec<OutlineSession>,
+    #[serde(default = "default_1733")]
     pub sessions_total: Integer,
-    #[serde(default = "default_1734")]
+    #[serde(default = "default_1735")]
     pub hubs: Vec<OutlineHub>,
-    #[serde(default = "default_1738")]
-    pub communities: Vec<OutlineCommunity>,
     #[serde(default = "default_1739")]
+    pub communities: Vec<OutlineCommunity>,
+    #[serde(default = "default_1740")]
     pub profile_chars: Integer,
 }
 
@@ -37682,7 +37684,7 @@ pub struct OwnerUsageRow {
     pub recalls: Integer,
     pub used: Integer,
     pub harm: Integer,
-    #[serde(default = "default_1740")]
+    #[serde(default = "default_1741")]
     pub last_recalled: Option<String>,
 }
 
@@ -38169,7 +38171,7 @@ pub struct MemoryPromoteOutput {
     pub shared_memory_key: String,
     pub promotion_event: String,
     pub reversible_until: String,
-    #[serde(default = "default_1741")]
+    #[serde(default = "default_1742")]
     pub ignored_args: Vec<String>,
 }
 
@@ -38338,18 +38340,18 @@ impl MemoryPromoteInput {
 pub struct MemoryProposalDecision {
     pub memory_key: String,
     pub decided: bool,
-    #[serde(default = "default_1743")]
-    pub status: String,
     #[serde(default = "default_1744")]
+    pub status: String,
+    #[serde(default = "default_1745")]
     pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryProposalDecideOutput {
-    #[serde(default = "default_1742")]
+    #[serde(default = "default_1743")]
     pub decided: Integer,
-    #[serde(default = "default_1745")]
+    #[serde(default = "default_1746")]
     pub results: Vec<MemoryProposalDecision>,
 }
 
@@ -38450,33 +38452,33 @@ pub enum MemoryProposalReady {
 pub struct MemoryProposal {
     pub memory_key: String,
     pub memory_id: String,
-    #[serde(default = "default_1746")]
-    pub content_sha256: String,
     #[serde(default = "default_1747")]
-    pub agent: String,
+    pub content_sha256: String,
     #[serde(default = "default_1748")]
-    pub memory_type: String,
+    pub agent: String,
     #[serde(default = "default_1749")]
-    pub value_preview: String,
+    pub memory_type: String,
     #[serde(default = "default_1750")]
-    pub sensitivity: String,
+    pub value_preview: String,
     #[serde(default = "default_1751")]
-    pub tags: Vec<String>,
+    pub sensitivity: String,
     #[serde(default = "default_1752")]
-    pub created_at: String,
+    pub tags: Vec<String>,
     #[serde(default = "default_1753")]
-    pub graded_passes: Integer,
+    pub created_at: String,
     #[serde(default = "default_1754")]
-    pub graded_fails: Integer,
+    pub graded_passes: Integer,
     #[serde(default = "default_1755")]
-    pub last_graded_at: String,
+    pub graded_fails: Integer,
     #[serde(default = "default_1756")]
-    pub used_count: Integer,
+    pub last_graded_at: String,
     #[serde(default = "default_1757")]
-    pub harm_count: Integer,
+    pub used_count: Integer,
     #[serde(default = "default_1758")]
-    pub ready: MemoryProposalReady,
+    pub harm_count: Integer,
     #[serde(default = "default_1759")]
+    pub ready: MemoryProposalReady,
+    #[serde(default = "default_1760")]
     pub conflict_with: Vec<String>,
 }
 
@@ -38492,24 +38494,24 @@ pub enum ProposalPolicyMode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ProposalPolicy {
-    #[serde(default = "default_1762")]
-    pub mode: ProposalPolicyMode,
     #[serde(default = "default_1763")]
-    pub min_passes: Integer,
+    pub mode: ProposalPolicyMode,
     #[serde(default = "default_1764")]
-    pub max_fails: Integer,
+    pub min_passes: Integer,
     #[serde(default = "default_1765")]
+    pub max_fails: Integer,
+    #[serde(default = "default_1766")]
     pub reject_after_fails: Integer,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryProposalsOutput {
-    #[serde(default = "default_1760")]
-    pub proposals: Vec<MemoryProposal>,
     #[serde(default = "default_1761")]
+    pub proposals: Vec<MemoryProposal>,
+    #[serde(default = "default_1762")]
     pub total: Integer,
-    #[serde(default = "default_1766")]
+    #[serde(default = "default_1767")]
     pub policy: ProposalPolicy,
 }
 
@@ -38616,19 +38618,19 @@ impl MemoryProposalsInput {
 pub struct MemoryProvenanceLink {
     pub direction: String,
     pub memory_key: String,
-    #[serde(default = "default_1780")]
-    pub relation: String,
     #[serde(default = "default_1781")]
-    pub label: String,
+    pub relation: String,
     #[serde(default = "default_1782")]
-    pub explanation: String,
+    pub label: String,
     #[serde(default = "default_1783")]
-    pub evidence: Vec<String>,
+    pub explanation: String,
     #[serde(default = "default_1784")]
-    pub confidence: f64,
+    pub evidence: Vec<String>,
     #[serde(default = "default_1785")]
-    pub author: String,
+    pub confidence: f64,
     #[serde(default = "default_1786")]
+    pub author: String,
+    #[serde(default = "default_1787")]
     pub run_id: String,
 }
 
@@ -38636,33 +38638,33 @@ pub struct MemoryProvenanceLink {
 #[non_exhaustive]
 pub struct MemoryProvenanceOutput {
     pub found: bool,
-    #[serde(default = "default_1767")]
-    pub source_trace: String,
     #[serde(default = "default_1768")]
-    pub source_kind: String,
+    pub source_trace: String,
     #[serde(default = "default_1769")]
-    pub actor: String,
+    pub source_kind: String,
     #[serde(default = "default_1770")]
-    pub source_class: String,
+    pub actor: String,
     #[serde(default = "default_1771")]
-    pub source_label: String,
+    pub source_class: String,
     #[serde(default = "default_1772")]
-    pub thread_id: String,
+    pub source_label: String,
     #[serde(default = "default_1773")]
-    pub thread_exists: bool,
+    pub thread_id: String,
     #[serde(default = "default_1774")]
-    pub thread_title: String,
+    pub thread_exists: bool,
     #[serde(default = "default_1775")]
-    pub agent: String,
+    pub thread_title: String,
     #[serde(default = "default_1776")]
-    pub session_id: String,
+    pub agent: String,
     #[serde(default = "default_1777")]
-    pub run_id: String,
+    pub session_id: String,
     #[serde(default = "default_1778")]
-    pub written_at: String,
+    pub run_id: String,
     #[serde(default = "default_1779")]
+    pub written_at: String,
+    #[serde(default = "default_1780")]
     pub source_resource_id: String,
-    #[serde(default = "default_1787")]
+    #[serde(default = "default_1788")]
     pub links: Vec<MemoryProvenanceLink>,
 }
 
@@ -38757,17 +38759,17 @@ impl MemoryProvenanceInput {
 pub struct RecallTurn {
     pub evidence_id: String,
     pub session_id: String,
-    #[serde(default = "default_1788")]
-    pub role: String,
     #[serde(default = "default_1789")]
-    pub actor: String,
+    pub role: String,
     #[serde(default = "default_1790")]
-    pub observed_at: String,
+    pub actor: String,
     #[serde(default = "default_1791")]
-    pub content: String,
+    pub observed_at: String,
     #[serde(default = "default_1792")]
-    pub truncated: bool,
+    pub content: String,
     #[serde(default = "default_1793")]
+    pub truncated: bool,
+    #[serde(default = "default_1794")]
     pub matched_tokens: Integer,
 }
 
@@ -38784,21 +38786,21 @@ pub enum MemoryRecallOutputOrder {
 #[non_exhaustive]
 pub struct MemoryRecallOutput {
     pub turns: Vec<RecallTurn>,
-    #[serde(default = "default_1794")]
-    pub total_matched: Integer,
     #[serde(default = "default_1795")]
-    pub returned: Integer,
+    pub total_matched: Integer,
     #[serde(default = "default_1796")]
-    pub has_more: bool,
+    pub returned: Integer,
     #[serde(default = "default_1797")]
-    pub next_cursor: String,
+    pub has_more: bool,
     #[serde(default = "default_1798")]
-    pub next_offset: Integer,
+    pub next_cursor: String,
     #[serde(default = "default_1799")]
-    pub order: MemoryRecallOutputOrder,
+    pub next_offset: Integer,
     #[serde(default = "default_1800")]
-    pub query_tokens: Vec<String>,
+    pub order: MemoryRecallOutputOrder,
     #[serde(default = "default_1801")]
+    pub query_tokens: Vec<String>,
+    #[serde(default = "default_1802")]
     pub tokens_returned: Integer,
 }
 
@@ -39080,19 +39082,19 @@ pub struct MemoryRecordConflictRow {
     pub schema_name: String,
     pub memory_key: String,
     pub field_name: String,
-    #[serde(default = "default_1802")]
-    pub prior_value: Value,
     #[serde(default = "default_1803")]
+    pub prior_value: Value,
+    #[serde(default = "default_1804")]
     pub incoming_value: Value,
     pub prior_record_id: String,
     pub incoming_record_id: String,
-    #[serde(default = "default_1804")]
-    pub prior_memory_id: String,
     #[serde(default = "default_1805")]
-    pub incoming_memory_id: String,
+    pub prior_memory_id: String,
     #[serde(default = "default_1806")]
-    pub detected_at: Option<String>,
+    pub incoming_memory_id: String,
     #[serde(default = "default_1807")]
+    pub detected_at: Option<String>,
+    #[serde(default = "default_1808")]
     pub resolved_at: Option<String>,
 }
 
@@ -39100,7 +39102,7 @@ pub struct MemoryRecordConflictRow {
 #[non_exhaustive]
 pub struct MemoryRecordConflictsOutput {
     pub rows: Vec<MemoryRecordConflictRow>,
-    #[serde(default = "default_1808")]
+    #[serde(default = "default_1809")]
     pub truncated: bool,
 }
 
@@ -39210,19 +39212,19 @@ pub enum MemoryRecordRowStatus {
 #[non_exhaustive]
 pub struct MemoryRecordRow {
     pub record_id: String,
-    #[serde(default = "default_1809")]
-    pub memory_key: String,
     #[serde(default = "default_1810")]
-    pub memory_id: String,
+    pub memory_key: String,
     #[serde(default = "default_1811")]
-    pub record: std::collections::HashMap<String, Value>,
+    pub memory_id: String,
     #[serde(default = "default_1812")]
-    pub field_states: std::collections::HashMap<String, String>,
+    pub record: std::collections::HashMap<String, Value>,
     #[serde(default = "default_1813")]
-    pub status: MemoryRecordRowStatus,
+    pub field_states: std::collections::HashMap<String, String>,
     #[serde(default = "default_1814")]
-    pub valid_at: Option<String>,
+    pub status: MemoryRecordRowStatus,
     #[serde(default = "default_1815")]
+    pub valid_at: Option<String>,
+    #[serde(default = "default_1816")]
     pub valid_to: Option<String>,
 }
 
@@ -39289,7 +39291,7 @@ impl MemoryRecordHistoryInput {
 #[non_exhaustive]
 pub struct MemoryRecordQueryOutput {
     pub rows: Vec<MemoryRecordRow>,
-    #[serde(default = "default_1816")]
+    #[serde(default = "default_1817")]
     pub truncated: bool,
 }
 
@@ -39513,15 +39515,15 @@ pub enum MemoryRecordWriteOutputKeySource {
 pub struct MemoryRecordWriteOutput {
     pub record_id: String,
     pub field_count: Integer,
-    #[serde(default = "default_1817")]
-    pub memory_key: String,
     #[serde(default = "default_1818")]
-    pub key_source: MemoryRecordWriteOutputKeySource,
+    pub memory_key: String,
     #[serde(default = "default_1819")]
-    pub fold: std::collections::HashMap<String, Value>,
+    pub key_source: MemoryRecordWriteOutputKeySource,
     #[serde(default = "default_1820")]
-    pub superseded_record_id: String,
+    pub fold: std::collections::HashMap<String, Value>,
     #[serde(default = "default_1821")]
+    pub superseded_record_id: String,
+    #[serde(default = "default_1822")]
     pub conflicts: Integer,
 }
 
@@ -39764,13 +39766,13 @@ impl MemoryRecordWriteInput {
 #[non_exhaustive]
 pub struct MemoryRedactOutput {
     pub redacted: bool,
-    #[serde(default = "default_1822")]
-    pub refused_head: bool,
     #[serde(default = "default_1823")]
-    pub redacted_at: Option<String>,
+    pub refused_head: bool,
     #[serde(default = "default_1824")]
-    pub cache_rows_deleted: Integer,
+    pub redacted_at: Option<String>,
     #[serde(default = "default_1825")]
+    pub cache_rows_deleted: Integer,
+    #[serde(default = "default_1826")]
     pub precedent_rows_deleted: Integer,
 }
 
@@ -39930,7 +39932,7 @@ impl MemoryReindexInput {
 #[non_exhaustive]
 pub struct MemoryRejectOutput {
     pub rejected: bool,
-    #[serde(default = "default_1826")]
+    #[serde(default = "default_1827")]
     pub rejected_at: Option<String>,
 }
 
@@ -40046,7 +40048,7 @@ pub struct MemoryRelatedHit {
 pub struct MemoryRelatedOutput {
     pub results: Vec<MemoryRelatedHit>,
     pub source_entities: Vec<String>,
-    #[serde(default = "default_1827")]
+    #[serde(default = "default_1828")]
     pub reason: String,
 }
 
@@ -40161,13 +40163,13 @@ impl MemoryRelatedInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryResolveOrphanDuplicatesOutput {
-    #[serde(default = "default_1828")]
-    pub candidates: Integer,
     #[serde(default = "default_1829")]
-    pub reactivated: Integer,
+    pub candidates: Integer,
     #[serde(default = "default_1830")]
-    pub dry_run: bool,
+    pub reactivated: Integer,
     #[serde(default = "default_1831")]
+    pub dry_run: bool,
+    #[serde(default = "default_1832")]
     pub memory_ids: Vec<String>,
 }
 
@@ -40244,15 +40246,15 @@ impl MemoryResolveOrphanDuplicatesInput {
 #[non_exhaustive]
 pub struct MemoryRestoreOutput {
     pub restored: bool,
-    #[serde(default = "default_1832")]
-    pub memory_id: Option<String>,
     #[serde(default = "default_1833")]
-    pub version: Option<Integer>,
+    pub memory_id: Option<String>,
     #[serde(default = "default_1834")]
-    pub expired: bool,
+    pub version: Option<Integer>,
     #[serde(default = "default_1835")]
-    pub redacted: bool,
+    pub expired: bool,
     #[serde(default = "default_1836")]
+    pub redacted: bool,
+    #[serde(default = "default_1837")]
     pub from_status: String,
 }
 
@@ -40372,13 +40374,13 @@ pub struct SearchTraceHit {
     pub content_excerpt: String,
     pub distance: f64,
     pub similarity: f64,
-    #[serde(default = "default_1837")]
+    #[serde(default = "default_1838")]
     pub entity_boost: f64,
     pub rank_score: f64,
     pub rank: Integer,
-    #[serde(default = "default_1838")]
-    pub source: String,
     #[serde(default = "default_1839")]
+    pub source: String,
+    #[serde(default = "default_1840")]
     pub parent_memory_key: String,
 }
 
@@ -40388,11 +40390,11 @@ pub struct MemorySearchTraceOutput {
     pub results: Vec<SearchTraceHit>,
     pub embedding_model: String,
     pub entity_filter: Vec<String>,
-    #[serde(default = "default_1840")]
-    pub query_spellings: std::collections::HashMap<String, String>,
     #[serde(default = "default_1841")]
-    pub query_spellings_skipped: bool,
+    pub query_spellings: std::collections::HashMap<String, String>,
     #[serde(default = "default_1842")]
+    pub query_spellings_skipped: bool,
+    #[serde(default = "default_1843")]
     pub stale_dropped: Integer,
 }
 
@@ -41573,7 +41575,7 @@ pub struct SearchTraceLogRow {
     pub embedding_model: String,
     pub latency_ms: Integer,
     pub run_id: String,
-    #[serde(default = "default_1843")]
+    #[serde(default = "default_1844")]
     pub operation: String,
 }
 
@@ -41682,71 +41684,71 @@ pub struct RefusedFact {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemorySetFromMessagesOutput {
-    #[serde(default = "default_1844")]
-    pub written: Vec<BulkSetResult>,
     #[serde(default = "default_1845")]
-    pub refused: Vec<RefusedFact>,
+    pub written: Vec<BulkSetResult>,
     #[serde(default = "default_1846")]
-    pub tokens_in: Integer,
+    pub refused: Vec<RefusedFact>,
     #[serde(default = "default_1847")]
-    pub tokens_out: Integer,
+    pub tokens_in: Integer,
     #[serde(default = "default_1848")]
-    pub llm_provider: String,
+    pub tokens_out: Integer,
     #[serde(default = "default_1849")]
-    pub llm_model: String,
+    pub llm_provider: String,
     #[serde(default = "default_1850")]
-    pub segments: Integer,
+    pub llm_model: String,
     #[serde(default = "default_1851")]
-    pub foresight: Integer,
+    pub segments: Integer,
     #[serde(default = "default_1852")]
-    pub forgotten: Integer,
+    pub foresight: Integer,
     #[serde(default = "default_1853")]
-    pub forgotten_keys: Vec<String>,
+    pub forgotten: Integer,
     #[serde(default = "default_1854")]
-    pub forget_requests: Integer,
+    pub forgotten_keys: Vec<String>,
     #[serde(default = "default_1855")]
-    pub about_other: Integer,
+    pub forget_requests: Integer,
     #[serde(default = "default_1856")]
-    pub premise_facts: Integer,
+    pub about_other: Integer,
     #[serde(default = "default_1857")]
-    pub learning_candidates: Integer,
+    pub premise_facts: Integer,
     #[serde(default = "default_1858")]
-    pub ignored_args: Vec<String>,
+    pub learning_candidates: Integer,
     #[serde(default = "default_1859")]
-    pub segmenter: String,
+    pub ignored_args: Vec<String>,
     #[serde(default = "default_1860")]
-    pub cached_tokens_in: Integer,
+    pub segmenter: String,
     #[serde(default = "default_1861")]
-    pub ontology_warnings: Vec<String>,
+    pub cached_tokens_in: Integer,
     #[serde(default = "default_1862")]
-    pub evidence_ids: Vec<String>,
+    pub ontology_warnings: Vec<String>,
     #[serde(default = "default_1863")]
-    pub belief_source_links: Integer,
+    pub evidence_ids: Vec<String>,
     #[serde(default = "default_1864")]
-    pub pipeline_errors: Vec<String>,
+    pub belief_source_links: Integer,
     #[serde(default = "default_1865")]
-    pub value_updates_linked: Integer,
+    pub pipeline_errors: Vec<String>,
     #[serde(default = "default_1866")]
-    pub stubbed_fields: Vec<String>,
+    pub value_updates_linked: Integer,
     #[serde(default = "default_1867")]
-    pub degraded: Vec<String>,
+    pub stubbed_fields: Vec<String>,
     #[serde(default = "default_1868")]
-    pub deferred: bool,
+    pub degraded: Vec<String>,
     #[serde(default = "default_1869")]
-    pub queue_id: String,
+    pub deferred: bool,
     #[serde(default = "default_1870")]
-    pub deferred_by: String,
+    pub queue_id: String,
     #[serde(default = "default_1871")]
-    pub stage_ms: std::collections::HashMap<String, f64>,
+    pub deferred_by: String,
     #[serde(default = "default_1872")]
-    pub observation_date_source: String,
+    pub stage_ms: std::collections::HashMap<String, f64>,
     #[serde(default = "default_1873")]
-    pub under_operator_policy: bool,
+    pub observation_date_source: String,
     #[serde(default = "default_1874")]
-    pub extract_prompt_keys: Vec<String>,
+    pub under_operator_policy: bool,
     #[serde(default = "default_1875")]
-    pub llm_cache_hits: Integer,
+    pub extract_prompt_keys: Vec<String>,
     #[serde(default = "default_1876")]
+    pub llm_cache_hits: Integer,
+    #[serde(default = "default_1877")]
     pub llm_cache_misses: Integer,
 }
 
@@ -42160,22 +42162,22 @@ pub enum StackEntrySection {
 #[non_exhaustive]
 pub struct StackEntry {
     pub section: StackEntrySection,
-    #[serde(default = "default_1877")]
-    pub memory_key: String,
     #[serde(default = "default_1878")]
-    pub memory_type: String,
+    pub memory_key: String,
     #[serde(default = "default_1879")]
+    pub memory_type: String,
+    #[serde(default = "default_1880")]
     pub value: String,
     pub tokens: Integer,
-    #[serde(default = "default_1880")]
-    pub pinned: bool,
     #[serde(default = "default_1881")]
-    pub recall_count: Integer,
+    pub pinned: bool,
     #[serde(default = "default_1882")]
-    pub last_recalled_at: Option<String>,
+    pub recall_count: Integer,
     #[serde(default = "default_1883")]
-    pub actor: String,
+    pub last_recalled_at: Option<String>,
     #[serde(default = "default_1884")]
+    pub actor: String,
+    #[serde(default = "default_1885")]
     pub namespace: String,
 }
 
@@ -42360,14 +42362,14 @@ impl MemoryStackInput {
 pub struct MemoryStatus {
     pub memory_id: String,
     pub status: String,
-    #[serde(default = "default_1885")]
+    #[serde(default = "default_1886")]
     pub superseded_by: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemoryStatusesOutput {
-    #[serde(default = "default_1886")]
+    #[serde(default = "default_1887")]
     pub rows: Vec<MemoryStatus>,
 }
 
@@ -42416,23 +42418,23 @@ impl MemoryStatusesInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MemorySweepExpiredOutput {
-    #[serde(default = "default_1887")]
-    pub scanned: Integer,
     #[serde(default = "default_1888")]
-    pub tombstoned: Integer,
+    pub scanned: Integer,
     #[serde(default = "default_1889")]
-    pub demoted: Integer,
+    pub tombstoned: Integer,
     #[serde(default = "default_1890")]
-    pub anonymized: Integer,
+    pub demoted: Integer,
     #[serde(default = "default_1891")]
-    pub locked_skipped: Integer,
+    pub anonymized: Integer,
     #[serde(default = "default_1892")]
-    pub moved_skipped: Integer,
+    pub locked_skipped: Integer,
     #[serde(default = "default_1893")]
-    pub dry_run: bool,
+    pub moved_skipped: Integer,
     #[serde(default = "default_1894")]
-    pub sample: Vec<std::collections::HashMap<String, Value>>,
+    pub dry_run: bool,
     #[serde(default = "default_1895")]
+    pub sample: Vec<std::collections::HashMap<String, Value>>,
+    #[serde(default = "default_1896")]
     pub failures: Vec<String>,
 }
 
@@ -42509,10 +42511,10 @@ pub struct MemoryTimelineEntry {
     pub memory_key: String,
     pub memory_type: String,
     pub content_excerpt: String,
-    #[serde(default = "default_1896")]
+    #[serde(default = "default_1897")]
     pub valid_at: Option<String>,
     pub created_at: String,
-    #[serde(default = "default_1897")]
+    #[serde(default = "default_1898")]
     pub namespace: String,
 }
 
@@ -42520,7 +42522,7 @@ pub struct MemoryTimelineEntry {
 #[non_exhaustive]
 pub struct MemoryTimelineOutput {
     pub events: Vec<MemoryTimelineEntry>,
-    #[serde(default = "default_1898")]
+    #[serde(default = "default_1899")]
     pub total_matching: Integer,
 }
 
@@ -42712,9 +42714,9 @@ impl MemoryTimelineInput {
 pub struct MemoryTouchResult {
     pub memory_key: String,
     pub touched: bool,
-    #[serde(default = "default_1901")]
-    pub version: Option<Integer>,
     #[serde(default = "default_1902")]
+    pub version: Option<Integer>,
+    #[serde(default = "default_1903")]
     pub expires_at: Option<String>,
 }
 
@@ -42722,13 +42724,13 @@ pub struct MemoryTouchResult {
 #[non_exhaustive]
 pub struct MemoryTouchOutput {
     pub touched: bool,
-    #[serde(default = "default_1899")]
-    pub version: Option<Integer>,
     #[serde(default = "default_1900")]
+    pub version: Option<Integer>,
+    #[serde(default = "default_1901")]
     pub expires_at: Option<String>,
-    #[serde(default = "default_1903")]
-    pub results: Vec<MemoryTouchResult>,
     #[serde(default = "default_1904")]
+    pub results: Vec<MemoryTouchResult>,
+    #[serde(default = "default_1905")]
     pub touched_count: Integer,
 }
 
@@ -42908,15 +42910,15 @@ impl MemoryTouchInput {
 #[non_exhaustive]
 pub struct MemoryUnlockOutput {
     pub unlocked: bool,
-    #[serde(default = "default_1905")]
-    pub reason: String,
     #[serde(default = "default_1906")]
-    pub memory_id: String,
+    pub reason: String,
     #[serde(default = "default_1907")]
-    pub version: Option<Integer>,
+    pub memory_id: String,
     #[serde(default = "default_1908")]
-    pub previous_mode: String,
+    pub version: Option<Integer>,
     #[serde(default = "default_1909")]
+    pub previous_mode: String,
+    #[serde(default = "default_1910")]
     pub unlocked_by: String,
 }
 
@@ -43021,11 +43023,11 @@ impl MemoryUnlockInput {
 #[non_exhaustive]
 pub struct MemoryUnpinOutput {
     pub unpinned: bool,
-    #[serde(default = "default_1910")]
-    pub reason: String,
     #[serde(default = "default_1911")]
-    pub memory_id: String,
+    pub reason: String,
     #[serde(default = "default_1912")]
+    pub memory_id: String,
+    #[serde(default = "default_1913")]
     pub version: Option<Integer>,
 }
 
@@ -43119,15 +43121,15 @@ impl MemoryUnpinInput {
 #[non_exhaustive]
 pub struct MemoryUpdateCandidate {
     pub memory_id: String,
-    #[serde(default = "default_1918")]
-    pub agent: String,
     #[serde(default = "default_1919")]
-    pub user_id: String,
+    pub agent: String,
     #[serde(default = "default_1920")]
-    pub session_id: String,
+    pub user_id: String,
     #[serde(default = "default_1921")]
-    pub version: Integer,
+    pub session_id: String,
     #[serde(default = "default_1922")]
+    pub version: Integer,
+    #[serde(default = "default_1923")]
     pub status: String,
 }
 
@@ -43135,23 +43137,23 @@ pub struct MemoryUpdateCandidate {
 #[non_exhaustive]
 pub struct MemoryUpdateOutput {
     pub updated: bool,
-    #[serde(default = "default_1913")]
-    pub memory_id: String,
     #[serde(default = "default_1914")]
-    pub memory_key: String,
+    pub memory_id: String,
     #[serde(default = "default_1915")]
-    pub new_version: Integer,
+    pub memory_key: String,
     #[serde(default = "default_1916")]
-    pub content_sha256: String,
+    pub new_version: Integer,
     #[serde(default = "default_1917")]
+    pub content_sha256: String,
+    #[serde(default = "default_1918")]
     pub reason: String,
-    #[serde(default = "default_1923")]
-    pub candidates: Vec<MemoryUpdateCandidate>,
     #[serde(default = "default_1924")]
-    pub conflict_verdict: String,
+    pub candidates: Vec<MemoryUpdateCandidate>,
     #[serde(default = "default_1925")]
-    pub conflict_peers: Integer,
+    pub conflict_verdict: String,
     #[serde(default = "default_1926")]
+    pub conflict_peers: Integer,
+    #[serde(default = "default_1927")]
     pub duplicate_of: String,
 }
 
@@ -43360,15 +43362,15 @@ impl MemoryUpdateInput {
 #[non_exhaustive]
 pub struct MemoryUpdateByIdOutput {
     pub updated: bool,
-    #[serde(default = "default_1927")]
-    pub new_version: Integer,
     #[serde(default = "default_1928")]
-    pub content_sha256: String,
+    pub new_version: Integer,
     #[serde(default = "default_1929")]
-    pub conflict_verdict: String,
+    pub content_sha256: String,
     #[serde(default = "default_1930")]
-    pub conflict_peers: Integer,
+    pub conflict_verdict: String,
     #[serde(default = "default_1931")]
+    pub conflict_peers: Integer,
+    #[serde(default = "default_1932")]
     pub duplicate_of: String,
 }
 
@@ -43496,23 +43498,23 @@ impl MemoryUpdateByIdInput {
 #[non_exhaustive]
 pub struct MemoryVerifyOutput {
     pub found: bool,
-    #[serde(default = "default_1932")]
-    pub changed: bool,
     #[serde(default = "default_1933")]
-    pub memory_id: String,
+    pub changed: bool,
     #[serde(default = "default_1934")]
-    pub memory_key: String,
+    pub memory_id: String,
     #[serde(default = "default_1935")]
-    pub namespace: String,
+    pub memory_key: String,
     #[serde(default = "default_1936")]
-    pub verified_by: String,
+    pub namespace: String,
     #[serde(default = "default_1937")]
-    pub verified_at: Option<String>,
+    pub verified_by: String,
     #[serde(default = "default_1938")]
-    pub verification: String,
+    pub verified_at: Option<String>,
     #[serde(default = "default_1939")]
-    pub version: Integer,
+    pub verification: String,
     #[serde(default = "default_1940")]
+    pub version: Integer,
+    #[serde(default = "default_1941")]
     pub content_sha256: String,
 }
 
@@ -43717,13 +43719,13 @@ pub struct SchemaFieldOutput {
     #[serde(rename = "type")]
     pub r#type: String,
     pub required: bool,
-    #[serde(default = "default_1943")]
-    pub identity: bool,
     #[serde(default = "default_1944")]
-    pub enum_values: Vec<String>,
+    pub identity: bool,
     #[serde(default = "default_1945")]
-    pub constraints: std::collections::HashMap<String, Value>,
+    pub enum_values: Vec<String>,
     #[serde(default = "default_1946")]
+    pub constraints: std::collections::HashMap<String, Value>,
+    #[serde(default = "default_1947")]
     pub description: String,
 }
 
@@ -43732,11 +43734,11 @@ pub struct SchemaFieldOutput {
 pub struct MemorySchemaSummary {
     pub schema_id: String,
     pub name: String,
-    #[serde(default = "default_1941")]
-    pub description: String,
     #[serde(default = "default_1942")]
+    pub description: String,
+    #[serde(default = "default_1943")]
     pub status: String,
-    #[serde(default = "default_1947")]
+    #[serde(default = "default_1948")]
     pub fields: Vec<SchemaFieldOutput>,
 }
 
@@ -44151,13 +44153,13 @@ impl MemorySchemaRegisterInput {
 #[non_exhaustive]
 pub struct MentorPlane {
     pub plane: String,
-    #[serde(default = "default_1949")]
-    pub calls: Integer,
     #[serde(default = "default_1950")]
-    pub available: Option<bool>,
+    pub calls: Integer,
     #[serde(default = "default_1951")]
-    pub when: String,
+    pub available: Option<bool>,
     #[serde(default = "default_1952")]
+    pub when: String,
+    #[serde(default = "default_1953")]
     pub mentored: bool,
 }
 
@@ -44167,11 +44169,11 @@ pub struct MentorHint {
     pub code: String,
     pub severity: String,
     pub text: String,
-    #[serde(default = "default_1954")]
-    pub ops: Vec<String>,
     #[serde(default = "default_1955")]
-    pub evidence: std::collections::HashMap<String, Value>,
+    pub ops: Vec<String>,
     #[serde(default = "default_1956")]
+    pub evidence: std::collections::HashMap<String, Value>,
+    #[serde(default = "default_1957")]
     pub plane: Option<String>,
 }
 
@@ -44179,9 +44181,9 @@ pub struct MentorHint {
 #[non_exhaustive]
 pub struct MentorAdoption {
     pub code: String,
-    #[serde(default = "default_1958")]
-    pub shown_sessions: Integer,
     #[serde(default = "default_1959")]
+    pub shown_sessions: Integer,
+    #[serde(default = "default_1960")]
     pub followed_sessions: Integer,
 }
 
@@ -44217,7 +44219,7 @@ pub enum UsageRungSource {
 #[non_exhaustive]
 pub struct UsageRung {
     pub rung: UsageRungRung,
-    #[serde(default = "default_1961")]
+    #[serde(default = "default_1962")]
     pub count: Option<Integer>,
     pub source: UsageRungSource,
     pub meaning: String,
@@ -44232,27 +44234,27 @@ pub struct MentorBriefOutput {
     pub window_seconds: Integer,
     pub computed_at: String,
     pub sessions: Integer,
-    #[serde(default = "default_1948")]
+    #[serde(default = "default_1949")]
     pub usage: std::collections::HashMap<String, Integer>,
-    #[serde(default = "default_1953")]
+    #[serde(default = "default_1954")]
     pub planes: Vec<MentorPlane>,
-    #[serde(default = "default_1957")]
+    #[serde(default = "default_1958")]
     pub hints: Vec<MentorHint>,
-    #[serde(default = "default_1960")]
+    #[serde(default = "default_1961")]
     pub adoption: Vec<MentorAdoption>,
-    #[serde(default = "default_1962")]
-    pub usage_evidence: Vec<UsageRung>,
     #[serde(default = "default_1963")]
-    pub ledger_from: Option<String>,
+    pub usage_evidence: Vec<UsageRung>,
     #[serde(default = "default_1964")]
-    pub ledger_retention_days: Option<Integer>,
+    pub ledger_from: Option<String>,
     #[serde(default = "default_1965")]
-    pub agents: Vec<String>,
+    pub ledger_retention_days: Option<Integer>,
     #[serde(default = "default_1966")]
-    pub agent_defaulted: bool,
+    pub agents: Vec<String>,
     #[serde(default = "default_1967")]
-    pub skipped: Vec<String>,
+    pub agent_defaulted: bool,
     #[serde(default = "default_1968")]
+    pub skipped: Vec<String>,
+    #[serde(default = "default_1969")]
     pub healthy: bool,
 }
 
@@ -44401,33 +44403,33 @@ impl MentorGuideInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct NamespaceAuditSummary {
-    #[serde(default = "default_1969")]
-    pub live_rows: Integer,
     #[serde(default = "default_1970")]
-    pub live_bytes: Integer,
+    pub live_rows: Integer,
     #[serde(default = "default_1971")]
-    pub excerpt_bytes: Integer,
+    pub live_bytes: Integer,
     #[serde(default = "default_1972")]
-    pub version_rows: Integer,
+    pub excerpt_bytes: Integer,
     #[serde(default = "default_1973")]
-    pub version_bytes: Integer,
+    pub version_rows: Integer,
     #[serde(default = "default_1974")]
-    pub unembedded_rows: Integer,
+    pub version_bytes: Integer,
     #[serde(default = "default_1975")]
-    pub gets: Integer,
+    pub unembedded_rows: Integer,
     #[serde(default = "default_1976")]
-    pub searches: Integer,
+    pub gets: Integer,
     #[serde(default = "default_1977")]
-    pub sets: Integer,
+    pub searches: Integer,
     #[serde(default = "default_1978")]
-    pub get_search_ratio: f64,
+    pub sets: Integer,
     #[serde(default = "default_1979")]
-    pub inspector_calls: Integer,
+    pub get_search_ratio: f64,
     #[serde(default = "default_1980")]
-    pub typed_gets: Integer,
+    pub inspector_calls: Integer,
     #[serde(default = "default_1981")]
-    pub written_in_window: Integer,
+    pub typed_gets: Integer,
     #[serde(default = "default_1982")]
+    pub written_in_window: Integer,
+    #[serde(default = "default_1983")]
     pub ledger_calls: Integer,
 }
 
@@ -44459,25 +44461,25 @@ pub struct NamespaceAuditFinding {
     pub kind: NamespaceAuditFindingKind,
     pub rule_version: Integer,
     pub source_op: String,
-    #[serde(default = "default_1983")]
-    pub window_seconds: Option<Integer>,
     #[serde(default = "default_1984")]
+    pub window_seconds: Option<Integer>,
+    #[serde(default = "default_1985")]
     pub population: Option<Integer>,
     pub sample_limit: Integer,
     pub samples_complete: bool,
-    #[serde(default = "default_1985")]
-    pub evidence: Vec<FindingEvidence>,
     #[serde(default = "default_1986")]
-    pub exceptions: String,
+    pub evidence: Vec<FindingEvidence>,
     #[serde(default = "default_1987")]
+    pub exceptions: String,
+    #[serde(default = "default_1988")]
     pub uncertainty: String,
     pub code: String,
     pub severity: NamespaceAuditFindingSeverity,
     pub count: Integer,
     pub share: f64,
-    #[serde(default = "default_1988")]
-    pub bytes: Integer,
     #[serde(default = "default_1989")]
+    pub bytes: Integer,
+    #[serde(default = "default_1990")]
     pub samples: Vec<std::collections::HashMap<String, Value>>,
     pub detail: String,
     pub remedy: String,
@@ -44492,7 +44494,7 @@ pub struct NamespaceAuditOutput {
     pub window_seconds: Integer,
     pub summary: NamespaceAuditSummary,
     pub findings: Vec<NamespaceAuditFinding>,
-    #[serde(default = "default_1990")]
+    #[serde(default = "default_1991")]
     pub skipped: Vec<String>,
     pub coverage: ReportCoverage,
     pub healthy: bool,
@@ -44583,29 +44585,29 @@ pub enum BrowseEntryMyStatus {
 #[non_exhaustive]
 pub struct BrowseEntry {
     pub namespace: String,
-    #[serde(default = "default_1991")]
+    #[serde(default = "default_1992")]
     pub kind: String,
     pub description: String,
     pub owner_email: String,
     pub member_count: Integer,
-    #[serde(default = "default_1992")]
+    #[serde(default = "default_1993")]
     pub requires_approval: bool,
     pub created_at: String,
-    #[serde(default = "default_1993")]
-    pub join_policy: String,
     #[serde(default = "default_1994")]
-    pub visibility: String,
+    pub join_policy: String,
     #[serde(default = "default_1995")]
-    pub my_status: BrowseEntryMyStatus,
+    pub visibility: String,
     #[serde(default = "default_1996")]
-    pub my_role: String,
+    pub my_status: BrowseEntryMyStatus,
     #[serde(default = "default_1997")]
-    pub repo: String,
+    pub my_role: String,
     #[serde(default = "default_1998")]
-    pub branch: String,
+    pub repo: String,
     #[serde(default = "default_1999")]
-    pub guide_revision: Integer,
+    pub branch: String,
     #[serde(default = "default_2000")]
+    pub guide_revision: Integer,
+    #[serde(default = "default_2001")]
     pub guide_summary: String,
 }
 
@@ -44709,9 +44711,9 @@ pub enum NamespaceCancelRequestOutputClearedRole {
 pub struct NamespaceCancelRequestOutput {
     pub cancelled: bool,
     pub namespace: String,
-    #[serde(default = "default_2001")]
-    pub cleared_role: Option<NamespaceCancelRequestOutputClearedRole>,
     #[serde(default = "default_2002")]
+    pub cleared_role: Option<NamespaceCancelRequestOutputClearedRole>,
+    #[serde(default = "default_2003")]
     pub cancelled_at: Option<String>,
 }
 
@@ -44783,7 +44785,7 @@ pub struct NamespaceDeleteOutput {
     pub deleted: bool,
     pub namespace: String,
     pub updated_at: String,
-    #[serde(default = "default_2003")]
+    #[serde(default = "default_2004")]
     pub sources_retired: Vec<String>,
 }
 
@@ -44852,67 +44854,67 @@ pub enum NamespaceGetOutputClassification {
 pub struct NamespaceGetOutput {
     pub found: bool,
     pub namespace: String,
-    #[serde(default = "default_2004")]
-    pub kind: Option<String>,
     #[serde(default = "default_2005")]
-    pub owner_email: Option<String>,
+    pub kind: Option<String>,
     #[serde(default = "default_2006")]
-    pub description: Option<String>,
+    pub owner_email: Option<String>,
     #[serde(default = "default_2007")]
-    pub tags: Option<Vec<String>>,
+    pub description: Option<String>,
     #[serde(default = "default_2008")]
-    pub active: Option<bool>,
+    pub tags: Option<Vec<String>>,
     #[serde(default = "default_2009")]
-    pub conversation_logging_enabled: Option<bool>,
+    pub active: Option<bool>,
     #[serde(default = "default_2010")]
-    pub capture_generation_io: Option<bool>,
+    pub conversation_logging_enabled: Option<bool>,
     #[serde(default = "default_2011")]
-    pub coverage_sweep: Option<bool>,
+    pub capture_generation_io: Option<bool>,
     #[serde(default = "default_2012")]
-    pub consolidation_enabled: Option<bool>,
+    pub coverage_sweep: Option<bool>,
     #[serde(default = "default_2013")]
-    pub daily_cost_cap_usd: Option<f64>,
+    pub consolidation_enabled: Option<bool>,
     #[serde(default = "default_2014")]
-    pub daily_user_cost_cap_usd: Option<f64>,
+    pub daily_cost_cap_usd: Option<f64>,
     #[serde(default = "default_2015")]
-    pub budget_alert_inbox: Option<String>,
+    pub daily_user_cost_cap_usd: Option<f64>,
     #[serde(default = "default_2016")]
-    pub conflict_threshold: Option<f64>,
+    pub budget_alert_inbox: Option<String>,
     #[serde(default = "default_2017")]
-    pub retention_days: Option<Integer>,
+    pub conflict_threshold: Option<f64>,
     #[serde(default = "default_2018")]
-    pub warm_days: Option<Integer>,
+    pub retention_days: Option<Integer>,
     #[serde(default = "default_2019")]
-    pub visibility: Option<NamespaceGetOutputVisibility>,
+    pub warm_days: Option<Integer>,
     #[serde(default = "default_2020")]
-    pub requires_approval: Option<bool>,
+    pub visibility: Option<NamespaceGetOutputVisibility>,
     #[serde(default = "default_2021")]
-    pub join_policy: Option<String>,
+    pub requires_approval: Option<bool>,
     #[serde(default = "default_2022")]
-    pub effective_join_policy: Option<String>,
+    pub join_policy: Option<String>,
     #[serde(default = "default_2023")]
-    pub retrieval_defaults: Option<std::collections::HashMap<String, Value>>,
+    pub effective_join_policy: Option<String>,
     #[serde(default = "default_2024")]
-    pub rerank_endpoint: Option<String>,
+    pub retrieval_defaults: Option<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2025")]
-    pub classify_endpoint: Option<String>,
+    pub rerank_endpoint: Option<String>,
     #[serde(default = "default_2026")]
-    pub default_conflict_policy: Option<String>,
+    pub classify_endpoint: Option<String>,
     #[serde(default = "default_2027")]
-    pub proposal_policy: Option<ProposalPolicy>,
+    pub default_conflict_policy: Option<String>,
     #[serde(default = "default_2028")]
-    pub code_change_policy: Option<NamespaceGetOutputCodeChangePolicy>,
+    pub proposal_policy: Option<ProposalPolicy>,
     #[serde(default = "default_2029")]
-    pub tag_registry: Option<Vec<std::collections::HashMap<String, Value>>>,
+    pub code_change_policy: Option<NamespaceGetOutputCodeChangePolicy>,
     #[serde(default = "default_2030")]
-    pub classification: Option<NamespaceGetOutputClassification>,
+    pub tag_registry: Option<Vec<std::collections::HashMap<String, Value>>>,
     #[serde(default = "default_2031")]
-    pub guide_revision: Option<Integer>,
+    pub classification: Option<NamespaceGetOutputClassification>,
     #[serde(default = "default_2032")]
-    pub guide_summary: Option<String>,
+    pub guide_revision: Option<Integer>,
     #[serde(default = "default_2033")]
-    pub created_at: Option<String>,
+    pub guide_summary: Option<String>,
     #[serde(default = "default_2034")]
+    pub created_at: Option<String>,
+    #[serde(default = "default_2035")]
     pub updated_at: Option<String>,
 }
 
@@ -44965,17 +44967,17 @@ impl NamespaceGetInput {
 #[non_exhaustive]
 pub struct NamespaceGuideGetOutput {
     pub found: bool,
-    #[serde(default = "default_2035")]
-    pub revision: Integer,
     #[serde(default = "default_2036")]
-    pub content: String,
+    pub revision: Integer,
     #[serde(default = "default_2037")]
-    pub summary: String,
+    pub content: String,
     #[serde(default = "default_2038")]
-    pub note: String,
+    pub summary: String,
     #[serde(default = "default_2039")]
-    pub updated_by: String,
+    pub note: String,
     #[serde(default = "default_2040")]
+    pub updated_by: String,
+    #[serde(default = "default_2041")]
     pub updated_at: Option<String>,
 }
 
@@ -45112,17 +45114,17 @@ impl NamespaceGuideHistoryInput {
 #[non_exhaustive]
 pub struct NamespaceGuideSetOutputNamespaceGuideGetOutput {
     pub found: bool,
-    #[serde(default = "default_2042")]
-    pub revision: Integer,
     #[serde(default = "default_2043")]
-    pub content: String,
+    pub revision: Integer,
     #[serde(default = "default_2044")]
-    pub summary: String,
+    pub content: String,
     #[serde(default = "default_2045")]
-    pub note: String,
+    pub summary: String,
     #[serde(default = "default_2046")]
-    pub updated_by: String,
+    pub note: String,
     #[serde(default = "default_2047")]
+    pub updated_by: String,
+    #[serde(default = "default_2048")]
     pub updated_at: Option<String>,
 }
 
@@ -45130,10 +45132,10 @@ pub struct NamespaceGuideSetOutputNamespaceGuideGetOutput {
 #[non_exhaustive]
 pub struct NamespaceGuideSetOutput {
     pub written: bool,
-    #[serde(default = "default_2041")]
+    #[serde(default = "default_2042")]
     pub conflict: bool,
     pub revision: Integer,
-    #[serde(default = "default_2048")]
+    #[serde(default = "default_2049")]
     pub current: Option<NamespaceGuideSetOutputNamespaceGuideGetOutput>,
 }
 
@@ -45254,7 +45256,7 @@ pub struct InventorySection {
     #[serde(deserialize_with = "required_nullable")]
     pub latest_at: Option<String>,
     pub complete: bool,
-    #[serde(default = "default_2049")]
+    #[serde(default = "default_2050")]
     pub reason: String,
 }
 
@@ -45284,10 +45286,10 @@ pub struct InventoryPopulation {
     pub population: InventoryPopulationPopulation,
     #[serde(deserialize_with = "required_nullable")]
     pub total: Option<Integer>,
-    #[serde(default = "default_2050")]
+    #[serde(default = "default_2051")]
     pub top: Vec<InventoryIdentity>,
     pub complete: bool,
-    #[serde(default = "default_2051")]
+    #[serde(default = "default_2052")]
     pub reason: String,
 }
 
@@ -45453,11 +45455,11 @@ pub struct NamespaceJoinOutput {
     pub joined: bool,
     pub namespace: String,
     pub role: NamespaceJoinOutputRole,
-    #[serde(default = "default_2052")]
-    pub status: String,
     #[serde(default = "default_2053")]
-    pub requested_role: Option<NamespaceJoinOutputRequestedRole>,
+    pub status: String,
     #[serde(default = "default_2054")]
+    pub requested_role: Option<NamespaceJoinOutputRequestedRole>,
+    #[serde(default = "default_2055")]
     pub pending_admins: Vec<String>,
     pub joined_at: String,
 }
@@ -45549,7 +45551,7 @@ impl NamespaceJoinInput {
 pub struct NamespaceLeaveOutput {
     pub left: bool,
     pub namespace: String,
-    #[serde(default = "default_2055")]
+    #[serde(default = "default_2056")]
     pub left_at: Option<String>,
 }
 
@@ -45626,27 +45628,27 @@ pub enum NamespaceEntryVisibility {
 #[non_exhaustive]
 pub struct NamespaceEntry {
     pub namespace: String,
-    #[serde(default = "default_2056")]
+    #[serde(default = "default_2057")]
     pub kind: String,
     pub owner_email: String,
     pub description: String,
     pub tags: Vec<String>,
     pub active: bool,
-    #[serde(default = "default_2057")]
-    pub consolidation_enabled: bool,
     #[serde(default = "default_2058")]
-    pub daily_cost_cap_usd: f64,
+    pub consolidation_enabled: bool,
     #[serde(default = "default_2059")]
-    pub daily_user_cost_cap_usd: f64,
+    pub daily_cost_cap_usd: f64,
     #[serde(default = "default_2060")]
-    pub budget_alert_inbox: String,
+    pub daily_user_cost_cap_usd: f64,
     #[serde(default = "default_2061")]
-    pub conflict_threshold: Option<f64>,
+    pub budget_alert_inbox: String,
     #[serde(default = "default_2062")]
-    pub retention_days: Integer,
+    pub conflict_threshold: Option<f64>,
     #[serde(default = "default_2063")]
-    pub warm_days: Integer,
+    pub retention_days: Integer,
     #[serde(default = "default_2064")]
+    pub warm_days: Integer,
+    #[serde(default = "default_2065")]
     pub visibility: NamespaceEntryVisibility,
     pub created_at: String,
     pub updated_at: String,
@@ -45801,27 +45803,27 @@ pub enum MineEntryVisibility {
 pub struct MineEntry {
     pub namespace: String,
     pub role: String,
-    #[serde(default = "default_2065")]
-    pub status: String,
     #[serde(default = "default_2066")]
-    pub pending_role: Option<String>,
+    pub status: String,
     #[serde(default = "default_2067")]
-    pub pending_since: Option<String>,
+    pub pending_role: Option<String>,
     #[serde(default = "default_2068")]
-    pub pending_admins: Vec<String>,
+    pub pending_since: Option<String>,
     #[serde(default = "default_2069")]
-    pub visibility: MineEntryVisibility,
+    pub pending_admins: Vec<String>,
     #[serde(default = "default_2070")]
-    pub kind: String,
+    pub visibility: MineEntryVisibility,
     #[serde(default = "default_2071")]
-    pub title: String,
+    pub kind: String,
     #[serde(default = "default_2072")]
-    pub description: String,
+    pub title: String,
     #[serde(default = "default_2073")]
-    pub joined_at: Option<String>,
+    pub description: String,
     #[serde(default = "default_2074")]
-    pub is_new: bool,
+    pub joined_at: Option<String>,
     #[serde(default = "default_2075")]
+    pub is_new: bool,
+    #[serde(default = "default_2076")]
     pub inherited: bool,
 }
 
@@ -45887,7 +45889,7 @@ pub struct OntologyEntry {
     pub name: String,
     pub status: String,
     pub description: String,
-    #[serde(default = "default_2076")]
+    #[serde(default = "default_2077")]
     pub cardinality: String,
     pub created_by: String,
     pub updated_at: String,
@@ -46080,7 +46082,7 @@ pub struct NamespaceRegisterOutput {
     pub registered: bool,
     pub namespace: String,
     pub updated_at: String,
-    #[serde(default = "default_2077")]
+    #[serde(default = "default_2078")]
     pub visibility: NamespaceRegisterOutputVisibility,
 }
 
@@ -47160,7 +47162,7 @@ impl NamespaceRegisterOntologyInput {
 #[non_exhaustive]
 pub struct NamespaceRestoreOutput {
     pub restored: bool,
-    #[serde(default = "default_2078")]
+    #[serde(default = "default_2079")]
     pub publication_pending: bool,
     pub target_namespace: String,
     pub snapshot_id: String,
@@ -48047,15 +48049,15 @@ pub struct NamespaceRollbackOutput {
     pub version_at: Integer,
     pub reinstate: Integer,
     pub remove: Integer,
-    #[serde(default = "default_2079")]
-    pub skipped_no_head: Integer,
     #[serde(default = "default_2080")]
-    pub skipped_already_gone: Integer,
+    pub skipped_no_head: Integer,
     #[serde(default = "default_2081")]
-    pub truncated: bool,
+    pub skipped_already_gone: Integer,
     #[serde(default = "default_2082")]
-    pub sample: Vec<std::collections::HashMap<String, Value>>,
+    pub truncated: bool,
     #[serde(default = "default_2083")]
+    pub sample: Vec<std::collections::HashMap<String, Value>>,
+    #[serde(default = "default_2084")]
     pub applied_at: Option<String>,
 }
 
@@ -48234,101 +48236,101 @@ pub struct NamespaceSnapshotOutputSnapshotMemoryRow {
     pub confidence: f64,
     pub source_trace: String,
     pub pinned: bool,
-    #[serde(default = "default_2084")]
-    pub expires_at: Option<String>,
     #[serde(default = "default_2085")]
-    pub entities: Vec<String>,
+    pub expires_at: Option<String>,
     #[serde(default = "default_2086")]
-    pub version: Integer,
+    pub entities: Vec<String>,
     #[serde(default = "default_2087")]
-    pub content_sha256: String,
+    pub version: Integer,
     #[serde(default = "default_2088")]
-    pub actor: String,
+    pub content_sha256: String,
     #[serde(default = "default_2089")]
-    pub source_class: String,
+    pub actor: String,
     #[serde(default = "default_2090")]
-    pub source_resource_id: String,
+    pub source_class: String,
     #[serde(default = "default_2091")]
-    pub verified_by: String,
+    pub source_resource_id: String,
     #[serde(default = "default_2092")]
-    pub verified_at: Option<String>,
+    pub verified_by: String,
     #[serde(default = "default_2093")]
-    pub verified_sha256: String,
+    pub verified_at: Option<String>,
     #[serde(default = "default_2094")]
-    pub grounding: String,
+    pub verified_sha256: String,
     #[serde(default = "default_2095")]
-    pub evidence: String,
+    pub grounding: String,
     #[serde(default = "default_2096")]
-    pub tags: Vec<String>,
+    pub evidence: String,
     #[serde(default = "default_2097")]
-    pub valid_at: Option<String>,
+    pub tags: Vec<String>,
     #[serde(default = "default_2098")]
-    pub valid_to: Option<String>,
+    pub valid_at: Option<String>,
     #[serde(default = "default_2099")]
-    pub created_at: Option<String>,
+    pub valid_to: Option<String>,
     #[serde(default = "default_2100")]
-    pub updated_at: Option<String>,
+    pub created_at: Option<String>,
     #[serde(default = "default_2101")]
-    pub value_json: String,
+    pub updated_at: Option<String>,
     #[serde(default = "default_2102")]
-    pub status: NamespaceSnapshotOutputSnapshotMemoryRowStatus,
+    pub value_json: String,
     #[serde(default = "default_2103")]
-    pub requires_review: Option<bool>,
+    pub status: NamespaceSnapshotOutputSnapshotMemoryRowStatus,
     #[serde(default = "default_2104")]
-    pub conflict_with: Vec<String>,
+    pub requires_review: Option<bool>,
     #[serde(default = "default_2105")]
-    pub duplicate_of: String,
+    pub conflict_with: Vec<String>,
     #[serde(default = "default_2106")]
-    pub evidence_count: Integer,
+    pub duplicate_of: String,
     #[serde(default = "default_2107")]
-    pub recall_count: Integer,
+    pub evidence_count: Integer,
     #[serde(default = "default_2108")]
-    pub last_recalled_at: Option<String>,
+    pub recall_count: Integer,
     #[serde(default = "default_2109")]
-    pub cross_promoted_from_memory_id: String,
+    pub last_recalled_at: Option<String>,
     #[serde(default = "default_2110")]
-    pub cross_promoted_from_namespace: String,
+    pub cross_promoted_from_memory_id: String,
     #[serde(default = "default_2111")]
-    pub superseded_by: String,
+    pub cross_promoted_from_namespace: String,
     #[serde(default = "default_2112")]
-    pub rejection_reason: String,
+    pub superseded_by: String,
     #[serde(default = "default_2113")]
-    pub temporal_anchor: Option<String>,
+    pub rejection_reason: String,
     #[serde(default = "default_2114")]
-    pub temporal_confidence: f64,
+    pub temporal_anchor: Option<String>,
     #[serde(default = "default_2115")]
-    pub invalid_at: Option<String>,
+    pub temporal_confidence: f64,
     #[serde(default = "default_2116")]
-    pub char_limit: Option<Integer>,
+    pub invalid_at: Option<String>,
     #[serde(default = "default_2117")]
-    pub reinforcement_count: Integer,
+    pub char_limit: Option<Integer>,
     #[serde(default = "default_2118")]
-    pub last_reinforced_at: Option<String>,
+    pub reinforcement_count: Integer,
     #[serde(default = "default_2119")]
-    pub mentioned_at: Option<String>,
+    pub last_reinforced_at: Option<String>,
     #[serde(default = "default_2120")]
-    pub sensitivity: String,
+    pub mentioned_at: Option<String>,
     #[serde(default = "default_2121")]
-    pub redacted_at: Option<String>,
+    pub sensitivity: String,
     #[serde(default = "default_2122")]
-    pub redaction_reason: String,
+    pub redacted_at: Option<String>,
     #[serde(default = "default_2123")]
-    pub lock_mode: String,
+    pub redaction_reason: String,
     #[serde(default = "default_2124")]
-    pub lock_reason: String,
+    pub lock_mode: String,
     #[serde(default = "default_2125")]
-    pub lock_until: Option<String>,
+    pub lock_reason: String,
     #[serde(default = "default_2126")]
-    pub locked_by: String,
+    pub lock_until: Option<String>,
     #[serde(default = "default_2127")]
-    pub locked_at: Option<String>,
+    pub locked_by: String,
     #[serde(default = "default_2128")]
-    pub on_expire: String,
+    pub locked_at: Option<String>,
     #[serde(default = "default_2129")]
-    pub expire_reason: String,
+    pub on_expire: String,
     #[serde(default = "default_2130")]
-    pub files: Vec<String>,
+    pub expire_reason: String,
     #[serde(default = "default_2131")]
+    pub files: Vec<String>,
+    #[serde(default = "default_2132")]
     pub concepts: Vec<String>,
 }
 
@@ -48337,11 +48339,11 @@ pub struct NamespaceSnapshotOutputSnapshotMemoryRow {
 pub struct NamespaceSnapshotOutputSnapshotTypeRow {
     pub memory_type: String,
     pub retention_days: Integer,
-    #[serde(default = "default_2132")]
-    pub dedup_threshold: Option<f64>,
     #[serde(default = "default_2133")]
-    pub hot_quota: Integer,
+    pub dedup_threshold: Option<f64>,
     #[serde(default = "default_2134")]
+    pub hot_quota: Integer,
+    #[serde(default = "default_2135")]
     pub conflict_policy: String,
 }
 
@@ -48556,7 +48558,7 @@ pub struct TaxonomyCommunity {
     pub community_id: Integer,
     pub label: String,
     pub size: Integer,
-    #[serde(default = "default_2135")]
+    #[serde(default = "default_2136")]
     pub top_entities: Vec<String>,
 }
 
@@ -48567,9 +48569,9 @@ pub struct NamespaceTaxonomyOutput {
     pub entities: Vec<TaxonomyEntry>,
     pub memory_count: Integer,
     pub memory_types: Vec<TaxonomyEntry>,
-    #[serde(default = "default_2136")]
-    pub communities: Vec<TaxonomyCommunity>,
     #[serde(default = "default_2137")]
+    pub communities: Vec<TaxonomyCommunity>,
+    #[serde(default = "default_2138")]
     pub communities_computed_at: String,
 }
 
@@ -48669,15 +48671,15 @@ pub enum TuneProposalTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TuneEvidence {
-    #[serde(default = "default_2139")]
-    pub finding_codes: Vec<String>,
     #[serde(default = "default_2140")]
-    pub supporting_count: Integer,
+    pub finding_codes: Vec<String>,
     #[serde(default = "default_2141")]
-    pub supporting: Vec<FindingEvidence>,
+    pub supporting_count: Integer,
     #[serde(default = "default_2142")]
-    pub counter_count: Option<Integer>,
+    pub supporting: Vec<FindingEvidence>,
     #[serde(default = "default_2143")]
+    pub counter_count: Option<Integer>,
+    #[serde(default = "default_2144")]
     pub documents: Vec<String>,
 }
 
@@ -48703,10 +48705,10 @@ pub enum TuneApplyVia {
 #[non_exhaustive]
 pub struct TuneApply {
     pub op: String,
-    #[serde(default = "default_2147")]
+    #[serde(default = "default_2148")]
     pub via: TuneApplyVia,
     pub args: std::collections::HashMap<String, Value>,
-    #[serde(default = "default_2148")]
+    #[serde(default = "default_2149")]
     pub args_complete: bool,
     pub required_role: String,
     pub guard: String,
@@ -48725,7 +48727,7 @@ pub struct ChunkStats {
     pub sections: Integer,
     pub sections_cut: Integer,
     pub max_input_tokens: Integer,
-    #[serde(default = "default_2150")]
+    #[serde(default = "default_2151")]
     pub over_input_limit: Option<Integer>,
 }
 
@@ -48745,25 +48747,25 @@ pub struct TuneProposal {
     pub title: String,
     pub rationale: String,
     pub current: String,
-    #[serde(default = "default_2138")]
+    #[serde(default = "default_2139")]
     pub current_revision: Option<Integer>,
     pub proposed: String,
     pub evidence: TuneEvidence,
-    #[serde(default = "default_2144")]
-    pub affected_agents: Vec<String>,
     #[serde(default = "default_2145")]
-    pub affected_agents_total: Option<Integer>,
+    pub affected_agents: Vec<String>,
     #[serde(default = "default_2146")]
+    pub affected_agents_total: Option<Integer>,
+    #[serde(default = "default_2147")]
     pub effect: TuneProposalEffect,
     pub historical: String,
     pub apply: TuneApply,
-    #[serde(default = "default_2149")]
+    #[serde(default = "default_2150")]
     pub apply_also: Vec<TuneApply>,
-    #[serde(default = "default_2151")]
-    pub preview: Option<ChunkingPreview>,
     #[serde(default = "default_2152")]
-    pub limits: String,
+    pub preview: Option<ChunkingPreview>,
     #[serde(default = "default_2153")]
+    pub limits: String,
+    #[serde(default = "default_2154")]
     pub refs: Vec<String>,
 }
 
@@ -48771,13 +48773,13 @@ pub struct TuneProposal {
 #[non_exhaustive]
 pub struct ChunkingSample {
     pub cap: Integer,
-    #[serde(default = "default_2159")]
+    #[serde(default = "default_2160")]
     pub population: Option<Integer>,
     pub documents: Integer,
     pub unread: Integer,
     pub load_cap: Integer,
     pub embedder_model: String,
-    #[serde(default = "default_2160")]
+    #[serde(default = "default_2161")]
     pub input_token_limit: Option<Integer>,
     pub current: ChunkStats,
 }
@@ -48788,21 +48790,21 @@ pub struct NamespaceTuneOutput {
     pub org: String,
     pub namespace: String,
     pub computed_at: String,
-    #[serde(default = "default_2154")]
-    pub proposals: Vec<TuneProposal>,
     #[serde(default = "default_2155")]
-    pub guide_revision: Option<Integer>,
+    pub proposals: Vec<TuneProposal>,
     #[serde(default = "default_2156")]
-    pub categories_registered: Option<Integer>,
+    pub guide_revision: Option<Integer>,
     #[serde(default = "default_2157")]
-    pub extraction_policy: Option<String>,
+    pub categories_registered: Option<Integer>,
     #[serde(default = "default_2158")]
+    pub extraction_policy: Option<String>,
+    #[serde(default = "default_2159")]
     pub extraction_policy_unavailable: String,
-    #[serde(default = "default_2161")]
-    pub chunking: Option<ChunkingSample>,
     #[serde(default = "default_2162")]
-    pub skipped: Vec<String>,
+    pub chunking: Option<ChunkingSample>,
     #[serde(default = "default_2163")]
+    pub skipped: Vec<String>,
+    #[serde(default = "default_2164")]
     pub model_used: bool,
 }
 
@@ -48923,25 +48925,25 @@ pub struct NamespaceValidateFinding {
     pub kind: NamespaceValidateFindingKind,
     pub rule_version: Integer,
     pub source_op: String,
-    #[serde(default = "default_2164")]
-    pub window_seconds: Option<Integer>,
     #[serde(default = "default_2165")]
+    pub window_seconds: Option<Integer>,
+    #[serde(default = "default_2166")]
     pub population: Option<Integer>,
     pub sample_limit: Integer,
     pub samples_complete: bool,
-    #[serde(default = "default_2166")]
-    pub evidence: Vec<FindingEvidence>,
     #[serde(default = "default_2167")]
-    pub exceptions: String,
+    pub evidence: Vec<FindingEvidence>,
     #[serde(default = "default_2168")]
+    pub exceptions: String,
+    #[serde(default = "default_2169")]
     pub uncertainty: String,
     pub check: String,
     pub severity: NamespaceValidateFindingSeverity,
     pub count: Integer,
-    #[serde(default = "default_2169")]
+    #[serde(default = "default_2170")]
     pub samples: Vec<std::collections::HashMap<String, Value>>,
     pub detail: String,
-    #[serde(default = "default_2170")]
+    #[serde(default = "default_2171")]
     pub totals: std::collections::HashMap<String, Integer>,
 }
 
@@ -48955,9 +48957,9 @@ pub struct NamespaceValidateOutput {
     pub warnings: Integer,
     pub infos: Integer,
     pub findings: Vec<NamespaceValidateFinding>,
-    #[serde(default = "default_2171")]
-    pub skipped: Vec<String>,
     #[serde(default = "default_2172")]
+    pub skipped: Vec<String>,
+    #[serde(default = "default_2173")]
     pub keys_scoped: Integer,
     pub coverage: ReportCoverage,
     pub checked_at: String,
@@ -49077,9 +49079,9 @@ impl NamespaceValidateInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ObserveCrystallizeOutput {
-    #[serde(default = "default_2173")]
-    pub enqueued: Integer,
     #[serde(default = "default_2174")]
+    pub enqueued: Integer,
+    #[serde(default = "default_2175")]
     pub session_id: String,
 }
 
@@ -49176,23 +49178,23 @@ impl ObserveCrystallizeInput {
 #[non_exhaustive]
 pub struct ObserveRecordOutput {
     pub memory_key: String,
-    #[serde(default = "default_2175")]
-    pub memory_id: String,
     #[serde(default = "default_2176")]
-    pub kind: String,
+    pub memory_id: String,
     #[serde(default = "default_2177")]
-    pub tags: Vec<String>,
+    pub kind: String,
     #[serde(default = "default_2178")]
-    pub file_paths: Vec<String>,
+    pub tags: Vec<String>,
     #[serde(default = "default_2179")]
-    pub content_sha256: String,
+    pub file_paths: Vec<String>,
     #[serde(default = "default_2180")]
-    pub tool_name: String,
+    pub content_sha256: String,
     #[serde(default = "default_2181")]
-    pub has_error: bool,
+    pub tool_name: String,
     #[serde(default = "default_2182")]
-    pub narrative_chars: Integer,
+    pub has_error: bool,
     #[serde(default = "default_2183")]
+    pub narrative_chars: Integer,
+    #[serde(default = "default_2184")]
     pub skipped_reason: String,
 }
 
@@ -49391,26 +49393,26 @@ pub struct ProjectionFailureRow {
     pub failure_id: String,
     pub org: String,
     pub namespace: String,
-    #[serde(default = "default_2184")]
+    #[serde(default = "default_2185")]
     pub agent: String,
     pub projection: String,
-    #[serde(default = "default_2185")]
-    pub source_operation: String,
     #[serde(default = "default_2186")]
-    pub source_resource_id: String,
+    pub source_operation: String,
     #[serde(default = "default_2187")]
-    pub memory_keys: Vec<String>,
+    pub source_resource_id: String,
     #[serde(default = "default_2188")]
-    pub error_type: String,
+    pub memory_keys: Vec<String>,
     #[serde(default = "default_2189")]
-    pub error_message: String,
+    pub error_type: String,
     #[serde(default = "default_2190")]
-    pub payload: std::collections::HashMap<String, Value>,
+    pub error_message: String,
     #[serde(default = "default_2191")]
-    pub status: String,
+    pub payload: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2192")]
-    pub created_at: Option<String>,
+    pub status: String,
     #[serde(default = "default_2193")]
+    pub created_at: Option<String>,
+    #[serde(default = "default_2194")]
     pub resolved_at: Option<String>,
 }
 
@@ -49564,22 +49566,22 @@ pub struct ProjectionFailureRetryRow {
     pub projection: String,
     pub retried: bool,
     pub resolved: bool,
-    #[serde(default = "default_2194")]
-    pub abandoned: bool,
     #[serde(default = "default_2195")]
-    pub reason: String,
+    pub abandoned: bool,
     #[serde(default = "default_2196")]
+    pub reason: String,
+    #[serde(default = "default_2197")]
     pub error: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ProjectionFailureRetryOutput {
-    #[serde(default = "default_2197")]
+    #[serde(default = "default_2198")]
     pub results: Vec<ProjectionFailureRetryRow>,
     pub retried: Integer,
     pub resolved: Integer,
-    #[serde(default = "default_2198")]
+    #[serde(default = "default_2199")]
     pub abandoned: Integer,
 }
 
@@ -49661,15 +49663,15 @@ impl ProjectionFailureRetryInput {
 pub struct OrgModelCallsOutput {
     pub org: String,
     pub enabled: bool,
-    #[serde(default = "default_2199")]
-    pub reason: String,
     #[serde(default = "default_2200")]
-    pub updated_by: String,
+    pub reason: String,
     #[serde(default = "default_2201")]
-    pub updated_at: Option<String>,
+    pub updated_by: String,
     #[serde(default = "default_2202")]
-    pub locked: bool,
+    pub updated_at: Option<String>,
     #[serde(default = "default_2203")]
+    pub locked: bool,
+    #[serde(default = "default_2204")]
     pub locked_by: String,
 }
 
@@ -50008,7 +50010,7 @@ impl PolicyDecisionsInput {
 #[non_exhaustive]
 pub struct PolicyDeleteOutput {
     pub removed: bool,
-    #[serde(default = "default_2204")]
+    #[serde(default = "default_2205")]
     pub widening: bool,
 }
 
@@ -50074,12 +50076,12 @@ pub struct PolicyRuleOut {
     pub condition: std::collections::HashMap<String, Value>,
     pub description: String,
     pub enabled: bool,
-    #[serde(default = "default_2205")]
+    #[serde(default = "default_2206")]
     pub mode: String,
     pub created_by: String,
-    #[serde(default = "default_2206")]
-    pub created_at: Option<String>,
     #[serde(default = "default_2207")]
+    pub created_at: Option<String>,
+    #[serde(default = "default_2208")]
     pub updated_at: Option<String>,
 }
 
@@ -50151,9 +50153,9 @@ impl PolicyListInput {
 pub struct PolicySetOutput {
     pub rule: PolicyRuleOut,
     pub leaf_count: Integer,
-    #[serde(default = "default_2208")]
-    pub widening: bool,
     #[serde(default = "default_2209")]
+    pub widening: bool,
+    #[serde(default = "default_2210")]
     pub change: Vec<String>,
 }
 
@@ -50423,37 +50425,37 @@ pub struct ProcedureEvolveOutput {
     pub revision: Integer,
     pub changed: bool,
     pub template: bool,
-    #[serde(default = "default_2210")]
-    pub folded_runs: Integer,
     #[serde(default = "default_2211")]
-    pub gate: ProcedureEvolveOutputGate,
+    pub folded_runs: Integer,
     #[serde(default = "default_2212")]
-    pub gate_mode: String,
+    pub gate: ProcedureEvolveOutputGate,
     #[serde(default = "default_2213")]
-    pub gate_llr: f64,
+    pub gate_mode: String,
     #[serde(default = "default_2214")]
-    pub gate_before: std::collections::HashMap<String, Integer>,
+    pub gate_llr: f64,
     #[serde(default = "default_2215")]
-    pub gate_after: std::collections::HashMap<String, Integer>,
+    pub gate_before: std::collections::HashMap<String, Integer>,
     #[serde(default = "default_2216")]
-    pub gate_cost_before: std::collections::HashMap<String, f64>,
+    pub gate_after: std::collections::HashMap<String, Integer>,
     #[serde(default = "default_2217")]
-    pub gate_cost_after: std::collections::HashMap<String, f64>,
+    pub gate_cost_before: std::collections::HashMap<String, f64>,
     #[serde(default = "default_2218")]
-    pub gate_reason: String,
+    pub gate_cost_after: std::collections::HashMap<String, f64>,
     #[serde(default = "default_2219")]
-    pub dead_end_steps: Vec<String>,
+    pub gate_reason: String,
     #[serde(default = "default_2220")]
-    pub fail_prone_steps: Vec<String>,
+    pub dead_end_steps: Vec<String>,
     #[serde(default = "default_2221")]
-    pub fail_prone_transitions: Vec<String>,
+    pub fail_prone_steps: Vec<String>,
     #[serde(default = "default_2222")]
-    pub run_stats: std::collections::HashMap<String, Integer>,
+    pub fail_prone_transitions: Vec<String>,
     #[serde(default = "default_2223")]
-    pub strikes: Integer,
+    pub run_stats: std::collections::HashMap<String, Integer>,
     #[serde(default = "default_2224")]
-    pub quarantined: bool,
+    pub strikes: Integer,
     #[serde(default = "default_2225")]
+    pub quarantined: bool,
+    #[serde(default = "default_2226")]
     pub retention: std::collections::HashMap<String, f64>,
 }
 
@@ -50676,9 +50678,9 @@ pub struct ProcedureForkOutput {
     pub memory_key: String,
     pub version: Integer,
     pub name: String,
-    #[serde(default = "default_2226")]
-    pub steps: Vec<String>,
     #[serde(default = "default_2227")]
+    pub steps: Vec<String>,
+    #[serde(default = "default_2228")]
     pub forked_from: std::collections::HashMap<String, Value>,
 }
 
@@ -50938,32 +50940,32 @@ pub enum ProcedureLocateOutputStatus {
 #[non_exhaustive]
 pub struct ProcedureLocateOutput {
     pub memory_key: String,
-    #[serde(default = "default_2228")]
-    pub name: String,
     #[serde(default = "default_2229")]
+    pub name: String,
+    #[serde(default = "default_2230")]
     pub status: ProcedureLocateOutputStatus,
     pub matched: bool,
-    #[serde(default = "default_2230")]
-    pub active: Option<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2231")]
-    pub hops: Vec<Vec<std::collections::HashMap<String, Value>>>,
+    pub active: Option<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2232")]
-    pub entry_nodes: Vec<String>,
+    pub hops: Vec<Vec<std::collections::HashMap<String, Value>>>,
     #[serde(default = "default_2233")]
-    pub dominant_next: Vec<String>,
+    pub entry_nodes: Vec<String>,
     #[serde(default = "default_2234")]
-    pub revisits: std::collections::HashMap<String, Integer>,
+    pub dominant_next: Vec<String>,
     #[serde(default = "default_2235")]
-    pub looping: bool,
+    pub revisits: std::collections::HashMap<String, Integer>,
     #[serde(default = "default_2236")]
-    pub exits: Vec<String>,
+    pub looping: bool,
     #[serde(default = "default_2237")]
-    pub failure_notes: Vec<std::collections::HashMap<String, Value>>,
+    pub exits: Vec<String>,
     #[serde(default = "default_2238")]
-    pub rendered: String,
+    pub failure_notes: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2239")]
-    pub run_stats: std::collections::HashMap<String, Integer>,
+    pub rendered: String,
     #[serde(default = "default_2240")]
+    pub run_stats: std::collections::HashMap<String, Integer>,
+    #[serde(default = "default_2241")]
     pub for_agent: std::collections::HashMap<String, Integer>,
 }
 
@@ -51118,43 +51120,43 @@ pub struct ProcedureMatch {
     pub name: String,
     pub situation: String,
     pub steps: Vec<String>,
-    #[serde(default = "default_2241")]
-    pub tags: Vec<String>,
     #[serde(default = "default_2242")]
+    pub tags: Vec<String>,
+    #[serde(default = "default_2243")]
     pub metadata: std::collections::HashMap<String, Value>,
     pub similarity: f64,
     pub memory_key: String,
     pub namespace: String,
-    #[serde(default = "default_2243")]
-    pub graph: Option<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2244")]
-    pub template: bool,
+    pub graph: Option<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2245")]
-    pub run_stats: std::collections::HashMap<String, Integer>,
+    pub template: bool,
     #[serde(default = "default_2246")]
-    pub status: ProcedureMatchStatus,
+    pub run_stats: std::collections::HashMap<String, Integer>,
     #[serde(default = "default_2247")]
-    pub quarantined: Option<std::collections::HashMap<String, Value>>,
+    pub status: ProcedureMatchStatus,
     #[serde(default = "default_2248")]
-    pub fail_prone_steps: Vec<String>,
+    pub quarantined: Option<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2249")]
-    pub revision: Integer,
+    pub fail_prone_steps: Vec<String>,
     #[serde(default = "default_2250")]
-    pub rejected_revisions: Vec<std::collections::HashMap<String, Value>>,
+    pub revision: Integer,
     #[serde(default = "default_2251")]
-    pub tool_overlap: f64,
+    pub rejected_revisions: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2252")]
-    pub score: f64,
+    pub tool_overlap: f64,
     #[serde(default = "default_2253")]
-    pub utility: f64,
+    pub score: f64,
     #[serde(default = "default_2254")]
-    pub goal_similarity: Option<f64>,
+    pub utility: f64,
     #[serde(default = "default_2255")]
-    pub for_agent: std::collections::HashMap<String, Integer>,
+    pub goal_similarity: Option<f64>,
     #[serde(default = "default_2256")]
+    pub for_agent: std::collections::HashMap<String, Integer>,
+    #[serde(default = "default_2257")]
     pub run_stats_by_agent:
         std::collections::HashMap<String, std::collections::HashMap<String, Integer>>,
-    #[serde(default = "default_2257")]
+    #[serde(default = "default_2258")]
     pub actor: String,
 }
 
@@ -51162,11 +51164,11 @@ pub struct ProcedureMatch {
 #[non_exhaustive]
 pub struct ProcedureMatchOutput {
     pub matches: Vec<ProcedureMatch>,
-    #[serde(default = "default_2258")]
-    pub matched: Integer,
     #[serde(default = "default_2259")]
-    pub procedure_key: String,
+    pub matched: Integer,
     #[serde(default = "default_2260")]
+    pub procedure_key: String,
+    #[serde(default = "default_2261")]
     pub score: f64,
 }
 
@@ -51547,7 +51549,7 @@ pub struct ProcedureReviseOutput {
     pub revision: Integer,
     pub prior_revision: Integer,
     pub digest: String,
-    #[serde(default = "default_2261")]
+    #[serde(default = "default_2262")]
     pub steps: Vec<String>,
 }
 
@@ -51659,14 +51661,14 @@ pub struct ProfileActivityEntry {
     pub agent: String,
     pub last_activated_at: String,
     pub event_count: Integer,
-    #[serde(default = "default_2262")]
+    #[serde(default = "default_2263")]
     pub operations: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ProfileActivityOutput {
-    #[serde(default = "default_2263")]
+    #[serde(default = "default_2264")]
     pub entries: Vec<ProfileActivityEntry>,
 }
 
@@ -51774,17 +51776,17 @@ impl ProfileActivityInput {
 #[non_exhaustive]
 pub struct ProfileMutationOutput {
     pub version: Integer,
-    #[serde(default = "default_2264")]
-    pub memory_id: String,
     #[serde(default = "default_2265")]
-    pub content_sha256: String,
+    pub memory_id: String,
     #[serde(default = "default_2266")]
-    pub namespace: String,
+    pub content_sha256: String,
     #[serde(default = "default_2267")]
-    pub label: String,
+    pub namespace: String,
     #[serde(default = "default_2268")]
-    pub char_limit: Option<Integer>,
+    pub label: String,
     #[serde(default = "default_2269")]
+    pub char_limit: Option<Integer>,
+    #[serde(default = "default_2270")]
     pub value_length: Integer,
 }
 
@@ -51893,7 +51895,7 @@ pub struct ProfileRenderOutput {
     pub rendered: String,
     pub section_count: Integer,
     pub total_chars: Integer,
-    #[serde(default = "default_2270")]
+    #[serde(default = "default_2271")]
     pub labels: Vec<String>,
 }
 
@@ -52278,17 +52280,17 @@ pub enum ProfileStructuredOutputStatus {
 #[non_exhaustive]
 pub struct ProfileStructuredOutput {
     pub status: ProfileStructuredOutputStatus,
-    #[serde(default = "default_2271")]
-    pub profile: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2272")]
-    pub built_at: Option<String>,
+    pub profile: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2273")]
-    pub memory_id: String,
+    pub built_at: Option<String>,
     #[serde(default = "default_2274")]
-    pub version: Integer,
+    pub memory_id: String,
     #[serde(default = "default_2275")]
-    pub version_text: String,
+    pub version: Integer,
     #[serde(default = "default_2276")]
+    pub version_text: String,
+    #[serde(default = "default_2277")]
     pub schema_sha256: String,
 }
 
@@ -52405,13 +52407,13 @@ impl ProfileStructuredInput {
 #[non_exhaustive]
 pub struct ProfileSchemaOutput {
     pub found: bool,
-    #[serde(default = "default_2277")]
-    pub json_schema: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2278")]
-    pub schema_sha256: String,
+    pub json_schema: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2279")]
-    pub updated_by: String,
+    pub schema_sha256: String,
     #[serde(default = "default_2280")]
+    pub updated_by: String,
+    #[serde(default = "default_2281")]
     pub updated_at: Option<String>,
 }
 
@@ -52564,10 +52566,10 @@ pub enum RunBeginOutputStatus {
 #[non_exhaustive]
 pub struct RunBeginOutput {
     pub run_id: String,
-    #[serde(default = "default_2281")]
+    #[serde(default = "default_2282")]
     pub status: RunBeginOutputStatus,
     pub started_at: String,
-    #[serde(default = "default_2282")]
+    #[serde(default = "default_2283")]
     pub next: String,
 }
 
@@ -52775,29 +52777,29 @@ pub struct RunCompleteOutput {
     pub run_id: String,
     pub status: RunCompleteOutputStatus,
     pub duration_ms: Integer,
-    #[serde(default = "default_2283")]
-    pub used_applied: Integer,
     #[serde(default = "default_2284")]
-    pub evidence_applied: Integer,
+    pub used_applied: Integer,
     #[serde(default = "default_2285")]
-    pub harm_applied: Integer,
+    pub evidence_applied: Integer,
     #[serde(default = "default_2286")]
-    pub memories_written: Vec<String>,
+    pub harm_applied: Integer,
     #[serde(default = "default_2287")]
-    pub recalled: Integer,
+    pub memories_written: Vec<String>,
     #[serde(default = "default_2288")]
-    pub observations: Integer,
+    pub recalled: Integer,
     #[serde(default = "default_2289")]
-    pub procedure_runs_recorded: Integer,
+    pub observations: Integer,
     #[serde(default = "default_2290")]
-    pub reflection_key: String,
+    pub procedure_runs_recorded: Integer,
     #[serde(default = "default_2291")]
-    pub retain: String,
+    pub reflection_key: String,
     #[serde(default = "default_2292")]
-    pub retained: Integer,
+    pub retain: String,
     #[serde(default = "default_2293")]
-    pub demoted: Integer,
+    pub retained: Integer,
     #[serde(default = "default_2294")]
+    pub demoted: Integer,
+    #[serde(default = "default_2295")]
     pub expiring: Integer,
 }
 
@@ -53318,25 +53320,25 @@ pub enum RunGetOutputOverBudgetItem {
 #[non_exhaustive]
 pub struct RunGetOutput {
     pub found: bool,
-    #[serde(default = "default_2295")]
-    pub run: Option<RunRow>,
     #[serde(default = "default_2296")]
-    pub recalled: Integer,
+    pub run: Option<RunRow>,
     #[serde(default = "default_2297")]
-    pub recalled_keys: Vec<String>,
+    pub recalled: Integer,
     #[serde(default = "default_2298")]
-    pub memories_written: Vec<String>,
+    pub recalled_keys: Vec<String>,
     #[serde(default = "default_2299")]
-    pub observations: Integer,
+    pub memories_written: Vec<String>,
     #[serde(default = "default_2300")]
-    pub turns: Integer,
+    pub observations: Integer,
     #[serde(default = "default_2301")]
-    pub unpriced_turns: Integer,
+    pub turns: Integer,
     #[serde(default = "default_2302")]
-    pub cost_usd: f64,
+    pub unpriced_turns: Integer,
     #[serde(default = "default_2303")]
-    pub elapsed_seconds: Integer,
+    pub cost_usd: f64,
     #[serde(default = "default_2304")]
+    pub elapsed_seconds: Integer,
+    #[serde(default = "default_2305")]
     pub over_budget: Vec<RunGetOutputOverBudgetItem>,
 }
 
@@ -53403,17 +53405,17 @@ pub struct RunGradeProposal {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct RunGradeOutput {
-    #[serde(default = "default_2305")]
-    pub graded: Integer,
     #[serde(default = "default_2306")]
-    pub run_ids: Vec<String>,
+    pub graded: Integer,
     #[serde(default = "default_2307")]
-    pub skipped_active: Integer,
+    pub run_ids: Vec<String>,
     #[serde(default = "default_2308")]
-    pub unchanged: Integer,
+    pub skipped_active: Integer,
     #[serde(default = "default_2309")]
-    pub memories_counted: Integer,
+    pub unchanged: Integer,
     #[serde(default = "default_2310")]
+    pub memories_counted: Integer,
+    #[serde(default = "default_2311")]
     pub proposals_decided: Vec<RunGradeProposal>,
 }
 
@@ -53528,7 +53530,7 @@ impl RunGradeInput {
 #[non_exhaustive]
 pub struct RunListOutput {
     pub runs: Vec<RunRow>,
-    #[serde(default = "default_2311")]
+    #[serde(default = "default_2312")]
     pub total: Option<Integer>,
 }
 
@@ -53805,39 +53807,39 @@ pub struct LiveSearchHit {
     pub title: String,
     pub url: String,
     pub provider: LiveSearchHitProvider,
-    #[serde(default = "default_2314")]
-    pub content: String,
     #[serde(default = "default_2315")]
+    pub content: String,
+    #[serde(default = "default_2316")]
     pub live: LiveSearchHitLive,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct LiveSearchResults {
-    #[serde(default = "default_2313")]
+    #[serde(default = "default_2314")]
     pub live: LiveSearchResultsLive,
-    #[serde(default = "default_2316")]
+    #[serde(default = "default_2317")]
     pub results: Vec<LiveSearchHit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SearchOutput {
-    #[serde(default = "default_2312")]
+    #[serde(default = "default_2313")]
     pub tracker: Option<std::collections::HashMap<String, Value>>,
-    #[serde(default = "default_2317")]
-    pub live: Option<LiveSearchResults>,
     #[serde(default = "default_2318")]
-    pub memory: std::collections::HashMap<String, Value>,
+    pub live: Option<LiveSearchResults>,
     #[serde(default = "default_2319")]
-    pub knowledge: std::collections::HashMap<String, Value>,
+    pub memory: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2320")]
-    pub profile: std::collections::HashMap<String, Value>,
+    pub knowledge: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2321")]
-    pub conversations: std::collections::HashMap<String, Value>,
+    pub profile: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2322")]
-    pub withheld: Option<std::collections::HashMap<String, Value>>,
+    pub conversations: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2323")]
+    pub withheld: Option<std::collections::HashMap<String, Value>>,
+    #[serde(default = "default_2324")]
     pub namespaces_skipped: Vec<String>,
 }
 
@@ -54030,7 +54032,7 @@ impl SearchInput {
 pub struct SessionBriefDeleteOutput {
     pub deleted: bool,
     pub brief_key: String,
-    #[serde(default = "default_2324")]
+    #[serde(default = "default_2325")]
     pub revision: Integer,
 }
 
@@ -54123,67 +54125,67 @@ impl SessionBriefDeleteInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BriefDecision {
-    #[serde(default = "default_2333")]
-    pub what: String,
     #[serde(default = "default_2334")]
+    pub what: String,
+    #[serde(default = "default_2335")]
     pub why: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BriefDeadEnd {
-    #[serde(default = "default_2336")]
-    pub tried: String,
     #[serde(default = "default_2337")]
+    pub tried: String,
+    #[serde(default = "default_2338")]
     pub why_not: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BriefDone {
-    #[serde(default = "default_2339")]
+    #[serde(default = "default_2340")]
     pub what: String,
-    #[serde(rename = "ref", default = "default_2340")]
+    #[serde(rename = "ref", default = "default_2341")]
     pub r#ref: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BriefFile {
-    #[serde(default = "default_2344")]
-    pub path: String,
     #[serde(default = "default_2345")]
+    pub path: String,
+    #[serde(default = "default_2346")]
     pub role: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BriefSections {
-    #[serde(default = "default_2330")]
-    pub goal: String,
     #[serde(default = "default_2331")]
-    pub status: String,
+    pub goal: String,
     #[serde(default = "default_2332")]
+    pub status: String,
+    #[serde(default = "default_2333")]
     pub verification: String,
-    #[serde(default = "default_2335")]
+    #[serde(default = "default_2336")]
     pub decisions: Vec<BriefDecision>,
-    #[serde(default = "default_2338")]
+    #[serde(default = "default_2339")]
     pub dead_ends: Vec<BriefDeadEnd>,
-    #[serde(default = "default_2341")]
-    pub done: Vec<BriefDone>,
     #[serde(default = "default_2342")]
-    pub open_questions: Vec<String>,
+    pub done: Vec<BriefDone>,
     #[serde(default = "default_2343")]
+    pub open_questions: Vec<String>,
+    #[serde(default = "default_2344")]
     pub next_steps: Vec<String>,
-    #[serde(default = "default_2346")]
-    pub files: Vec<BriefFile>,
     #[serde(default = "default_2347")]
-    pub constraints: Vec<String>,
+    pub files: Vec<BriefFile>,
     #[serde(default = "default_2348")]
-    pub pointers: Vec<String>,
+    pub constraints: Vec<String>,
     #[serde(default = "default_2349")]
-    pub client_summary: String,
+    pub pointers: Vec<String>,
     #[serde(default = "default_2350")]
+    pub client_summary: String,
+    #[serde(default = "default_2351")]
     pub client_summary_at: String,
 }
 
@@ -54191,45 +54193,45 @@ pub struct BriefSections {
 #[non_exhaustive]
 pub struct SessionBriefGetOutput {
     pub found: bool,
-    #[serde(default = "default_2325")]
-    pub brief_key: String,
     #[serde(default = "default_2326")]
-    pub revision: Integer,
+    pub brief_key: String,
     #[serde(default = "default_2327")]
-    pub snapshot_id: String,
+    pub revision: Integer,
     #[serde(default = "default_2328")]
-    pub snapshot_key: String,
+    pub snapshot_id: String,
     #[serde(default = "default_2329")]
+    pub snapshot_key: String,
+    #[serde(default = "default_2330")]
     pub rendered: String,
-    #[serde(default = "default_2351")]
-    pub sections: Option<BriefSections>,
     #[serde(default = "default_2352")]
-    pub project: String,
+    pub sections: Option<BriefSections>,
     #[serde(default = "default_2353")]
-    pub branch: String,
+    pub project: String,
     #[serde(default = "default_2354")]
-    pub head_sha: String,
+    pub branch: String,
     #[serde(default = "default_2355")]
-    pub author: String,
+    pub head_sha: String,
     #[serde(default = "default_2356")]
-    pub trigger: String,
+    pub author: String,
     #[serde(default = "default_2357")]
-    pub actor: String,
+    pub trigger: String,
     #[serde(default = "default_2358")]
-    pub source_sessions: Vec<String>,
+    pub actor: String,
     #[serde(default = "default_2359")]
-    pub updated_at: Option<String>,
+    pub source_sessions: Vec<String>,
     #[serde(default = "default_2360")]
-    pub age_seconds: Integer,
+    pub updated_at: Option<String>,
     #[serde(default = "default_2361")]
-    pub revisions: Integer,
+    pub age_seconds: Integer,
     #[serde(default = "default_2362")]
-    pub events_total: Integer,
+    pub revisions: Integer,
     #[serde(default = "default_2363")]
-    pub source_chars: Integer,
+    pub events_total: Integer,
     #[serde(default = "default_2364")]
-    pub brief_chars: Integer,
+    pub source_chars: Integer,
     #[serde(default = "default_2365")]
+    pub brief_chars: Integer,
+    #[serde(default = "default_2366")]
     pub deleted: bool,
 }
 
@@ -54404,34 +54406,34 @@ impl SessionBriefGetInput {
 pub struct SessionBriefSummary {
     pub brief_key: String,
     pub revision: Integer,
-    #[serde(default = "default_2366")]
-    pub project: String,
     #[serde(default = "default_2367")]
-    pub branch: String,
+    pub project: String,
     #[serde(default = "default_2368")]
-    pub agent: String,
+    pub branch: String,
     #[serde(default = "default_2369")]
-    pub goal: String,
+    pub agent: String,
     #[serde(default = "default_2370")]
-    pub status: String,
+    pub goal: String,
     #[serde(default = "default_2371")]
-    pub author: String,
+    pub status: String,
     #[serde(default = "default_2372")]
-    pub actor: String,
+    pub author: String,
     #[serde(default = "default_2373")]
-    pub updated_at: Option<String>,
+    pub actor: String,
     #[serde(default = "default_2374")]
-    pub age_seconds: Integer,
+    pub updated_at: Option<String>,
     #[serde(default = "default_2375")]
+    pub age_seconds: Integer,
+    #[serde(default = "default_2376")]
     pub brief_chars: Integer,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SessionBriefListOutput {
-    #[serde(default = "default_2376")]
-    pub briefs: Vec<SessionBriefSummary>,
     #[serde(default = "default_2377")]
+    pub briefs: Vec<SessionBriefSummary>,
+    #[serde(default = "default_2378")]
     pub rendered: String,
 }
 
@@ -54571,25 +54573,25 @@ impl SessionBriefListInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SessionBriefStats {
-    #[serde(default = "default_2381")]
-    pub events_in: Integer,
     #[serde(default = "default_2382")]
-    pub windows: Integer,
+    pub events_in: Integer,
     #[serde(default = "default_2383")]
-    pub events_total: Integer,
+    pub windows: Integer,
     #[serde(default = "default_2384")]
-    pub source_chars: Integer,
+    pub events_total: Integer,
     #[serde(default = "default_2385")]
-    pub brief_chars: Integer,
+    pub source_chars: Integer,
     #[serde(default = "default_2386")]
-    pub compression_ratio: f64,
+    pub brief_chars: Integer,
     #[serde(default = "default_2387")]
-    pub dropped_ungrounded: Integer,
+    pub compression_ratio: f64,
     #[serde(default = "default_2388")]
-    pub tokens_in: Integer,
+    pub dropped_ungrounded: Integer,
     #[serde(default = "default_2389")]
-    pub tokens_out: Integer,
+    pub tokens_in: Integer,
     #[serde(default = "default_2390")]
+    pub tokens_out: Integer,
+    #[serde(default = "default_2391")]
     pub llm_model: String,
 }
 
@@ -54599,13 +54601,13 @@ pub struct SessionBriefSaveOutput {
     pub brief_key: String,
     pub revision: Integer,
     pub changed: bool,
-    #[serde(default = "default_2378")]
-    pub author: String,
     #[serde(default = "default_2379")]
-    pub reason: String,
+    pub author: String,
     #[serde(default = "default_2380")]
+    pub reason: String,
+    #[serde(default = "default_2381")]
     pub rendered: String,
-    #[serde(default = "default_2391")]
+    #[serde(default = "default_2392")]
     pub stats: SessionBriefStats,
 }
 
@@ -55350,39 +55352,39 @@ pub struct TaskPayload {
     pub priority: Integer,
     pub disclosure: TaskPayloadDisclosure,
     pub status: TaskPayloadStatus,
-    #[serde(default = "default_2392")]
-    pub reason: String,
     #[serde(default = "default_2393")]
-    pub blocked_on: String,
+    pub reason: String,
     #[serde(default = "default_2394")]
-    pub not_before: Option<String>,
+    pub blocked_on: String,
     #[serde(default = "default_2395")]
-    pub resume_at: Option<String>,
+    pub not_before: Option<String>,
     #[serde(default = "default_2396")]
-    pub deadline: Option<String>,
+    pub resume_at: Option<String>,
     #[serde(default = "default_2397")]
+    pub deadline: Option<String>,
+    #[serde(default = "default_2398")]
     pub defer_count: Integer,
     pub title: String,
-    #[serde(default = "default_2398")]
+    #[serde(default = "default_2399")]
     pub brief: std::collections::HashMap<String, Value>,
     pub from_agent: String,
-    #[serde(default = "default_2399")]
-    pub from_subject: String,
     #[serde(default = "default_2400")]
-    pub origin: String,
+    pub from_subject: String,
     #[serde(default = "default_2401")]
-    pub parent_task_id: Option<String>,
+    pub origin: String,
     #[serde(default = "default_2402")]
-    pub owner: String,
+    pub parent_task_id: Option<String>,
     #[serde(default = "default_2403")]
-    pub attempt: Integer,
+    pub owner: String,
     #[serde(default = "default_2404")]
-    pub fence: Integer,
+    pub attempt: Integer,
     #[serde(default = "default_2405")]
-    pub lease_until: Option<String>,
+    pub fence: Integer,
     #[serde(default = "default_2406")]
-    pub outcome: std::collections::HashMap<String, Value>,
+    pub lease_until: Option<String>,
     #[serde(default = "default_2407")]
+    pub outcome: std::collections::HashMap<String, Value>,
+    #[serde(default = "default_2408")]
     pub last_actor: String,
     pub created_at: String,
     pub updated_at: String,
@@ -55393,7 +55395,7 @@ pub struct TaskPayload {
 #[non_exhaustive]
 pub struct TaskOutput {
     pub task: TaskPayload,
-    #[serde(default = "default_2408")]
+    #[serde(default = "default_2409")]
     pub seq: Integer,
 }
 
@@ -55794,10 +55796,10 @@ impl TaskCompleteInput {
 pub struct InboxCount {
     pub inbox: String,
     pub status: String,
-    #[serde(default = "default_2409")]
+    #[serde(default = "default_2410")]
     pub blocked_on: String,
     pub n: Integer,
-    #[serde(default = "default_2410")]
+    #[serde(default = "default_2411")]
     pub oldest: Option<String>,
 }
 
@@ -55884,7 +55886,7 @@ pub struct TaskCreateOutput {
     pub task: TaskPayload,
     pub created: bool,
     pub seq: Integer,
-    #[serde(default = "default_2411")]
+    #[serde(default = "default_2412")]
     pub next: String,
 }
 
@@ -56223,7 +56225,7 @@ impl TaskFailInput {
 #[non_exhaustive]
 pub struct TaskGetOutput {
     pub found: bool,
-    #[serde(default = "default_2412")]
+    #[serde(default = "default_2413")]
     pub task: Option<TaskPayload>,
 }
 
@@ -56357,23 +56359,23 @@ pub struct TaskEventPayload {
     pub task_id: String,
     pub inbox: String,
     pub event: String,
-    #[serde(default = "default_2413")]
-    pub from_status: String,
     #[serde(default = "default_2414")]
-    pub to_status: String,
+    pub from_status: String,
     #[serde(default = "default_2415")]
-    pub actor: String,
+    pub to_status: String,
     #[serde(default = "default_2416")]
-    pub agent: String,
+    pub actor: String,
     #[serde(default = "default_2417")]
-    pub fence: Integer,
+    pub agent: String,
     #[serde(default = "default_2418")]
-    pub version: Integer,
+    pub fence: Integer,
     #[serde(default = "default_2419")]
-    pub reason: String,
+    pub version: Integer,
     #[serde(default = "default_2420")]
-    pub patch: std::collections::HashMap<String, Value>,
+    pub reason: String,
     #[serde(default = "default_2421")]
+    pub patch: std::collections::HashMap<String, Value>,
+    #[serde(default = "default_2422")]
     pub note: String,
     pub ts: String,
 }
@@ -56713,7 +56715,7 @@ pub struct TaskPullOutput {
     pub tasks: Vec<TaskPayload>,
     pub waited_ms: Integer,
     pub backend: String,
-    #[serde(default = "default_2422")]
+    #[serde(default = "default_2423")]
     pub note: String,
 }
 
@@ -57109,7 +57111,7 @@ impl TaskUnblockInput {
 pub struct TaskUpdateOutput {
     pub task: TaskPayload,
     pub seq: Integer,
-    #[serde(default = "default_2423")]
+    #[serde(default = "default_2424")]
     pub conflict: bool,
 }
 
@@ -57472,19 +57474,19 @@ impl TaskReasonInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TrackerAnswerOutput {
-    #[serde(default = "default_2424")]
-    pub intent: String,
     #[serde(default = "default_2425")]
-    pub anchors: std::collections::HashMap<String, Value>,
+    pub intent: String,
     #[serde(default = "default_2426")]
-    pub sections: Vec<std::collections::HashMap<String, Value>>,
+    pub anchors: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2427")]
-    pub searched: Vec<String>,
+    pub sections: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2428")]
-    pub lines: Vec<String>,
+    pub searched: Vec<String>,
     #[serde(default = "default_2429")]
-    pub restricted: bool,
+    pub lines: Vec<String>,
     #[serde(default = "default_2430")]
+    pub restricted: bool,
+    #[serde(default = "default_2431")]
     pub verdict: String,
 }
 
@@ -57580,17 +57582,17 @@ impl TrackerAnswerInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TrackerBindingOutput {
-    #[serde(default = "default_2431")]
-    pub tracker_namespace: String,
     #[serde(default = "default_2432")]
-    pub tracker_namespaces: Vec<String>,
+    pub tracker_namespace: String,
     #[serde(default = "default_2433")]
-    pub restricted: bool,
+    pub tracker_namespaces: Vec<String>,
     #[serde(default = "default_2434")]
-    pub kind: String,
+    pub restricted: bool,
     #[serde(default = "default_2435")]
-    pub authorized: bool,
+    pub kind: String,
     #[serde(default = "default_2436")]
+    pub authorized: bool,
+    #[serde(default = "default_2437")]
     pub templates: Vec<String>,
 }
 
@@ -57643,13 +57645,13 @@ impl TrackerBindingInput {
 #[non_exhaustive]
 pub struct TrackerComponentOutput {
     pub component: String,
-    #[serde(default = "default_2437")]
-    pub risk: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2438")]
-    pub open_issues: Vec<std::collections::HashMap<String, Value>>,
+    pub risk: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2439")]
-    pub known: bool,
+    pub open_issues: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2440")]
+    pub known: bool,
+    #[serde(default = "default_2441")]
     pub tracker_unavailable: bool,
 }
 
@@ -57710,9 +57712,9 @@ impl TrackerComponentInput {
 #[non_exhaustive]
 pub struct TrackerContractOutput {
     pub database: String,
-    #[serde(default = "default_2441")]
-    pub tables: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2442")]
+    pub tables: Vec<std::collections::HashMap<String, Value>>,
+    #[serde(default = "default_2443")]
     pub templates: std::collections::HashMap<String, String>,
 }
 
@@ -57765,66 +57767,66 @@ impl TrackerContractInput {
 #[non_exhaustive]
 pub struct TrackerLegStatus {
     pub name: String,
-    #[serde(default = "default_2453")]
-    pub status: String,
     #[serde(default = "default_2454")]
-    pub reason: String,
+    pub status: String,
     #[serde(default = "default_2455")]
-    pub message: String,
+    pub reason: String,
     #[serde(default = "default_2456")]
-    pub retried: bool,
+    pub message: String,
     #[serde(default = "default_2457")]
-    pub ms: Integer,
+    pub retried: bool,
     #[serde(default = "default_2458")]
-    pub cause: String,
+    pub ms: Integer,
     #[serde(default = "default_2459")]
+    pub cause: String,
+    #[serde(default = "default_2460")]
     pub namespace: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TrackerDuplicateCheckOutput {
-    #[serde(default = "default_2443")]
-    pub verdict: String,
     #[serde(default = "default_2444")]
-    pub items: Vec<std::collections::HashMap<String, Value>>,
+    pub verdict: String,
     #[serde(default = "default_2445")]
-    pub undecided: bool,
+    pub items: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2446")]
-    pub epistemic: String,
+    pub undecided: bool,
     #[serde(default = "default_2447")]
-    pub thresholds: std::collections::HashMap<String, f64>,
+    pub epistemic: String,
     #[serde(default = "default_2448")]
-    pub judge: std::collections::HashMap<String, Value>,
+    pub thresholds: std::collections::HashMap<String, f64>,
     #[serde(default = "default_2449")]
-    pub fit_at: String,
+    pub judge: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2450")]
-    pub fit: std::collections::HashMap<String, Value>,
+    pub fit_at: String,
     #[serde(default = "default_2451")]
-    pub query: std::collections::HashMap<String, Value>,
+    pub fit: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2452")]
+    pub query: std::collections::HashMap<String, Value>,
+    #[serde(default = "default_2453")]
     pub legs: std::collections::HashMap<String, String>,
-    #[serde(default = "default_2460")]
-    pub leg_status: Vec<TrackerLegStatus>,
     #[serde(default = "default_2461")]
-    pub tracker_unavailable: bool,
+    pub leg_status: Vec<TrackerLegStatus>,
     #[serde(default = "default_2462")]
-    pub namespaces: Vec<String>,
+    pub tracker_unavailable: bool,
     #[serde(default = "default_2463")]
-    pub by_namespace: std::collections::HashMap<String, std::collections::HashMap<String, Value>>,
+    pub namespaces: Vec<String>,
     #[serde(default = "default_2464")]
-    pub closest: Vec<std::collections::HashMap<String, Value>>,
+    pub by_namespace: std::collections::HashMap<String, std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2465")]
-    pub needs: Vec<std::collections::HashMap<String, String>>,
+    pub closest: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2466")]
-    pub closest_note: String,
+    pub needs: Vec<std::collections::HashMap<String, String>>,
     #[serde(default = "default_2467")]
-    pub nearest: Vec<std::collections::HashMap<String, Value>>,
+    pub closest_note: String,
     #[serde(default = "default_2468")]
-    pub rerank: std::collections::HashMap<String, Value>,
+    pub nearest: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2469")]
-    pub answer: String,
+    pub rerank: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2470")]
+    pub answer: String,
+    #[serde(default = "default_2471")]
     pub related_prs: Vec<std::collections::HashMap<String, Value>>,
 }
 
@@ -58031,17 +58033,17 @@ impl TrackerDuplicateCheckInput {
 #[non_exhaustive]
 pub struct TrackerFlakyOutput {
     pub test_name: String,
-    #[serde(default = "default_2471")]
-    pub known_flaky: bool,
     #[serde(default = "default_2472")]
-    pub open_issues: Integer,
+    pub known_flaky: bool,
     #[serde(default = "default_2473")]
-    pub issues: Vec<std::collections::HashMap<String, Value>>,
+    pub open_issues: Integer,
     #[serde(default = "default_2474")]
-    pub verdict: String,
+    pub issues: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2475")]
-    pub tracker_unavailable: bool,
+    pub verdict: String,
     #[serde(default = "default_2476")]
+    pub tracker_unavailable: bool,
+    #[serde(default = "default_2477")]
     pub signal: Option<std::collections::HashMap<String, Value>>,
 }
 
@@ -58124,9 +58126,9 @@ impl TrackerFlakyInput {
 #[non_exhaustive]
 pub struct TrackerItemOutput {
     pub items: Vec<std::collections::HashMap<String, Value>>,
-    #[serde(default = "default_2477")]
-    pub unknown: Vec<Integer>,
     #[serde(default = "default_2478")]
+    pub unknown: Vec<Integer>,
+    #[serde(default = "default_2479")]
     pub tracker_unavailable: bool,
 }
 
@@ -58175,19 +58177,19 @@ impl TrackerItemInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TrackerLinksOutput {
-    #[serde(default = "default_2479")]
-    pub subject: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2480")]
-    pub verdict: String,
+    pub subject: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2481")]
-    pub items: Vec<std::collections::HashMap<String, Value>>,
+    pub verdict: String,
     #[serde(default = "default_2482")]
-    pub epistemic: String,
+    pub items: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2483")]
-    pub record: std::collections::HashMap<String, Value>,
+    pub epistemic: String,
     #[serde(default = "default_2484")]
-    pub computed_at: String,
+    pub record: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2485")]
+    pub computed_at: String,
+    #[serde(default = "default_2486")]
     pub tracker_unavailable: bool,
 }
 
@@ -58285,11 +58287,11 @@ impl TrackerLinksInput {
 pub struct TrackerReleaseOutput {
     pub version: String,
     pub blockers: Vec<std::collections::HashMap<String, Value>>,
-    #[serde(default = "default_2486")]
-    pub active_blockers: Integer,
     #[serde(default = "default_2487")]
-    pub health: std::collections::HashMap<String, Value>,
+    pub active_blockers: Integer,
     #[serde(default = "default_2488")]
+    pub health: std::collections::HashMap<String, Value>,
+    #[serde(default = "default_2489")]
     pub tracker_unavailable: bool,
 }
 
@@ -58338,17 +58340,17 @@ impl TrackerReleaseInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TrackerSimilarOutput {
-    #[serde(default = "default_2489")]
-    pub items: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2490")]
-    pub query: std::collections::HashMap<String, Value>,
+    pub items: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2491")]
-    pub legs: std::collections::HashMap<String, String>,
+    pub query: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2492")]
-    pub epistemic: String,
+    pub legs: std::collections::HashMap<String, String>,
     #[serde(default = "default_2493")]
-    pub tracker_unavailable: bool,
+    pub epistemic: String,
     #[serde(default = "default_2494")]
+    pub tracker_unavailable: bool,
+    #[serde(default = "default_2495")]
     pub namespaces: Vec<String>,
 }
 
@@ -58469,19 +58471,19 @@ pub struct TrackerSourceAddOutput {
     pub name: String,
     pub host: String,
     pub database: String,
-    #[serde(default = "default_2495")]
-    pub namespaces: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2496")]
-    pub contract: std::collections::HashMap<String, Value>,
+    pub namespaces: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2497")]
-    pub roles: Vec<String>,
+    pub contract: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2498")]
-    pub my_role: String,
+    pub roles: Vec<String>,
     #[serde(default = "default_2499")]
-    pub dry_run: bool,
+    pub my_role: String,
     #[serde(default = "default_2500")]
-    pub written: bool,
+    pub dry_run: bool,
     #[serde(default = "default_2501")]
+    pub written: bool,
+    #[serde(default = "default_2502")]
     pub view_templates: std::collections::HashMap<String, String>,
 }
 
@@ -58644,13 +58646,13 @@ impl TrackerSourceAddInput {
 #[non_exhaustive]
 pub struct TrackerSourceCheckOutput {
     pub name: String,
-    #[serde(default = "default_2502")]
-    pub database: String,
     #[serde(default = "default_2503")]
-    pub reachable: bool,
+    pub database: String,
     #[serde(default = "default_2504")]
-    pub contract: std::collections::HashMap<String, Value>,
+    pub reachable: bool,
     #[serde(default = "default_2505")]
+    pub contract: std::collections::HashMap<String, Value>,
+    #[serde(default = "default_2506")]
     pub view_templates: std::collections::HashMap<String, String>,
 }
 
@@ -58690,11 +58692,11 @@ impl TrackerSourceCheckInput {
 pub struct TrackerSourceInspectOutput {
     pub host: String,
     pub database: String,
-    #[serde(default = "default_2506")]
-    pub tables: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2507")]
-    pub roles: Vec<String>,
+    pub tables: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2508")]
+    pub roles: Vec<String>,
+    #[serde(default = "default_2509")]
     pub proposal: std::collections::HashMap<String, Value>,
 }
 
@@ -58823,9 +58825,9 @@ impl TrackerSourceInspectInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TrackerSourceListOutput {
-    #[serde(default = "default_2509")]
-    pub sources: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2510")]
+    pub sources: Vec<std::collections::HashMap<String, Value>>,
+    #[serde(default = "default_2511")]
     pub self_service: bool,
 }
 
@@ -58878,9 +58880,9 @@ impl TrackerSourceListInput {
 #[non_exhaustive]
 pub struct TrackerSourceRemoveOutput {
     pub name: String,
-    #[serde(default = "default_2511")]
-    pub deactivated: bool,
     #[serde(default = "default_2512")]
+    pub deactivated: bool,
+    #[serde(default = "default_2513")]
     pub namespaces_retired: Vec<String>,
 }
 
@@ -58921,9 +58923,9 @@ impl TrackerSourceRemoveInput {
 #[non_exhaustive]
 pub struct TrackerSourceRotateOutput {
     pub name: String,
-    #[serde(default = "default_2513")]
-    pub contract: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2514")]
+    pub contract: std::collections::HashMap<String, Value>,
+    #[serde(default = "default_2515")]
     pub rotated_at: String,
 }
 
@@ -58970,11 +58972,11 @@ impl TrackerSourceRotateInput {
 #[non_exhaustive]
 pub struct TrackerSourceSetMappingOutput {
     pub name: String,
-    #[serde(default = "default_2515")]
-    pub contract: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2516")]
-    pub dry_run: bool,
+    pub contract: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2517")]
+    pub dry_run: bool,
+    #[serde(default = "default_2518")]
     pub written: bool,
 }
 
@@ -59041,45 +59043,45 @@ impl TrackerSourceSetMappingInput {
 #[non_exhaustive]
 pub struct TrackerTestSignalOutput {
     pub test_name: String,
-    #[serde(default = "default_2518")]
-    pub verdict: String,
     #[serde(default = "default_2519")]
-    pub why: Vec<String>,
+    pub verdict: String,
     #[serde(default = "default_2520")]
-    pub lower_bound: f64,
+    pub why: Vec<String>,
     #[serde(default = "default_2521")]
-    pub window_days: Integer,
+    pub lower_bound: f64,
     #[serde(default = "default_2522")]
-    pub since: String,
+    pub window_days: Integer,
     #[serde(default = "default_2523")]
-    pub features: std::collections::HashMap<String, Value>,
+    pub since: String,
     #[serde(default = "default_2524")]
-    pub infra: std::collections::HashMap<String, Value>,
+    pub features: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2525")]
-    pub churn: std::collections::HashMap<String, Value>,
+    pub infra: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2526")]
-    pub thresholds: std::collections::HashMap<String, Value>,
+    pub churn: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2527")]
-    pub source: String,
+    pub thresholds: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2528")]
-    pub timings_ms: std::collections::HashMap<String, Integer>,
+    pub source: String,
     #[serde(default = "default_2529")]
-    pub tracker_unavailable: bool,
+    pub timings_ms: std::collections::HashMap<String, Integer>,
     #[serde(default = "default_2530")]
-    pub rollup: std::collections::HashMap<String, Value>,
+    pub tracker_unavailable: bool,
     #[serde(default = "default_2531")]
-    pub streak: std::collections::HashMap<String, Value>,
+    pub rollup: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2532")]
-    pub smells: std::collections::HashMap<String, Value>,
+    pub streak: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2533")]
-    pub prior: std::collections::HashMap<String, Value>,
+    pub smells: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2534")]
-    pub unavailable_reason: String,
+    pub prior: std::collections::HashMap<String, Value>,
     #[serde(default = "default_2535")]
-    pub candidates: Vec<std::collections::HashMap<String, Value>>,
+    pub unavailable_reason: String,
     #[serde(default = "default_2536")]
-    pub candidate_matches: Integer,
+    pub candidates: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_2537")]
+    pub candidate_matches: Integer,
+    #[serde(default = "default_2538")]
     pub resolved_from: String,
 }
 
@@ -59183,9 +59185,9 @@ impl TrackerTestSignalInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct UiVitalsOutput {
-    #[serde(default = "default_2538")]
-    pub recorded: bool,
     #[serde(default = "default_2539")]
+    pub recorded: bool,
+    #[serde(default = "default_2540")]
     pub route: String,
 }
 
@@ -59369,7 +59371,7 @@ pub struct WebhookDelivery {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct WebhookDeliveriesOutput {
-    #[serde(default = "default_2540")]
+    #[serde(default = "default_2541")]
     pub deliveries: Vec<WebhookDelivery>,
 }
 
@@ -59491,14 +59493,14 @@ pub struct WebhookInfo {
     pub secret_ref: String,
     pub events: Vec<WebhookInfoEventsItem>,
     pub created_at: String,
-    #[serde(default = "default_2541")]
+    #[serde(default = "default_2542")]
     pub secret_present: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct WebhookListOutput {
-    #[serde(default = "default_2542")]
+    #[serde(default = "default_2543")]
     pub webhooks: Vec<WebhookInfo>,
 }
 
@@ -59680,7 +59682,7 @@ pub struct WorkingMemoryMutationOutput {
     pub version: Integer,
     pub char_limit: Integer,
     pub value_length: Integer,
-    #[serde(default = "default_2543")]
+    #[serde(default = "default_2544")]
     pub fill_ratio: f64,
 }
 
@@ -59904,15 +59906,15 @@ impl WorkingMemoryDeleteInput {
 pub struct WorkingMemoryGetOutput {
     pub found: bool,
     pub block_key: String,
-    #[serde(default = "default_2544")]
-    pub content: String,
     #[serde(default = "default_2545")]
-    pub char_limit: Integer,
+    pub content: String,
     #[serde(default = "default_2546")]
-    pub version: Integer,
+    pub char_limit: Integer,
     #[serde(default = "default_2547")]
-    pub updated_at: Option<String>,
+    pub version: Integer,
     #[serde(default = "default_2548")]
+    pub updated_at: Option<String>,
+    #[serde(default = "default_2549")]
     pub fill_ratio: f64,
 }
 
@@ -60023,7 +60025,7 @@ pub struct WorkingMemoryBlock {
     pub content: String,
     pub char_limit: Integer,
     pub version: Integer,
-    #[serde(default = "default_2549")]
+    #[serde(default = "default_2550")]
     pub updated_at: Option<String>,
 }
 
@@ -60031,7 +60033,7 @@ pub struct WorkingMemoryBlock {
 #[non_exhaustive]
 pub struct WorkingMemoryRenderOutput {
     pub rendered: String,
-    #[serde(default = "default_2550")]
+    #[serde(default = "default_2551")]
     pub blocks: Vec<WorkingMemoryBlock>,
     pub block_count: Integer,
     pub total_chars: Integer,
@@ -64153,26 +64155,26 @@ fn default_1248() -> bool {
 fn default_1249() -> bool {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_1250() -> String {
+fn default_1250() -> bool {
+    serde_json::from_str("true").expect("schema default")
+}
+fn default_1251() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1251() -> std::collections::HashMap<String, Value> {
+fn default_1252() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1252() -> String {
+fn default_1253() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1253() -> Vec<KnowledgeSourceParsedLink> {
+fn default_1254() -> Vec<KnowledgeSourceParsedLink> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1254() -> bool {
+fn default_1255() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1255() -> String {
-    serde_json::from_str("\"disabled\"").expect("schema default")
-}
 fn default_1256() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+    serde_json::from_str("\"disabled\"").expect("schema default")
 }
 fn default_1257() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -64189,89 +64191,89 @@ fn default_1260() -> String {
 fn default_1261() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1262() -> Integer {
+fn default_1262() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1263() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1263() -> f64 {
+fn default_1264() -> f64 {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1264() -> Integer {
+fn default_1265() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1265() -> KnowledgeSourceProbe {
+fn default_1266() -> KnowledgeSourceProbe {
     serde_json::from_str(
         "{\"documents\":0,\"more\":false,\"sample\":[],\"checked\":0,\"sampled\":false}",
     )
     .expect("schema default")
 }
-fn default_1266() -> String {
+fn default_1267() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1267() -> bool {
+fn default_1268() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1268() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_1269() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1269() -> Vec<String> {
+fn default_1270() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1270() -> std::collections::HashMap<String, Value> {
+fn default_1271() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
-}
-fn default_1271() -> Vec<std::collections::HashMap<String, Value>> {
-    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1272() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1273() -> KnowledgeSourceProbe {
+fn default_1273() -> Vec<std::collections::HashMap<String, Value>> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_1274() -> KnowledgeSourceProbe {
     serde_json::from_str(
         "{\"documents\":0,\"more\":false,\"sample\":[],\"checked\":0,\"sampled\":false}",
     )
     .expect("schema default")
 }
-fn default_1274() -> Vec<String> {
+fn default_1275() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1275() -> Integer {
+fn default_1276() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1276() -> Option<std::collections::HashMap<String, Value>> {
+fn default_1277() -> Option<std::collections::HashMap<String, Value>> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1277() -> Vec<CitedChunk> {
+fn default_1278() -> Vec<CitedChunk> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1278() -> Vec<String> {
+fn default_1279() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1279() -> bool {
-    serde_json::from_str("false").expect("schema default")
 }
 fn default_1280() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1281() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1281() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_1282() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1283() -> Vec<Vec<Integer>> {
+fn default_1283() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1284() -> Vec<Vec<Integer>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1284() -> bool {
+fn default_1285() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1285() -> Vec<String> {
+fn default_1286() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1286() -> Vec<SynthesizeCalculation> {
+fn default_1287() -> Vec<SynthesizeCalculation> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1287() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1288() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -64279,65 +64281,65 @@ fn default_1288() -> String {
 fn default_1289() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1290() -> Vec<String> {
+fn default_1290() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1291() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1291() -> Integer {
+fn default_1292() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1292() -> String {
+fn default_1293() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1293() -> Integer {
+fn default_1294() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_1294() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1295() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1296() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1296() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1297() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1298() -> String {
-    serde_json::from_str("\"memory_supporters\"").expect("schema default")
+fn default_1298() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1299() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+    serde_json::from_str("\"memory_supporters\"").expect("schema default")
 }
 fn default_1300() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1301() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_1302() -> String {
+fn default_1301() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1302() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1303() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1304() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_1304() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1305() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1306() -> String {
+fn default_1306() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_1307() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1307() -> std::collections::HashMap<String, String> {
+fn default_1308() -> std::collections::HashMap<String, String> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1308() -> Vec<AggregateRow> {
+fn default_1309() -> Vec<AggregateRow> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1309() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1310() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -64345,17 +64347,17 @@ fn default_1310() -> String {
 fn default_1311() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1312() -> Vec<MemorySetPeer> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1313() -> String {
+fn default_1312() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1313() -> Vec<MemorySetPeer> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1314() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1315() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1315() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1316() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
@@ -64366,11 +64368,11 @@ fn default_1317() -> Vec<String> {
 fn default_1318() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1319() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_1320() -> Vec<String> {
+fn default_1319() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
+}
+fn default_1320() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1321() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
@@ -64378,20 +64380,20 @@ fn default_1321() -> Vec<String> {
 fn default_1322() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1323() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_1324() -> Vec<String> {
+fn default_1323() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1325() -> std::collections::HashMap<String, String> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_1326() -> std::collections::HashMap<String, f64> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_1327() -> Integer {
+fn default_1324() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1325() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_1326() -> std::collections::HashMap<String, String> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_1327() -> std::collections::HashMap<String, f64> {
+    serde_json::from_str("{}").expect("schema default")
 }
 fn default_1328() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -64408,11 +64410,11 @@ fn default_1331() -> Integer {
 fn default_1332() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1333() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_1333() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
-fn default_1334() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1334() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_1335() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -64423,74 +64425,74 @@ fn default_1336() -> String {
 fn default_1337() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1338() -> Option<Integer> {
+fn default_1338() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1339() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1339() -> String {
+fn default_1340() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1340() -> Vec<ApplyRow> {
+fn default_1341() -> Vec<ApplyRow> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1341() -> String {
+fn default_1342() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1342() -> MemoryAskOutputSource {
+fn default_1343() -> MemoryAskOutputSource {
     serde_json::from_str("\"synthesized\"").expect("schema default")
 }
-fn default_1343() -> bool {
+fn default_1344() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1344() -> String {
+fn default_1345() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1345() -> Vec<String> {
+fn default_1346() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1346() -> Vec<MemorySearchHit> {
+fn default_1347() -> Vec<MemorySearchHit> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1347() -> Vec<String> {
+fn default_1348() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1348() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1349() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1350() -> MemoryAskOutputRouteTier {
+fn default_1350() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1351() -> String {
+fn default_1351() -> MemoryAskOutputRouteTier {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1352() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1352() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1353() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1354() -> bool {
+fn default_1354() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1355() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1355() -> f64 {
+fn default_1356() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
-}
-fn default_1356() -> Option<f64> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_1357() -> Option<f64> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1358() -> bool {
+fn default_1358() -> Option<f64> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_1359() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1359() -> String {
+fn default_1360() -> String {
     serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1360() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1361() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -64501,32 +64503,32 @@ fn default_1362() -> Integer {
 fn default_1363() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1364() -> String {
+fn default_1364() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1365() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1365() -> Vec<String> {
+fn default_1366() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1366() -> Integer {
+fn default_1367() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1367() -> MemoryAskOutputConsistency {
+fn default_1368() -> MemoryAskOutputConsistency {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1368() -> f64 {
+fn default_1369() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
 }
-fn default_1369() -> String {
+fn default_1370() -> String {
     serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1370() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1371() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1372() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1372() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1373() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -64537,17 +64539,17 @@ fn default_1374() -> String {
 fn default_1375() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1376() -> MemoryAskOutputDepth {
+fn default_1376() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1377() -> bool {
+fn default_1377() -> MemoryAskOutputDepth {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1378() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1378() -> Vec<String> {
+fn default_1379() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1379() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1380() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -64555,11 +64557,11 @@ fn default_1380() -> Integer {
 fn default_1381() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1382() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1383() -> Integer {
+fn default_1382() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1383() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1384() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -64567,17 +64569,17 @@ fn default_1384() -> Integer {
 fn default_1385() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1386() -> MemoryAskOutputGrounding {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1387() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1388() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1389() -> Integer {
+fn default_1386() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1387() -> MemoryAskOutputGrounding {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1388() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1389() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1390() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -64588,17 +64590,17 @@ fn default_1391() -> Integer {
 fn default_1392() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1393() -> std::collections::HashMap<String, Integer> {
+fn default_1393() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1394() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1394() -> MemoryAskOutputDeepSelector {
+fn default_1395() -> MemoryAskOutputDeepSelector {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1395() -> MemoryAskOutputDeepFirst {
+fn default_1396() -> MemoryAskOutputDeepFirst {
     serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1396() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1397() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -64609,11 +64611,11 @@ fn default_1398() -> Integer {
 fn default_1399() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1400() -> f64 {
-    serde_json::from_str("0.0").expect("schema default")
-}
-fn default_1401() -> Integer {
+fn default_1400() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1401() -> f64 {
+    serde_json::from_str("0.0").expect("schema default")
 }
 fn default_1402() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -64627,11 +64629,11 @@ fn default_1404() -> Integer {
 fn default_1405() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1406() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_1406() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
-fn default_1407() -> String {
-    serde_json::from_str("\"-\"").expect("schema default")
+fn default_1407() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_1408() -> String {
     serde_json::from_str("\"-\"").expect("schema default")
@@ -64640,7 +64642,7 @@ fn default_1409() -> String {
     serde_json::from_str("\"-\"").expect("schema default")
 }
 fn default_1410() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+    serde_json::from_str("\"-\"").expect("schema default")
 }
 fn default_1411() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -64648,89 +64650,89 @@ fn default_1411() -> String {
 fn default_1412() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1413() -> bool {
+fn default_1413() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1414() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1414() -> String {
+fn default_1415() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1415() -> Option<f64> {
+fn default_1416() -> Option<f64> {
     serde_json::from_str("null").expect("schema default")
-}
-fn default_1416() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1417() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1418() -> Vec<MemoryAutoRetirement> {
+fn default_1418() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1419() -> Vec<MemoryAutoRetirement> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1419() -> Option<String> {
+fn default_1420() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1420() -> bool {
+fn default_1421() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_1421() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1422() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1423() -> Vec<BacklinkVersion> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1424() -> String {
+fn default_1423() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1425() -> Vec<BacklinkDigest> {
+fn default_1424() -> Vec<BacklinkVersion> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1426() -> String {
+fn default_1425() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1426() -> Vec<BacklinkDigest> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1427() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1428() -> Vec<BacklinkEdge> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1428() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1429() -> Vec<BacklinkEdge> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1430() -> Integer {
+fn default_1430() -> Vec<BacklinkEdge> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_1431() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1431() -> Vec<String> {
+fn default_1432() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1432() -> Vec<BacklinkRelated> {
+fn default_1433() -> Vec<BacklinkRelated> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1433() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1434() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1435() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_1436() -> String {
+fn default_1435() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1436() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_1437() -> String {
-    serde_json::from_str("\"fact\"").expect("schema default")
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1438() -> String {
+    serde_json::from_str("\"fact\"").expect("schema default")
+}
+fn default_1439() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1439() -> bool {
+fn default_1440() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_1440() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1441() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -64738,29 +64740,29 @@ fn default_1441() -> String {
 fn default_1442() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1443() -> Vec<BriefEvidence> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1443() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1444() -> Vec<String> {
+fn default_1444() -> Vec<BriefEvidence> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_1445() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1446() -> std::collections::HashMap<String, MemoryBulkGetOutputMemoryGetOutput> {
+fn default_1446() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_1447() -> std::collections::HashMap<String, MemoryBulkGetOutputMemoryGetOutput> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1447() -> Vec<String> {
+fn default_1448() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1448() -> Integer {
+fn default_1449() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1449() -> Vec<MemoryConsolidateResult> {
+fn default_1450() -> Vec<MemoryConsolidateResult> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1450() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1451() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -64780,8 +64782,8 @@ fn default_1455() -> Integer {
 fn default_1456() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1457() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1457() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1458() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -64792,11 +64794,11 @@ fn default_1459() -> String {
 fn default_1460() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1461() -> bool {
-    serde_json::from_str("true").expect("schema default")
+fn default_1461() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1462() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1462() -> bool {
+    serde_json::from_str("true").expect("schema default")
 }
 fn default_1463() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -64810,113 +64812,113 @@ fn default_1465() -> Integer {
 fn default_1466() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1467() -> bool {
+fn default_1467() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1468() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1468() -> Vec<DedupCollapsePair> {
+fn default_1469() -> Vec<DedupCollapsePair> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1469() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1470() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1471() -> Option<String> {
+fn default_1471() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1472() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1472() -> Vec<DedupDuplicate> {
+fn default_1473() -> Vec<DedupDuplicate> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1473() -> bool {
-    serde_json::from_str("false").expect("schema default")
 }
 fn default_1474() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1475() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1476() -> bool {
+fn default_1475() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1477() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_1478() -> Vec<String> {
+fn default_1476() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1479() -> Option<DefinitionEntryVerdict> {
+fn default_1477() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_1478() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1480() -> Option<DefinitionEntryLapseReason> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_1481() -> Vec<LostName> {
+fn default_1479() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1482() -> Integer {
+fn default_1480() -> Option<DefinitionEntryVerdict> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_1481() -> Option<DefinitionEntryLapseReason> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_1482() -> Vec<LostName> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_1483() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1483() -> bool {
+fn default_1484() -> bool {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_1484() -> String {
+fn default_1485() -> String {
     serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1485() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1486() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1487() -> std::collections::HashMap<String, f64> {
+fn default_1487() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1488() -> std::collections::HashMap<String, f64> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1488() -> String {
+fn default_1489() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1489() -> f64 {
+fn default_1490() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
 }
-fn default_1490() -> bool {
+fn default_1491() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_1491() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1492() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1493() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1493() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1494() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1495() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_1495() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
-fn default_1496() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1496() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1497() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1498() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_1498() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1499() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1500() -> Integer {
+fn default_1500() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_1501() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1501() -> bool {
+fn default_1502() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_1502() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1503() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -64927,29 +64929,29 @@ fn default_1504() -> String {
 fn default_1505() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1506() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_1507() -> String {
+fn default_1506() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1508() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1507() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_1508() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1509() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1510() -> String {
+fn default_1510() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1511() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1511() -> Vec<MemoryEvidenceItem> {
+fn default_1512() -> Vec<MemoryEvidenceItem> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1512() -> bool {
+fn default_1513() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_1513() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1514() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -64963,80 +64965,80 @@ fn default_1516() -> Integer {
 fn default_1517() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1518() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1518() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1519() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1520() -> String {
-    serde_json::from_str("\"-\"").expect("schema default")
-}
-fn default_1521() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1522() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1521() -> String {
+    serde_json::from_str("\"-\"").expect("schema default")
 }
-fn default_1523() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1522() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1523() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1524() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1525() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1525() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1526() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1527() -> Vec<EvidenceChunk> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1527() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1528() -> String {
-    serde_json::from_str("\"-\"").expect("schema default")
+fn default_1528() -> Vec<EvidenceChunk> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1529() -> String {
     serde_json::from_str("\"-\"").expect("schema default")
 }
-fn default_1530() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1530() -> String {
+    serde_json::from_str("\"-\"").expect("schema default")
 }
 fn default_1531() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1532() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1532() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1533() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1534() -> Vec<EvidenceDigest> {
+fn default_1534() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1535() -> Vec<EvidenceDigest> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1535() -> f64 {
+fn default_1536() -> f64 {
     serde_json::from_str("1.0").expect("schema default")
-}
-fn default_1536() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1537() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1538() -> Vec<EvidenceEdge> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1539() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_1540() -> String {
+fn default_1538() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1541() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_1542() -> Vec<String> {
+fn default_1539() -> Vec<EvidenceEdge> {
     serde_json::from_str("[]").expect("schema default")
+}
+fn default_1540() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_1541() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1542() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1543() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
@@ -65050,56 +65052,56 @@ fn default_1545() -> Vec<String> {
 fn default_1546() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1547() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_1547() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1548() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1549() -> Vec<ExtractionQueueRow> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1549() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
-fn default_1550() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1550() -> Vec<ExtractionQueueRow> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1551() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1552() -> Vec<ExtractionQueueRow> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1553() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1554() -> Integer {
+fn default_1552() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1553() -> Vec<ExtractionQueueRow> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_1554() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1555() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1556() -> bool {
+fn default_1556() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1557() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1557() -> Vec<String> {
+fn default_1558() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1558() -> f64 {
+fn default_1559() -> f64 {
     serde_json::from_str("1.0").expect("schema default")
 }
-fn default_1559() -> bool {
+fn default_1560() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1560() -> String {
+fn default_1561() -> String {
     serde_json::from_str("\"active\"").expect("schema default")
 }
-fn default_1561() -> String {
+fn default_1562() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1562() -> Option<String> {
+fn default_1563() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
-}
-fn default_1563() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1564() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65110,35 +65112,35 @@ fn default_1565() -> String {
 fn default_1566() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1567() -> MemoryForFileHitSupersedesKind {
+fn default_1567() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1568() -> Vec<String> {
+fn default_1568() -> MemoryForFileHitSupersedesKind {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1569() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1569() -> String {
+fn default_1570() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1570() -> MemoryForFileHitVerification {
+fn default_1571() -> MemoryForFileHitVerification {
     serde_json::from_str("\"none\"").expect("schema default")
 }
-fn default_1571() -> MemoryForFileHitCodeState {
+fn default_1572() -> MemoryForFileHitCodeState {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1572() -> Vec<CodeLink> {
+fn default_1573() -> Vec<CodeLink> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1573() -> String {
+fn default_1574() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1574() -> Integer {
+fn default_1575() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1575() -> bool {
+fn default_1576() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_1576() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1577() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65155,19 +65157,19 @@ fn default_1580() -> String {
 fn default_1581() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1582() -> Option<String> {
+fn default_1582() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1583() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1583() -> Value {
+fn default_1584() -> Value {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1584() -> Option<f64> {
+fn default_1585() -> Option<f64> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1585() -> Option<Integer> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_1586() -> Option<String> {
+fn default_1586() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
 fn default_1587() -> Option<String> {
@@ -65179,23 +65181,23 @@ fn default_1588() -> Option<String> {
 fn default_1589() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1590() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_1590() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
-fn default_1591() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1591() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_1592() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1593() -> Option<String> {
+fn default_1593() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1594() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1594() -> String {
-    serde_json::from_str("\"none\"").expect("schema default")
-}
 fn default_1595() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+    serde_json::from_str("\"none\"").expect("schema default")
 }
 fn default_1596() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65209,11 +65211,11 @@ fn default_1598() -> String {
 fn default_1599() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1600() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_1601() -> String {
+fn default_1600() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1601() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1602() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65221,32 +65223,32 @@ fn default_1602() -> String {
 fn default_1603() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1604() -> Integer {
+fn default_1604() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1605() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1605() -> Vec<MemoryHealthTypeRow> {
+fn default_1606() -> Vec<MemoryHealthTypeRow> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1606() -> Integer {
+fn default_1607() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1607() -> Option<String> {
+fn default_1608() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1608() -> Vec<MemoryHealthTopRow> {
+fn default_1609() -> Vec<MemoryHealthTopRow> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1609() -> std::collections::HashMap<String, Integer> {
+fn default_1610() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1610() -> Integer {
+fn default_1611() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1611() -> f64 {
+fn default_1612() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
-}
-fn default_1612() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1613() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -65260,36 +65262,36 @@ fn default_1615() -> Integer {
 fn default_1616() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1617() -> MemoryHealthStaleness {
-    serde_json::from_str("{\"by_age\":{},\"with_validity_end\":0,\"with_validity_end_share\":0.0,\"with_expiry\":0,\"expiring_7d\":0,\"pinned\":0,\"days_since_reinforced_p50\":0,\"days_since_reinforced_p90\":0}").expect("schema default")
-}
-fn default_1618() -> Integer {
+fn default_1617() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1618() -> MemoryHealthStaleness {
+    serde_json::from_str("{\"by_age\":{},\"with_validity_end\":0,\"with_validity_end_share\":0.0,\"with_expiry\":0,\"expiring_7d\":0,\"pinned\":0,\"days_since_reinforced_p50\":0,\"days_since_reinforced_p90\":0}").expect("schema default")
 }
 fn default_1619() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1620() -> f64 {
+fn default_1620() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1621() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
 }
-fn default_1621() -> MemoryHealthFootprint {
+fn default_1622() -> MemoryHealthFootprint {
     serde_json::from_str("{\"value_chars\":0,\"value_tokens_est\":0,\"tokens_per_row_est\":0.0}")
         .expect("schema default")
 }
-fn default_1622() -> String {
+fn default_1623() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1623() -> Value {
+fn default_1624() -> Value {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1624() -> String {
+fn default_1625() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1625() -> bool {
+fn default_1626() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_1626() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_1627() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
@@ -65297,8 +65299,8 @@ fn default_1627() -> Option<String> {
 fn default_1628() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1629() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1629() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1630() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65312,23 +65314,23 @@ fn default_1632() -> String {
 fn default_1633() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1634() -> Option<String> {
+fn default_1634() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1635() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1635() -> String {
+fn default_1636() -> String {
     serde_json::from_str("\"active\"").expect("schema default")
-}
-fn default_1636() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1637() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1638() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_1638() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
-fn default_1639() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1639() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1640() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65339,11 +65341,11 @@ fn default_1641() -> String {
 fn default_1642() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1643() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_1643() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1644() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1644() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1645() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -65354,26 +65356,26 @@ fn default_1646() -> Integer {
 fn default_1647() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1648() -> MemoryImportResultReason {
+fn default_1648() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1649() -> MemoryImportResultReason {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1649() -> String {
+fn default_1650() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1650() -> MemoryImportResultNote {
+fn default_1651() -> MemoryImportResultNote {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1651() -> bool {
+fn default_1652() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1652() -> String {
+fn default_1653() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1653() -> Option<String> {
+fn default_1654() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
-}
-fn default_1654() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1655() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -65381,29 +65383,29 @@ fn default_1655() -> Integer {
 fn default_1656() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1657() -> String {
+fn default_1657() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1658() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1658() -> Integer {
+fn default_1659() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1659() -> Vec<String> {
+fn default_1660() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1660() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1661() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1662() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1663() -> Integer {
+fn default_1662() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1664() -> Vec<InspectCount> {
+fn default_1663() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
+}
+fn default_1664() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1665() -> Vec<InspectCount> {
     serde_json::from_str("[]").expect("schema default")
@@ -65417,78 +65419,78 @@ fn default_1667() -> Vec<InspectCount> {
 fn default_1668() -> Vec<InspectCount> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1669() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_1669() -> Vec<InspectCount> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1670() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1671() -> String {
+fn default_1671() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_1672() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1672() -> Integer {
+fn default_1673() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1673() -> String {
+fn default_1674() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1674() -> Vec<InspectRow> {
+fn default_1675() -> Vec<InspectRow> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1675() -> bool {
+fn default_1676() -> bool {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_1676() -> Vec<InspectCall> {
+fn default_1677() -> Vec<InspectCall> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1677() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_1678() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1679() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1680() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_1681() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1682() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_1683() -> Option<String> {
+fn default_1679() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1684() -> String {
+fn default_1680() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
+fn default_1681() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1682() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1683() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1684() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
 fn default_1685() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1686() -> String {
     serde_json::from_str("\"Each request that extracts memories from messages may send extraction instructions; no user, agent or session setting stores them.\"").expect("schema default")
 }
-fn default_1686() -> Vec<String> {
+fn default_1687() -> Vec<String> {
     serde_json::from_str("[\"memory.set_from_messages\",\"extraction_instructions\"]")
         .expect("schema default")
 }
-fn default_1687() -> Vec<String> {
+fn default_1688() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1688() -> bool {
+fn default_1689() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_1689() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1690() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1691() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_1692() -> String {
+fn default_1691() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1692() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1693() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65496,50 +65498,50 @@ fn default_1693() -> String {
 fn default_1694() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1695() -> MemoryLineageOutputMechanism {
+fn default_1695() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1696() -> MemoryLineageOutputMechanism {
     serde_json::from_str("\"unknown\"").expect("schema default")
 }
-fn default_1696() -> Vec<LineageSupporter> {
+fn default_1697() -> Vec<LineageSupporter> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1697() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1698() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1699() -> Option<LineageCandidate> {
+fn default_1699() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1700() -> Option<LineageCandidate> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1700() -> Vec<LineageAuditEvent> {
+fn default_1701() -> Vec<LineageAuditEvent> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1701() -> f64 {
+fn default_1702() -> f64 {
     serde_json::from_str("1.0").expect("schema default")
-}
-fn default_1702() -> bool {
-    serde_json::from_str("false").expect("schema default")
 }
 fn default_1703() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1704() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1704() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_1705() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1706() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1707() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_1708() -> Integer {
+fn default_1706() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1709() -> String {
+fn default_1707() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1708() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_1709() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1710() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65547,17 +65549,17 @@ fn default_1710() -> String {
 fn default_1711() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1712() -> Option<Integer> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_1713() -> String {
+fn default_1712() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1714() -> Option<String> {
+fn default_1713() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1715() -> String {
+fn default_1714() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1715() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1716() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65565,20 +65567,20 @@ fn default_1716() -> String {
 fn default_1717() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1718() -> Integer {
+fn default_1718() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1719() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1719() -> String {
+fn default_1720() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1720() -> Vec<String> {
+fn default_1721() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1721() -> bool {
+fn default_1722() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_1722() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1723() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65586,71 +65588,71 @@ fn default_1723() -> String {
 fn default_1724() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1725() -> bool {
+fn default_1725() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1726() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1726() -> std::collections::HashMap<String, Integer> {
+fn default_1727() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
-}
-fn default_1727() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1728() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1729() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1729() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1730() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1731() -> Vec<OutlineSession> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1732() -> Integer {
+fn default_1731() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1732() -> Vec<OutlineSession> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1733() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1734() -> Vec<OutlineHub> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1735() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1736() -> Integer {
+fn default_1734() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1737() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1738() -> Vec<OutlineCommunity> {
+fn default_1735() -> Vec<OutlineHub> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1739() -> Integer {
+fn default_1736() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1737() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1740() -> Option<String> {
+fn default_1738() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1739() -> Vec<OutlineCommunity> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_1740() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1741() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1741() -> Vec<String> {
+fn default_1742() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1742() -> Integer {
+fn default_1743() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_1743() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1744() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1745() -> Vec<MemoryProposalDecision> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1746() -> String {
+fn default_1745() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1746() -> Vec<MemoryProposalDecision> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1747() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65664,59 +65666,59 @@ fn default_1749() -> String {
 fn default_1750() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1751() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1752() -> String {
+fn default_1751() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1753() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1752() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_1753() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1754() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1755() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1756() -> Integer {
+fn default_1755() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1756() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1757() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1758() -> MemoryProposalReady {
+fn default_1758() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1759() -> MemoryProposalReady {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1759() -> Vec<String> {
+fn default_1760() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1760() -> Vec<MemoryProposal> {
+fn default_1761() -> Vec<MemoryProposal> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1761() -> Integer {
+fn default_1762() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1762() -> ProposalPolicyMode {
+fn default_1763() -> ProposalPolicyMode {
     serde_json::from_str("\"manual\"").expect("schema default")
 }
-fn default_1763() -> Integer {
-    serde_json::from_str("2").expect("schema default")
-}
 fn default_1764() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+    serde_json::from_str("2").expect("schema default")
 }
 fn default_1765() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1766() -> ProposalPolicy {
+fn default_1766() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1767() -> ProposalPolicy {
     serde_json::from_str(
         "{\"mode\":\"manual\",\"min_passes\":2,\"max_fails\":0,\"reject_after_fails\":0}",
     )
     .expect("schema default")
-}
-fn default_1767() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1768() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65733,11 +65735,11 @@ fn default_1771() -> String {
 fn default_1772() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1773() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_1774() -> String {
+fn default_1773() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1774() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_1775() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65763,23 +65765,23 @@ fn default_1781() -> String {
 fn default_1782() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1783() -> Vec<String> {
+fn default_1783() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1784() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1784() -> f64 {
+fn default_1785() -> f64 {
     serde_json::from_str("1.0").expect("schema default")
-}
-fn default_1785() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1786() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1787() -> Vec<MemoryProvenanceLink> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1788() -> String {
+fn default_1787() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1788() -> Vec<MemoryProvenanceLink> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1789() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -65790,11 +65792,11 @@ fn default_1790() -> String {
 fn default_1791() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1792() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_1792() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1793() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1793() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_1794() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -65802,182 +65804,182 @@ fn default_1794() -> Integer {
 fn default_1795() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1796() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_1797() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1798() -> Integer {
-    serde_json::from_str("-1").expect("schema default")
-}
-fn default_1799() -> MemoryRecallOutputOrder {
-    serde_json::from_str("\"recent\"").expect("schema default")
-}
-fn default_1800() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1801() -> Integer {
+fn default_1796() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1802() -> Value {
-    serde_json::from_str("null").expect("schema default")
+fn default_1797() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_1798() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1799() -> Integer {
+    serde_json::from_str("-1").expect("schema default")
+}
+fn default_1800() -> MemoryRecallOutputOrder {
+    serde_json::from_str("\"recent\"").expect("schema default")
+}
+fn default_1801() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_1802() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1803() -> Value {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1804() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1804() -> Value {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1805() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1806() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_1806() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1807() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1808() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_1808() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
-fn default_1809() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1809() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_1810() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1811() -> std::collections::HashMap<String, Value> {
+fn default_1811() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1812() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1812() -> std::collections::HashMap<String, String> {
+fn default_1813() -> std::collections::HashMap<String, String> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1813() -> MemoryRecordRowStatus {
+fn default_1814() -> MemoryRecordRowStatus {
     serde_json::from_str("\"active\"").expect("schema default")
-}
-fn default_1814() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_1815() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1816() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_1817() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1818() -> MemoryRecordWriteOutputKeySource {
-    serde_json::from_str("\"anonymous\"").expect("schema default")
-}
-fn default_1819() -> std::collections::HashMap<String, Value> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_1820() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1821() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_1822() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_1823() -> Option<String> {
+fn default_1816() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1824() -> Integer {
+fn default_1817() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_1818() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1819() -> MemoryRecordWriteOutputKeySource {
+    serde_json::from_str("\"anonymous\"").expect("schema default")
+}
+fn default_1820() -> std::collections::HashMap<String, Value> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_1821() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1822() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1823() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_1824() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1825() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1826() -> Option<String> {
+fn default_1826() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1827() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1827() -> String {
+fn default_1828() -> String {
     serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1828() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1829() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1830() -> bool {
+fn default_1830() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1831() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1831() -> Vec<String> {
+fn default_1832() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1832() -> Option<String> {
+fn default_1833() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1833() -> Option<Integer> {
+fn default_1834() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
-}
-fn default_1834() -> bool {
-    serde_json::from_str("false").expect("schema default")
 }
 fn default_1835() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1836() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1837() -> f64 {
-    serde_json::from_str("0.0").expect("schema default")
-}
-fn default_1838() -> String {
-    serde_json::from_str("\"fact\"").expect("schema default")
-}
-fn default_1839() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_1840() -> std::collections::HashMap<String, String> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_1841() -> bool {
+fn default_1836() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1842() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_1843() -> String {
+fn default_1837() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1844() -> Vec<BulkSetResult> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1838() -> f64 {
+    serde_json::from_str("0.0").expect("schema default")
 }
-fn default_1845() -> Vec<RefusedFact> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1839() -> String {
+    serde_json::from_str("\"fact\"").expect("schema default")
 }
-fn default_1846() -> Integer {
+fn default_1840() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1841() -> std::collections::HashMap<String, String> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_1842() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_1843() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1844() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1845() -> Vec<BulkSetResult> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_1846() -> Vec<RefusedFact> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1847() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1848() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1848() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1849() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1850() -> Integer {
-    serde_json::from_str("1").expect("schema default")
+fn default_1850() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1851() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+    serde_json::from_str("1").expect("schema default")
 }
 fn default_1852() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1853() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1854() -> Integer {
+fn default_1853() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1854() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1855() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -65988,65 +65990,65 @@ fn default_1856() -> Integer {
 fn default_1857() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1858() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_1859() -> String {
-    serde_json::from_str("\"whole\"").expect("schema default")
-}
-fn default_1860() -> Integer {
+fn default_1858() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1861() -> Vec<String> {
+fn default_1859() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
+}
+fn default_1860() -> String {
+    serde_json::from_str("\"whole\"").expect("schema default")
+}
+fn default_1861() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1862() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1863() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_1864() -> Vec<String> {
+fn default_1863() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1865() -> Integer {
+fn default_1864() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1866() -> Vec<String> {
+fn default_1865() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
+}
+fn default_1866() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1867() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1868() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_1868() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
-fn default_1869() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1869() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_1870() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1871() -> std::collections::HashMap<String, f64> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_1872() -> String {
+fn default_1871() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1873() -> bool {
+fn default_1872() -> std::collections::HashMap<String, f64> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_1873() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1874() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1874() -> Vec<String> {
+fn default_1875() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1875() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1876() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1877() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1877() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1878() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66054,17 +66056,17 @@ fn default_1878() -> String {
 fn default_1879() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1880() -> bool {
+fn default_1880() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1881() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1881() -> Integer {
+fn default_1882() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1882() -> Option<String> {
+fn default_1883() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
-}
-fn default_1883() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1884() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66072,11 +66074,11 @@ fn default_1884() -> String {
 fn default_1885() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1886() -> Vec<MemoryStatus> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1886() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1887() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_1887() -> Vec<MemoryStatus> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1888() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -66093,53 +66095,53 @@ fn default_1891() -> Integer {
 fn default_1892() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1893() -> bool {
+fn default_1893() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1894() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1894() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_1895() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1895() -> Vec<String> {
+fn default_1896() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1896() -> Option<String> {
+fn default_1897() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1897() -> String {
+fn default_1898() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1898() -> Integer {
+fn default_1899() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1899() -> Option<Integer> {
+fn default_1900() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1900() -> Option<String> {
+fn default_1901() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1901() -> Option<Integer> {
+fn default_1902() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1902() -> Option<String> {
+fn default_1903() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1903() -> Vec<MemoryTouchResult> {
+fn default_1904() -> Vec<MemoryTouchResult> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1904() -> Integer {
+fn default_1905() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_1905() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1906() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1907() -> Option<Integer> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_1908() -> String {
+fn default_1907() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1908() -> Option<Integer> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1909() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66150,20 +66152,20 @@ fn default_1910() -> String {
 fn default_1911() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1912() -> Option<Integer> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_1913() -> String {
+fn default_1912() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1913() -> Option<Integer> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_1914() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1915() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_1916() -> String {
+fn default_1915() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1916() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1917() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66177,44 +66179,44 @@ fn default_1919() -> String {
 fn default_1920() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1921() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_1922() -> String {
+fn default_1921() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1923() -> Vec<MemoryUpdateCandidate> {
+fn default_1922() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1923() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1924() -> Vec<MemoryUpdateCandidate> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1924() -> String {
+fn default_1925() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1925() -> Integer {
+fn default_1926() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1926() -> String {
+fn default_1927() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1927() -> Integer {
+fn default_1928() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_1928() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1929() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1930() -> Integer {
+fn default_1930() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1931() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1931() -> String {
+fn default_1932() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1932() -> bool {
+fn default_1933() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_1933() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1934() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66225,104 +66227,104 @@ fn default_1935() -> String {
 fn default_1936() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1937() -> Option<String> {
+fn default_1937() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1938() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1938() -> String {
+fn default_1939() -> String {
     serde_json::from_str("\"none\"").expect("schema default")
 }
-fn default_1939() -> Integer {
+fn default_1940() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_1940() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1941() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1942() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1943() -> String {
     serde_json::from_str("\"active\"").expect("schema default")
 }
-fn default_1943() -> bool {
+fn default_1944() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1944() -> Vec<String> {
+fn default_1945() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1945() -> std::collections::HashMap<String, Value> {
+fn default_1946() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1946() -> String {
+fn default_1947() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1947() -> Vec<SchemaFieldOutput> {
+fn default_1948() -> Vec<SchemaFieldOutput> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1948() -> std::collections::HashMap<String, Integer> {
+fn default_1949() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1949() -> Integer {
+fn default_1950() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1950() -> Option<bool> {
+fn default_1951() -> Option<bool> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1951() -> String {
+fn default_1952() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1952() -> bool {
+fn default_1953() -> bool {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_1953() -> Vec<MentorPlane> {
+fn default_1954() -> Vec<MentorPlane> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1954() -> Vec<String> {
+fn default_1955() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1955() -> std::collections::HashMap<String, Value> {
+fn default_1956() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_1956() -> Option<String> {
+fn default_1957() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1957() -> Vec<MentorHint> {
+fn default_1958() -> Vec<MentorHint> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_1958() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1959() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1960() -> Vec<MentorAdoption> {
+fn default_1960() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_1961() -> Vec<MentorAdoption> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1961() -> Option<Integer> {
+fn default_1962() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1962() -> Vec<UsageRung> {
+fn default_1963() -> Vec<UsageRung> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1963() -> Option<String> {
+fn default_1964() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1964() -> Option<Integer> {
+fn default_1965() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1965() -> Vec<String> {
+fn default_1966() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1966() -> bool {
+fn default_1967() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1967() -> Vec<String> {
+fn default_1968() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1968() -> bool {
+fn default_1969() -> bool {
     serde_json::from_str("true").expect("schema default")
-}
-fn default_1969() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_1970() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -66348,11 +66350,11 @@ fn default_1976() -> Integer {
 fn default_1977() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1978() -> f64 {
-    serde_json::from_str("0.0").expect("schema default")
-}
-fn default_1979() -> Integer {
+fn default_1978() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_1979() -> f64 {
+    serde_json::from_str("0.0").expect("schema default")
 }
 fn default_1980() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -66363,47 +66365,47 @@ fn default_1981() -> Integer {
 fn default_1982() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1983() -> Option<Integer> {
-    serde_json::from_str("null").expect("schema default")
+fn default_1983() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_1984() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_1985() -> Vec<FindingEvidence> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_1985() -> Option<Integer> {
+    serde_json::from_str("null").expect("schema default")
 }
-fn default_1986() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_1986() -> Vec<FindingEvidence> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_1987() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1988() -> Integer {
+fn default_1988() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_1989() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_1989() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_1990() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1990() -> Vec<String> {
+fn default_1991() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_1991() -> String {
+fn default_1992() -> String {
     serde_json::from_str("\"memory\"").expect("schema default")
 }
-fn default_1992() -> bool {
+fn default_1993() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_1993() -> String {
+fn default_1994() -> String {
     serde_json::from_str("\"approval\"").expect("schema default")
 }
-fn default_1994() -> String {
+fn default_1995() -> String {
     serde_json::from_str("\"public\"").expect("schema default")
 }
-fn default_1995() -> BrowseEntryMyStatus {
+fn default_1996() -> BrowseEntryMyStatus {
     serde_json::from_str("\"none\"").expect("schema default")
-}
-fn default_1996() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_1997() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66411,23 +66413,23 @@ fn default_1997() -> String {
 fn default_1998() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_1999() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_2000() -> String {
+fn default_1999() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2001() -> Option<NamespaceCancelRequestOutputClearedRole> {
+fn default_2000() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2001() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2002() -> Option<NamespaceCancelRequestOutputClearedRole> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2002() -> Option<String> {
+fn default_2003() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2003() -> Vec<String> {
+fn default_2004() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_2004() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_2005() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
@@ -66435,10 +66437,10 @@ fn default_2005() -> Option<String> {
 fn default_2006() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2007() -> Option<Vec<String>> {
+fn default_2007() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2008() -> Option<bool> {
+fn default_2008() -> Option<Vec<String>> {
     serde_json::from_str("null").expect("schema default")
 }
 fn default_2009() -> Option<bool> {
@@ -66453,40 +66455,40 @@ fn default_2011() -> Option<bool> {
 fn default_2012() -> Option<bool> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2013() -> Option<f64> {
+fn default_2013() -> Option<bool> {
     serde_json::from_str("null").expect("schema default")
 }
 fn default_2014() -> Option<f64> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2015() -> Option<String> {
+fn default_2015() -> Option<f64> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2016() -> Option<f64> {
+fn default_2016() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2017() -> Option<Integer> {
+fn default_2017() -> Option<f64> {
     serde_json::from_str("null").expect("schema default")
 }
 fn default_2018() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2019() -> Option<NamespaceGetOutputVisibility> {
+fn default_2019() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2020() -> Option<bool> {
+fn default_2020() -> Option<NamespaceGetOutputVisibility> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2021() -> Option<String> {
+fn default_2021() -> Option<bool> {
     serde_json::from_str("null").expect("schema default")
 }
 fn default_2022() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2023() -> Option<std::collections::HashMap<String, Value>> {
+fn default_2023() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2024() -> Option<String> {
+fn default_2024() -> Option<std::collections::HashMap<String, Value>> {
     serde_json::from_str("null").expect("schema default")
 }
 fn default_2025() -> Option<String> {
@@ -66495,22 +66497,22 @@ fn default_2025() -> Option<String> {
 fn default_2026() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2027() -> Option<ProposalPolicy> {
+fn default_2027() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2028() -> Option<NamespaceGetOutputCodeChangePolicy> {
+fn default_2028() -> Option<ProposalPolicy> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2029() -> Option<Vec<std::collections::HashMap<String, Value>>> {
+fn default_2029() -> Option<NamespaceGetOutputCodeChangePolicy> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2030() -> Option<NamespaceGetOutputClassification> {
+fn default_2030() -> Option<Vec<std::collections::HashMap<String, Value>>> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2031() -> Option<Integer> {
+fn default_2031() -> Option<NamespaceGetOutputClassification> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2032() -> Option<String> {
+fn default_2032() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
 fn default_2033() -> Option<String> {
@@ -66519,11 +66521,11 @@ fn default_2033() -> Option<String> {
 fn default_2034() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2035() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_2035() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
-fn default_2036() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2036() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_2037() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66534,17 +66536,17 @@ fn default_2038() -> String {
 fn default_2039() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2040() -> Option<String> {
+fn default_2040() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2041() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2041() -> bool {
+fn default_2042() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2042() -> Integer {
+fn default_2043() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_2043() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2044() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66555,128 +66557,128 @@ fn default_2045() -> String {
 fn default_2046() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2047() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_2048() -> Option<NamespaceGuideSetOutputNamespaceGuideGetOutput> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_2049() -> String {
+fn default_2047() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2050() -> Vec<InventoryIdentity> {
+fn default_2048() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2049() -> Option<NamespaceGuideSetOutputNamespaceGuideGetOutput> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2050() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2051() -> Vec<InventoryIdentity> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_2051() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2052() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2053() -> String {
     serde_json::from_str("\"active\"").expect("schema default")
 }
-fn default_2053() -> Option<NamespaceJoinOutputRequestedRole> {
+fn default_2054() -> Option<NamespaceJoinOutputRequestedRole> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2054() -> Vec<String> {
+fn default_2055() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2055() -> Option<String> {
+fn default_2056() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2056() -> String {
+fn default_2057() -> String {
     serde_json::from_str("\"memory\"").expect("schema default")
 }
-fn default_2057() -> bool {
+fn default_2058() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_2058() -> f64 {
-    serde_json::from_str("0.0").expect("schema default")
 }
 fn default_2059() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
 }
-fn default_2060() -> String {
+fn default_2060() -> f64 {
+    serde_json::from_str("0.0").expect("schema default")
+}
+fn default_2061() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2061() -> Option<f64> {
+fn default_2062() -> Option<f64> {
     serde_json::from_str("null").expect("schema default")
-}
-fn default_2062() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_2063() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2064() -> NamespaceEntryVisibility {
+fn default_2064() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2065() -> NamespaceEntryVisibility {
     serde_json::from_str("\"private\"").expect("schema default")
 }
-fn default_2065() -> String {
+fn default_2066() -> String {
     serde_json::from_str("\"active\"").expect("schema default")
-}
-fn default_2066() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_2067() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2068() -> Vec<String> {
+fn default_2068() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2069() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2069() -> MineEntryVisibility {
+fn default_2070() -> MineEntryVisibility {
     serde_json::from_str("\"private\"").expect("schema default")
 }
-fn default_2070() -> String {
-    serde_json::from_str("\"memory\"").expect("schema default")
-}
 fn default_2071() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+    serde_json::from_str("\"memory\"").expect("schema default")
 }
 fn default_2072() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2073() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_2073() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2074() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_2074() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_2075() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2076() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2077() -> NamespaceRegisterOutputVisibility {
-    serde_json::from_str("\"private\"").expect("schema default")
-}
-fn default_2078() -> bool {
+fn default_2076() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2079() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_2077() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2078() -> NamespaceRegisterOutputVisibility {
+    serde_json::from_str("\"private\"").expect("schema default")
+}
+fn default_2079() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_2080() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2081() -> bool {
+fn default_2081() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2082() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2082() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2083() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_2083() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_2084() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2085() -> Vec<String> {
+fn default_2085() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2086() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2086() -> Integer {
+fn default_2087() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_2087() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2088() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66690,11 +66692,11 @@ fn default_2090() -> String {
 fn default_2091() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2092() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_2093() -> String {
+fn default_2092() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2093() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_2094() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66702,11 +66704,11 @@ fn default_2094() -> String {
 fn default_2095() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2096() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_2096() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2097() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_2097() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2098() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
@@ -66717,32 +66719,32 @@ fn default_2099() -> Option<String> {
 fn default_2100() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2101() -> String {
+fn default_2101() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2102() -> String {
     serde_json::from_str("\"{}\"").expect("schema default")
 }
-fn default_2102() -> NamespaceSnapshotOutputSnapshotMemoryRowStatus {
+fn default_2103() -> NamespaceSnapshotOutputSnapshotMemoryRowStatus {
     serde_json::from_str("\"active\"").expect("schema default")
 }
-fn default_2103() -> Option<bool> {
+fn default_2104() -> Option<bool> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2104() -> Vec<String> {
+fn default_2105() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2105() -> String {
+fn default_2106() -> String {
     serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2106() -> Integer {
-    serde_json::from_str("1").expect("schema default")
 }
 fn default_2107() -> Integer {
+    serde_json::from_str("1").expect("schema default")
+}
+fn default_2108() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2108() -> Option<String> {
+fn default_2109() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
-}
-fn default_2109() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2110() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66753,35 +66755,35 @@ fn default_2111() -> String {
 fn default_2112() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2113() -> Option<String> {
+fn default_2113() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2114() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2114() -> f64 {
+fn default_2115() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
 }
-fn default_2115() -> Option<String> {
+fn default_2116() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2116() -> Option<Integer> {
+fn default_2117() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2117() -> Integer {
+fn default_2118() -> Integer {
     serde_json::from_str("1").expect("schema default")
-}
-fn default_2118() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_2119() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2120() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2121() -> Option<String> {
+fn default_2120() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2122() -> String {
+fn default_2121() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2122() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_2123() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66789,155 +66791,155 @@ fn default_2123() -> String {
 fn default_2124() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2125() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_2126() -> String {
+fn default_2125() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2127() -> Option<String> {
+fn default_2126() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2128() -> String {
+fn default_2127() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2128() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_2129() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2130() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_2130() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2131() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2132() -> Option<f64> {
+fn default_2132() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2133() -> Option<f64> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2133() -> Integer {
+fn default_2134() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2134() -> String {
+fn default_2135() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2135() -> Vec<String> {
+fn default_2136() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2136() -> Vec<TaxonomyCommunity> {
+fn default_2137() -> Vec<TaxonomyCommunity> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2137() -> String {
+fn default_2138() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2138() -> Option<Integer> {
+fn default_2139() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2139() -> Vec<String> {
+fn default_2140() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2140() -> Integer {
+fn default_2141() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2141() -> Vec<FindingEvidence> {
+fn default_2142() -> Vec<FindingEvidence> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2142() -> Option<Integer> {
+fn default_2143() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
-}
-fn default_2143() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2144() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2145() -> Option<Integer> {
+fn default_2145() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2146() -> Option<Integer> {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2146() -> TuneProposalEffect {
+fn default_2147() -> TuneProposalEffect {
     serde_json::from_str("\"future\"").expect("schema default")
 }
-fn default_2147() -> TuneApplyVia {
+fn default_2148() -> TuneApplyVia {
     serde_json::from_str("\"op\"").expect("schema default")
 }
-fn default_2148() -> bool {
+fn default_2149() -> bool {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_2149() -> Vec<TuneApply> {
+fn default_2150() -> Vec<TuneApply> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2150() -> Option<Integer> {
+fn default_2151() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2151() -> Option<ChunkingPreview> {
+fn default_2152() -> Option<ChunkingPreview> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2152() -> String {
+fn default_2153() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2153() -> Vec<String> {
+fn default_2154() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2154() -> Vec<TuneProposal> {
+fn default_2155() -> Vec<TuneProposal> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_2155() -> Option<Integer> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_2156() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2157() -> Option<String> {
+fn default_2157() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2158() -> String {
+fn default_2158() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2159() -> String {
     serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2159() -> Option<Integer> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_2160() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2161() -> Option<ChunkingSample> {
+fn default_2161() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2162() -> Vec<String> {
+fn default_2162() -> Option<ChunkingSample> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2163() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2163() -> bool {
+fn default_2164() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_2164() -> Option<Integer> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_2165() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2166() -> Vec<FindingEvidence> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_2166() -> Option<Integer> {
+    serde_json::from_str("null").expect("schema default")
 }
-fn default_2167() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2167() -> Vec<FindingEvidence> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2168() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2169() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2169() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2170() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2170() -> std::collections::HashMap<String, Integer> {
+fn default_2171() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2171() -> Vec<String> {
+fn default_2172() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_2172() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_2173() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2174() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2174() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_2175() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66945,26 +66947,26 @@ fn default_2175() -> String {
 fn default_2176() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2177() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_2177() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2178() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2179() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2179() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2180() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2181() -> bool {
+fn default_2181() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2182() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2182() -> Integer {
+fn default_2183() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_2183() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2184() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -66975,104 +66977,104 @@ fn default_2185() -> String {
 fn default_2186() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2187() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2188() -> String {
+fn default_2187() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2188() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2189() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2190() -> std::collections::HashMap<String, Value> {
+fn default_2190() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2191() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2191() -> String {
+fn default_2192() -> String {
     serde_json::from_str("\"active\"").expect("schema default")
-}
-fn default_2192() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
 }
 fn default_2193() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2194() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_2194() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
-fn default_2195() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2195() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_2196() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2197() -> Vec<ProjectionFailureRetryRow> {
+fn default_2197() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2198() -> Vec<ProjectionFailureRetryRow> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2198() -> Integer {
+fn default_2199() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_2199() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2200() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2201() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_2202() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_2203() -> String {
+fn default_2201() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2204() -> bool {
+fn default_2202() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2203() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2205() -> String {
-    serde_json::from_str("\"inherit\"").expect("schema default")
+fn default_2204() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2206() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_2205() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_2206() -> String {
+    serde_json::from_str("\"inherit\"").expect("schema default")
 }
 fn default_2207() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2208() -> bool {
+fn default_2208() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2209() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2209() -> Vec<String> {
+fn default_2210() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2210() -> Integer {
+fn default_2211() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2211() -> ProcedureEvolveOutputGate {
+fn default_2212() -> ProcedureEvolveOutputGate {
     serde_json::from_str("\"none\"").expect("schema default")
 }
-fn default_2212() -> String {
+fn default_2213() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2213() -> f64 {
+fn default_2214() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
-}
-fn default_2214() -> std::collections::HashMap<String, Integer> {
-    serde_json::from_str("{}").expect("schema default")
 }
 fn default_2215() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2216() -> std::collections::HashMap<String, f64> {
+fn default_2216() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
 fn default_2217() -> std::collections::HashMap<String, f64> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2218() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2218() -> std::collections::HashMap<String, f64> {
+    serde_json::from_str("{}").expect("schema default")
 }
-fn default_2219() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_2219() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2220() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
@@ -67080,95 +67082,95 @@ fn default_2220() -> Vec<String> {
 fn default_2221() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2222() -> std::collections::HashMap<String, Integer> {
+fn default_2222() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2223() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2223() -> Integer {
+fn default_2224() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2224() -> bool {
+fn default_2225() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2225() -> std::collections::HashMap<String, f64> {
+fn default_2226() -> std::collections::HashMap<String, f64> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2226() -> Vec<String> {
+fn default_2227() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2227() -> std::collections::HashMap<String, Value> {
+fn default_2228() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2228() -> String {
+fn default_2229() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2229() -> ProcedureLocateOutputStatus {
+fn default_2230() -> ProcedureLocateOutputStatus {
     serde_json::from_str("\"authored\"").expect("schema default")
 }
-fn default_2230() -> Option<std::collections::HashMap<String, Value>> {
+fn default_2231() -> Option<std::collections::HashMap<String, Value>> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2231() -> Vec<Vec<std::collections::HashMap<String, Value>>> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2232() -> Vec<String> {
+fn default_2232() -> Vec<Vec<std::collections::HashMap<String, Value>>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_2233() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2234() -> std::collections::HashMap<String, Integer> {
+fn default_2234() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2235() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2235() -> bool {
+fn default_2236() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2236() -> Vec<String> {
+fn default_2237() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2237() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2238() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2238() -> String {
+fn default_2239() -> String {
     serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2239() -> std::collections::HashMap<String, Integer> {
-    serde_json::from_str("{}").expect("schema default")
 }
 fn default_2240() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2241() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2242() -> std::collections::HashMap<String, Value> {
+fn default_2241() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2243() -> Option<std::collections::HashMap<String, Value>> {
+fn default_2242() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2243() -> std::collections::HashMap<String, Value> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_2244() -> Option<std::collections::HashMap<String, Value>> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2244() -> bool {
+fn default_2245() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2245() -> std::collections::HashMap<String, Integer> {
+fn default_2246() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2246() -> ProcedureMatchStatus {
+fn default_2247() -> ProcedureMatchStatus {
     serde_json::from_str("\"authored\"").expect("schema default")
 }
-fn default_2247() -> Option<std::collections::HashMap<String, Value>> {
+fn default_2248() -> Option<std::collections::HashMap<String, Value>> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2248() -> Vec<String> {
+fn default_2249() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2249() -> Integer {
+fn default_2250() -> Integer {
     serde_json::from_str("1").expect("schema default")
 }
-fn default_2250() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2251() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_2251() -> f64 {
-    serde_json::from_str("0.0").expect("schema default")
 }
 fn default_2252() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
@@ -67176,38 +67178,38 @@ fn default_2252() -> f64 {
 fn default_2253() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
 }
-fn default_2254() -> Option<f64> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_2255() -> std::collections::HashMap<String, Integer> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_2256() -> std::collections::HashMap<String, std::collections::HashMap<String, Integer>> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_2257() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2258() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_2259() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2260() -> f64 {
+fn default_2254() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
 }
-fn default_2261() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_2255() -> Option<f64> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2256() -> std::collections::HashMap<String, Integer> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_2257() -> std::collections::HashMap<String, std::collections::HashMap<String, Integer>> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_2258() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2259() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2260() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2261() -> f64 {
+    serde_json::from_str("0.0").expect("schema default")
 }
 fn default_2262() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2263() -> Vec<ProfileActivityEntry> {
+fn default_2263() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2264() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2264() -> Vec<ProfileActivityEntry> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2265() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -67218,53 +67220,53 @@ fn default_2266() -> String {
 fn default_2267() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2268() -> Option<Integer> {
+fn default_2268() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2269() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2269() -> Integer {
+fn default_2270() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2270() -> Vec<String> {
+fn default_2271() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2271() -> std::collections::HashMap<String, Value> {
+fn default_2272() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2272() -> Option<String> {
+fn default_2273() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2273() -> String {
+fn default_2274() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2274() -> Integer {
+fn default_2275() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_2275() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2276() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2277() -> std::collections::HashMap<String, Value> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_2278() -> String {
+fn default_2277() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2278() -> std::collections::HashMap<String, Value> {
+    serde_json::from_str("{}").expect("schema default")
 }
 fn default_2279() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2280() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_2281() -> RunBeginOutputStatus {
-    serde_json::from_str("\"active\"").expect("schema default")
-}
-fn default_2282() -> String {
+fn default_2280() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2283() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_2281() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2282() -> RunBeginOutputStatus {
+    serde_json::from_str("\"active\"").expect("schema default")
+}
+fn default_2283() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2284() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -67272,26 +67274,26 @@ fn default_2284() -> Integer {
 fn default_2285() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2286() -> Vec<String> {
+fn default_2286() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2287() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2287() -> Integer {
-    serde_json::from_str("-1").expect("schema default")
-}
 fn default_2288() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+    serde_json::from_str("-1").expect("schema default")
 }
 fn default_2289() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2290() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2290() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
 fn default_2291() -> String {
-    serde_json::from_str("\"keep\"").expect("schema default")
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2292() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_2292() -> String {
+    serde_json::from_str("\"keep\"").expect("schema default")
 }
 fn default_2293() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -67299,20 +67301,20 @@ fn default_2293() -> Integer {
 fn default_2294() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2295() -> Option<RunRow> {
+fn default_2295() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2296() -> Option<RunRow> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2296() -> Integer {
+fn default_2297() -> Integer {
     serde_json::from_str("-1").expect("schema default")
-}
-fn default_2297() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2298() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2299() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_2299() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2300() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -67320,23 +67322,23 @@ fn default_2300() -> Integer {
 fn default_2301() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2302() -> f64 {
+fn default_2302() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2303() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
 }
-fn default_2303() -> Integer {
+fn default_2304() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2304() -> Vec<RunGetOutputOverBudgetItem> {
+fn default_2305() -> Vec<RunGetOutputOverBudgetItem> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2305() -> Integer {
+fn default_2306() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2306() -> Vec<String> {
+fn default_2307() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_2307() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_2308() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -67344,32 +67346,32 @@ fn default_2308() -> Integer {
 fn default_2309() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2310() -> Vec<RunGradeProposal> {
+fn default_2310() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2311() -> Vec<RunGradeProposal> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2311() -> Option<Integer> {
+fn default_2312() -> Option<Integer> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2312() -> Option<std::collections::HashMap<String, Value>> {
+fn default_2313() -> Option<std::collections::HashMap<String, Value>> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2313() -> LiveSearchResultsLive {
+fn default_2314() -> LiveSearchResultsLive {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_2314() -> String {
+fn default_2315() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2315() -> LiveSearchHitLive {
+fn default_2316() -> LiveSearchHitLive {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_2316() -> Vec<LiveSearchHit> {
+fn default_2317() -> Vec<LiveSearchHit> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2317() -> Option<LiveSearchResults> {
+fn default_2318() -> Option<LiveSearchResults> {
     serde_json::from_str("null").expect("schema default")
-}
-fn default_2318() -> std::collections::HashMap<String, Value> {
-    serde_json::from_str("{}").expect("schema default")
 }
 fn default_2319() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
@@ -67380,23 +67382,23 @@ fn default_2320() -> std::collections::HashMap<String, Value> {
 fn default_2321() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2322() -> Option<std::collections::HashMap<String, Value>> {
+fn default_2322() -> std::collections::HashMap<String, Value> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_2323() -> Option<std::collections::HashMap<String, Value>> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2323() -> Vec<String> {
+fn default_2324() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2324() -> Integer {
+fn default_2325() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2325() -> String {
+fn default_2326() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2326() -> Integer {
+fn default_2327() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_2327() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2328() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -67419,59 +67421,59 @@ fn default_2333() -> String {
 fn default_2334() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2335() -> Vec<BriefDecision> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2336() -> String {
+fn default_2335() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2336() -> Vec<BriefDecision> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2337() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2338() -> Vec<BriefDeadEnd> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2339() -> String {
+fn default_2338() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2339() -> Vec<BriefDeadEnd> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2340() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2341() -> Vec<BriefDone> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_2341() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2342() -> Vec<String> {
+fn default_2342() -> Vec<BriefDone> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_2343() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2344() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2344() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2345() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2346() -> Vec<BriefFile> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_2346() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2347() -> Vec<String> {
+fn default_2347() -> Vec<BriefFile> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_2348() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2349() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2349() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2350() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2351() -> Option<BriefSections> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_2352() -> String {
+fn default_2351() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2352() -> Option<BriefSections> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_2353() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -67488,14 +67490,14 @@ fn default_2356() -> String {
 fn default_2357() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2358() -> Vec<String> {
+fn default_2358() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2359() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2359() -> Option<String> {
+fn default_2360() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
-}
-fn default_2360() -> Integer {
-    serde_json::from_str("0").expect("schema default")
 }
 fn default_2361() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -67509,11 +67511,11 @@ fn default_2363() -> Integer {
 fn default_2364() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2365() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_2365() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
-fn default_2366() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2366() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_2367() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -67533,20 +67535,20 @@ fn default_2371() -> String {
 fn default_2372() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2373() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_2373() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2374() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_2374() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_2375() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2376() -> Vec<SessionBriefSummary> {
-    serde_json::from_str("[]").expect("schema default")
+fn default_2376() -> Integer {
+    serde_json::from_str("0").expect("schema default")
 }
-fn default_2377() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+fn default_2377() -> Vec<SessionBriefSummary> {
+    serde_json::from_str("[]").expect("schema default")
 }
 fn default_2378() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -67557,8 +67559,8 @@ fn default_2379() -> String {
 fn default_2380() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2381() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_2381() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2382() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -67572,11 +67574,11 @@ fn default_2384() -> Integer {
 fn default_2385() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2386() -> f64 {
-    serde_json::from_str("0.0").expect("schema default")
-}
-fn default_2387() -> Integer {
+fn default_2386() -> Integer {
     serde_json::from_str("0").expect("schema default")
+}
+fn default_2387() -> f64 {
+    serde_json::from_str("0.0").expect("schema default")
 }
 fn default_2388() -> Integer {
     serde_json::from_str("0").expect("schema default")
@@ -67584,20 +67586,20 @@ fn default_2388() -> Integer {
 fn default_2389() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2390() -> String {
+fn default_2390() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2391() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2391() -> SessionBriefStats {
+fn default_2392() -> SessionBriefStats {
     serde_json::from_str("{\"events_in\":0,\"windows\":0,\"events_total\":0,\"source_chars\":0,\"brief_chars\":0,\"compression_ratio\":0.0,\"dropped_ungrounded\":0,\"tokens_in\":0,\"tokens_out\":0,\"llm_model\":\"\"}").expect("schema default")
-}
-fn default_2392() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2393() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2394() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
+fn default_2394() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2395() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
@@ -67605,56 +67607,56 @@ fn default_2395() -> Option<String> {
 fn default_2396() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2397() -> Integer {
+fn default_2397() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2398() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2398() -> std::collections::HashMap<String, Value> {
+fn default_2399() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
-}
-fn default_2399() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2400() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2401() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_2402() -> String {
+fn default_2401() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2403() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_2402() -> Option<String> {
+    serde_json::from_str("null").expect("schema default")
+}
+fn default_2403() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2404() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2405() -> Option<String> {
-    serde_json::from_str("null").expect("schema default")
-}
-fn default_2406() -> std::collections::HashMap<String, Value> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_2407() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2408() -> Integer {
+fn default_2405() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2409() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2410() -> Option<String> {
+fn default_2406() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2411() -> String {
+fn default_2407() -> std::collections::HashMap<String, Value> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_2408() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2412() -> Option<TaskPayload> {
+fn default_2409() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2410() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2411() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2413() -> String {
+fn default_2412() -> String {
     serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2413() -> Option<TaskPayload> {
+    serde_json::from_str("null").expect("schema default")
 }
 fn default_2414() -> String {
     serde_json::from_str("\"\"").expect("schema default")
@@ -67665,326 +67667,326 @@ fn default_2415() -> String {
 fn default_2416() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2417() -> Integer {
-    serde_json::from_str("0").expect("schema default")
+fn default_2417() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2418() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2419() -> String {
+fn default_2419() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2420() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2420() -> std::collections::HashMap<String, Value> {
+fn default_2421() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
-}
-fn default_2421() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2422() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2423() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_2424() -> String {
+fn default_2423() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2425() -> std::collections::HashMap<String, Value> {
+fn default_2424() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_2425() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2426() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2426() -> Vec<std::collections::HashMap<String, Value>> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2427() -> Vec<String> {
+fn default_2427() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_2428() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2429() -> bool {
-    serde_json::from_str("false").expect("schema default")
+fn default_2429() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
 }
-fn default_2430() -> String {
-    serde_json::from_str("\"unknown\"").expect("schema default")
+fn default_2430() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
 fn default_2431() -> String {
+    serde_json::from_str("\"unknown\"").expect("schema default")
+}
+fn default_2432() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2432() -> Vec<String> {
+fn default_2433() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2433() -> bool {
+fn default_2434() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2434() -> String {
+fn default_2435() -> String {
     serde_json::from_str("\"none\"").expect("schema default")
 }
-fn default_2435() -> bool {
+fn default_2436() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2436() -> Vec<String> {
+fn default_2437() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2437() -> std::collections::HashMap<String, Value> {
+fn default_2438() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2438() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2439() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_2439() -> bool {
-    serde_json::from_str("false").expect("schema default")
 }
 fn default_2440() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2441() -> Vec<std::collections::HashMap<String, Value>> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2442() -> std::collections::HashMap<String, String> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_2443() -> String {
-    serde_json::from_str("\"none\"").expect("schema default")
-}
-fn default_2444() -> Vec<std::collections::HashMap<String, Value>> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2445() -> bool {
+fn default_2441() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2446() -> String {
+fn default_2442() -> Vec<std::collections::HashMap<String, Value>> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2443() -> std::collections::HashMap<String, String> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_2444() -> String {
+    serde_json::from_str("\"none\"").expect("schema default")
+}
+fn default_2445() -> Vec<std::collections::HashMap<String, Value>> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2446() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_2447() -> String {
     serde_json::from_str("\"calibrated\"").expect("schema default")
 }
-fn default_2447() -> std::collections::HashMap<String, f64> {
+fn default_2448() -> std::collections::HashMap<String, f64> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2448() -> std::collections::HashMap<String, Value> {
+fn default_2449() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2449() -> String {
+fn default_2450() -> String {
     serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2450() -> std::collections::HashMap<String, Value> {
-    serde_json::from_str("{}").expect("schema default")
 }
 fn default_2451() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2452() -> std::collections::HashMap<String, String> {
+fn default_2452() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2453() -> String {
-    serde_json::from_str("\"ok\"").expect("schema default")
+fn default_2453() -> std::collections::HashMap<String, String> {
+    serde_json::from_str("{}").expect("schema default")
 }
 fn default_2454() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
+    serde_json::from_str("\"ok\"").expect("schema default")
 }
 fn default_2455() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2456() -> bool {
+fn default_2456() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2457() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2457() -> Integer {
+fn default_2458() -> Integer {
     serde_json::from_str("0").expect("schema default")
-}
-fn default_2458() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2459() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2460() -> Vec<TrackerLegStatus> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2461() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_2462() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2463() -> std::collections::HashMap<String, std::collections::HashMap<String, Value>> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_2464() -> Vec<std::collections::HashMap<String, Value>> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2465() -> Vec<std::collections::HashMap<String, String>> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2466() -> String {
+fn default_2460() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2467() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2461() -> Vec<TrackerLegStatus> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2468() -> std::collections::HashMap<String, Value> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_2469() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2470() -> Vec<std::collections::HashMap<String, Value>> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2471() -> bool {
+fn default_2462() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2472() -> Integer {
+fn default_2463() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2464() -> std::collections::HashMap<String, std::collections::HashMap<String, Value>> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_2465() -> Vec<std::collections::HashMap<String, Value>> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2466() -> Vec<std::collections::HashMap<String, String>> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2467() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2468() -> Vec<std::collections::HashMap<String, Value>> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2469() -> std::collections::HashMap<String, Value> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_2470() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
+}
+fn default_2471() -> Vec<std::collections::HashMap<String, Value>> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2472() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_2473() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2473() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2474() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2474() -> String {
+fn default_2475() -> String {
     serde_json::from_str("\"no_flaky_signal\"").expect("schema default")
 }
-fn default_2475() -> bool {
+fn default_2476() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2476() -> Option<std::collections::HashMap<String, Value>> {
+fn default_2477() -> Option<std::collections::HashMap<String, Value>> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2477() -> Vec<Integer> {
+fn default_2478() -> Vec<Integer> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2478() -> bool {
+fn default_2479() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2479() -> std::collections::HashMap<String, Value> {
+fn default_2480() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2480() -> String {
+fn default_2481() -> String {
     serde_json::from_str("\"not_computed\"").expect("schema default")
 }
-fn default_2481() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2482() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2482() -> String {
+fn default_2483() -> String {
     serde_json::from_str("\"candidate\"").expect("schema default")
 }
-fn default_2483() -> std::collections::HashMap<String, Value> {
+fn default_2484() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2484() -> String {
+fn default_2485() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2485() -> bool {
+fn default_2486() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2486() -> Integer {
+fn default_2487() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2487() -> std::collections::HashMap<String, Value> {
+fn default_2488() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2488() -> bool {
+fn default_2489() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2489() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2490() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2490() -> std::collections::HashMap<String, Value> {
+fn default_2491() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2491() -> std::collections::HashMap<String, String> {
+fn default_2492() -> std::collections::HashMap<String, String> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2492() -> String {
+fn default_2493() -> String {
     serde_json::from_str("\"lower_bound\"").expect("schema default")
 }
-fn default_2493() -> bool {
+fn default_2494() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2494() -> Vec<String> {
+fn default_2495() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2495() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2496() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2496() -> std::collections::HashMap<String, Value> {
+fn default_2497() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2497() -> Vec<String> {
+fn default_2498() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2498() -> String {
+fn default_2499() -> String {
     serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2499() -> bool {
-    serde_json::from_str("false").expect("schema default")
 }
 fn default_2500() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_2501() -> bool {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_2501() -> std::collections::HashMap<String, String> {
+fn default_2502() -> std::collections::HashMap<String, String> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2502() -> String {
+fn default_2503() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2503() -> bool {
+fn default_2504() -> bool {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_2504() -> std::collections::HashMap<String, Value> {
+fn default_2505() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2505() -> std::collections::HashMap<String, String> {
+fn default_2506() -> std::collections::HashMap<String, String> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2506() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2507() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2507() -> Vec<String> {
+fn default_2508() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2508() -> std::collections::HashMap<String, Value> {
+fn default_2509() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2509() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2510() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
-}
-fn default_2510() -> bool {
-    serde_json::from_str("true").expect("schema default")
 }
 fn default_2511() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_2512() -> Vec<String> {
-    serde_json::from_str("[]").expect("schema default")
-}
-fn default_2513() -> std::collections::HashMap<String, Value> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_2514() -> String {
-    serde_json::from_str("\"\"").expect("schema default")
-}
-fn default_2515() -> std::collections::HashMap<String, Value> {
-    serde_json::from_str("{}").expect("schema default")
-}
-fn default_2516() -> bool {
-    serde_json::from_str("false").expect("schema default")
-}
-fn default_2517() -> bool {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_2518() -> String {
-    serde_json::from_str("\"no_signal\"").expect("schema default")
+fn default_2512() -> bool {
+    serde_json::from_str("false").expect("schema default")
 }
-fn default_2519() -> Vec<String> {
+fn default_2513() -> Vec<String> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2520() -> f64 {
-    serde_json::from_str("0.0").expect("schema default")
+fn default_2514() -> std::collections::HashMap<String, Value> {
+    serde_json::from_str("{}").expect("schema default")
 }
-fn default_2521() -> Integer {
-    serde_json::from_str("0").expect("schema default")
-}
-fn default_2522() -> String {
+fn default_2515() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2523() -> std::collections::HashMap<String, Value> {
+fn default_2516() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
+}
+fn default_2517() -> bool {
+    serde_json::from_str("false").expect("schema default")
+}
+fn default_2518() -> bool {
+    serde_json::from_str("true").expect("schema default")
+}
+fn default_2519() -> String {
+    serde_json::from_str("\"no_signal\"").expect("schema default")
+}
+fn default_2520() -> Vec<String> {
+    serde_json::from_str("[]").expect("schema default")
+}
+fn default_2521() -> f64 {
+    serde_json::from_str("0.0").expect("schema default")
+}
+fn default_2522() -> Integer {
+    serde_json::from_str("0").expect("schema default")
+}
+fn default_2523() -> String {
+    serde_json::from_str("\"\"").expect("schema default")
 }
 fn default_2524() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
@@ -67995,17 +67997,17 @@ fn default_2525() -> std::collections::HashMap<String, Value> {
 fn default_2526() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2527() -> String {
+fn default_2527() -> std::collections::HashMap<String, Value> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_2528() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2528() -> std::collections::HashMap<String, Integer> {
+fn default_2529() -> std::collections::HashMap<String, Integer> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2529() -> bool {
+fn default_2530() -> bool {
     serde_json::from_str("false").expect("schema default")
-}
-fn default_2530() -> std::collections::HashMap<String, Value> {
-    serde_json::from_str("{}").expect("schema default")
 }
 fn default_2531() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
@@ -68016,54 +68018,57 @@ fn default_2532() -> std::collections::HashMap<String, Value> {
 fn default_2533() -> std::collections::HashMap<String, Value> {
     serde_json::from_str("{}").expect("schema default")
 }
-fn default_2534() -> String {
+fn default_2534() -> std::collections::HashMap<String, Value> {
+    serde_json::from_str("{}").expect("schema default")
+}
+fn default_2535() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2535() -> Vec<std::collections::HashMap<String, Value>> {
+fn default_2536() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2536() -> Integer {
+fn default_2537() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2537() -> String {
+fn default_2538() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2538() -> bool {
+fn default_2539() -> bool {
     serde_json::from_str("true").expect("schema default")
 }
-fn default_2539() -> String {
+fn default_2540() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2540() -> Vec<WebhookDelivery> {
+fn default_2541() -> Vec<WebhookDelivery> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2541() -> bool {
+fn default_2542() -> bool {
     serde_json::from_str("false").expect("schema default")
 }
-fn default_2542() -> Vec<WebhookInfo> {
+fn default_2543() -> Vec<WebhookInfo> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_2543() -> f64 {
+fn default_2544() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
 }
-fn default_2544() -> String {
+fn default_2545() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_2545() -> Integer {
+fn default_2546() -> Integer {
     serde_json::from_str("4096").expect("schema default")
 }
-fn default_2546() -> Integer {
+fn default_2547() -> Integer {
     serde_json::from_str("0").expect("schema default")
 }
-fn default_2547() -> Option<String> {
+fn default_2548() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2548() -> f64 {
+fn default_2549() -> f64 {
     serde_json::from_str("0.0").expect("schema default")
 }
-fn default_2549() -> Option<String> {
+fn default_2550() -> Option<String> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_2550() -> Vec<WorkingMemoryBlock> {
+fn default_2551() -> Vec<WorkingMemoryBlock> {
     serde_json::from_str("[]").expect("schema default")
 }

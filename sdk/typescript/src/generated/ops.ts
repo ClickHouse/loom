@@ -4579,6 +4579,7 @@ export interface KnowledgeSourceListOutput {
   sources?: KnowledgeSourceEntry[];
   enabled?: boolean;
   accepts_sources?: boolean;
+  self_service?: boolean;
 }
 
 export interface KnowledgeSourceParseLinksInput {

@@ -3056,6 +3056,11 @@ settings:
   # it for decisions. [restart]
   # knowledge_source_sync_enabled: false
 
+  # Off refuses knowledge.source.add and knowledge.source.rotate (SELF_SERVICE_OFF), so
+  # no member's credential reaches the pods; the other source operations still answer.
+  # [live]
+  # knowledge_source_self_service_enabled: true
+
   # Require protected automatic session capture and persist deployment privacy state.
   # Off does not lift protection while the deployment latch remains set. [restart]
   # knowledge_mirrored_sources_enabled: false

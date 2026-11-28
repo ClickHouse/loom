@@ -60,6 +60,8 @@ export interface KnowledgeSourceList {
   enabled: boolean;
   /** False where add would refuse the namespace; absent from an older server. */
   accepts_sources?: boolean;
+  /** False where the operator turned add and rotate off; absent from an older server. */
+  self_service?: boolean;
 }
 
 export interface KnowledgeSourceProbe {

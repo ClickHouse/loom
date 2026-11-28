@@ -640,6 +640,7 @@
  "knowledge_source_push_provider_timeout_s": 40.0,
  "knowledge_source_push_stop_timeout_s": 2.0,
  "knowledge_source_retire_documents_per_pass": 40,
+ "knowledge_source_self_service_enabled": true,
  "knowledge_source_sync_cap_share": 0.25,
  "knowledge_source_sync_documents_per_pass": 40,
  "knowledge_source_sync_enabled": false,

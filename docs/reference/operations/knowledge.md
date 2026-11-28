@@ -706,6 +706,7 @@ The document sources registered on a namespace, with each one's sync state.
 | `sources` | `list[KnowledgeSourceEntry]` | The namespace's active sources, by name. |
 | `enabled` | `bool` | Whether this deployment runs the sync worker (LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED); false: sources are stored and probed, but nothing pulls from them. |
 | `accepts_sources` | `bool` | False where add would refuse the namespace (PERSONAL_NAMESPACE, NAMESPACE_INACTIVE). |
+| `self_service` | `bool` | Whether knowledge.source.add and rotate answer on this deployment (LOOM_KNOWLEDGE_SOURCE_SELF_SERVICE_ENABLED); the page offers neither when false. |
 
 ## `knowledge.source.parse_links`
 
