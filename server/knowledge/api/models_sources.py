@@ -145,6 +145,9 @@ class KnowledgeSourceListOutput(BaseModel):
     enabled: bool = False
     # False where add would refuse the namespace (PERSONAL_NAMESPACE, NAMESPACE_INACTIVE).
     accepts_sources: bool = True
+    # Whether knowledge.source.add and rotate answer on this deployment
+    # (LOOM_KNOWLEDGE_SOURCE_SELF_SERVICE_ENABLED); the page offers neither when false.
+    self_service: bool = True
 
 
 _ITEMS_DESCRIPTION = (

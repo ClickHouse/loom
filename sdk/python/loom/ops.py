@@ -12080,6 +12080,7 @@ class KnowledgeSourceListOutput(TypedDict, total=False):
     sources: NotRequired[list["KnowledgeSourceEntry"]]
     enabled: NotRequired[bool]
     accepts_sources: NotRequired[bool]
+    self_service: NotRequired[bool]
 
 
 class KnowledgeSourceEntry(TypedDict, total=False):

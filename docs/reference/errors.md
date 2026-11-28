@@ -852,7 +852,7 @@ Raised in `server/memory/app/profile.py`.
 
 #### `SELF_SERVICE_OFF`
 
-Raised in `server/code/app/repo_admin.py`, `server/tracker/app/sources.py`.
+Raised in `server/code/app/repo_admin.py`, `server/knowledge/app/sources.py`, `server/tracker/app/sources.py`.
 
 #### `SELF_SIGNUP_DISABLED`
 

@@ -1255,6 +1255,49 @@ def test_the_source_list_tells_a_persons_own_place(fake: _Store) -> None:
     assert not accepts("retired")
 
 
+@pytest.mark.parametrize("mode", ["shared", "connected"])
+def test_self_service_off_refuses_add_before_the_probe(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_self_service_enabled", False)
+    assert _code(app.handle_knowledge_source_add(_add(credential_mode=mode))) == (
+        "SELF_SERVICE_OFF"
+    )
+    assert fake.rows == {} and fake.probes == []
+
+
+def test_self_service_off_refuses_rotate_and_keeps_the_stored_credential(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add()))
+    before = fake.rows[(ORG, NS, "design-decks")].credential_enc
+    monkeypatch.setattr(settings, "knowledge_source_self_service_enabled", False)
+    body = KnowledgeSourceRotateInput(org=ORG, namespace=NS, name="design-decks", credential="k2")
+    assert _code(app.handle_knowledge_source_rotate(body)) == "SELF_SERVICE_OFF"
+    assert fake.rows[(ORG, NS, "design-decks")].credential_enc == before
+    assert len(fake.probes) == 1  # the add's only
+
+
+def test_self_service_off_keeps_the_reads_and_the_list_says_so(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add()))
+
+    def listed() -> Any:
+        body = KnowledgeSourceListInput(org=ORG, namespace=NS)
+        return asyncio.run(app.handle_knowledge_source_list(body))
+
+    assert listed().self_service
+    monkeypatch.setattr(settings, "knowledge_source_self_service_enabled", False)
+    out = listed()
+    assert not out.self_service and out.accepts_sources
+    assert [s.name for s in out.sources] == ["design-decks"]
+    body = KnowledgeSourceInspectInput(org=ORG, namespace=NS, name="design-decks")
+    assert asyncio.run(app.handle_knowledge_source_inspect(body)).name == "design-decks"
+    links = KnowledgeSourceParseLinksInput(org=ORG, namespace=NS, links=[LINK])
+    assert asyncio.run(app.handle_knowledge_source_parse_links(links)).links[0].kind == "gdrive"
+
+
 def test_a_collection_the_tree_no_longer_holds_takes_no_source(
     fake: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:

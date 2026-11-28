@@ -4064,6 +4064,11 @@ fn knowledge_source_list() {
         serde_json::from_str::<serde_json::Value>("true").unwrap(),
         "knowledge.source.list:accepts_sources"
     );
+    assert_eq!(
+        encoded["self_service"],
+        serde_json::from_str::<serde_json::Value>("true").unwrap(),
+        "knowledge.source.list:self_service"
+    );
 }
 #[test]
 fn knowledge_source_inspect() {

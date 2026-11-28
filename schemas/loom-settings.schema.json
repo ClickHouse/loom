@@ -3633,6 +3633,11 @@
           "type": "integer",
           "description": "Documents of stopped mirrored sources retired per cleanup pass, independently of the content-sync budget. Cleanup continues while syncing is switched off."
         },
+        "knowledge_source_self_service_enabled": {
+          "default": true,
+          "type": "boolean",
+          "description": "Off refuses knowledge.source.add and knowledge.source.rotate (SELF_SERVICE_OFF), so no member's credential reaches the pods; the other source operations still answer."
+        },
         "knowledge_source_sync_cap_share": {
           "default": 0.25,
           "exclusiveMinimum": 0.0,
