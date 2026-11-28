@@ -22,6 +22,7 @@
 // recorded. LOOM_RUN_LEDGER=off disables.
 
 import {
+  planeEnabled,
   postBounded,
   postBoundedResult,
   readStdinJson,
@@ -46,7 +47,7 @@ import {
 import { sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 import { appendTurn, lastAssistant, readJournal } from "../lib/turn-journal.mjs";
 
-const ENABLED = runLedgerEnabled();
+const ENABLED = planeEnabled("ledger") && runLedgerEnabled();
 
 async function main() {
   const event = process.argv[2] || "";

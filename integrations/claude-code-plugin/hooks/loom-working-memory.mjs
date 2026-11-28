@@ -21,6 +21,7 @@ import crypto from "node:crypto";
 import {
   envSwitch,
   git,
+  planeEnabled,
   postFireAndForget,
   readStdinJson,
   resolveScope,
@@ -44,7 +45,7 @@ import {
   turnConclusion,
 } from "../lib/working-memory.mjs";
 
-const ENABLED = envSwitch("LOOM_WORKING_MEMORY", true);
+const ENABLED = planeEnabled("memory") && envSwitch("LOOM_WORKING_MEMORY", true);
 // Run scratchpad: one working_memory.append per turn with
 // the turn's conclusion, at run scope. Off by default — a write per turn.
 const SCRATCHPAD = envSwitch("LOOM_PLUGIN_SCRATCHPAD", false);

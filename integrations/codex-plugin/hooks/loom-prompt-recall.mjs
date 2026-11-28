@@ -16,6 +16,7 @@
 import fs from "node:fs";
 import {
   envNumber,
+  planeEnabled,
   postBounded,
   readStdinJson,
   resolveScope,
@@ -31,7 +32,7 @@ import { readJsonFile, sessionStatePath, writeCursor, writeJsonFile } from "../l
 // "first" recalls once, when the task is stated, and leaves later lookups to
 // the model: one bounded call per session.
 const MODE = (process.env.LOOM_PROMPT_RECALL || "first").toLowerCase();
-const ENABLED = MODE === "on" || MODE === "first";
+const ENABLED = planeEnabled("memory") && (MODE === "on" || MODE === "first");
 const MIN_CONF = envNumber("LOOM_PROMPT_RECALL_MIN_CONF", 0.5, { min: 0, max: 1 });
 const TOP_K = Math.round(envNumber("LOOM_PROMPT_RECALL_TOP_K", 3, { min: 1, max: 5 }));
 const BUDGET = Math.round(envNumber("LOOM_PROMPT_RECALL_BUDGET", 600, { min: 200, max: 2000 }));
@@ -59,7 +60,8 @@ async function main() {
   }
   const payload = await readStdinJson();
   const prompt = String(payload.prompt || "");
-  const lookup = MODE === "first" ? codeLookup(prompt, token) : null;
+  // A prompt that names a definition is the code pointers' to answer, where they run.
+  const lookup = MODE === "first" && planeEnabled("code") ? codeLookup(prompt, token) : null;
   const asksMemory =
     memoryRequested(prompt) ||
     /\b(?:remember|recall|memory|memories|decisions?|conventions?|lessons?|preferences?|constraints?)\b/i.test(

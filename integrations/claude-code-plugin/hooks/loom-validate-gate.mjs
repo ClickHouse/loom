@@ -12,6 +12,7 @@
 // LOOM_VALIDATE_GATE=off disables.
 
 import {
+  planeEnabled,
   postBounded,
   readStdinJson,
   resolveScope,
@@ -24,7 +25,7 @@ import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 import { readAllLines } from "../lib/transcript.mjs";
 import { decideBlock, gatePayload, keysSignature, renderValidate, writtenKeys } from "../lib/validate-gate.mjs";
 
-const ENABLED = envSwitch("LOOM_VALIDATE_GATE", true);
+const ENABLED = planeEnabled("memory") && envSwitch("LOOM_VALIDATE_GATE", true);
 async function main() {
   if (!ENABLED) {
     scheduleExit(0);

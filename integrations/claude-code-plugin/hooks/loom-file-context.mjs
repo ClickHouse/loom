@@ -23,6 +23,7 @@
 
 import {
   gitToplevel,
+  planeEnabled,
   postBounded,
   readStdinJson,
   resolveScope,
@@ -42,7 +43,7 @@ import {
 import { readCache } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 
-const ENABLED = envSwitch("LOOM_FILE_CONTEXT", true);
+const ENABLED = planeEnabled("memory") && envSwitch("LOOM_FILE_CONTEXT", true);
 const TOKENS = Number(process.env.LOOM_FILE_CONTEXT_TOKENS || 300);
 const TTL_MS = Number(process.env.LOOM_FILE_CONTEXT_TTL_MIN || 30) * 60 * 1000;
 

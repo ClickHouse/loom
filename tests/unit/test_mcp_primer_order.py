@@ -135,6 +135,39 @@ def test_a_plugin_connection_gets_one_paragraph_and_the_profile(
     )
 
 
+def test_a_plugin_connection_in_one_mode_gets_that_planes_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The paragraph names only tools the mode lists: the two sentences of the full
+    paragraph, one each, so each mode's text is shorter than it."""
+    both, memory, code = (
+        _split(
+            asyncio.run(
+                mcp_primer._initialize_instructions(object(), "coding", schema_profile=profile)
+            )
+        )[0].strip()
+        for profile in ("plugin", "plugin-memory", "plugin-code")
+    )
+    assert both == f"{code} {memory}"
+    assert code.startswith("Use Loom first for unchanged indexed code")
+    assert "loom_search" not in code
+    assert memory.startswith("`loom_search` recalls saved memory") and "loom_code" not in memory
+
+    async def no_default(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"org": "acme", "namespace": "", "agent": "a", "readable": ["code-a", "mem-b"]}
+
+    monkeypatch.setattr(mcp_primer, "_caller_defaults", no_default)
+    texts = {
+        profile: asyncio.run(
+            mcp_primer._initialize_instructions(object(), "coding", schema_profile=profile)
+        )
+        for profile in ("plugin-memory", "plugin-code")
+    }
+    # only a mode that lists a memory or tracker call is told to name its namespace
+    assert "pass `namespace` (`code-a`, `mem-b`)" in texts["plugin-memory"]
+    assert "namespace" not in texts["plugin-code"]
+
+
 def test_compact_coding_primer_preserves_scope_and_profile() -> None:
     full = asyncio.run(
         mcp_primer._initialize_instructions(object(), "coding", schema_profile="standard")

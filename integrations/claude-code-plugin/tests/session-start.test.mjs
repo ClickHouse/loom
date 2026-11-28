@@ -14,7 +14,6 @@ import {
   codeArbitration,
   codeScopeLine,
   indexStatusBody,
-  instructionsRouteCode,
   localFirstBlock,
   ownsMcpEntry,
   renderPrimer,
@@ -120,16 +119,6 @@ test("the plugin's own MCP entry is Claude Code's: its hooks run with CLAUDE_PLU
   // Codex names its client on every hook command, whatever variables it exports.
   assert.equal(ownsMcpEntry({ CLAUDE_PLUGIN_ROOT: "/p" }, "codex"), false);
   assert.equal(ownsMcpEntry({ CLAUDE_PLUGIN_ROOT: "/p", LOOM_CLIENT: "my-agent" }), false);
-});
-
-test("the startup instructions route a code lookup only on a toolset with a coding part", () => {
-  for (const toolset of ["coding", "", undefined, "coding+tracker", "Tracker, Coding", "tasks coding"])
-    assert.equal(instructionsRouteCode(toolset), true, String(toolset));
-  for (const toolset of ["all", "core", "tracker", "readonly", "assistant", "core+tracker"])
-    assert.equal(instructionsRouteCode(toolset), false, toolset);
-  // Only curated rosters join a union: the server answers these with its default toolset.
-  for (const toolset of ["coding+all", "coding readonly", "assistant,coding"])
-    assert.equal(instructionsRouteCode(toolset), false, toolset);
 });
 
 test("the code block resolves the checkout from the payload cwd, not the hook process's cwd", () => {
@@ -310,10 +299,12 @@ const TOKEN = `${claims({ alg: "none" })}.${claims({ org: "o", namespaces: ["cod
 
 /** A fake Loom that knows one indexed repository, x/y, and has no primer to give. */
 async function fakeLoom() {
+  const ops = [];
   const srv = http.createServer((req, res) => {
     req.resume();
     req.on("end", () => {
       const op = req.url.replace(/^\/v1\//, "");
+      ops.push(op);
       const body =
         op === "code.repos"
           ? { repos: [{ org: "o", namespace: "code-x", repo: "x/y", branch: "main", readable: true, git_head: "abc" }] }
@@ -327,6 +318,7 @@ async function fakeLoom() {
   await new Promise((r) => srv.listen(0, "127.0.0.1", r));
   return {
     url: `http://127.0.0.1:${srv.address().port}`,
+    ops,
     close: () => {
       srv.closeAllConnections();
       srv.close();
@@ -381,11 +373,11 @@ test("the Claude Code plugin's session in an indexed checkout hears one line; an
   const { home, dir } = checkout(t);
   const loom = await fakeLoom();
   t.after(loom.close);
-  // The `toolset` option's default, set or not, and a union with a coding part.
-  for (const toolset of [undefined, "coding", "coding+tracker"]) {
-    const env = { ...PLUGIN, ...(toolset ? { CLAUDE_PLUGIN_OPTION_TOOLSET: toolset } : {}) };
+  // The `mode` option's default, set or not; a value that is no mode is the default.
+  for (const mode of [undefined, "both", "Both", "all"]) {
+    const env = { ...PLUGIN, ...(mode ? { CLAUDE_PLUGIN_OPTION_MODE: mode } : {}) };
     const out = await startSession(loom.url, dir, home, { env });
-    assert.match(out, new RegExp(`^${SCOPE_OWN} ${TAG_OWN}\n$`), String(toolset));
+    assert.match(out, new RegExp(`^${SCOPE_OWN} ${TAG_OWN}\n$`), String(mode));
   }
   // Codex and a hand-wired client mount an entry the hook cannot see, whether
   // or not the host exports the variable Claude Code marks its plugin with.
@@ -403,20 +395,33 @@ test("the Claude Code plugin's session in an indexed checkout hears one line; an
   }
 });
 
-for (const toolset of ["all", "core", "tracker"]) {
-  test(`the plugin's session on the ${toolset} toolset, whose startup instructions route no code lookup, keeps the routing`, async (t) => {
+test("a session in one mode asks for and hears that plane's parts alone", async (t) => {
+  // A home and a server of its own each: the hook caches a server's answers under its home.
+  const sent = async (env) => {
     const { home, dir } = checkout(t);
     const loom = await fakeLoom();
     t.after(loom.close);
-    const out = await startSession(loom.url, dir, home, { env: { ...PLUGIN, CLAUDE_PLUGIN_OPTION_TOOLSET: toolset } });
-    // The header still binds the namespace, so the scope line stays short.
-    assert.match(out, new RegExp(`^${SCOPE_OWN}\n\n# Loom code index: this repository is indexed`));
-    assert.match(out, /Use Loom first when indexed evidence is needed: loom_code_symbol for definitions/);
-    assert.match(out, new RegExp(`\n\n# Loom memory primer: ${TAG_OWN}\n`));
-    // Only `all` lists the conversation write tools.
-    assert.equal(/the Stop hook records this conversation/.test(out), toolset === "all");
-  });
-}
+    const out = await startSession(loom.url, dir, home, { env });
+    return { out, ops: [...new Set(loom.ops)].filter((op) => op !== "health").sort() };
+  };
+  // Code: the checkout's namespace, no memory tag, and no memory request.
+  const code = await sent({ ...PLUGIN, CLAUDE_PLUGIN_OPTION_MODE: "code" });
+  assert.match(code.out, new RegExp(`^${SCOPE_OWN}\n$`));
+  assert.deepEqual(code.ops, ["code.index_status", "code.repos"]);
+  // Memory: the tag for what it saves, no code line, and no code request.
+  const memory = await sent({ ...PLUGIN, CLAUDE_PLUGIN_OPTION_MODE: "memory" });
+  assert.match(memory.out, new RegExp(`^# Loom memory primer: ${TAG_OWN}\n$`));
+  assert.deepEqual(memory.ops, ["collection.list", "context.pack", "task.counts"]);
+  // Both: the union of the two.
+  const both = await sent(PLUGIN);
+  assert.deepEqual(both.ops, [...code.ops, ...memory.ops].sort());
+  // A wiring with no install option names its mode in LOOM_MODE; the option outranks it.
+  const codex = await sent({ LOOM_MODE: "code" });
+  assert.deepEqual(codex.ops, code.ops);
+  assert.doesNotMatch(codex.out, /memory primer|records this conversation/);
+  const option = await sent({ ...PLUGIN, CLAUDE_PLUGIN_OPTION_MODE: "memory", LOOM_MODE: "code" });
+  assert.deepEqual(option.ops, memory.ops);
+});
 
 // The server adds the tag to a save only on a connection the helper's header
 // binds, and the hook cannot see whether the helper sent one. The line is an

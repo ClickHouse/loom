@@ -18,6 +18,7 @@ import {
   envNumber,
   envSwitch,
   gitToplevel,
+  planeEnabled,
   postBounded,
   readStdinJson,
   resolveServerUrl,
@@ -31,7 +32,7 @@ import { symbolAnswerText } from "../lib/code-shunt.mjs";
 import { renderBlast } from "../lib/blast-radius.mjs";
 import { recalledDataBlock } from "../lib/prompt-recall.mjs";
 
-const ENABLED = envSwitch("LOOM_PROMPT_PACK", true);
+const ENABLED = planeEnabled("code") && envSwitch("LOOM_PROMPT_PACK", true);
 // The user's prompt waits on this search; pointers that arrive later help no one.
 const TIMEOUT_MS = Math.round(envNumber("LOOM_PROMPT_PACK_TIMEOUT_MS", 2500, { min: 200 }));
 // Unset, the gate is the index's own low-risk label.

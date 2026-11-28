@@ -16,11 +16,11 @@ conflict detection, blacklist and erasure. What the plugin sends, and where, is
 under [data handling](#data-handling).
 
 The plugin also mounts the MCP tools: `.mcp.json` points at
-`${user_config.server_url}/mcp?toolset=${user_config.toolset}&schema_profile=plugin` (the
-`server_url` and `toolset` plugin options; `server_url` defaults to
+`${user_config.server_url}/mcp?toolset=coding&schema_profile=plugin&mode=${user_config.mode}` (the
+`server_url` and `mode` plugin options; `server_url` defaults to
 `$LOOM_BASE_URL`, else `http://localhost:7777`; the `plugin` profile lists every
-tool of the toolset in the compact shapes and, on a toolset with a `coding`
-part, sends one paragraph of startup instructions, since the hooks carry the
+tool of the toolset in the compact shapes and sends one paragraph of startup
+instructions, since the hooks carry the
 rest of the routing; a server that does not know
 the profile answers with its default listing), and its `headersHelper`
 (`bin/loom-mcp-headers.mjs`) sends `Authorization: Bearer <token>` from
@@ -33,10 +33,43 @@ eight code tools, the ranged read and the pre-edit context, the duplicate
 check, bisect candidates, PR check and blast
 radius, `loom_search`, `loom_activate`, `loom_op`), about 6k
 tokens per `tools/list` in the plugin's compact shapes, of which a session loads two code tools up front; every other op runs through `loom_op {op, arguments}`. The
-`toolset` plugin setting selects another listing, including a union such as `coding+tracker`. See
+`mode` plugin setting narrows the listing to one plane ([modes](#modes)). A session that wants another roster, such as the tracker plane, mounts a second MCP entry on it (`?toolset=tracker`). See
 [MCP clients](https://loom.clickhouse.com/docs/features/integrations/mcp-clients/).
 
 > **Bare mode skips hooks.** `claude --bare` (chosen by some agent harnesses for prompt-cache and cost reasons) does not run PreToolUse hooks, so the token shunt and the outcome capture in this plugin do not fire there. A harness that wants the shunt under bare mode needs the SDK backend's hook path instead.
+
+## Modes
+
+The `mode` option installs one of Loom's planes alone, so a session pays only for
+the plane it uses: `claude plugin install loom@loom --config mode=code`.
+
+| Mode             | The hooks                                                                             | The MCP entry lists                          |
+| ---------------- | ------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `both` (default) | capture the session, recall memory and answer from the code index                     | 23 tools: every tool of the `coding` toolset |
+| `memory`         | capture the session and recall memory; no request reaches the code index              | 10 tools: the listing without its code tools |
+| `code`           | answer from the code index; nothing of the session is captured, recalled or extracted | 13 tools: the code tools alone               |
+
+- **`code`** is for a session that wants the index and no memory. The hooks
+  record no tool call, chat turn, brief or note and hand the server no session
+  to extract facts from, so the server makes no model call for the session.
+  They read no memory either: no primer, no recall, no file memories.
+- **`memory`** is for a repository with no index, or a session that wants only
+  what was learned before. No `loom_code_*` tool is listed and no hook sends a
+  `code.*` request: no redirect of a read or grep, no code pointers at the
+  prompt, no blast radius, no test gate. The pre-edit lookup covers your own
+  namespace; a repository's team rules need the index, so they need `both`.
+- **Every mode keeps the run ledger**: the session's first prompt, its last
+  reply and its token usage ([data handling](#data-handling)).
+  `LOOM_RUN_LEDGER=off` and `LOOM_USAGE=off` turn those off.
+- **The three skills are listed in every mode.** A skill's description is
+  fixed text the client loads at start.
+- **The listing needs a server that reads `?mode=`.** An older server ignores
+  it and lists both planes; the hooks follow the mode either way.
+- **Other clients** set `LOOM_MODE` for the hooks (the option outranks it
+  under Claude Code). The Codex plugin's MCP entry is fixed and lists what it
+  always did.
+
+[HOOKS.md](hooks/HOOKS.md#modes) names each hook script's plane.
 
 ## Data handling
 
@@ -73,6 +106,16 @@ space on the server that your token writes to. The hooks and scripts send:
   mode (an automated agent whose platform gives it an identity token, set in
   `LOOM_WORKLOAD_TOKEN` or `LOOM_WORKLOAD_TOKEN_FILE` with `LOOM_CLIENT_ID`),
   that identity token and `LOOM_CLIENT_ID`, exchanged for a Loom token.
+
+The `mode` option narrows the list ([modes](#modes)). In `code` mode the hooks
+send no tool call's input or output, no chat turn, no brief, no note and no
+session for the server to extract facts from. They still send each prompt's
+text as a code-index search (`LOOM_PROMPT_PACK=off` stops it), the record of
+the session's first prompt and last reply with token usage and the model name
+(`LOOM_RUN_LEDGER=off` and `LOOM_USAGE=off` stop those), and the code-index
+items above: a redirected grep's symbol, the read and grep records, diff
+outlines and the repository's identity. In `memory` mode they send nothing to
+the code index: no redirect, no read or grep record, no diff outline.
 
 A client-side redaction removes common credential shapes from what the hooks
 send; it is best effort, not a guarantee, and MCP tool arguments and a brief the
@@ -342,6 +385,7 @@ path.
 | `LOOM_AGENT`                          | `claude-code`                                                                            | Agent segment of the identity tuple.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `LOOM_PROJECT_SCOPE`                  | `tag`                                                                                    | `tag` (one namespace, `project:<name>` tag) or `namespace` (project basename _is_ the namespace).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `LOOM_PROJECT_NAME`                   | _(git toplevel basename)_                                                                | Override the resolved project.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `LOOM_MODE`                           | `both`                                                                                   | `both`, `memory` or `code`: the planes the hooks run ([modes](#modes)). Under Claude Code set the `mode` option, which outranks it and also picks the MCP listing.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `LOOM_INJECT_CONTEXT`                 | `true`                                                                                   | SessionStart context primer (once per session). Set `false` to disable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `LOOM_TASK_INBOX_LINE`                | `on`                                                                                     | SessionStart task inbox line: one `task.counts`, cached a minute, and one line when inboxes the namespace owns hold tasks in triage or todo — `Loom task inbox: N in triage, M to do in <inbox> (oldest 40 min) — pull with the loom `tasks` toolset (task.pull)`. Silent on an empty board or when the server does not answer. Set `off` to disable.                                                                                                                                                                                                                                                                   |
 | `LOOM_COLLECTIONS_LINE`               | `on`                                                                                     | SessionStart collections line: one `collection.list`, cached a minute, and a few lines naming up to six shared collections the token can read, with your role and each one's description inside the recalled-data block (their creators' words); how to write one only when you write one and the toolset allows writes. Silent when there are none or the server does not answer. Set `off` to disable.                                                                                                                                                                                                                |

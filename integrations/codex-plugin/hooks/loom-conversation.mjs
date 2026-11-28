@@ -17,6 +17,7 @@ import {
   contentText,
   envNumber,
   envSwitch,
+  planeEnabled,
   postFireAndForget,
   readStdinJson,
   redactHead,
@@ -126,7 +127,7 @@ function fromEvents(payload, sessionId, scope) {
 }
 
 async function main() {
-  if (!envSwitch("LOOM_CAPTURE_CONVERSATIONS", true)) {
+  if (!planeEnabled("memory") || !envSwitch("LOOM_CAPTURE_CONVERSATIONS", true)) {
     return scheduleExit(0);
   }
   const payload = await readStdinJson();

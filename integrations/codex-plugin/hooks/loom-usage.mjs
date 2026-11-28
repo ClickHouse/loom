@@ -11,6 +11,7 @@
 
 import {
   envSwitch,
+  planeEnabled,
   postFireAndForget,
   readStdinJson,
   resolveScope,
@@ -23,7 +24,7 @@ import { parseLines, readTail } from "../lib/transcript.mjs";
 import { readJsonFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 import { extractTurns, recordBody } from "../lib/usage.mjs";
 
-const ENABLED = envSwitch("LOOM_USAGE", true);
+const ENABLED = planeEnabled("ledger") && envSwitch("LOOM_USAGE", true);
 
 async function main() {
   if (!ENABLED) {
