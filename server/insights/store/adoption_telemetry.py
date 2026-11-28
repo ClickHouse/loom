@@ -127,6 +127,40 @@ SETTINGS optimize_move_to_prewhere_if_final = 0
 """
 
 
+_DOMAIN_ACTIVITY_FIELDS = ("domain", "active_accounts", "successful_requests", "serving_processes")
+_MAX_SNAPSHOT_DOMAINS = 2000  # With domain names capped at 253 bytes, this fits in one MiB.
+_LIVE_DOMAINS_SQL = f"""
+SELECT * FROM ({DAILY_DOMAIN_ACTIVITY_SQL})
+ORDER BY successful_requests DESC, domain
+LIMIT {_MAX_SNAPSHOT_DOMAINS}
+"""
+
+
+async def domain_snapshot(
+    end: datetime,
+    installation_id: UUID,
+    *,
+    restricted: set[tuple[str, str]],
+    ch: CHClient,
+) -> dict[str, Any]:
+    start = end.replace(hour=0, minute=0, second=0, microsecond=0)
+    params = {"start": start, "end": end, "restricted": sorted(restricted)}
+    with sequential_reads():
+        rows = await ch.query_all(_LIVE_DOMAINS_SQL, params)
+        version = await ch.query_one("SELECT version() AS clickhouse_version")
+    if version is None:
+        raise RuntimeError("adoption ClickHouse version is unavailable")
+    return {
+        "schema_version": 4,
+        "installation_id": str(installation_id),
+        "day": start.date().isoformat(),
+        "observed_at": end.isoformat(),
+        "loom_version": __version__,
+        "clickhouse_version": version["clickhouse_version"],
+        "domain_activity": [{name: row[name] for name in _DOMAIN_ACTIVITY_FIELDS} for row in rows],
+    }
+
+
 async def window_report(
     start: datetime,
     end: datetime,
@@ -154,16 +188,7 @@ async def window_report(
                 for row in activity
             ]
             domain_activity = [
-                {
-                    name: row[name]
-                    for name in (
-                        "domain",
-                        "active_accounts",
-                        "successful_requests",
-                        "serving_processes",
-                    )
-                }
-                for row in activity
+                {name: row[name] for name in _DOMAIN_ACTIVITY_FIELDS} for row in activity
             ]
         else:
             domains = await ch.query_all(DOMAINS_SQL, domain_params)

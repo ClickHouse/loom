@@ -123,19 +123,6 @@ function decodeFirstObservation(encoded) {
   return rows?.[0] ?? null;
 }
 
-function decodeVersionTrends(encoded) {
-  return (
-    decodeRows(encoded, ({ grain, period, period_end, product, version, active_installations }) =>
-      isPeriod({ grain, period, period_end }) &&
-      ["loom", "clickhouse"].includes(product) &&
-      (isVersion(version) || version === smokeVersion) &&
-      isCount(active_installations)
-        ? { grain, period, period_end, product, version, active_installations }
-        : null,
-    )?.filter(({ version }) => version !== smokeVersion) ?? null
-  );
-}
-
 function decodeCompanyTrends(encoded) {
   return decodeRows(encoded, ({ grain, period, period_end, companies, days_reported, complete_days_reported }) =>
     isPeriod({ grain, period, period_end }) &&
@@ -196,7 +183,6 @@ async function loadWarehouse(env) {
         domainDirectories,
         domainAccounts: decodeDomainAccounts(row.domain_accounts, domainDirectories),
         firstObservation: decodeFirstObservation(row.first_observation),
-        versionTrends: decodeVersionTrends(row.version_trends),
         companyTrends: decodeCompanyTrends(row.company_trends),
         growth,
         growthCoverage,
@@ -386,7 +372,6 @@ export function createAdoptionReader(env, now, readRegistries = readRegistryMetr
       domainDirectories,
       domainAccounts,
       firstObservation,
-      versionTrends,
       companyTrends,
       growth,
       growthCoverage,
@@ -407,7 +392,6 @@ export function createAdoptionReader(env, now, readRegistries = readRegistryMetr
         domainDirectories: domainDirectories ?? null,
         domainAccounts: domainAccounts ?? null,
         firstObservation: firstObservation ?? null,
-        versionTrends: versionTrends ?? null,
         companyTrends: companyTrends ?? null,
       },
       openSource: [],

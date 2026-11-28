@@ -21,27 +21,26 @@ changed what, with tamper evidence.
 
 Loom enables self-hosted adoption telemetry by default. It measures deployment and
 feature usage to inform product development. The server aggregates activity locally
-and sends one event per completed 12-hour UTC window, with eligible contact domains
-and aggregate daily activity.
+and sends one report per completed 12-hour UTC window. It also sends snapshots of
+today's activity for eligible contact domains every five minutes.
 
 ### Where telemetry is sent
 
 The background worker posts to
 `https://loom.clickhouse.com/api/v1/adoption`. The endpoint validates
-the report and acknowledges the installation UUID and window after writing to
-the analytics ClickHouse service. The warehouse deduplicates retries and expires
-reports 400 days after receipt.
+the payload and acknowledges the installation UUID and window start or snapshot
+timestamp after writing to the analytics ClickHouse service. The warehouse
+deduplicates retries. Completed reports expire after 400 days and snapshots
+expire after two days.
 
 The worker derives a stable reporting UUID from the storage authority's deployment ID.
 Replicas sharing that authority report under one UUID. If the worker detail shows
 `missing_deployment_id` on a deployment that applies migrations manually, start the
-server once with `LOOM_BOOT_MIGRATE=true` to record its authority. Windows start at midnight
-and noon UTC. The worker allows an hour for ledger rows to arrive before reporting.
-When it acquires the worker lease, it attempts delivery immediately if the latest
-completed window has no acknowledgement. It checks for reports hourly, including idle windows,
-and retries failed deliveries while the window is still the most recent completed one.
-On an upgrade, a window already acknowledged under version 2 keeps its existing
-report. Daily measurements begin with the next version 3 report.
+server once with `LOOM_BOOT_MIGRATE=true` to record its authority. Completed windows
+start at midnight and noon UTC and allow an hour for ledger rows to arrive. The
+worker checks for reports and snapshots every five minutes. It also checks as
+soon as it acquires the lease if the latest completed window is unacknowledged.
+A failed delivery is retried while its window is the latest completed one.
 
 ### What is sent
 
@@ -61,6 +60,13 @@ report. Daily measurements begin with the next version 3 report.
 | `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                                                                  |
 | `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                                                                         |
 | `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                                                                 |
+
+Snapshots include the installation UUID, UTC day, observation timestamp, software
+versions, and aggregate activity for up to 2,000 eligible domains, ordered by
+successful requests. Each snapshot counts requests and distinct active users and
+serving processes since UTC midnight. The public directory refreshes every minute
+while visible and uses a completed daily report in place of snapshots for that
+installation and day.
 
 The report excludes private mirror events, benchmark traffic, background traffic, and
 unclassified routes. It contains no full email addresses, names, operation strings,
@@ -93,11 +99,11 @@ The [collector deployment guide](../../../deploy/telemetry/README.md) covers the
 warehouse and dashboard setup. The public [adoption page](https://loom.clickhouse.com/adoption)
 shows aggregate self-hosted usage and open-source distribution metrics. The
 self-hosted summary includes today's completed reporting windows. The directory
-shows contact domains from version 2 and 3 reports with attributed successful requests
-in the public directory's lookback period and orders names by those requests. The
-one-year view uses the 90-day directory. Completed daily reports provide successful
-requests, active installations, active users, serving processes, the latest reported
-Loom version, and first retained and latest activity dates for each domain.
+shows contact domains with attributed successful requests in the lookback period
+and orders names by those requests. The one-year view uses the 90-day directory.
+Snapshots and completed daily reports provide successful requests, active
+installations, active users, serving processes, the latest reported Loom version,
+and first retained and latest activity dates for each domain.
 Only standard namespaces with a contact domain in the same report contribute to
 those counts.
 `loom_adoption_windows` contains one report per

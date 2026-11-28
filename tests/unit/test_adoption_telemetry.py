@@ -412,19 +412,6 @@ def test_public_adoption_query_publishes_only_measured_company_activity() -> Non
         ("1.0.0", "25.12", 1),
         ("1.1.0", "26.0.0", 1),
     ]
-    versions = {
-        (row["grain"], row["period"], row["product"], row["version"]): row["active_installations"]
-        for row in map(json.loads, report["version_trends"])
-    }
-    assert all(
-        version not in {"0.0.0-smoke", "1.2.0", "1.0.2", "26.1.5"} for _, _, _, version in versions
-    )
-    assert all((grain, period) != ("day", "2026-11-25") for grain, period, _, _ in versions)
-    assert versions["day", "2026-11-24", "loom", "1.0.1"] == 1
-    assert ("week", "2026-11-23", "loom", "1.0.1") not in versions
-    assert versions["week", "2026-11-23", "loom", "1.1.0"] == 3
-    assert versions["day", "2026-11-26", "clickhouse", "26.1.0"] == 2
-    assert versions["month", "2026-11-01", "loom", "1.1.0"] == 6
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -538,10 +525,10 @@ async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.Mo
     http.assert_not_called()
 
 
-def test_adoption_worker_checks_hourly(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_adoption_worker_checks_every_five_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
     worker = next(worker for worker in enabled_workers() if worker.name == "adoption_telemetry")
-    assert worker.interval_seconds == 3600
+    assert worker.interval_seconds == 300
 
 
 @pytest.mark.parametrize(
@@ -628,12 +615,32 @@ async def test_delivery_retries_without_recounting_after_ack(
 
     aggregate = AsyncMock(side_effect=report)
     monkeypatch.setattr(adoption_telemetry, "window_report", aggregate)
-    requests: list[httpx.Request] = []
+
+    async def snapshot(
+        end: datetime,
+        installation_id: UUID,
+        *,
+        restricted: set[tuple[str, str]],
+        ch: object,
+    ) -> dict[str, str]:
+        assert restricted == restricted_pairs
+        assert end == datetime(2026, 11, 24, 2, 55, tzinfo=UTC)
+        return {"installation_id": str(installation_id), "observed_at": end.isoformat()}
+
+    snapshots = AsyncMock(side_effect=snapshot)
+    monkeypatch.setattr(adoption_telemetry, "domain_snapshot", snapshots)
+    completed: list[httpx.Request] = []
 
     def collect(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        acknowledgement = {"stored": True, **json.loads(request.content)}
-        if len(requests) > 1:
+        assert request.method == "POST"
+        assert request.url.host == "loom.clickhouse.com"
+        assert request.url.path == "/api/v1/adoption"
+        payload = json.loads(request.content)
+        acknowledgement = {"stored": True, **payload}
+        if "observed_at" in payload:
+            return httpx.Response(200, json=acknowledgement)
+        completed.append(request)
+        if len(completed) > 1:
             return httpx.Response(200, json=acknowledgement)
         if rejection is not None:
             return rejection
@@ -651,11 +658,75 @@ async def test_delivery_retries_without_recounting_after_ack(
             ctx.resume_cursor = ctx.cursor
             await adoption_telemetry.run_pass()
 
-    assert len(requests) == 2 and aggregate.await_count == 2
-    assert all(request.method == "POST" for request in requests)
-    assert all(request.url.host == "loom.clickhouse.com" for request in requests)
-    assert all(request.url.path == "/api/v1/adoption" for request in requests)
-    assert requests[0].content == requests[1].content
-    payload = json.loads(requests[0].content)
+    assert len(completed) == 2 and aggregate.await_count == 2
+    assert snapshots.await_count == 3
+    assert completed[0].content == completed[1].content
+    payload = json.loads(completed[0].content)
     assert UUID(payload["installation_id"]).version == 5
     assert payload["window_start"] == "2026-11-23T12:00:00+00:00"
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> None:
+    telemetry = ROOT / "deploy" / "telemetry"
+    clock = "toDateTime('2026-11-27 01:30:00', 'UTC')"
+    warehouse = (telemetry / "warehouse.sql").read_text().strip().removesuffix(";")
+    [report] = run(
+        [
+            warehouse.replace("now('UTC')", clock),
+            """
+            INSERT INTO loom_product_analytics.adoption_enrollments (installation_id, is_internal)
+            VALUES ('internal', 1)
+            """,
+            """
+            INSERT INTO loom_product_analytics.adoption_reports
+                (installation_id, window_start, window_end, day, schema_version,
+                 loom_version, clickhouse_version, requests, successful_requests,
+                 daily_successful_requests, user_domains, domain_activity)
+            VALUES
+                ('measured', '2026-11-26 12:00:00', '2026-11-27 00:00:00', '2026-11-26',
+                 3, '1.2.0', '26.1.0', 23, 23, 23, [('live.example', 1, 23)],
+                 [('live.example', 3, 23, 2)])
+            """,
+            """
+            INSERT INTO loom_product_analytics.adoption_domain_snapshots
+                (schema_version, installation_id, day, observed_at, loom_version,
+                 clickhouse_version, domain_activity)
+            VALUES
+                (4, 'measured', '2026-11-27', '2026-11-27 01:25:00', '1.3.0', '26.1.0',
+                 [('live.example', 2, 7, 2), ('new.example', 1, 2, NULL)]),
+                (4, 'measured', '2026-11-27', '2026-11-27 01:20:00', '1.3.0', '26.1.0',
+                 [('live.example', 3, 5, 1)]),
+                (4, 'measured', '2026-11-26', '2026-11-26 23:55:00', '1.3.0', '26.1.0',
+                 [('live.example', 3, 20, 2)]),
+                (4, 'internal', '2026-11-27', '2026-11-27 01:25:00', '1.3.0', '26.1.0',
+                 [('internal.example', 1, 30, 1)]),
+                (4, 'smoke', '2026-11-27', '2026-11-27 01:25:00', '1.3.0', '0.0.0-smoke',
+                 [('smoke.example', 1, 50, 1)]),
+                (4, 'stale', '2026-11-26', '2026-11-26 23:25:00', '1.3.0', '26.1.0',
+                 [('stale.example', 1, 30, 1)])
+            """,
+        ],
+        (telemetry / "public-adoption.sql").read_text(),
+    )
+
+    directories = [json.loads(row) for row in report["domain_directories"]]
+    assert all(row["domains"] == ["live.example", "new.example"] for row in directories)
+    domain_rows = {
+        row["domain"]: row
+        for row in map(json.loads, report["domain_accounts"])
+        if row["range_days"] == 30
+    }
+    assert domain_rows["live.example"] == {
+        "range_days": 30,
+        "domain": "live.example",
+        "active_installations": 1,
+        "successful_requests": 30,
+        "active_accounts": 2,
+        "serving_processes": 2,
+        "loom_version": "1.3.0",
+        "day": "2026-11-27",
+        "first_seen": "2026-11-26",
+        "last_seen": "2026-11-27",
+    }
+    assert domain_rows["new.example"]["successful_requests"] == 2
