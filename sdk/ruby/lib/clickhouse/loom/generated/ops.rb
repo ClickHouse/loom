@@ -753,7 +753,7 @@ module ClickHouse
         end
 
         # `code.test_gate` (viewer, read-only, experimental).
-        # The pre-PR question in one call: for THIS change, which tests must
+        # The pre-PR question in one call: for THIS change, which tests must run, and
         def test_gate(body = nil, request_options: nil, **fields)
           call_op("code.test_gate", body, fields, request_options)
         end

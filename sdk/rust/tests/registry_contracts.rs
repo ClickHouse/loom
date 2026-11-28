@@ -9200,6 +9200,11 @@ fn code_test_gate() {
         "code.test_gate:untested"
     );
     assert_eq!(
+        encoded["unlinked"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.test_gate:unlinked"
+    );
+    assert_eq!(
         encoded["changed_files"],
         serde_json::from_str::<serde_json::Value>("[]").unwrap(),
         "code.test_gate:changed_files"
@@ -9225,6 +9230,11 @@ fn code_test_gate() {
         "code.test_gate:untested_total"
     );
     assert_eq!(
+        encoded["unlinked_total"],
+        serde_json::from_str::<serde_json::Value>("0").unwrap(),
+        "code.test_gate:unlinked_total"
+    );
+    assert_eq!(
         encoded["tests_capped"],
         serde_json::from_str::<serde_json::Value>("false").unwrap(),
         "code.test_gate:tests_capped"
@@ -9233,6 +9243,11 @@ fn code_test_gate() {
         encoded["untested_capped"],
         serde_json::from_str::<serde_json::Value>("false").unwrap(),
         "code.test_gate:untested_capped"
+    );
+    assert_eq!(
+        encoded["unlinked_capped"],
+        serde_json::from_str::<serde_json::Value>("false").unwrap(),
+        "code.test_gate:unlinked_capped"
     );
     assert_eq!(
         encoded["counts_floor"],

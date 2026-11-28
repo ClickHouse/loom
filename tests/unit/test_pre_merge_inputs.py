@@ -370,7 +370,7 @@ async def test_impact_with_pr_number_seeds_added_functions_and_counts_pr_call_si
     data = out.model_dump(mode="json")
     # the PR's range is the diff: old() is touched by hunk, fresh() is an added seed
     touched = {t["qualified_name"]: t for t in data["touched_symbols"]}
-    assert touched["DB::A::old"]["via"] == "header"  # git's hunk header names it
+    assert touched["DB::A::old"]["via"] == "hunk"  # the added lines sit inside it
     assert touched["DB::A::fresh"] == {
         "qualified_name": "DB::A::fresh",
         "path": "src/A.cpp",

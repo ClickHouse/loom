@@ -13,7 +13,7 @@
 //
 // Stop: if the working tree has uncommitted changes THIS SESSION made
 // in a loom-indexed repo, ask `code.test_gate` for the change's obligations
-// (tests to run, untested touched functions) and block the stop ONCE per
+// (tests to run, touched definitions measured unexecuted) and block the stop ONCE per
 // distinct change with a reason that names them. "This session's" is read
 // from the transcript: dirty paths an edit tool targeted or a shell command
 // named, written since the session began (by the file's modification time);

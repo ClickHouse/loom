@@ -10,12 +10,14 @@
 // At Stop it holds a session that ran no test since its last code change.
 // When the agent is about to stop with uncommitted changes in a
 // loom-indexed repo, it asks
-// `code.test_gate` what the change obliges: the tests that reach
-// it (evidence-ordered, with a run command when derivable) and the touched
-// functions no test reaches. If either list is non-empty and this exact
-// change has not been gated yet this session, block the stop ONCE with a
-// reason that names them: the tests are named before "done", not discovered
-// in review. The second stop on the
+// `code.test_gate` what the change obliges: the tests to run
+// (evidence-ordered, with a run command when derivable) and the touched
+// definitions a coverage run measured unexecuted. If either list is non-empty
+// and this exact change has not been gated yet this session, block the stop
+// ONCE with a reason that names them: the tests are named before "done", not
+// discovered in review. A touched definition the index links no test to is
+// named beside the tests and asks for nothing by itself: a call graph cannot
+// show that no test runs it. The second stop on the
 // same change passes: the agent has seen the obligation and either ran the
 // tests or chose not to, and a gate that nags is a gate that gets disabled.
 // A block costs the session one more model request, so by default any test
@@ -96,10 +98,17 @@ function short(qname) {
   return parts.length > 2 ? parts.slice(-2).join("::") : String(qname || "");
 }
 
+/** `names` as a bounded list: the first `max`, then how many more of `total`. */
+function listed(names, max, total = names.length) {
+  const shown = names.slice(0, max);
+  return `${shown.join(", ")}${total > shown.length ? ` (+${total - shown.length})` : ""}`;
+}
+
 /**
  * Render the obligation text, or "" when there is nothing to say.
  * Runnable commands first (deduped), then tests with no derivable command,
- * then the untested functions. Bounded: maxRuns commands, maxNames names.
+ * then the definitions the index links no test to and the ones a coverage
+ * run measured unexecuted. Bounded: maxRuns commands, maxNames names.
  */
 export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists } = {}) {
   if (!gate || !gate.obligations) return "";
@@ -117,57 +126,54 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
     .filter((t) => !t.run)
     .map((t) => String(t.test_path || ""))
     .filter(Boolean);
-  const untested = Array.isArray(gate.untested) ? gate.untested : [];
+  // A measurement names its run: a row without a commit is no coverage result.
+  const untested = (Array.isArray(gate.untested) ? gate.untested : []).filter((u) => u && u.commit);
   const parts = [];
   if (runs) parts.push(`run: ${runs}`);
-  if (unknown.length) {
-    const shown = unknown.slice(0, maxNames);
-    const more = unknown.length - shown.length;
-    parts.push(`also reached (no known runner): ${shown.join(", ")}${more > 0 ? ` (+${more})` : ""}`);
-  }
-  if (missing.length) {
-    const shown = missing.slice(0, maxNames);
-    const more = missing.length - shown.length;
-    parts.push(`indexed tests not present in this checkout: ${shown.join(", ")}${more > 0 ? ` (+${more})` : ""}`);
+  if (unknown.length) parts.push(`also reached (no known runner): ${listed(unknown, maxNames)}`);
+  if (missing.length) parts.push(`indexed tests not present in this checkout: ${listed(missing, maxNames)}`);
+  const unlinked = unlinkedNames(gate, maxNames);
+  if (unlinked.list) {
+    // A statement about the index, never about the tests: a test that
+    // reaches the definition through a fixture or an entry point leaves no
+    // edge in the graph.
+    const hedge =
+      runs || unknown.length ? ` (the tests named here may still reach ${unlinked.total > 1 ? "them" : "it"})` : "";
+    parts.push(`the index links no test to: ${unlinked.list}${hedge}`);
   }
   if (untested.length) {
-    const { list, total } = untestedNames(gate, maxNames);
-    // Beside tests to run, "no test reaches" reads as a fact about them, and
-    // a test that builds an object reaches a constructor the graph holds no
-    // edge to.
-    parts.push(
-      runs || unknown.length
-        ? `the index links no test to: ${list} (the tests named here may still reach ${total > 1 ? "them" : "it"})`
-        : `no test reaches: ${list}`,
-    );
+    const names = [...new Set(untested.map((u) => short(u.qualified_name)))].filter(Boolean);
+    const commits = [...new Set(untested.map((u) => String(u.commit).slice(0, 10)))];
+    const at = commits.length === 1 ? ` at ${commits[0]}` : "";
+    parts.push(`measured unexecuted${at}: ${listed(names, maxNames, gate.untested_total || names.length)}`);
   }
   if (!parts.length) return "";
   const floor = gate.counts_floor ? " (graph is a floor)" : "";
   // Nothing to run is not "run the tests" — a session told
   // that went hunting for a runner. Say what the obligation actually is.
+  const add = untested.length ? "Add a test that runs the unexecuted code, or say why none is needed." : "";
   const tail = missing.length
     ? "Run the available tests and check the missing paths against the indexed revision (deleted, renamed or different checkout); use current equivalent tests or say why not. Missing tests are not passes."
     : runs || unknown.length
       ? "Run the tests before finishing, or say why not."
-      : "Add a test that reaches it, or say why none is needed.";
+      : "";
   const env =
     python === "" && raw.some(isPytest)
       ? " No Python was found for this checkout (no .venv, venv or VIRTUAL_ENV, no python3 or python on PATH): name the test you would run instead of searching for one."
       : "";
-  return `Loom test gate${floor}: ${parts.join(" · ")}. ${tail}${env}`;
+  return `Loom test gate${floor}: ${parts.join(" · ")}. ${[tail, add].filter(Boolean).join(" ")}${env}`.trimEnd();
 }
 
 const isPytest = (run) => /^pytest(\s|$)/.test(String(run || ""));
 
-/** The functions of a gate's `untested`, by short name: the first `maxNames`
- *  as `list`, with a count of the rest, and how many there are in `total`. */
-function untestedNames(gate, maxNames = 4) {
-  const untested = gate && Array.isArray(gate.untested) ? gate.untested : [];
-  const names = [...new Set(untested.map((u) => short(u.qualified_name)))].filter(Boolean);
-  const shown = names.slice(0, maxNames);
-  const total = (gate && gate.untested_total) || names.length;
-  const more = total > shown.length ? ` (+${total - shown.length})` : "";
-  return { list: shown.length ? `${shown.join(", ")}${more}` : "", total };
+/** The definitions of a gate's `unlinked`, by short name: the first
+ *  `maxNames` as `list`, with a count of the rest, and how many there are in
+ *  `total`. */
+function unlinkedNames(gate, maxNames = 4) {
+  const unlinked = gate && Array.isArray(gate.unlinked) ? gate.unlinked : [];
+  const names = [...new Set(unlinked.map((u) => short(u.qualified_name)))].filter(Boolean);
+  const total = (gate && gate.unlinked_total) || names.length;
+  return { list: listed(names, maxNames, total), total };
 }
 
 /** The distinct run commands of `tests` (`raw`) and the first `maxRuns` of
@@ -182,7 +188,8 @@ function runList(tests, { maxRuns, python }) {
 /**
  * The tests of a `code.test_gate` answer about `rel` alone that the
  * edit-time line names: the ones the checkout has. For a source file they
- * are the tests the index links to it; for a test file, the file itself.
+ * are the tests the index links to it, or failing those up to four tests
+ * that call other definitions of the file; for a test file, the file itself.
  * A file under a tests directory that no runner takes (a fixture, a
  * conftest) is not a test to run for its own change.
  */
@@ -196,18 +203,18 @@ export function adviceTests(rel, gate, testExists) {
 /**
  * The edit-time line for `rel` from `tests` (see `adviceTests`): their
  * commands, then the tests no runner is known for. With no test, it names
- * `untested`, the changed functions the index links no test to, as the
+ * `unlinked`, the changed definitions the index links no test to, as the
  * index's view: the graph is a floor, and the line has no reply in which the
  * agent could say that a test does reach them. "" when there is neither.
  */
-export function renderAdvice(rel, tests, { maxRuns = 4, maxNames = 4, python, untested = "" } = {}) {
+export function renderAdvice(rel, tests, { maxRuns = 4, maxNames = 4, python, unlinked = "" } = {}) {
   const parts = [runList(tests, { maxRuns, python }).text].filter(Boolean);
   const unknown = [...new Set(tests.filter((t) => !t.run).map((t) => String(t.test_path)))];
   if (unknown.length) {
     const more = unknown.length - maxNames;
     parts.push(`no known runner: ${unknown.slice(0, maxNames).join(", ")}${more > 0 ? ` (+${more})` : ""}`);
   }
-  if (!parts.length && untested) parts.push(`the index links no test to ${untested}`);
+  if (!parts.length && unlinked) parts.push(`the index links no test to ${unlinked}`);
   return parts.length ? `Loom tests for ${rel}: ${parts.join(" · ")}` : "";
 }
 
@@ -570,9 +577,9 @@ export async function adviceLines(payload, files, { root, repo, token, depth = g
     const tests = adviceTests(rel, gates[i], testExists);
     const fresh = tests.filter((t) => !named[t.test_path] && !(t.run && runsHere(command, String(t.run))));
     if (python === undefined && fresh.some((t) => isPytest(t.run))) python = checkoutPython(root);
-    // Functions are named only for a file with no test to run in this checkout.
-    const untested = tests.length ? "" : untestedNames(gates[i]).list;
-    const text = renderAdvice(rel, fresh, { python, untested });
+    // Definitions are named only for a file with no test to run in this checkout.
+    const unlinked = tests.length ? "" : unlinkedNames(gates[i]).list;
+    const text = renderAdvice(rel, fresh, { python, unlinked });
     if (!text) continue;
     // A test folded into "(+N more)" was not shown, so its own change still names it.
     for (const t of printedTests(fresh)) {
@@ -908,10 +915,11 @@ function wholeRuns(objs, { root, cwd, since } = {}) {
  * transcript already answers it: the person's latest prompt ends by saying
  * not to run tests, or `wholeRuns` holds every named test (its file, or a
  * directory above it); `lastModified()` is the tree's newest file time in
- * epoch ms. The stop then names no untested function either. A gate that
- * names a test missing from the checkout, or only untested functions, still
- * asks; so does one whose tests another runner runs, unless the person
- * ruled the run out. A Codex rollout answers nothing, so its stop blocks.
+ * epoch ms. The stop then names no unexecuted definition either. A
+ * gate that names a test missing from the checkout, or only unexecuted
+ * definitions, still asks; so does one whose tests another runner runs,
+ * unless the person ruled the run out. A Codex rollout answers nothing, so
+ * its stop blocks.
  */
 export function runAnswered(gate, objs, { root, cwd, testExists, lastModified } = {}) {
   const tests = gate && Array.isArray(gate.tests) ? gate.tests : [];

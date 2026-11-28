@@ -1914,13 +1914,16 @@ export interface CodeTestGateInput {
 export interface CodeTestGateOutput {
   tests?: Array<Record<string, unknown>>;
   untested?: Array<Record<string, unknown>>;
+  unlinked?: Array<Record<string, unknown>>;
   changed_files?: string[];
   touched_symbols?: Array<Record<string, unknown>>;
   obligations?: boolean;
   tests_total?: number;
   untested_total?: number;
+  unlinked_total?: number;
   tests_capped?: boolean;
   untested_capped?: boolean;
+  unlinked_capped?: boolean;
   counts_floor?: boolean;
   epistemic?: string;
   causes?: string[];

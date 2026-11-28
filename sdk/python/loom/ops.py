@@ -8091,7 +8091,7 @@ class CodeSymbolHistoryOutput(TypedDict, total=False):
 
 
 class CodeTestGateInput(TypedDict, total=False):
-    "The pre-PR question in one call: for THIS change, which tests must"
+    "The pre-PR question in one call: for THIS change, which tests must run, and"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -8105,7 +8105,7 @@ class CodeTestGateInput(TypedDict, total=False):
 
 
 class CodeTestGateBody(TypedDict, total=False):
-    "The pre-PR question in one call: for THIS change, which tests must"
+    "The pre-PR question in one call: for THIS change, which tests must run, and"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -8121,13 +8121,16 @@ class CodeTestGateBody(TypedDict, total=False):
 class CodeTestGateOutput(TypedDict, total=False):
     tests: NotRequired[list[dict[str, Any]]]
     untested: NotRequired[list[dict[str, Any]]]
+    unlinked: NotRequired[list[dict[str, Any]]]
     changed_files: NotRequired[list[str]]
     touched_symbols: NotRequired[list[dict[str, Any]]]
     obligations: NotRequired[bool]
     tests_total: NotRequired[int]
     untested_total: NotRequired[int]
+    unlinked_total: NotRequired[int]
     tests_capped: NotRequired[bool]
     untested_capped: NotRequired[bool]
+    unlinked_capped: NotRequired[bool]
     counts_floor: NotRequired[bool]
     epistemic: NotRequired[str]
     causes: NotRequired[list[str]]

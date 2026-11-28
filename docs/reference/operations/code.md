@@ -873,8 +873,8 @@ Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius.
 | `name` | `str` | `''` | Symbol shape: the seed's bare, qualified or partly qualified name, or `path:line`. |
 | `symbol_id` | `str` | `''` | Symbol shape: an index symbol id for the seed; wins over `name`. |
 | `depth` | `int` | `2` | How many caller hops the radius walks from the seeds (1–2). |
-| `files` | `list[str]` | *(computed)* | Diff shape: repo-relative changed paths, and/or a unified diff whose hunk line ranges narrow the touched set from whole files to the symbols actually edited. |
-| `diff` | `str` | `''` | A unified diff (at most 200,000 chars); its hunk ranges pick the edited functions as seeds. |
+| `files` | `list[str]` | *(computed)* | Diff shape: repo-relative changed paths, and/or a unified diff whose changed lines narrow the touched set from whole files to the symbols actually edited. |
+| `diff` | `str` | `''` | A unified diff (at most 200,000 chars) against the revision the index holds; each changed line seeds the innermost function it sits in. |
 | `exclude_authors` | `list[str]` | *(computed)* | Left out of `owners`: the change's own author(s) are not its reviewers. |
 | `summary_only` | `bool` | `False` | Hub-safe ergonomics. |
 | `per_hop_limit` | `int` | `200` | At most this many `impacted_symbols` rows from each hop (1–500). |
@@ -889,7 +889,7 @@ Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius.
 | `impacted_tests` | `list[dict[str, Any]]` | Tests the test map ties to the seed and impacted paths: {test_path, src_path, confidence}. |
 | `co_change_files` | `list[dict[str, Any]]` | Files changed in the same merged PRs as the seed paths, most often first ({path, prs}, at most 20): the last 10 PRs for the symbol shape, 50 for the diff shape. |
 | `blast_radius_score` | `float` | impacted/50 + tests/40, capped at 1. |
-| `touched_symbols` | `list[dict[str, Any]]` | Diff shape only: the symbols the change touches (hunk-overlap when a diff was given, else every function in the files), and the files that historically co-change with the touched set but are absent from it — the "did you forget to update… |
+| `touched_symbols` | `list[dict[str, Any]]` | Diff shape only: the symbols the change touches (the functions its changed lines sit in when a diff was given, else every function in the files), and the files that historically co-change with the touched set but are absent from it — the… |
 | `co_change_missing` | `list[dict[str, Any]]` | Diff shape: co-change files absent from the change ({path, prs, of}, at most 5, support at least 4 PRs and 15%); empty for the symbol shape. |
 | `owners` | `list[dict[str, Any]]` | Who to ask: {author, share, prs, reviews, last_merged_at} from merged PRs over the seed paths — the PRs a person AUTHORED (`prs`) and the ones they REVIEWED (`reviews`, inline comments), recency-decayed (120-day half-life), share floor, at… |
 | `reverts` | `list[dict[str, Any]]` | Merged PRs over the seed paths that were REVERTS ({pr_number, title, merged_at}, newest first, <=5): the one kind of history that says what not to do, invisible to symbol lookups (the code is back) and to co-change (same files as the… |
@@ -1720,7 +1720,7 @@ The regression history of one function: the merged PRs that touched it (with lin
 
 ## `code.test_gate`
 
-The pre-PR question in one call: for THIS change, which tests must run, and which touched code no test reaches.
+The pre-PR question in one call: for THIS change, which tests must run, and which touched definitions no test is shown to run.
 
 `POST /v1/code.test_gate` · MCP `loom_code_test_gate` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -1732,24 +1732,27 @@ The pre-PR question in one call: for THIS change, which tests must run, and whic
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `files` | `list[str]` | *(computed)* | Changed file paths; a test file here is itself a test to run. |
-| `diff` | `str` | `''` | A unified diff; its hunks (line spans, hunk-header names) pick the touched functions. |
+| `diff` | `str` | `''` | A unified diff against the revision the index holds (the working tree against HEAD, a pull request against its merge base). |
 | `depth` | `int` | `2` | Reverse-edge hops to look for tests through. |
-| `limit` | `int` | `30` | At most this many rows in each of `tests` and `untested` (at most 200). |
+| `limit` | `int` | `30` | At most this many rows in each of `tests`, `untested` and `unlinked` (at most 200). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `tests` | `list[dict[str, Any]]` | {test_path, why, evidence, run, run_unknown, [src_path], [confidence], [hop]} why in {changed_test, stem_partner, test_map, graph_hop}, strongest first. |
-| `untested` | `list[dict[str, Any]]` | Touched source symbols no test reaches by any evidence class: {qualified_name, path, start_line}. |
+| `tests` | `list[dict[str, Any]]` | {test_path, why, evidence, run, run_unknown} per test file, strongest evidence first. |
+| `untested` | `list[dict[str, Any]]` | Touched source definitions a coverage run measured unexecuted, at a commit the index verified: {qualified_name, path, start_line, commit}. |
+| `unlinked` | `list[dict[str, Any]]` | Touched source definitions no coverage run measured and no call chain links a test to: {qualified_name, path, start_line}. |
 | `changed_files` | `list[str]` | The change as the gate saw it. |
-| `touched_symbols` | `list[dict[str, Any]]` | The source symbols the change touches, {qualified_name, path, start_line, tier}, by path and line (first 200). |
-| `obligations` | `bool` | True while either list is non-empty: run the tests, then rely on green; write a test for (or explain) the untested rows. |
+| `touched_symbols` | `list[dict[str, Any]]` | The source definitions the change touches, {qualified_name, path, start_line, tier}, by path and line (first 200). |
+| `obligations` | `bool` | True while `tests` or `untested` is non-empty: run the tests, whose green says as much as each row's `why` (a `coverage` or `static_call` test ran against a touched definition; a `stem_partner`, `test_map` or `file_neighbor` test is about… |
 | `tests_total` | `int` | Rows of `tests` before `limit`. |
 | `untested_total` | `int` | Rows of `untested` before `limit`. |
+| `unlinked_total` | `int` | Rows of `unlinked` before `limit`. |
 | `tests_capped` | `bool` | True when `limit` cut `tests` short of `tests_total`. |
 | `untested_capped` | `bool` | True when `limit` cut `untested` short of `untested_total`. |
-| `counts_floor` | `bool` | Same epistemic contract as code.callers: the graph is a floor, so "no test reaches this" means none the index can see. |
-| `epistemic` | `str` | Epistemic envelope, as on code.callers: "exact" when the compiler tier covers every seed file, no call site named like a seed was declined, and no override seed lacks its base; otherwise "lower_bound" with `causes` from {unresolved_calls… |
-| `causes` | `list[str]` | Why `epistemic` is lower_bound (values above); [] when it is exact. |
+| `unlinked_capped` | `bool` | True when `limit` cut `unlinked` short of `unlinked_total`. |
+| `counts_floor` | `bool` | Same epistemic contract as code.callers: the graph is a floor, so a test missing from `tests` is one the index cannot see. |
+| `epistemic` | `str` | `measured` when a verified coverage run settled every touched definition, every changed line sat in one and every changed source file touched one; otherwise `lower_bound`. |
+| `causes` | `list[str]` | What limits the answer, from code.callers' causes (unresolved_calls, ambiguous_calls, treesitter_only_files, external_calls, truncated: a hop read hit its row limit), which limit `tests` under either `epistemic`, and two of its own that… |
 | `by_hop_counts` | `dict[int, int]` | Distinct symbols reached per hop BEFORE any slicing: {1: n, 2: m}. |
 | `trace_run_id` | `str` | Id of this call's row in `loom.code_search_trace`. |
 

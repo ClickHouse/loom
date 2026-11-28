@@ -1,5 +1,5 @@
-"""The test plane: code.test_gate (tests to run and the untested blast radius),
-code.test_home, code.tests_for and code.coverage_claim.
+"""The test plane: code.test_gate (tests to run, and the touched definitions measured
+unexecuted or linked to no test), code.test_home, code.tests_for and code.coverage_claim.
 """
 
 from __future__ import annotations
@@ -11,31 +11,38 @@ from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_seri
 from server.code.api.models_common import _CodeIdentity, _drop_unset_resolved_by
 
 # ============================================================
-# code.test_gate (pre-PR obligations: tests to run + untested blast radius)
+# code.test_gate (pre-PR obligations: tests to run + what no test is shown to run)
 # ============================================================
 
 
 class CodeTestGateInput(_CodeIdentity):
-    """The pre-PR question in one call: for THIS change, which tests must
-    run, and which touched code no test reaches. Diff-shaped like
-    code.impact (files and/or a unified diff); the answer is two ordered
-    lists and one boolean, `obligations`, that a Stop hook or CI step can
-    gate on. Tests come back in EVIDENCE order — a changed test file first,
-    then the stem partner of a changed source file, then the mined test
-    map, then tests reached through the call graph — each row saying why
-    it is there and how to run it (or `run_unknown` when the harness is
-    not derivable from the path; never a guessed command)."""
+    """The pre-PR question in one call: for THIS change, which tests must run, and
+    which touched definitions no test is shown to run. Diff-shaped like code.impact
+    (files and/or a unified diff); the answer is the tests, two lists of touched
+    definitions and one boolean, `obligations`, that a Stop hook or CI step can gate on.
+    Tests come back in EVIDENCE order — a changed test file, then tests a coverage run
+    measured executing a touched definition, then tests a call chain links to one, then
+    the stem partner of a changed source file, then the mined test map, then (while the
+    list is shorter than four) tests that call other definitions of the edited files —
+    each row saying why it is there and how to run it (or `run_unknown` when the harness
+    is not derivable from the path; never a guessed command)."""
 
     # Changed file paths; a test file here is itself a test to run. Unioned with the
     # diff's paths; files and/or `diff` must be given.
     files: list[str] = Field(default_factory=list, max_length=50)
-    # A unified diff; its hunks (line spans, hunk-header names) pick the touched functions.
-    # A file with no hunks, as from `files` alone, touches every function in it.
+    # A unified diff against the revision the index holds (the working tree against HEAD, a
+    # pull request against its merge base). Each changed line touches the innermost
+    # function or class it sits in; a line in neither touches nothing. Added lines that
+    # replace nothing touch the definition that holds the lines on both sides of them;
+    # decorators touch the definition below, and Python lines indented as deep as the line
+    # above touch the definition that line ends (both need the diff's lines, not only its
+    # hunk headers). A file with no hunks, as from `files` alone, touches every function
+    # in it.
     diff: str = Field(default="", max_length=200_000)
     # Reverse-edge hops to look for tests through. Two is code.impact's
     # ceiling; three reaches integration tests that sit behind a fixture.
     depth: int = Field(default=2, ge=1, le=3)
-    # At most this many rows in each of `tests` and `untested` (at most 200).
+    # At most this many rows in each of `tests`, `untested` and `unlinked` (at most 200).
     limit: int = Field(default=30, ge=1, le=200)
 
 
@@ -157,39 +164,68 @@ class CodeCoverageClaimOutput(BaseModel):
 
 
 class CodeTestGateOutput(BaseModel):
-    # {test_path, why, evidence, run, run_unknown, [src_path], [confidence], [hop]}
-    # why in {changed_test, stem_partner, test_map, graph_hop}, strongest first.
+    # {test_path, why, evidence, run, run_unknown} per test file, strongest evidence first.
+    # `why` is the kind of evidence: `changed_test` (the file is in the diff), `coverage`
+    # (a coverage run measured it executing a touched definition; `links_to`),
+    # `static_call` (a call chain links its tests to a touched definition: `hop` of the
+    # nearest, `callers` how many of its tests do, `links_to` naming up to ten of the
+    # definitions, `via` `constructor` when the test calls the class of a touched
+    # constructor, `enclosing` when it calls the function a touched nested function is
+    # defined in or `fixture` when it reaches through a fixture), `stem_partner` (its name
+    # holds the stem of a changed source file: `src_path`), `test_map` (mined history
+    # about the file: `src_path`, `confidence`), `file_neighbor` (it calls `callees` other
+    # definitions of the edited files and says nothing about the touched
+    # ones; listed only while the other kinds leave fewer than four rows, and never more
+    # than fill the list to four). Within a kind the nearest hop is first, then the file
+    # linked to more of the touched definitions, then the one with more tests or callees.
     tests: list[dict[str, Any]] = Field(default_factory=list)
-    # Touched source symbols no test reaches by any evidence class:
-    # {qualified_name, path, start_line}. The other half of the obligation.
+    # Touched source definitions a coverage run measured unexecuted, at a commit the index
+    # verified: {qualified_name, path, start_line, commit}. Empty without such a run.
     untested: list[dict[str, Any]] = Field(default_factory=list)
+    # Touched source definitions no coverage run measured and no call chain links a test
+    # to: {qualified_name, path, start_line}. Not proof that no test runs them: tests reach
+    # code through fixtures, string dispatch and entry points the graph has no edge for. A
+    # `stem_partner`, `test_map` or `file_neighbor` row never takes a definition off this
+    # list.
+    unlinked: list[dict[str, Any]] = Field(default_factory=list)
     # The change as the gate saw it.
     changed_files: list[str] = Field(default_factory=list)
-    # The source symbols the change touches, {qualified_name, path, start_line, tier}, by
-    # path and line (first 200).
+    # The source definitions the change touches, {qualified_name, path, start_line, tier},
+    # by path and line (first 200).
     touched_symbols: list[dict[str, Any]] = Field(default_factory=list)
-    # True while either list is non-empty: run the tests, then rely on green;
-    # write a test for (or explain) the untested rows.
+    # True while `tests` or `untested` is non-empty: run the tests, whose green says as
+    # much as each row's `why` (a `coverage` or `static_call` test ran against a touched
+    # definition; a `stem_partner`, `test_map` or `file_neighbor` test is about the file
+    # and may not run the changed code), and write a test for (or explain) the untested
+    # rows. `unlinked` alone asks for nothing.
     obligations: bool = False
     # Rows of `tests` before `limit`.
     tests_total: int = 0
     # Rows of `untested` before `limit`.
     untested_total: int = 0
+    # Rows of `unlinked` before `limit`.
+    unlinked_total: int = 0
     # True when `limit` cut `tests` short of `tests_total`.
     tests_capped: bool = False
     # True when `limit` cut `untested` short of `untested_total`.
     untested_capped: bool = False
-    # Same epistemic contract as code.callers: the graph is a floor, so
-    # "no test reaches this" means none the index can see.
+    # True when `limit` cut `unlinked` short of `unlinked_total`.
+    unlinked_capped: bool = False
+    # Same epistemic contract as code.callers: the graph is a floor, so a test missing
+    # from `tests` is one the index cannot see.
     counts_floor: bool = True
-    # Epistemic envelope, as on code.callers: "exact" when the compiler tier
-    # covers every seed file, no call site named like a seed was declined,
-    # and no override seed lacks its base; otherwise "lower_bound" with
-    # `causes` from {unresolved_calls, ambiguous_calls, dispatch_seeds_missing,
-    # treesitter_only_files, external_calls, ctor_edges_absent, truncated (a
-    # hop read hit its row limit)}.
+    # `measured` when a verified coverage run settled every touched definition, every
+    # changed line sat in one and every changed source file touched one; otherwise
+    # `lower_bound`. The gate never answers `exact`: a static graph cannot show that no
+    # test runs a definition.
     epistemic: str = "lower_bound"
-    # Why `epistemic` is lower_bound (values above); [] when it is exact.
+    # What limits the answer, from code.callers' causes (unresolved_calls,
+    # ambiguous_calls, treesitter_only_files, external_calls, truncated: a hop read hit its
+    # row limit), which limit `tests` under either `epistemic`, and two of its own that
+    # make it `lower_bound`: `unmapped_changes` (a changed line sits in no definition the
+    # index holds: module-level code, text added above a definition, a file with no
+    # definition or one the index does not hold) and `no_coverage` (no verified coverage
+    # run measured a touched definition).
     causes: list[str] = Field(default_factory=list)
     # Distinct symbols reached per hop BEFORE any slicing: {1: n, 2: m}.
     # The true size of the radius when `truncated` says the rows are a page.

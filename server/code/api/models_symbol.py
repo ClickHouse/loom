@@ -550,11 +550,11 @@ class CodeImpactInput(_CodeIdentity, _PrPostImage, _ResultLessons):
     # How many caller hops the radius walks from the seeds (1–2).
     depth: int = Field(default=2, ge=1, le=2)
     # Diff shape: repo-relative changed paths, and/or a unified diff whose
-    # hunk line ranges narrow the touched set from whole files to the
+    # changed lines narrow the touched set from whole files to the
     # symbols actually edited.
     files: list[str] = Field(default_factory=list, max_length=50)
-    # A unified diff (at most 200,000 chars); its hunk ranges pick the edited functions
-    # as seeds.
+    # A unified diff (at most 200,000 chars) against the revision the index holds; each
+    # changed line seeds the innermost function it sits in.
     diff: str = Field(default="", max_length=200_000)
     # Left out of `owners`: the change's own author(s) are not its reviewers.
     # GitHub logins as recorded on merged PRs.
@@ -600,8 +600,8 @@ class CodeImpactOutput(_LessonsOut):
     # predictor of a revert or fix PR it is weak (within noise in a
     # calibration replay).
     blast_radius_score: float = 0.0
-    # Diff shape only: the symbols the change touches (hunk-overlap when a
-    # diff was given, else every function in the files), and the files that
+    # Diff shape only: the symbols the change touches (the functions its changed
+    # lines sit in when a diff was given, else every function in the files), and the files that
     # historically co-change with the touched set but are absent from it —
     # the "did you forget to update X?" list.
     touched_symbols: list[dict[str, Any]] = Field(default_factory=list)

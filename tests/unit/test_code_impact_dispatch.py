@@ -54,7 +54,7 @@ def test_hunk_context_name_extraction() -> None:
 
 
 def test_parse_unified_diff_full_ranges_and_names() -> None:
-    ranges, names = diff._parse_unified_diff_full(DIFF)
+    ranges, names, _ = diff._parse_unified_diff_full(DIFF)
     assert ranges["src/Core/BaseSettings.h"] == [(707, 713), (313, 320)]
     assert names["src/Core/BaseSettings.h"] == {"BaseSettings::write"}
     assert names["src/Common/maskURIPassword.h"] == {"maskPresignedURLParameters"}
@@ -308,7 +308,7 @@ def test_partial_relationship_languages() -> None:
     assert not dispatch._partial_relationships("")
 
 
-def test_touched_rows_fold_a_definitions_tier_ids_and_rank_header_first() -> None:
+def test_touched_rows_fold_a_definitions_tier_ids_and_rank_changed_lines_first() -> None:
     def row(sid: str, name: str, path: str, start: int, end: int, tier: str) -> dict:
         return {
             "symbol_id": sid,
@@ -323,16 +323,23 @@ def test_touched_rows_fold_a_definitions_tier_ids_and_rank_header_first() -> Non
         row("ts_f", "DB::f", "src/a.cpp", 10, 20, "treesitter"),  # same definition, parser tier
         row("sc_f", "DB::f", "src/a.cpp", 10, 10, "scip"),
         row("sc_g", "DB::g", "src/a.cpp", 30, 40, "scip"),  # a hunk inside g
-        row("sc_h", "DB::h", "src/a.cpp", 90, 99, "scip"),  # untouched
+        row("sc_h", "DB::h", "src/a.cpp", 90, 90, "scip"),  # one line: only a header can name it
+        row("sc_i", "DB::i", "src/a.cpp", 50, 60, "scip"),  # only headers name it
         row("sc_k", "DB::k", "src/b.cpp", 1, 5, "scip"),  # files-only: every function
     ]
-    touched, seed_ids = diff._touched_rows_for_diff(
-        rows, {"src/a.cpp": [(35, 36)]}, {"src/a.cpp": {"f"}}
-    )
+    hunks = [
+        diff.Hunk("i", ((35, 36),), ()),  # its lines sit in g, whatever the header says
+        diff.Hunk("", ((15, 15),), ()),  # inside f's parser span
+        diff.Hunk("h", ((95, 95),), ()),  # in no definition; h has no body extent
+        diff.Hunk("i", ((70, 70),), ()),  # in no definition; i's body ends above it
+    ]
+    touched, seed_ids, unmapped = diff._touched_rows_for_diff(rows, {"src/a.cpp": hunks})
     assert [(r["symbol_id"], r["via"]) for r in touched] == [
-        ("sc_f", "header"),
+        ("sc_f", "hunk"),
         ("sc_g", "hunk"),
+        ("sc_h", "header"),
         ("sc_k", "file"),
     ]
     assert touched[0]["tier_ids"] == ["sc_f", "ts_f"]
-    assert seed_ids == ["sc_f", "ts_f", "sc_g", "sc_k"]
+    assert seed_ids == ["sc_f", "ts_f", "sc_g", "sc_h", "sc_k"]
+    assert unmapped == 1

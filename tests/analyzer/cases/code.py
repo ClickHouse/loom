@@ -387,6 +387,8 @@ async def _point_readers(ch: RecordingCH, c: dict[str, Any]) -> None:
         ["getSubcolumnNameForStream(subpath,"],
     )
     await repo.caller_counts(ORG, NS, ["s1", "s2"])
+    # code.test_gate's file neighbours: the test files calling a file's other definitions
+    await repo.test_files_calling(ORG, NS, {"s1": "s1", "s2": "s1"}, limit=4)
     await repo.coverage_gaps(ORG, NS)
     await repo.coverage(ORG, NS)
     await repo.index_errors(ORG, NS, limit=10)

@@ -460,8 +460,10 @@ class CodeClient:
     ) -> dict[str, Any]:
         """Pre-PR obligations for a change: `tests` to run in evidence order
         (each with `why`, and `run` or `run_unknown`), `untested` touched
-        symbols no test reaches, and `obligations` — true while either list
-        is non-empty. Pass the unified diff for hunk-level touched symbols;
+        definitions a coverage run measured unexecuted, `unlinked` ones the
+        index links no test to, and `obligations` — true while `tests` or
+        `untested` is non-empty. Pass the unified diff against the indexed
+        revision to touch only the definitions its changed lines sit in;
         files alone means every function in them."""
         body: dict[str, Any] = {"depth": depth, "limit": limit}
         if files:
