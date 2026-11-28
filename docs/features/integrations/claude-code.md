@@ -257,8 +257,8 @@ only its listed read tools. This guidance does not depend on plugin hooks.
 The plugin's own connection gets one
 paragraph instead, because its hooks say the rest when it applies: the
 checkout's code namespace at session start, the Loom call in place of a local
-read they refuse, a file's memories before an edit and recalled memories beside
-the prompt. In a one-plane [mode](#modes) the paragraph is that plane's sentence.
+read they refuse, a file's memories at its first local read or before an edit
+and recalled memories beside the prompt. In a one-plane [mode](#modes) the paragraph is that plane's sentence.
 A first-step memory pack requires a default memory namespace; code tools use
 the supplied code scope. Instructions guide tool choice and do not prove a
 lookup occurred.
@@ -397,10 +397,17 @@ runs only the client program, without CLI hooks. See [headless usage](https://co
 
 ### Hook context does not appear
 
-The file-context hook runs on `PreToolUse`, before `Edit`, `Write`, `MultiEdit` and
-`NotebookEdit`. It emits context only when `memory.for_file` renders matching memories,
-decisions or constraints. Lookups are cached per session and file, including empty
-answers, for `LOOM_FILE_CONTEXT_TTL_MIN` minutes.
+The file-context hook runs on `PostToolUse`, after `Read`, `Grep` and `Bash`, and on
+`PreToolUse`, before `Edit`, `Write`, `MultiEdit` and `NotebookEdit`. After a read it looks
+up each file of the checkout the call read: the file `Read` names, a `Grep` of one file,
+and in a shell command a file read whole or by a line range (`cat`, `sed -n`, `head`,
+`tail`) or searched by name (`grep pattern file`). A command the hook cannot follow, such
+as a script that opens the file, starts no lookup. The hook emits context only when
+`memory.for_file` renders matching memories, decisions or constraints. A file is looked up
+once per session and agent context, including an empty answer; a compaction clears that,
+and before an edit a file shown more than `LOOM_FILE_CONTEXT_TTL_MIN` minutes ago is
+looked up again. Reads look up at most three files per call and 40 per session, and stop
+after three lookups the server did not answer.
 
 The blast-radius hook runs on `PostToolUse` after `Edit`, `Write` and `MultiEdit`.
 It stays quiet for untracked files, empty diffs, repeated impact results, an unavailable
@@ -483,7 +490,7 @@ claude plugin install loom@loom --config mode=code
   hints, which each name the other plane's tools, are off.
 - **Memory mode** sends no `code.*` request and lists no `loom_code_*` tool: no redirect
   of a read or grep, no code pointers, no blast radius, no test gate, and no
-  `X-Loom-Code-Scope` header. The pre-edit lookup covers your own namespace. A
+  `X-Loom-Code-Scope` header. The file lookup covers your own namespace. A
   repository's team rules are found through its code index, so they need `both`.
 - **Every mode keeps the run ledger**: `run.begin` with the first prompt, `run.complete`
   with the last reply, and `cost.record_turns` with the token usage.
@@ -541,7 +548,8 @@ The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
 | UserPromptSubmit                                  | `loom-prompt-recall.mjs`    | one bounded `context.pack` recall for the prompt (memories, decisions, procedures), injected only when memory does not abstain                                                                                                                                                                                                                                                  | `LOOM_PROMPT_RECALL=first` (default) / `on` / `off`                                                         |
 | UserPromptSubmit                                  | `loom-run.mjs`              | opens the session's run (`run.begin`, `run_id = cc-<session_id>`, goal = the first prompt); the prompt does not wait for it                                                                                                                                                                                                                                                     | `LOOM_RUN_LEDGER=off`                                                                                       |
 | PreToolUse (Read, Grep, Bash)                     | `loom-code-shunt.mjs`       | the code shunt and the tracker shunt ([next section](#the-code-shunt))                                                                                                                                                                                                                                                                                                          | `LOOM_CODE_SHUNT=off`, `LOOM_TRACKER_SHUNT=off`                                                             |
-| PreToolUse (Edit, Write, MultiEdit, NotebookEdit) | `loom-file-context.mjs`     | what Loom knows about the file about to change (`memory.for_file`): your rules and the repository's shared rules and design decisions; once per file per 30 min                                                                                                                                                                                                                 | `LOOM_FILE_CONTEXT=off`                                                                                     |
+| PostToolUse (Read, Grep, Bash)                    | `loom-file-context.mjs`     | what Loom knows about each file the call read (`memory.for_file`): your rules and the repository's shared rules and design decisions, on the read's result; once per file per session and agent context                                                                                                                                                                         | `LOOM_FILE_CONTEXT=off`                                                                                     |
+| PreToolUse (Edit, Write, MultiEdit, NotebookEdit) | `loom-file-context.mjs`     | the same block before an edit of a file not shown yet in this agent context, or shown more than 30 min ago                                                                                                                                                                                                                                                                      | `LOOM_FILE_CONTEXT=off`                                                                                     |
 | PostToolUse (Loom tools)                          | `loom-mentor-hint.mjs`      | lifts a result's `hint` into context, once per hint code per session                                                                                                                                                                                                                                                                                                            | `LOOM_MENTOR_HINTS=off`                                                                                     |
 | PostToolUse (Edit, Write, MultiEdit)              | `loom-blast-radius.mjs`     | one line from `code.impact`: callers, tests reaching the change, co-change files not yet touched; on a file's first edit, the test gate's line beside it in place of the tests                                                                                                                                                                                                  | `LOOM_BLAST_RADIUS=off`                                                                                     |
 | PostToolUse (Bash, PowerShell)                    | `loom-test-gate.mjs`        | one line per file the command changed, naming the command of the file's tests, or the changed functions the index links no test to (`code.test_gate`); once per file and per test per session, on the tool result ([the test gate](#the-test-gate))                                                                                                                             | `LOOM_TEST_GATE=off`                                                                                        |
@@ -618,9 +626,9 @@ scripts it runs have returned.
 
 ### Recalled content and local data
 
-The primer, the per-prompt recall, the saved-brief list, the file rules injected before an
-edit (`loom-file-context`) and the tracker items the code shunt quotes when it answers a
-GitHub issue search can carry other people's writes: team file rules live in the
+The primer, the per-prompt recall, the saved-brief list, the file rules injected after a
+read or before an edit (`loom-file-context`) and the tracker items the code shunt quotes
+when it answers a GitHub issue search can carry other people's writes: team file rules live in the
 repository's code namespace, where every member writes, and anyone who can file an issue
 writes its title. Each item is labelled with its writer (`by=` in recall, the author on a
 team file rule), and the plugin wraps every one of these in a `<loom-recalled-data>` block
@@ -655,7 +663,7 @@ Beyond the off switches in the table:
 | `LOOM_PROMPT_RECALL_MAX_CHARS` | `1200`                    | cap on the injected recall                                                                 |
 | `LOOM_PROMPT_PACK_TOP_K`       | `3`                       | pointers per prompt (`LOOM_PROMPT_PACK=off` turns the pack off)                            |
 | `LOOM_PROMPT_PACK_MIN_CONF`    | unset                     | a `retrieval_confidence` gate for search pointers (low risk is 0.7 up); unset, that label  |
-| `LOOM_FILE_CONTEXT_TTL_MIN`    | `30`                      | minutes before the same file's context is fetched again                                    |
+| `LOOM_FILE_CONTEXT_TTL_MIN`    | `30`                      | minutes before an edit fetches the same file's context again                               |
 | `LOOM_BLAST_DEPTH`             | `1`                       | `code.impact` depth for the blast-radius line                                              |
 | `LOOM_TEST_GATE`               | unset                     | `block`: no line at edit time, and a stop passes only on the named tests; `off`: no gate   |
 | `LOOM_TEST_GATE_DEPTH`         | `2`                       | hops the test gate follows (1–3)                                                           |
