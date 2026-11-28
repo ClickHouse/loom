@@ -821,8 +821,8 @@ def _memory_section_lines(
     200-char lines, level with memory.ask at a fifth of the latency. The
     reading rule rides once, ahead of the block. Without a block (a later
     page) the agent reads the plain hit lines, which carry the block line's
-    note for a hit that names code with the hit's date (`code_change.hit_note`),
-    under the block's sentence for unlinked and changed hits.
+    note for a hit that names code (`code_change.hit_note`), under the block's
+    sentence on what was compared.
     """
     block = str(memory.get("reader_block") or "").strip()
     out: list[str] = []
@@ -852,11 +852,10 @@ def _memory_section_lines(
                 out.extend(f"  [{k}] why: {w}" for k, w in whys)
         return out
     out.append("\nMemory hits:")
-    if unchecked := code_change.unchecked(h.get("code_state") or "" for h in mem_hits[:top_k]):
-        out.append(unchecked)
+    if compared := code_change.compared(h.get("code_state") or "" for h in mem_hits[:top_k]):
+        out.append(compared)
     for h in mem_hits[:top_k]:
-        excerpt = code_change.shown(h.get("content_excerpt") or "", h.get("code_state") or "")
-        excerpt = excerpt.replace("\n", " ").strip()
+        excerpt = (h.get("content_excerpt") or "").replace("\n", " ").strip()
         ns_label = h.get("namespace") or "-"
         code = code_change.hit_note(h)
         why = why_note(h) if explain else (h.get("explanation") or "").replace("\n", " ").strip()

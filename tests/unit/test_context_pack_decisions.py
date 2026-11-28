@@ -39,6 +39,8 @@ _DECISION = NS(
     valid_at="",
     memory_type="decision",
 )
+# what a block says once when a line it renders holds a link
+_INDEXED = code_change.compared(["fresh"])
 
 
 def _search_stub(hits: list[Any]) -> Any:
@@ -261,7 +263,7 @@ def test_a_line_whose_code_changed_says_so_with_the_commit(
         handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
     )
     memories = out.sections["memories"]
-    assert memories.splitlines()[0] == code_change.UNCHECKED
+    assert memories.splitlines()[0] == _INDEXED
     assert "code_state=changed@c0ffeec0ffee] deploys are Tue/Thu" in memories
     assert "code_state=moved] deploys are Tue/Thu" in memories
     assert (
@@ -303,7 +305,7 @@ def test_a_line_whose_code_moved_names_where_it_is_now(monkeypatch: pytest.Monke
         handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
     )
     said, *lines = out.sections["memories"].splitlines()
-    assert said == code_change.UNCHECKED
+    assert said == _INDEXED
     assert [ln.split("] ", 1)[1] for ln in lines] == [
         f"(code moved: {now}) deploys are Tue/Thu",
         f"(code moved: {now}) deploys are Tue/Thu",
@@ -314,25 +316,25 @@ def test_a_line_whose_code_moved_names_where_it_is_now(monkeypatch: pytest.Monke
         "code_state=changed@c0ffeec0ffee",
         "code_state=moved",
     ]
-    assert out.sections["decisions"].splitlines()[0] == code_change.UNCHECKED
+    assert out.sections["decisions"].splitlines()[0] == _INDEXED
     assert (
         "(its code changed since it was written, commit c0ffeec0ffee: check before relying "
         f"on it; {now}) we chose clickhouse"
     ) in out.sections["decisions"]
 
 
-def test_a_line_that_names_code_says_its_state_revision_and_date(
+def test_a_line_that_names_code_says_its_state_revision_and_write_day(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unlinked memory says so with the day it was written and without the line numbers
-    of its text; a fresh one names the commit its link was anchored at, and alone needs
-    no sentence."""
+    """An unlinked memory says so with the day it was written and the text it was written
+    with; a fresh one names the commit its link was anchored at. The `date=` label stays
+    the date the text is about."""
     _dead_other_sections(monkeypatch)
     cause = "the cause is in src/core/print_helpers.py:8"
     written = {"content_excerpt": cause, "created_at": "2026-03-02T10:00:00"}
     unlinked = NS(**{**vars(_FACT), **written, "code_state": "unlinked"})
     anchored = {"memory_key": "m2", "code_state": "fresh", "code_rev": "ba5e" * 10}
-    fresh = NS(**{**vars(_FACT), **written, **anchored})
+    fresh = NS(**{**vars(_FACT), **written, **anchored, "valid_at": "2025-01-15T00:00:00"})
     plain = NS(**{**vars(_FACT), "memory_key": "m3", "created_at": "2026-03-02T10:00:00"})
 
     def _memories(hits: list[Any]) -> list[str]:
@@ -341,14 +343,14 @@ def test_a_line_that_names_code_says_its_state_revision_and_date(
         return asyncio.run(handle_context_pack(pack)).sections["memories"].splitlines()
 
     assert _memories([unlinked, fresh, plain]) == [
-        code_change.UNCHECKED,
-        "- [memory:ns/m1 source=fact by=unknown date=2026-03-02 code_state=unlinked]"
-        " the cause is in src/core/print_helpers.py",
-        "- [memory:ns/m2 source=fact by=unknown date=2026-03-02 code_state=fresh"
-        f" rev=ba5eba5eba5e] {cause}",
+        code_change.compared(["unlinked", "fresh"]),
+        f"- [memory:ns/m1 source=fact by=unknown code_state=unlinked written=2026-03-02] {cause}",
+        "- [memory:ns/m2 source=fact by=unknown date=2025-01-15 code_state=fresh"
+        f" rev=ba5eba5eba5e written=2026-03-02] {cause}",
         "- [memory:ns/m3 source=fact by=unknown] deploys are Tue/Thu",
     ]
-    assert code_change.UNCHECKED not in _memories([fresh, plain])
+    assert _memories([fresh, plain])[0] == _INDEXED
+    assert _memories([plain]) == ["- [memory:ns/m3 source=fact by=unknown] deploys are Tue/Thu"]
 
 
 def test_every_governed_definition_leads_the_memories_block(

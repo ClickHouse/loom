@@ -293,9 +293,10 @@ async def _annotation_reads(
     return _heads_of(input.org, idents, links, heads), seen, policies
 
 
-def _unlinked(hit: Any) -> bool:
-    """The hit was read from a memory's own row, holds no link the caller may read and
-    its text names a file (`code_change.names_file`): nothing compared it with code."""
+def unlinked(hit: Any) -> bool:
+    """The hit was read from a memory's own row, shows no link state and its text names a
+    file (`code_change.names_file`): the read has no comparison with code to show for
+    it. A link it holds is pending or in a repository the caller may not read."""
     if hit.code_state or getattr(hit, "_row_identity", None) is None:
         return False
     row = getattr(hit, "row", None)  # a listed row (the startup recall), not a search hit
@@ -305,7 +306,7 @@ def _unlinked(hit: Any) -> bool:
 
 async def annotate_hits(input: Any, hits: list[Any]) -> None:
     """Set each search hit's `code_state` to its worst link in a repository the caller
-    may read (`unlinked` for one that names a file and holds none, `_unlinked`),
+    may read (`unlinked` for one that names a file and shows none, `unlinked`),
     `code_changed_since` to the commit of that state (`code_change.worst_commit`),
     `code_rev` to the commit that link was anchored at (`code_change.anchored_commit`)
     and `code_moved` to those of the links now at another path or symbol than the
@@ -342,7 +343,7 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
             and h.code_state in code_change.DEMOTED
             and not code_change.held(m)
         )
-        if _unlinked(h):
+        if unlinked(h):
             h.code_state = code_change.UNLINKED
         kept.append(h)
     hits[:] = kept

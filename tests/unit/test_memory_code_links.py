@@ -1122,7 +1122,11 @@ async def _startup_lines(monkeypatch, served, *, pinned=(), recent=(), top_k=2) 
 
     rows = {
         h["mid"]: SimpleNamespace(
-            **h, confidence=1.0, valid_at=None, created_at=datetime(2026, 1, 1)
+            **h,
+            confidence=1.0,
+            valid_at=None,
+            created_at=datetime(2026, 1, 1),
+            updated_at=datetime(2026, 1, 9),  # its last write
         )
         for h in served.heads
     }
@@ -1157,10 +1161,16 @@ async def _startup_lines(monkeypatch, served, *, pinned=(), recent=(), top_k=2) 
     ("held", "state", "policy", "kept_current", "label"),
     [
         ({}, "missing", "", True, None),  # the code is gone and nobody holds the memory
-        ({"pinned": 1}, "missing", "", True, "code_state=missing@c0ffeec0ffee]"),
-        ({}, "changed", "", True, "code_state=changed@c0ffeec0ffee]"),
-        ({}, "missing", code_change.FLAG, True, "code_state=missing@c0ffeec0ffee]"),
-        ({}, "missing", "", False, "code_state=missing@c0ffeec0ffee]"),
+        ({"pinned": 1}, "missing", "", True, "code_state=missing@c0ffeec0ffee written=2026-01-09]"),
+        ({}, "changed", "", True, "code_state=changed@c0ffeec0ffee written=2026-01-09]"),
+        (
+            {},
+            "missing",
+            code_change.FLAG,
+            True,
+            "code_state=missing@c0ffeec0ffee written=2026-01-09]",
+        ),
+        ({}, "missing", "", False, "code_state=missing@c0ffeec0ffee written=2026-01-09]"),
     ],
 )
 async def test_a_startup_pack_with_no_query_reads_code_state_as_a_search_does(
@@ -1191,7 +1201,9 @@ async def test_a_startup_pack_names_where_a_memorys_moved_code_is_now(served, mo
     lines = await _startup_lines(monkeypatch, served, recent=["m", "edited", "other"], top_k=3)
     by_key = {ln.split()[1]: ln.split("] ", 1) for ln in lines}
     label, text = by_key["[memory:agent-a/m"]
-    assert label.endswith(" code_state=moved") and text == f"(code moved: {_NOW}) claim"
+    # the day beside the state is the row's last write, the `date=` label its first
+    assert label.endswith(" date=2026-01-01 code_state=moved written=2026-01-09")
+    assert text == f"(code moved: {_NOW}) claim"
     label, text = by_key["[memory:agent-a/edited"]
     assert "code_state=changed@c0ffeec0ffee" in label and text == f"(code moved: {_NOW}) claim"
     assert by_key["[memory:agent-a/other"][1] == "claim"

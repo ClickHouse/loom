@@ -734,6 +734,8 @@ async def test_a_decision_answer_first_withholds_leaves_the_mcp_text(monkeypatch
 
 
 _COMMIT = "c0ffee" * 6 + "abcd"
+# what a section says once when a hit it serves holds a link
+_INDEXED = code_change.compared(["changed"])
 _CODE_NOTE = (
     " (code_state=changed)"
     " (its code changed since it was written, commit c0ffeec0ffee: check before relying on it)"
@@ -752,11 +754,11 @@ async def test_a_hit_whose_code_changed_says_so_in_the_block(monkeypatch) -> Non
     out = _output([_changed("evict_rule"), _hit("note-a", 0.7, "me")])
     section = (await _assemble(monkeypatch, out))["memory"]
     assert section["reader_block"].split("\n\n") == [
-        code_change.UNCHECKED,
+        _INDEXED,
         f"[undated] [evict_rule] (semantic){_CODE_NOTE} text of evict_rule",
         "[undated] [note-a] (semantic) text of note-a",
     ]
-    assert section["code_note"] == code_change.UNCHECKED
+    assert section["code_note"] == _INDEXED
 
 
 @pytest.mark.asyncio
@@ -765,10 +767,10 @@ async def test_the_note_is_of_the_hits_left_after_trimming(monkeypatch) -> None:
     stale = _hit("decision:evict", 0.5, TRUNK, "decision")
     stale.code_state = "changed"
     out = _output([_hit("home_fact", 0.8, "me"), stale])
-    assert out.model_dump()["code_note"] == code_change.UNCHECKED
+    assert out.code_note == out.model_dump()["code_note"] == _INDEXED
     section = (await _assemble(monkeypatch, out))["memory"]
     assert [h["memory_key"] for h in section["results"]] == ["home_fact"]
-    assert section["code_note"] == "" and code_change.UNCHECKED not in section["reader_block"]
+    assert section["code_note"] == "" and _INDEXED not in section["reader_block"]
 
 
 @pytest.mark.asyncio

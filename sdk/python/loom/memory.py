@@ -398,10 +398,12 @@ class MemorySearchHit:
     # the number to threshold on.
     similarity: float = 0.0
     namespace: str = ""
-    # The hit's worst link to code: `fresh`, `moved`, `changed` (check the code
+    # The hit's worst link to code, compared with the repository's indexed head
+    # (not the caller's checkout): `fresh`, `moved`, `changed` (check the code
     # before relying on it), `unresolved` (gone where it was, maybe renamed) or
-    # `missing`. `unlinked` for a hit that holds no link and whose text names a
-    # file by its path: nothing compared it with code. '' when it names none.
+    # `missing`. `unlinked` for a hit that shows no link and whose text names a
+    # file by its path: the search has no comparison with code for it. '' when
+    # it names none.
     code_state: str = ""
     # The commit that put `code_state` at `changed`, `unresolved` or `missing`; ''
     # for any other state, and when no commit is known.

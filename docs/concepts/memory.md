@@ -599,8 +599,8 @@ The links are read where the code is:
   (a bare filename, `search/handler.py`; an absolute path is trusted to name a file below the
   root that it ends in), each with its `code_state`, within `code_result_lessons_tokens`. Each
   row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `rev` (the first 12
-  characters of the commit its link was anchored at) for a linked row, `date` (the day it was
-  last written) for a row with a code state, `changed_since` (the
+  characters of the commit its link was anchored at) for a linked row, `written` (the day it
+  was last written) for a row with a code state, `changed_since` (the
   commit that put its code in a changed, unresolved or missing state) when one is known, and
   `supersedes_key` when it replaces an older row, and `code_moved` (its links to code in the
   file that is now at another path or symbol than it was written against) when there are
@@ -641,23 +641,28 @@ The links are read where the code is:
   another path or symbol.
 - Each of those reads says of a memory that names code which state it is in, the commit
   its link was anchored at (`code_rev` on a search hit, `rev` on a line or a lesson) and
-  its date. A search hit read from a memory's own row that holds no link, and whose text
-  names a file by a path with a directory, is `unlinked`: nothing compared it with code.
-  Where no repository is indexed that is every such hit. A `memory.for_file` line and a
-  lesson are marked the same way; a rule that names its file only in `files` is not.
-  A reply that serves an `unlinked` or `changed` memory says once that those memories
-  were not checked against the caller's checkout: `code_note` on `memory.search`, the
-  first line of a reader block, of a `context.pack` block and of `loom_search`'s plain
-  lines, and the line after the header of a `memory.for_file` block. It says nothing when
-  every memory that names code is fresh. A memory that is not `fresh` is shown without
-  the line numbers its text gives (`reader.py:8`, `at lines 940-944`, a diff hunk's
-  ranges), on those lines, in a lesson's excerpt and in `loom_search`'s structured hit;
-  `memory.get` and a `memory.search` hit's `content_excerpt` keep the stored text.
+  the day it was written (`created_at` on a search hit, `written` on a line or a lesson).
+  The commit is the repository's indexed head when the link was made or last re-anchored;
+  for a link made after its memory that is a later commit than the writer worked at.
+  A search hit read from a memory's own row that shows no link state, and whose text
+  names a file by a path with a directory, is `unlinked`: the read has no comparison
+  with code to show for it. Where no repository is indexed that is every such hit, and a
+  hit whose only link is pending or in a repository the caller may not read is marked
+  the same way. A `memory.for_file` line and a lesson are marked likewise; a memory that
+  names its file only in `files`, by a bare file name or by a symbol is not. `unlinked`
+  is a label a read gives: no row and no parked search page stores it.
+  A reply that serves a memory with a code state says once what was compared: no code
+  for an `unlinked` memory, and for every other state the repository as Loom indexed
+  it, which is not the caller's checkout. That sentence is `code_note` on
+  `memory.search`, the first line of a reader block, of a `context.pack` block and of
+  `loom_search`'s plain lines, and the line after the header of a `memory.for_file`
+  block.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read, and the edits that bring a memory's
   text up to a rename its link followed.
 
-A memory with no link reads exactly as one whose code is current. `namespace.validate`
+A memory with no link carries no link state: a read marks it `unlinked` when its text
+names a file by its path, and serves it without a label otherwise. `namespace.validate`
 counts the served memories that name code (a backticked or qualified name, a call, or
 `files`) and hold no link, by cause, as `info` findings:
 

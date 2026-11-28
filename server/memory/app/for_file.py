@@ -175,15 +175,13 @@ def _is_whole(hit: dict[str, Any]) -> bool:
 
 
 def _body(hit: dict[str, Any], *, decision: bool, whole: bool = True) -> str:
-    """The value on one line, without its line numbers unless the row's links are fresh
-    (`code_change.shown`), capped unless the row prints whole (`whole` lets a decision
+    """The value on one line, capped unless the row prints whole (`whole` lets a decision
     or constraint do so); a decision's source follows it whole, so the citation still
     resolves through knowledge.get."""
-    value = code_change.shown(value_text(hit), str(hit.get("code_state") or ""))
     if whole and _is_whole(hit):
-        text = " ".join(value.split())
+        text = " ".join(value_text(hit).split())
     else:
-        text = _one_line(value, _LINE_CHARS)
+        text = _one_line(value_text(hit), _LINE_CHARS)
     # Only a line break would break the one-line-per-row layout; spaces stay as cited.
     source = " ".join(str(hit.get("source_resource_id") or "").splitlines())
     if decision and source:
@@ -318,10 +316,10 @@ def _ceiling_hides(hits: list[dict[str, Any]], rows: list[str], whole_chars: int
     return False
 
 
-def _unchecked_line(rows: list[dict[str, Any]]) -> list[str]:
-    """`code_change.UNCHECKED` as the block's second line when one of `rows` is unlinked
-    or changed; no line otherwise."""
-    said = code_change.unchecked(str(h.get("code_state") or "") for h in rows)
+def _compared_line(rows: list[dict[str, Any]]) -> list[str]:
+    """What was compared (`code_change.compared`) as the block's second line when one of
+    `rows` names code; no line otherwise."""
+    said = code_change.compared(str(h.get("code_state") or "") for h in rows)
     return [said] if said else []
 
 
@@ -344,8 +342,8 @@ def render_block(
     removal footer always print, and the "… more" line whenever a row is counted on it, so
     a budget smaller than those can be exceeded. `home` is the caller's namespace; a row
     from any other is a team row (rule or decision), rendered with its author and age, and
-    the block ends with how to remove one. When a row is unlinked or changed,
-    `code_change.UNCHECKED` follows the header, inside the budget."""
+    the block ends with how to remove one. When a row names code, what was compared
+    (`code_change.compared`) follows the header, inside the budget."""
     if not hits:
         return "", 0, False
     now, printed = now or naive_utc_now(), [] if shown is None else shown
@@ -357,7 +355,7 @@ def render_block(
     # Each line after the header adds its length and the newline before it; room for the
     # sentence is kept whenever a row would need it.
     used = len(lines[0]) + (len(footer) + 1 if footer else 0)
-    used += sum(len(said) + 1 for said in _unchecked_line(hits))
+    used += sum(len(said) + 1 for said in _compared_line(hits))
     rows = [_row_line(h, now, home) for h in hits]
     budgeted = [not _is_whole(h) for h in hits]
     # No "… more" line can appear when every budgeted row fits and no decision or constraint
@@ -397,7 +395,7 @@ def render_block(
             used += len(row) + 1
         else:
             whole_used += len(row) + 1
-    lines[1:1] = _unchecked_line(printed)
+    lines[1:1] = _compared_line(printed)
     if left_out:
         lines.append(_more_line(path, left_out))
     if whole_left:
@@ -785,10 +783,10 @@ def _with_ids(hit: _MemoryForFileHit, row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _as_printed(row: dict[str, Any]) -> dict[str, Any]:
-    """The row as the block prints it: `unlinked` when it holds no link to code in the
-    file and its text names a file by its path (`code_change.names_file`), so nothing
-    compared what it says of that code. A rule that names the file only in `files`
-    prints as it is."""
+    """The row as the block prints it: `unlinked` when it shows no link to code in the
+    file and its text names a file by its path (`code_change.names_file`), so the read
+    has no comparison to show for what it says of that code. A rule that names the file
+    only in `files` prints as it is."""
     if row.get("code_state") or not code_change.names_file(value_text(row)):
         return row
     return row | {"code_state": code_change.UNLINKED}

@@ -33,6 +33,8 @@ class EvidenceItem:
     code_state: str = ""
     # The commit its worst link was anchored at (` rev=…` on the line); "" with no link.
     code_rev: str = ""
+    # When a memory that names code was written (` written=<day>` on the line).
+    code_written: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,8 +79,8 @@ def pack_evidence(
     `max_per_group` items before filling the remaining budget. This prevents
     one verbose transcript or document from crowding out other evidence planes.
     Order stays relevance-descending; the event date rides each line as a label.
-    When a line it renders is of an unlinked or changed memory the list opens with
-    `code_change.UNCHECKED`, inside the budget.
+    When a line it renders is of a memory that names code the list opens with what
+    was compared (`code_change.compared`), inside the budget.
     """
 
     if char_budget <= 0 or not items:
@@ -112,8 +114,8 @@ def pack_evidence(
     groups: list[str] = []
     truncated = False
     # room for the sentence is kept whenever a candidate would need it
-    unchecked = code_change.unchecked(_state(item) for item in ordered)
-    room = char_budget - (len(unchecked) + 1 if unchecked else 0)
+    compared = code_change.compared(_state(item) for item in ordered)
+    room = char_budget - (len(compared) + 1 if compared else 0)
     served: list[str] = []
     for item in ordered:
         group = item.group or item.source or "fact"
@@ -121,6 +123,7 @@ def pack_evidence(
         date = f" date={item.temporal_anchor[:10]}" if item.temporal_anchor else ""
         code = f" code_state={item.code_state}" if item.code_state else ""
         code += f" rev={item.code_rev[:12]}" if item.code_rev else ""
+        code += f" written={item.code_written[:10]}" if code and item.code_written else ""
         labels = f"source={item.source}{item.author}{_derived(item)}{date}{marker}{code}"
         line = one_item(f"- [{label_part(item.citation)} {labels}] {item.text}")
         tentative = "\n".join([*lines, line])
@@ -132,8 +135,8 @@ def pack_evidence(
         citations.append(item.citation)
         if group not in groups:
             groups.append(group)
-    if unchecked := code_change.unchecked(served):
-        lines.insert(0, unchecked)
+    if compared := code_change.compared(served):
+        lines.insert(0, compared)
 
     rendered, trim_truncated = _trim("\n".join(lines), char_budget)
     return PackedEvidence(

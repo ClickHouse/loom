@@ -479,9 +479,10 @@ async def search_sections(
 
 def _note_code_of_served(memory: dict[str, Any]) -> None:
     """Set the memory section's `code_note` from the rows left after trimming: the
-    search read its own off every row it served. A failed leg's section has none."""
+    search's own is of every row it served. A failed leg's section has none."""
     if "code_note" in memory:
-        memory["code_note"] = code_change.unchecked(h["code_state"] for h in memory["results"])
+        states = (str(h.get("code_state") or "") for h in memory["results"])
+        memory["code_note"] = code_change.compared(states)
 
 
 def _leg_error(leg: str, e: Exception) -> str:

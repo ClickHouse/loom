@@ -72,18 +72,18 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
         return None
     state = str(hit.get("code_state") or "")
     if not state and code_change.names_file(excerpt):
-        state = code_change.UNLINKED  # it says where code is, and nothing compared it
+        state = code_change.UNLINKED  # it says where code is, with no comparison to show
     lesson: dict[str, Any] = {
         "path": path,
         "memory_key": str(hit["memory_key"]),
         "namespace": str(hit["namespace"]),
-        "excerpt": code_change.shown(excerpt, state),
+        "excerpt": excerpt,
         "code_state": state,
     }
     if hit.get("code_rev"):
         lesson["rev"] = str(hit["code_rev"])[:12]
     if state and isinstance(written := hit.get("updated_at"), datetime):
-        lesson["date"] = written.date().isoformat()
+        lesson["written"] = written.date().isoformat()
     if hit.get("code_changed_since"):
         lesson["changed_since"] = str(hit["code_changed_since"])
     if hit.get("code_moved"):
@@ -288,13 +288,12 @@ async def lessons_for_paths(
     `token_budget` estimated tokens of serialized rows. A row that another row read here
     supersedes is never served: the newer row names the first one it replaces in
     `supersedes_key`, and `memory.for_file` shows them. Each row: `path`, `memory_key`,
-    `namespace`, `excerpt` (without its line numbers unless its links are fresh),
-    `code_state`: the worst state of its links to code in the file (`fresh`, `moved`, or
-    `changed`, `unresolved` or `missing` when that code differs from what the memory was
-    written against), `unlinked` for a row with no link whose text names a file by its
-    path, '' for one that names the file only in `files`; `rev`, the first 12 characters
-    of the commit that link was anchored at, for a linked row; `date`, the day a row with
-    a code state was last written;
+    `namespace`, `excerpt`, `code_state`: the worst state of its links to code in the file
+    (`fresh`, `moved`, or `changed`, `unresolved` or `missing` when that code differs from
+    what the memory was written against), `unlinked` for a row with no link whose text
+    names a file by its path, '' for one that names the file only in `files`; `rev`, the
+    first 12 characters of the commit that link was anchored at, for a linked row;
+    `written`, the day a row with a code state was last written;
     `changed_since`, the commit that put its code in a `changed`, `unresolved` or `missing`
     state, when one is known; `code_moved`, its links to code in the file that is now at
     another path or symbol than the row was written against, when there are any; and

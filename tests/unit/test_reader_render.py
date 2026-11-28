@@ -65,6 +65,10 @@ def _code_hit(key: str, **code: Any) -> dict[str, Any]:
     return {"memory_key": key, "memory_type": "semantic", "content_excerpt": "x", **code}
 
 
+# what a block says once when a hit it serves holds a link
+_INDEXED = code_change.compared(["fresh"])
+
+
 def test_a_line_whose_code_changed_or_went_names_the_state_and_its_commit() -> None:
     block = render_reader_block(
         [
@@ -74,7 +78,7 @@ def test_a_line_whose_code_changed_or_went_names_the_state_and_its_commit() -> N
         ]
     )
     assert block.split("\n\n") == [
-        code_change.UNCHECKED,
+        _INDEXED,
         "[undated] [a] (semantic) (code_state=changed) (its code changed since it was written,"
         " commit c0ffeec0ffee: check before relying on it) x",
         "[undated] [b] (semantic) (code_state=unresolved) (its code was renamed or removed and"
@@ -84,32 +88,40 @@ def test_a_line_whose_code_changed_or_went_names_the_state_and_its_commit() -> N
     ]
 
 
-def test_a_line_that_names_code_says_its_state_and_the_commit_it_was_anchored_at() -> None:
+def test_a_line_that_names_code_says_its_state_its_anchor_commit_and_its_write_day() -> None:
     for code in ({}, {"code_state": ""}):
         assert render_reader_block([_code_hit("k", **code)]) == "[undated] [k] (semantic) x"
-    anchored = {"code_rev": "ba5e" * 10}
+    # the day in the note is the write day, whatever date the line opens with
+    anchored = {"code_rev": "ba5e" * 10, "created_at": "2026-04-01T08:00:00"}
+    dated = {"temporal_anchor": "2026-03-02T00:00:00"}
     for code, said in (
-        ({"code_state": "fresh", **anchored}, "(code_state=fresh rev=ba5eba5eba5e)"),
+        (
+            {"code_state": "fresh", **anchored},
+            "[2026-04-01 08:00] [k] (semantic) (code_state=fresh rev=ba5eba5eba5e"
+            " written=2026-04-01) x",
+        ),
         # a commit beside a state no note names is never printed
         (
-            {"code_state": "moved", "code_changed_since": "c0ffee" * 7, **anchored},
-            "(code_state=moved rev=ba5eba5eba5e)",
+            {"code_state": "moved", "code_changed_since": "c0ffee" * 7, **anchored, **dated},
+            "[2026-03-02] [k] (semantic) (code_state=moved rev=ba5eba5eba5e written=2026-04-01) x",
         ),
     ):
-        # nothing says a fresh or moved hit was not checked
-        assert render_reader_block([_code_hit("k", **code)]) == f"[undated] [k] (semantic) {said} x"
+        # a linked hit's state and commit are the index's, which the block says once
+        assert render_reader_block([_code_hit("k", **code)]) == f"{_INDEXED}\n\n{said}"
 
 
-def test_an_unlinked_line_says_so_once_and_drops_the_line_numbers_it_was_written_with() -> None:
+def test_an_unlinked_line_says_so_once_and_keeps_the_text_it_was_written_with() -> None:
     text = "The cause is in Printable (src/core/print_helpers.py:8), fixed at lines 940-944."
     unlinked = _code_hit("u", code_state="unlinked", content_excerpt=text)
     fresh = _code_hit("f", code_state="fresh", content_excerpt=text)
-    assert render_reader_block([unlinked, unlinked | {"memory_key": "v"}, fresh]).split("\n\n") == [
-        code_change.UNCHECKED,
-        "[undated] [u] (semantic) (code_state=unlinked) The cause is in Printable"
-        " (src/core/print_helpers.py), fixed.",
-        "[undated] [v] (semantic) (code_state=unlinked) The cause is in Printable"
-        " (src/core/print_helpers.py), fixed.",
+    assert render_reader_block([unlinked, unlinked | {"memory_key": "v"}]).split("\n\n") == [
+        code_change.compared(["unlinked"]),
+        f"[undated] [u] (semantic) (code_state=unlinked) {text}",
+        f"[undated] [v] (semantic) (code_state=unlinked) {text}",
+    ]
+    assert render_reader_block([unlinked, fresh]).split("\n\n") == [
+        code_change.compared(["unlinked", "fresh"]),
+        f"[undated] [u] (semantic) (code_state=unlinked) {text}",
         f"[undated] [f] (semantic) (code_state=fresh) {text}",
     ]
 
@@ -137,7 +149,7 @@ def test_a_line_whose_code_moved_names_where_it_is_now() -> None:
         ]
     )
     assert block.split("\n\n") == [
-        code_change.UNCHECKED,
+        _INDEXED,
         f"[undated] [a] (semantic) (code_state=moved) (code moved: {now}) x",
         "[undated] [b] (semantic) (code_state=changed) (its code changed since it was written,"
         f" commit c0ffeec0ffee: check before relying on it; {now}) x",
@@ -169,7 +181,7 @@ def test_a_hit_model_renders_its_relocated_links_as_a_wire_dict_does() -> None:
         code_moved=[link],
     )
     line = (
-        "[undated] [k] (semantic) (code_state=moved)"
+        f"{_INDEXED}\n\n[undated] [k] (semantic) (code_state=moved)"
         " (code moved: `reader::fetch_rows` is now at src/io.py:3-9) x"
     )
     assert render_reader_block([hit]) == line

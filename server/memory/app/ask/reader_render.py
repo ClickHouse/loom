@@ -63,11 +63,10 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
     order `memory.ask` would read them for this question (chronological for
     temporal questions, rank order otherwise). A hit from `label_namespace`
     names it beside its type: `(decision, code-acme)`. A hit that names code says
-    before its excerpt which state its code is in and the commit its link was
-    anchored at, and one whose code is now at another name or path says where
-    (`code_change.hit_note`); its excerpt is shown without line numbers unless its
-    links are fresh (`code_change.shown`). When a hit is unlinked or changed the
-    block opens with `code_change.UNCHECKED`."""
+    before its excerpt which state its code is in, the commit its link was anchored
+    at and the day it was written, and one whose code is now at another name or path
+    says where (`code_change.hit_note`). The block then opens with what was compared
+    (`code_change.compared`)."""
     if not hits:
         return ""
     from server.memory.app.ask.rendering import evidence_order
@@ -83,12 +82,11 @@ def render_reader_block(hits: list[Any], question: str = "", *, label_namespace:
         mtype = str(_get(h, "memory_type") or "memory")
         if label_namespace and _get(h, "namespace") == label_namespace:
             mtype = f"{mtype}, {label_namespace}"
-        state = str(_get(h, "code_state") or "")
-        text = code_change.shown(str(_get(h, "content_excerpt") or ""), state)[:_EXCERPT_CHARS]
-        code = code_change.hit_note(h, dated=False)  # the line opens with the date
+        text = str(_get(h, "content_excerpt") or "")[:_EXCERPT_CHARS]
+        code = code_change.hit_note(h)
         parts.append(f"[{_date_of(h)}] [{key}] ({mtype}){code} {text}{_restatement_note(h, keys)}")
-    unchecked = code_change.unchecked(str(_get(h, "code_state") or "") for h in ordered)
-    return "\n\n".join([unchecked, *parts] if unchecked else parts)
+    compared = code_change.compared(str(_get(h, "code_state") or "") for h in ordered)
+    return "\n\n".join([compared, *parts] if compared else parts)
 
 
 def _restatement_note(h: Any, keys_in_block: set[str]) -> str:
