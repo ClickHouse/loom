@@ -10,9 +10,7 @@
 // same change passes: the agent has seen the obligation and either ran the
 // tests or chose not to, and a gate that nags is a gate that gets disabled.
 // A stop whose transcript already answers the ask is not blocked at all
-// (`runAnswered`): a block costs the session one more model request. A
-// reason that names tests the checkout has names no untested function: the
-// graph is a floor, and a test it names may reach the function unseen.
+// (`runAnswered`): a block costs the session one more model request.
 //
 // The change is the session's, not the tree's: `sessionScope` keeps only
 // the dirty paths the transcript shows this session edited or named in a
@@ -51,8 +49,7 @@ function short(qname) {
 /**
  * Render the obligation text, or "" when there is nothing to say.
  * Runnable commands first (deduped), then tests with no derivable command,
- * then the untested functions, which are named only when the gate names no
- * test or one the checkout lacks. Bounded: maxRuns commands, maxNames names.
+ * then the untested functions. Bounded: maxRuns commands, maxNames names.
  */
 export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists } = {}) {
   if (!gate || !gate.obligations) return "";
@@ -87,14 +84,19 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
     const more = missing.length - shown.length;
     parts.push(`indexed tests not present in this checkout: ${shown.join(", ")}${more > 0 ? ` (+${more})` : ""}`);
   }
-  // "No test reaches" is what the index cannot see. Beside tests to run it
-  // reads as a fact about them, and a test that builds an object reaches a
-  // constructor the graph holds no edge to.
-  if (untested.length && (missing.length || !(runs.length || unknown.length))) {
+  if (untested.length) {
     const names = [...new Set(untested.map((u) => short(u.qualified_name)))].filter(Boolean);
     const shown = names.slice(0, maxNames);
-    const more = (gate.untested_total || names.length) - shown.length;
-    parts.push(`no test reaches: ${shown.join(", ")}${more > 0 ? ` (+${more})` : ""}`);
+    const total = gate.untested_total || names.length;
+    const list = `${shown.join(", ")}${total > shown.length ? ` (+${total - shown.length})` : ""}`;
+    // Beside tests to run, "no test reaches" reads as a fact about them, and
+    // a test that builds an object reaches a constructor the graph holds no
+    // edge to.
+    parts.push(
+      runs.length || unknown.length
+        ? `the index links no test to: ${list} (the tests named here may still reach ${total > 1 ? "them" : "it"})`
+        : `no test reaches: ${list}`,
+    );
   }
   if (!parts.length) return "";
   const floor = gate.counts_floor ? " (graph is a floor)" : "";
@@ -381,6 +383,10 @@ const WHOLE =
   /^=*\s*\d+ (?:failed|passed)(?:, \d+ (?:passed|skipped|xfailed|xpassed|warnings?|errors?))* in [\d.]+s(?: \([\d:]+\))?\s*=*$/;
 // pytest flags that end a run at a failure, before the files after it.
 const STOPS = /(?:^|\s)(?:-[A-Za-z]*x|--exitfirst|--maxfail)/;
+// The line pytest prints above the summary of a run it ended early: at a
+// failure limit, at --sw, at a collection error. It shows a limit set in a
+// configuration file or in PYTEST_ADDOPTS, which the command does not.
+const ENDED = /^!{3,} .*(?:stopping after \d+ failures|Interrupted: ).* !{3,}$/;
 // The directory a command moves to before it runs something, and any move.
 const CD = /(?:^|[;&|(\n])\s*cd\s+([^\s;&|)]+)/g;
 const MOVE = /\b(?:cd|pushd|popd)\s/g;
@@ -414,15 +420,20 @@ const onlyRuns = (tail) =>
 /** True when the output holds a whole pytest summary for each of `runs`
  *  and no other summary: `| tail -5; echo exit=$?` hides the exit status,
  *  the summary line survives it. Failures count: the session has read
- *  them. A line that counts one is not whole when a run has a flag that
- *  stops at a failure; such a flag set in a config file is not seen. */
+ *  them. No line is whole under pytest's line for a run it ended early,
+ *  and one that counts a failure is not whole when a run has a flag that
+ *  stops at one: `| tail -1` cuts pytest's line, the flag stays. */
 function allRan(output, runs) {
-  const lines = String(output || "")
+  const all = String(output || "")
     .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length < 300 && SUMMARY.test(l));
+    .map((l) => l.trim());
+  const lines = all.filter((l) => l.length < 300 && SUMMARY.test(l));
   const stops = runs.some((run) => STOPS.test(run[1]));
-  return lines.length >= runs.length && lines.every((l) => WHOLE.test(l) && !(stops && /\d (?:failed|error)/.test(l)));
+  return (
+    !all.some((l) => ENDED.test(l)) &&
+    lines.length >= runs.length &&
+    lines.every((l) => WHOLE.test(l) && !(stops && /\d (?:failed|error)/.test(l)))
+  );
 }
 
 /**
@@ -474,10 +485,12 @@ function wholeRuns(objs, { root, cwd, since } = {}) {
       const before = from < 0 ? "" : command.slice(0, runs[from].index);
       const result = results.get(b.id) || {};
       // --ignore, --deselect, --lf and --sw leave out tests a summary does
-      // not count; a quoted argument may be a flag's value in several
-      // words; a move the reader cannot follow (a second `cd`, one between
-      // two runs, one in a subshell that closed before the run, `pushd`)
-      // leaves the paths unknown.
+      // not count, and --continue-on-collection-errors counts a named file
+      // that failed to import as one error among the tests that ran; a
+      // quoted argument may be a flag's value in several words; a move the
+      // reader cannot follow (a second `cd`, one between two runs, one in a
+      // subshell that closed before the run, `pushd`) leaves the paths
+      // unknown.
       const ran =
         from >= 0 &&
         allRan(result.output, runs) &&
@@ -486,7 +499,7 @@ function wholeRuns(objs, { root, cwd, since } = {}) {
         cd.length < 2 &&
         (command.match(MOVE) || []).length === cd.length &&
         cd.every((m) => !closesParen(before.slice(m.index + m[0].length))) &&
-        !/--(?:ignore|deselect|lf|last-failed|sw|stepwise)\b/.test(command);
+        !/--(?:ignore|deselect|lf|last-failed|sw|stepwise|continue-on-collection-errors)\b/.test(command);
       if (!ran) {
         whole = [];
         continue;

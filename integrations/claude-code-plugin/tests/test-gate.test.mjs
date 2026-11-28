@@ -46,17 +46,18 @@ test("blocks once per signature, then lets the stop through", () => {
   assert.equal(other.block, true);
 });
 
-test("render dedupes commands and lists unknown-runner tests", () => {
+test("render dedupes commands, lists unknown-runner tests and untested names", () => {
   const text = renderGate(GATE);
   assert.match(text, /^Loom test gate \(graph is a floor\): run: pytest tests\/unit\/test_a\.py · /);
   assert.equal((text.match(/pytest tests\/unit\/test_a\.py/g) || []).length, 1);
-  assert.match(text, /also reached \(no known runner\): src\/x\/tests\/gtest_parts\.cpp\. /);
+  assert.match(text, /also reached \(no known runner\): src\/x\/tests\/gtest_parts\.cpp · /);
+  assert.match(text, /links no test to: MergeTreeData::renameTempPartAndAdd, Foo::bar \(the tests named here may/);
   assert.match(text, /\. Run the tests before finishing, or say why not\.$/);
 });
 
-test("untested functions are named only when the gate names no test, or one the checkout lacks", () => {
-  // As a recorded session was told, of a file whose every test builds a Widget.
-  const recorded = {
+test("beside tests to run, an untested function is the index's view, not a fact about those tests", () => {
+  // A constructor, and a test file whose every test builds the object: the graph holds no edge between them.
+  const built = {
     obligations: true,
     counts_floor: true,
     tests: [{ test_path: "tests/test_widgets.py", why: "changed_test", run: "pytest tests/test_widgets.py" }],
@@ -64,16 +65,19 @@ test("untested functions are named only when the gate names no test, or one the 
     untested_total: 1,
   };
   assert.equal(
-    renderGate(recorded, { python: "python3", testExists: () => true }),
-    "Loom test gate (graph is a floor): run: python3 -m pytest tests/test_widgets.py. Run the tests before finishing, or say why not.",
+    renderGate(built, { python: "python3", testExists: () => true }),
+    "Loom test gate (graph is a floor): run: python3 -m pytest tests/test_widgets.py · the index links no test to: Widget::__init__ (the tests named here may still reach it). Run the tests before finishing, or say why not.",
   );
-  assert.doesNotMatch(renderGate(GATE), /no test reaches/);
   assert.doesNotMatch(renderGate(GATE, { testExists: () => true }), /no test reaches/);
   assert.match(
-    renderGate({ ...GATE, tests: [] }),
-    /: no test reaches: MergeTreeData::renameTempPartAndAdd, Foo::bar\. Add a test that reaches it/,
+    renderGate(GATE, { testExists: () => true }),
+    /Foo::bar \(the tests named here may still reach them\)\. /,
   );
-  assert.match(renderGate(recorded, { testExists: () => false }), /no test reaches: Widget::__init__\. /);
+  // With no test to run there is none to hedge about.
+  for (const none of [renderGate({ ...GATE, tests: [] }), renderGate(GATE, { testExists: () => false })]) {
+    assert.match(none, /no test reaches: MergeTreeData::renameTempPartAndAdd, Foo::bar\. /);
+  }
+  assert.match(renderGate({ ...GATE, tests: [] }), /Foo::bar\. Add a test that reaches it/);
 });
 
 test("plain pytest runs fold into one command; a run with an option stays its own", () => {
@@ -121,7 +125,7 @@ test("a deleted indexed test is reported as missing, never prescribed as a runna
   assert.match(text, /indexed tests not present in this checkout: tests\/unit\/test_migrations_schema_slice\.py/);
   assert.equal((text.match(/test_migrations_schema_slice\.py/g) || []).length, 1);
   assert.match(text, /Missing tests are not passes/);
-  assert.match(text, /no test reaches:/);
+  assert.match(text, /the index links no test to:/);
 });
 
 test("a gate with only unavailable tests remains an explicit obligation", () => {
@@ -630,7 +634,7 @@ test("a run before the tree's last change, an edit or another shell command answ
   assert.equal(answered([edit(), bash(SUITE, PASSED, { isSidechain: true })]), false);
 });
 
-// As recorded sessions wrote them, in a checkout whose suite fails 8 tests with or without the change.
+// Output of a suite that fails 8 tests with or without the change, and of a run that stopped at its first failure.
 const LAST_FAILED = "FAILED tests/test_io.py::test_reads_every_row - Deprec...\n";
 const BASE = `${LAST_FAILED}8 failed, 466 passed, 10 skipped in 1.01s`;
 const CHANGED = `${LAST_FAILED}8 failed, 467 passed, 10 skipped in 0.81s`;
@@ -652,6 +656,16 @@ test("a run that printed its failures answers the gate, unless it stopped at the
     assert.equal(answered([edit(), bash(stops, "38 passed, 1 error in 0.37s")]), false, flag);
     assert.equal(answered([edit(), bash(stops, PASSED)]), true, flag);
   }
+  // A limit set outside pytest's arguments shows in pytest's own line; so does --sw set in a configuration file.
+  assert.equal(answered([edit(), bash("PYTEST_ADDOPTS=-x python -m pytest tests -q 2>&1 | tail -3", STOPPED)]), false);
+  const stepwise =
+    "!!!!!!!! Interrupted: Test failed, continuing from this test next run. !!!!!!!!!\n1 failed, 38 passed in 0.37s";
+  assert.equal(answered([edit(), bash("pytest tests -q", stepwise)]), false);
+  // A named file that failed to import is one error among the tests that ran.
+  assert.equal(
+    answered([edit(), bash("pytest tests -q --continue-on-collection-errors", "400 passed, 1 error in 1.60s")]),
+    false,
+  );
   // A collection that stopped at an error ran no test.
   for (const none of ["1 error in 0.12s", "2 skipped, 1 error in 0.20s"]) {
     assert.equal(answered([edit(), bash("pytest tests -q", none)]), false, none);
