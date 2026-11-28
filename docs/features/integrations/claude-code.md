@@ -639,8 +639,8 @@ Loom tests for src/app/router.py: .venv/bin/python -m pytest tests/test_router.p
   the index links no test to. A held stop costs the session one more model request, so
   any test run since that change lets the stop pass: a shell command that starts a test
   runner and finished no earlier than the newest write among the code files the session
-  changed. A documentation or prose file (`.md`, `.rst`, a changelog) written
-  after the run holds nothing. The gate reads that command for a runner's name only. Which tests ran and how they went cannot be read
+  changed. A documentation or prose file (`.md`, `.rst`, a changelog, a `.txt` file under `docs/`)
+  written after the run holds nothing. The gate reads that command for a runner's name only. Which tests ran and how they went cannot be read
   reliably from shell commands, so that judgement stays with the agent and with CI. The
   plugin README lists the runners under **Stops that pass**.
 

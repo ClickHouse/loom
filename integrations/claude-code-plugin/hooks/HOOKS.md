@@ -348,7 +348,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   At Stop, with uncommitted changes this session made in a loom-indexed
   repo (dirty paths the transcript shows an edit tool targeted or a shell
   command named, written since the session's first row; a tree left dirty
-  before the session gates nothing), it sends the change's paths, hunk
+  before the session gates nothing; in a Codex rollout the calls read are
+  `apply_patch` and the shell tool under each name `rolloutShell` takes,
+  in either mode), it sends the change's paths, hunk
   ranges and function names only (`diffHeaders`) to code.test_gate for its
   obligations and blocks the stop once per distinct change with a reason
   naming them. By default a stop passes, and asks the server nothing, when

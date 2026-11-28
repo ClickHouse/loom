@@ -629,28 +629,40 @@ function runsHere(command, run) {
 }
 
 // A shell command that starts a test runner, wrapped or piped in any way: a
-// program `code.test_gate` names a run with or a common other one, or a
-// build tool with an argument in which `test` or `tests` follows no letter
-// (`make test-unit`, `make testall`, `npm run test`, `node --test`, `gradle
-// :app:test`, `gradlew testDebugUnitTest`), or Gradle with a task in which
-// `Test` follows a lower-case letter (`gradlew integrationTest`). `import
-// pytest`, `pytest.raises`, `make latest` and `node scripts/attest.js` are
-// not runs. A command that only mentions a runner counts: what is read is
+// program `code.test_gate` names a run with or a common other one; a build
+// tool with an argument in which `test` or `tests` follows no letter and no
+// lower-case letter follows it (`make test-unit`, `npm run test`, `node
+// --test`, `gradle :app:test`, `gradlew testDebugUnitTest`); a tool that runs
+// a target or a script by its name, with a name that starts with `test`
+// (`make testall`, `npm run testci`); or Gradle with a task that ends in
+// `Test` after a lower-case letter (`gradlew integrationTest`). `import
+// pytest`, `pytest.raises`, `make latest`, `go vet ./internal/testutil/...`,
+// `cargo build -p testcontainers` and `gradlew compileTestJava` are not
+// runs. A command that only mentions a runner counts: what is read is
 // whether the session ran a test at all.
 //
-// After a package manager's verb earlier in the simple command the name is a
-// package: `pip install -U pytest`, `npm i -D @types/jest`, `uv add --dev
-// pytest`, `go get github.com/stretchr/testify`. A flag is no verb: `npx
-// --no-install jest` runs.
-const FETCHED = String.raw`\s(?:(?:un)?install|add|i|ci|get)\s[^\n;|&]*`;
-// The task after Gradle's `-x` is left out of the build: `gradle build -x
-// test`. Maven's `-Dmaven.test.skip=true` runs none either (`(?!\.skip)`).
+// After one of these verbs earlier in the simple command the name is a
+// package: `pip install -U pytest`, `npm i -D @types/jest`, `yarn remove
+// jest`, `go get github.com/stretchr/testify`. A flag is no verb: `npx
+// --no-install jest` and `docker run --rm app pytest` run. A build tool's
+// target of a verb's name hides the run after it: `make install test` is
+// read as none.
+const FETCHED = String.raw`\s(?:(?:un)?install|add|i|ci|get|remove|rm|update|upgrade|download|require)\s[^\n;|&]*`;
+// What a build tool is told to leave out is no run, for every tool of the
+// list: the word after `-x`, where Gradle takes a task to exclude (`gradle
+// build -x test`), and `test.skip`, Maven's property (`mvn package
+// -Dmaven.test.skip=true`).
 const LEFT_OUT = String.raw`\s-x\s+\S*`;
 const RUNNER = new RegExp(
   String.raw`(?<![\w.-])(?:(?<!import\s)(?:py\.?test|unittest|tox|nox|jest|vitest|mocha|nextest|rspec|phpunit|ctest|clickhouse-test)(?![\w.-])(?<!${FETCHED})` +
-    String.raw`|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*(?<![A-Za-z])tests?(?!\.skip)(?<!${FETCHED}|${LEFT_OUT})` +
-    String.raw`|gradlew?\s[^\n;|&]*[a-z]Test(?<!${LEFT_OUT}))`,
+    String.raw`|(?:go|cargo|npm|pnpm|yarn|bun|deno|make|mvn|gradle|gradlew|dotnet|swift|bazel|mix|rake|node)\s[^\n;|&]*(?<![A-Za-z])tests?(?![a-z]|\.skip)(?<!${FETCHED}|${LEFT_OUT})` +
+    String.raw`|(?:make|npm|pnpm|yarn|bun|rake)\s[^\n;|&]*(?<=\s)test[a-z](?<!${FETCHED})` +
+    String.raw`|gradlew?\s[^\n;|&]*[a-z]Test(?![A-Za-z])(?<!${LEFT_OUT}))`,
 );
+
+/** True when `command` starts a test runner (`RUNNER`), read as the shell
+ *  reads it: a backslash at a line's end joins the next line to it. */
+const startsRunner = (command) => RUNNER.test(command.replace(/\\\n/g, ""));
 
 /** True for the name of a Codex rollout's shell tool, under any of the names
  *  `normalizeToolName` folds onto Bash. */
@@ -686,7 +698,7 @@ export function testedSince(objs, since) {
     if (o?.type === "response_item") {
       const call = o.payload || {};
       if (/_output$/.test(call.type)) done.set(call.call_id, at);
-      else if (rolloutShell(call.name) && RUNNER.test(rolloutCommand(call))) {
+      else if (rolloutShell(call.name) && startsRunner(rolloutCommand(call))) {
         runs.push(call.call_id);
       }
       continue;
@@ -698,7 +710,7 @@ export function testedSince(objs, since) {
         o.type === "assistant" &&
         b?.type === "tool_use" &&
         ["Bash", "PowerShell"].includes(normalizeToolName(b.name)) &&
-        RUNNER.test(commandText(b.input))
+        startsRunner(commandText(b.input))
       ) {
         runs.push(b.id);
       }
@@ -707,11 +719,16 @@ export function testedSince(objs, since) {
   return runs.some((id) => !(done.get(id) < since));
 }
 
-// Documentation and prose by name: a test run answers no change to one.
-// A `.txt` file is code: a requirements file, a build list, a test fixture.
+// Documentation and prose by name: a test run answers no change to one. A
+// `.txt` file is code (a requirements file, a build list, a test fixture)
+// unless its name or a `docs` directory above it says prose: `CHANGES.txt`,
+// `docs/releases/5.2.txt`. A requirements or a constraints file under `docs`
+// stays code.
 const PROSE = /\.(?:md|mdx|markdown|rst|adoc|asciidoc)$/i;
 const CHANGELOG = /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|NEWS)$/;
-const isProse = (file) => CHANGELOG.test(file) || PROSE.test(file);
+const PROSE_TXT =
+  /(?:^|\/)(?:changelog|changes|history|news|readme|license|notice|authors|docs?\/(?!.*(?:requirements|constraints)).*)\.txt$/i;
+const isProse = (file) => CHANGELOG.test(file) || PROSE.test(file) || PROSE_TXT.test(file);
 
 /** The newest modification time, in epoch ms, among the code files of
  *  `files` under `root`: a test run that finished since then saw each of
