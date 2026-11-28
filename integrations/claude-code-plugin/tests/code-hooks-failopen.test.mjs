@@ -115,9 +115,8 @@ async function withCapturingServer(fn) {
   return bodies;
 }
 
-// The Stop test gate holds a stop, and so reads its input and asks the server, only with this.
+// The Stop test gate that takes only a run of the named tests as an answer.
 const BLOCKING = { LOOM_TEST_GATE: "block" };
-const stopEnv = (hook) => (hook === "loom-test-gate.mjs" ? BLOCKING : {});
 
 const HOOK_NAMES = [
   "loom-code-shunt.mjs",
@@ -130,7 +129,7 @@ const HOOK_NAMES = [
 test("malformed, empty and non-object stdin: every code hook exits 0 and prints nothing", async () => {
   const tmp = freshTmp();
   for (const hook of HOOK_NAMES) {
-    // The test gate reads its input at a Stop with LOOM_TEST_GATE=block, and after a shell command.
+    // The test gate reads its input at a Stop in either mode, and after a shell command.
     const starts = hook === "loom-test-gate.mjs" ? [{}, { env: BLOCKING }, { event: "PostToolUse" }] : [{}];
     for (const stdin of ["{not json", "", "[]", "null", '"text"', "42"]) {
       for (const how of starts) {
@@ -167,7 +166,7 @@ test("no token: nothing is asked of the server and nothing is printed", async ()
       ["loom-test-gate.mjs", { cwd: dir, session_id: "s" }],
       ["loom-validate-gate.mjs", { cwd: dir, session_id: "s" }],
     ]) {
-      const r = await run(hook, payload, { tmp, url, token: "", env: stopEnv(hook) });
+      const r = await run(hook, payload, { tmp, url, token: "" });
       assert.equal(r.code, 0, hook);
       assert.equal(r.out, "", hook);
     }
@@ -310,7 +309,7 @@ test("Stop gates: 401 and a hanging server both let the stop through", async () 
           r = await run(
             hook,
             { cwd: dir, session_id: "s", transcript_path: transcript },
-            { tmp, url, env: { ...stopEnv(hook), LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } },
+            { tmp, url, env: { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } },
           );
           assert.equal(r.code, 0, `${hook} ${status}`);
           assert.equal(r.out, "", `${hook} ${status}`);
@@ -336,7 +335,10 @@ test("Stop gates: a Stop the gate itself caused never blocks again", async () =>
       const r = await run(
         hook,
         { cwd: dir, session_id: "s", transcript_path: transcript, stop_hook_active: true },
-        { tmp, url, env: stopEnv(hook) },
+        {
+          tmp,
+          url,
+        },
       );
       assert.equal(r.out, "", hook);
     }
@@ -399,7 +401,7 @@ test("blast radius and file context: 401 and a hanging server add nothing to the
           r = await run(
             hook,
             { ...edit, session_id: `s-${hook}-${attempt}` },
-            { tmp, url, env: { ...stopEnv(hook), LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } },
+            { tmp, url, env: { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } },
           );
           assert.equal(r.code, 0, `${hook} ${status}`);
           assert.equal(r.out, "", `${hook} ${status}`);
@@ -485,13 +487,9 @@ test("blast radius and test gate: only the diff's paths and hunk headers reach t
     };
     // The edit's own requests: the radius and the tests line.
     await run("loom-blast-radius.mjs", edit, { tmp, url });
-    await run(
-      "loom-test-gate.mjs",
-      { cwd: dir, session_id: "s", transcript_path: transcript },
-      { tmp, url, env: BLOCKING },
-    );
+    await run("loom-test-gate.mjs", { cwd: dir, session_id: "s", transcript_path: transcript }, { tmp, url });
   });
-  // code.test_gate twice: for the tests line at the edit, and at the Stop that LOOM_TEST_GATE=block holds.
+  // code.test_gate twice: for the tests line at the edit, and at the Stop of a session that ran no test.
   for (const [op, times] of [
     ["/v1/code.impact", 1],
     ["/v1/code.test_gate", 2],

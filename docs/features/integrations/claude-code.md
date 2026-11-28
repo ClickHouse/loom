@@ -60,9 +60,10 @@ end of this section are the exceptions. The plugin sends:
   against `HEAD`, to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);
 - the first time a session changes a file in an indexed checkout, with an edit tool or a
   shell command that names it, the outline of that file's uncommitted diff, to
-  `code.test_gate` (`LOOM_TEST_GATE=off` stops it). With `LOOM_TEST_GATE=block` the
-  outline goes at Stop instead, for the files the session changed, or for the whole
-  uncommitted tree when the client gives no transcript. A diff's outline, up to 200,000
+  `code.test_gate` (`LOOM_TEST_GATE=off` stops it), and once more at the Stop of a
+  session that ran no test since its last code change, for the files it changed. With
+  `LOOM_TEST_GATE=block` the outline goes at Stop only, for the files the session changed,
+  or for the whole uncommitted tree when the client gives no transcript. A diff's outline, up to 200,000
   characters, is its file paths, its hunk line ranges and, in a code file, the last
   identifier before the first `(` of each hunk header's context, usually the enclosing
   function's name. Git takes that context from a line above the hunk in the old file,
@@ -549,7 +550,7 @@ The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
 | PostToolUse, PostToolUseFailure (any tool)        | `loom-capture.mjs`          | one episodic observation per tool call (`observe.record`); a failed call is typed `error`                                                                                                                                                                                                                                                                                       | none                                                                                                        |
 | Stop, SessionEnd                                  | `loom-conversation.mjs`     | appends new chat turns to the conversation plane (`conversation.append`)                                                                                                                                                                                                                                                                                                        | `LOOM_CAPTURE_CONVERSATIONS=false`                                                                          |
 | Stop                                              | `loom-usage.mjs`            | posts the session's token usage to `cost.record_turns`                                                                                                                                                                                                                                                                                                                          | `LOOM_USAGE=off`                                                                                            |
-| Stop                                              | `loom-test-gate.mjs`        | nothing by default: the gate never holds the end of a session. With `LOOM_TEST_GATE=block`, for changes this session made, blocks "done" once with the tests `code.test_gate` says the change obliges, unless your latest prompt ends with "Do not run the tests" or pytest ran the named tests to its summary line with no edit or run since ([the test gate](#the-test-gate)) | unset, or `LOOM_TEST_GATE=off`                                                                              |
+| Stop                                              | `loom-test-gate.mjs`        | for changes this session made, blocks "done" once with the tests `code.test_gate` says the change obliges, unless a test runner ran since the last code change or your latest prompt ends with "Do not run the tests"; with `LOOM_TEST_GATE=block`, unless pytest ran the named tests to its summary line and nothing was edited or run since ([the test gate](#the-test-gate)) | `LOOM_TEST_GATE=off`                                                                                        |
 | Stop                                              | `loom-validate-gate.mjs`    | blocks once when `namespace.validate` finds errors or warnings on the memory keys this session wrote                                                                                                                                                                                                                                                                            | `LOOM_VALIDATE_GATE=off`                                                                                    |
 | Stop                                              | `loom-namespace-health.mjs` | one line when `namespace.audit` finds a critical misuse of the namespace, pointing at the `loom-optimize` skill; the audit is asked once per session, by the first prompt's detached process, and told at a Stop                                                                                                                                                                | `LOOM_NAMESPACE_HEALTH=off`                                                                                 |
 | Stop, PreCompact                                  | `loom-working-memory.mjs`   | refreshes the working-memory note (`session:<project>`): goal, git status, files edited, last reply                                                                                                                                                                                                                                                                             | `LOOM_WORKING_MEMORY=off`                                                                                   |
@@ -656,7 +657,7 @@ Beyond the off switches in the table:
 | `LOOM_PROMPT_PACK_MIN_CONF`    | unset                     | a `retrieval_confidence` gate for search pointers (low risk is 0.7 up); unset, that label  |
 | `LOOM_FILE_CONTEXT_TTL_MIN`    | `30`                      | minutes before the same file's context is fetched again                                    |
 | `LOOM_BLAST_DEPTH`             | `1`                       | `code.impact` depth for the blast-radius line                                              |
-| `LOOM_TEST_GATE`               | unset                     | unset: a line at edit time, no stop held; `block`: no line, the stop held; `off`: no gate  |
+| `LOOM_TEST_GATE`               | unset                     | `block`: no line at edit time, and a stop passes only on the named tests; `off`: no gate   |
 | `LOOM_TEST_GATE_DEPTH`         | `2`                       | hops the test gate follows (1–3)                                                           |
 | `LOOM_OBSERVE_DEDUPE_S`        | `60`                      | a repeated read in this window is not observed again; `0` disables                         |
 | `LOOM_OBSERVE_SKIP_TOOLS`      | a built-in list           | comma-separated tool names (with `*` globs) that produce no observation                    |
@@ -689,16 +690,22 @@ Loom tests for src/app/router.py: .venv/bin/python -m pytest tests/test_router.p
   never runs the tests has still been told which ones they are. A file is asked about at
   its first change only, so a function changed later in the same file is not named. A
   test that shell command itself runs is not named on its own result.
-- **At the end of the session.** Nothing. By default the gate informs and never holds
-  the stop. Which tests ran and how they went cannot be read reliably from shell
-  commands, so that judgement stays with the agent and with CI.
+- **At the end of the session.** A session that ran no test since its last code change
+  is held once per distinct change, with the tests the change obliges and the functions
+  the index links no test to. A held stop costs the session one more model request, so
+  any test run since that change lets the stop pass: a shell command that starts a test
+  runner and finished no earlier than the newest write among the code files the session
+  changed. A documentation or prose file (`.md`, `.rst`, a changelog, a `.txt` file under `docs/`)
+  written after the run holds nothing. The gate reads that command for a runner's name only. Which tests ran and how they went cannot be read
+  reliably from shell commands, so that judgement stays with the agent and with CI. The
+  plugin README lists the runners under **Stops that pass**.
 
 To hold the stop until the named tests ran on the final tree, set `LOOM_TEST_GATE=block`
 in the environment Claude Code starts in. The gate then prints nothing at edit time, and
 blocks "done" once per distinct change unless the transcript already answers the ask; the
 plugin README lists the exact conditions under **Answered stops**. That mode also holds a
-session that ran the tests in a way the gate does not read, and each held stop costs the
-session one more model request. `LOOM_TEST_GATE=off` turns the gate off.
+session that ran the tests in a way the gate does not read. `LOOM_TEST_GATE=off` turns
+the gate off.
 
 ## The code shunt
 

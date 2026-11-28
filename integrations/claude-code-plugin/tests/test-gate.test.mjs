@@ -523,7 +523,7 @@ test("checkoutPython runs no pytest.py planted in the checkout", () => {
 import http from "node:http";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { declinesTests, newestChange, runAnswered } from "../lib/test-gate.mjs";
+import { declinesTests, lastCodeChange, newestChange, runAnswered, testedSince } from "../lib/test-gate.mjs";
 import { cachedUnindexed, cachePathFor } from "../lib/repo-scope.mjs";
 import { hostEnv } from "./host-env.mjs";
 
@@ -918,10 +918,219 @@ test("a Codex rollout answers nothing", () => {
   assert.equal(answered(rollout), false);
 });
 
-test("the hook holds no stop by default; LOOM_TEST_GATE=block holds one whose named tests did not run on the final tree", async () => {
+test("any test run that finished since the change counts, whatever it ran and however it went", () => {
+  const since = Date.parse(edit()[0].timestamp);
+  for (const command of [
+    SUITE,
+    "git stash; pytest tests; git stash pop",
+    "pytest tests/test_other.py -x 2>&1 | grep FAILED",
+    "sed -i s/1/2/ src/a.py && .venv/bin/python -m unittest discover",
+    "npx vitest run src/a.test.ts",
+    "go test ./pkg/...",
+    "go test ./...",
+    "make test-unit",
+    "npm run test",
+    "node --test",
+    "node --test tests/a.test.mjs",
+    "gradle :app:test",
+    "./gradlew testDebugUnitTest",
+    "make unit-tests",
+    "cargo nextest run",
+    "tests/clickhouse-test 01234_x",
+    "make testacc",
+    "make testall",
+    "npm run testci",
+    "./gradlew integrationTest",
+    "gradle connectedAndroidTest",
+    // A run after an install, in its own simple command.
+    "npm ci && npm test",
+    "pip install -e . && pytest",
+    "yarn add -D jest; yarn jest",
+    "for i in 1 2 3; do pytest tests; done",
+    "npx --no-install jest",
+    "docker run --rm app pytest",
+    "pip install -e . \\\n  && pytest",
+    // A line continuation joins the run to its tool.
+    "make \\\n  test",
+  ]) {
+    assert.equal(testedSince(bash(command, FAILED), since), true, command);
+    assert.equal(testedSince(call("PowerShell", { command }), since), true, command);
+  }
+  // A command that reads or writes a test, or installs, removes or updates a
+  // package, runs none; neither does a build tool whose argument holds `test`
+  // inside a word or at the start of a path's or a package's name, one that
+  // builds the tests, or one told to leave them out.
+  for (const command of [
+    HEREDOC,
+    "sed -n 1,40p tests/test_a.py",
+    "cat pytest.ini",
+    "pip install pytest",
+    "git diff",
+    "npm install x@latest",
+    "go install y@latest",
+    "make latest",
+    "node scripts/attest.js",
+    "npm install @testing-library/react",
+    "go get github.com/stretchr/testify",
+    "npm install @playwright/test",
+    "npm install -D node-test",
+    "npm install --save-dev jest",
+    "yarn add -D jest",
+    "pnpm add -D vitest",
+    "pip install -U pytest",
+    "pip install 'pytest>=8'",
+    "uv add --dev pytest",
+    "npm i -D @types/jest",
+    "npm uninstall jest",
+    "npm rm jest",
+    "yarn remove jest",
+    "pnpm remove vitest",
+    "npm update jest",
+    "yarn upgrade jest",
+    "poetry update pytest",
+    "pip download pytest",
+    "composer require --dev phpunit/phpunit",
+    "pip install \\\n  pytest",
+    "npm install --save-dev \\\n  jest \\\n  vitest",
+    "go vet ./internal/testutil/...",
+    "go build ./cmd/testserver",
+    "go generate ./testdata/...",
+    "bazel build //testing/...",
+    "bazel build //pkg:testlib",
+    "node scripts/testbed.js",
+    "cargo build -p testcontainers",
+    "gradle build -x test",
+    "./gradlew build -x integrationTest",
+    "./gradlew compileTestJava",
+    "./gradlew :app:compileDebugUnitTestKotlin",
+    "./gradlew processTestResources",
+    "gradle build -PskipTests",
+    "gradle assemble -DskipTests",
+    "mvn package -Dmaven.test.skip=true",
+    // A build tool's target of a verb's name hides the run after it.
+    "make install test",
+    "make ci test",
+    "mvn clean install test",
+  ]) {
+    assert.equal(testedSince(bash(command, ""), since), false, command);
+  }
+  assert.equal(testedSince(call("Read", { command: SUITE }), since), false);
+  assert.equal(testedSince(bash(SUITE, PASSED, { isSidechain: true }), since), false);
+  // A row of another type that copies the call is not the session's call.
+  assert.equal(testedSince([{ ...bash(SUITE, PASSED)[0], type: "api-request-blob" }], since), false);
+  // A run that finished before the change does not count; one with no dated result does.
+  const before = bash(SUITE, PASSED);
+  assert.equal(testedSince(before, Date.parse(before[1].timestamp) + 1), false);
+  assert.equal(testedSince(before.slice(0, 1), Date.parse(before[1].timestamp) + 1), true);
+  // A Codex rollout's shell call counts by its output row's time.
+  const item = (payload, ms) => ({ type: "response_item", timestamp: new Date(ms).toISOString(), payload });
+  const rollout = [
+    item(
+      { type: "function_call", name: "shell", call_id: "c1", arguments: '{"command":["pytest","tests","-q"]}' },
+      1e12,
+    ),
+    item({ type: "function_call_output", call_id: "c1", output: "3 passed in 0.10s" }, 1e12 + 1000),
+  ];
+  assert.equal(testedSince(rollout, 1e12 + 500), true);
+  assert.equal(testedSince(rollout, 1e12 + 1500), false);
+  // Its arguments hold an argv, a shell wrapper's script or one string.
+  const shell = (args) => [item({ type: "function_call", name: "shell", call_id: "c2", arguments: args }, 1e12)];
+  for (const args of [
+    '{"command":["go","test","./..."]}',
+    '{"command":["npm","test"]}',
+    '{"command":["bash","-lc","make test-unit"]}',
+    '{"cmd":"npm run test"}',
+    "go test ./...",
+  ]) {
+    assert.equal(testedSince(shell(args), 1e12), true, args);
+  }
+  assert.equal(testedSince(shell('{"command":["npm","install","x@latest"]}'), 1e12), false);
+  // The shell tool counts under each name the client gives it; another tool that names a runner does not.
+  const named = (name) => [
+    item({ type: "function_call", name, call_id: "c3", arguments: '{"command":"pytest -q"}' }, 1e12),
+  ];
+  for (const name of ["exec", "exec_command", "shell", "shell_command", "local_shell", "container.exec"]) {
+    assert.equal(testedSince(named(name), 1e12), true, name);
+  }
+  assert.equal(testedSince(named("apply_patch"), 1e12), false);
+  assert.equal(testedSince([], 0), false);
+});
+
+test("a tool and its argument are read up to 256 characters apart, and a long line in time linear in its length", () => {
+  const ran = (command) => testedSince(bash(command, ""), 0);
+  assert.equal(ran(`make ${"a".repeat(255)} test`), true);
+  assert.equal(ran(`make ${"a".repeat(256)} test`), false);
+  // A verb further back than that names no package.
+  assert.equal(ran(`pip install ${"a".repeat(249)} pytest`), false);
+  assert.equal(ran(`pip install ${"a".repeat(250)} pytest`), true);
+  // Two lines of 20,000 characters. The first cost over 15 s of CPU with no
+  // bound; the second, where each tool has a verb and many `tests` within
+  // reach, is the costliest shape found with one.
+  const before = process.cpuUsage();
+  assert.equal(ran(`x install ${"make test ".repeat(2000)}`), true);
+  assert.equal(ran(`${" npm".repeat(44)} rm${" tests".repeat(18)}`.repeat(70)), false);
+  assert.ok(process.cpuUsage(before).user < 2e6);
+});
+
+test("the last code change is the most recently written code file that can be read", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-last-code-"));
+  try {
+    for (const [file, at] of [
+      ["a.py", 1e12],
+      ["b.py", 1e12 + 5000],
+      ["constraints.txt", 1e12 + 6000],
+      ["requirements/dev.txt", 1e12 + 6000],
+      ["tests/fixtures/expected.txt", 1e12 + 6000],
+      ["testdata/golden.txt", 1e12 + 6000],
+      ["docs/requirements.txt", 1e12 + 6000],
+      ["docs/releases/5.2.txt", 1e12 + 9000],
+      ["CHANGES.txt", 1e12 + 9000],
+      ["README.txt", 1e12 + 9000],
+      ["README.md", 1e12 + 9000],
+      ["notes.markdown", 1e12 + 9000],
+      ["guide.rst", 1e12 + 9000],
+      ["manual.asciidoc", 1e12 + 9000],
+      ["CHANGELOG", 1e12 + 9000],
+    ]) {
+      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+      fs.writeFileSync(path.join(dir, file), "x\n");
+      fs.utimesSync(path.join(dir, file), new Date(at), new Date(at));
+    }
+    assert.equal(lastCodeChange(dir, ["b.py", "a.py", "deleted.py"]), 1e12 + 5000);
+    // Documentation and prose are left out: by extension, by a changelog's name, and a .txt file by a note's
+    // name or under a docs directory.
+    for (const file of [
+      "README.md",
+      "notes.markdown",
+      "guide.rst",
+      "manual.asciidoc",
+      "CHANGELOG",
+      "docs/releases/5.2.txt",
+      "CHANGES.txt",
+      "README.txt",
+    ]) {
+      assert.equal(lastCodeChange(dir, ["a.py", "b.py", file]), 1e12 + 5000, file);
+    }
+    // Any other .txt file is code: a requirements file, also under docs, a test fixture.
+    for (const file of [
+      "constraints.txt",
+      "requirements/dev.txt",
+      "tests/fixtures/expected.txt",
+      "testdata/golden.txt",
+      "docs/requirements.txt",
+    ]) {
+      assert.equal(lastCodeChange(dir, ["a.py", file]), 1e12 + 6000, file);
+    }
+    assert.equal(lastCodeChange(dir, ["README.md", "deleted.py"]), 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the hook holds the stop of a session that ran no test since its last code change; LOOM_TEST_GATE=block also holds one whose named tests did not run on the final tree", async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-hook-")));
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-hook-tmp-")));
-  for (const f of ["src/a.py", "src/b.py", "tests/test_a.py"]) {
+  for (const f of ["src/a.py", "src/b.py", "tests/test_a.py", "docs/guide.md"]) {
     fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true });
     fs.writeFileSync(path.join(dir, f), "def f():\n    return 1\n");
   }
@@ -979,25 +1188,41 @@ test("the hook holds no stop by default; LOOM_TEST_GATE=block holds one whose na
   try {
     const ran = [change, bash(SUITE, PASSED)];
     const no = [said("Fix f. Do not run the test suite."), change];
-    // A Codex rollout that changed the file through its shell tool; a call of another tool that names the file
-    // is no change.
+    // The default: a change with no test run since it is held once, with the tests to run.
+    assert.match(await stop("d-never-ran", [change], ""), /"decision":"block".*pytest tests\/test_a\.py/);
+    assert.equal(await stop("d-never-ran", [change], ""), "");
+    assert.match(await stop("d-ran-before", [ranBefore, change], ""), /"decision":"block"/);
+    assert.match(await stop("d-only-read", [change, bash("cat tests/test_a.py", "")], ""), /"decision":"block"/);
+    // Any run since the change passes: one that failed, ran another file, or was followed by more commands.
+    const asked = requests.length;
+    assert.equal(await stop("d-ran", ran, ""), "");
+    assert.equal(await stop("d-failed", [change, bash("pytest tests/test_b.py -x | grep FAILED", "")], ""), "");
+    assert.equal(await stop("d-then-more", [...ran, bash("rm src/helper.py", ""), bash("git diff", "")], ""), "");
+    // A documentation file written after the run is not a code change.
+    const later = (file) => {
+      const edited = call("Edit", { file_path: path.join(dir, file) }, "updated");
+      fs.appendFileSync(path.join(dir, file), "def h():\n    return 3\n");
+      touch(file, new Date(edited[1].timestamp));
+      return edited;
+    };
+    assert.equal(await stop("d-doc-after-run", [...ran, later("docs/guide.md")], ""), "");
+    assert.equal(requests.length, asked, "a stop that passes on a test run asks the server nothing");
+    // A second code file written after the run is: the run saw the first one only.
+    assert.match(await stop("d-run-between", [...ran, later("src/b.py")], ""), /"decision":"block"/);
+    execFileSync("git", ["checkout", "-q", "--", "src/b.py", "docs/guide.md"], { cwd: dir });
+    assert.equal(await stop("d-ruled-out", no, ""), "");
+    assert.match(await stop("never-ran", [change]), /"decision":"block".*pytest tests\/test_a\.py/);
+    assert.equal(await stop("never-ran", [change]), "");
+    // A Codex rollout that changed the file through its shell tool is held in either mode, under each name of
+    // that tool; a call of another tool that names the file is no change.
     const rollout = (name) => [
       {
         type: "response_item",
         payload: { type: "function_call", name, arguments: '{"command":"sed -i s/1/2/ src/a.py"}' },
       },
     ];
-    // The default holds no stop and asks the server nothing: a change with no test run, a run before the
-    // change, a rollout's change.
-    assert.equal(await stop("d-never-ran", [change], ""), "");
-    assert.equal(await stop("d-ran-before", [ranBefore, change], ""), "");
-    assert.equal(await stop("d-codex", rollout("shell_command"), ""), "");
-    assert.deepEqual(requests, []);
-    // LOOM_TEST_GATE=block holds each of them, once per change.
-    assert.match(await stop("never-ran", [change]), /"decision":"block".*pytest tests\/test_a\.py/);
-    assert.equal(await stop("never-ran", [change]), "");
-    assert.match(await stop("ran-before", [ranBefore, change]), /"decision":"block"/);
     assert.match(await stop("codex-block", rollout("shell_command")), /"decision":"block"/);
+    assert.match(await stop("codex-default", rollout("shell_command"), ""), /"decision":"block"/);
     assert.equal(await stop("codex-other-tool", rollout("read_file")), "");
     // An untracked file whose name git would quote or a trim would cut does not hide the tree's age.
     const odd = process.platform === "win32" ? " naïve.txt" : ' na"ï\tve.txt';
@@ -1256,6 +1481,8 @@ test("a changed file's tests ride the tool call that changed it, once", async ()
     write("src/old.py", "# a note\n");
     assert.equal(await shell("echo '# a note' >> src/old.py"), null);
     assert.ok(!asked.some((a) => a.endsWith("src/old.py")), asked.join(", "));
+    // This transcript shows no tool call, so the stop has no change of the session's to hold.
+    assert.equal(await run("loom-test-gate", "Stop", {}), null);
     // LOOM_TEST_GATE=block: nothing at edit time, the radius counts its tests, the stop is held.
     const blocking = { LOOM_TEST_GATE: "block" };
     write("src/a.py", "def h():\n    return 3\n");
@@ -1278,7 +1505,7 @@ test("a changed file's tests ride the tool call that changed it, once", async ()
     assert.doesNotMatch(context(radius), /Loom tests for/);
     const stopped = await run("loom-test-gate", "Stop", { session_id: "b", transcript_path: "" }, blocking);
     assert.equal(stopped.decision, "block");
-    // The same dirty tree by default: the stop is not held.
+    // With no transcript nothing shows that the session ran no test: the default holds no stop.
     assert.equal(await run("loom-test-gate", "Stop", { session_id: "n", transcript_path: "" }), null);
     // LOOM_TEST_GATE=off: neither.
     const off = { LOOM_TEST_GATE: "off" };

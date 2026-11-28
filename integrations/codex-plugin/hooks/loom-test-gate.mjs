@@ -11,25 +11,30 @@
 // edited. An edit tool's call gets the same line from loom-blast-radius, the
 // one hook wired for those tools.
 //
-// At Stop the default does nothing: the line above informs, and the end of a
-// session is never held. The script exits before it reads its input.
+// Stop: if the working tree has uncommitted changes THIS SESSION made
+// in a loom-indexed repo, ask `code.test_gate` for the change's obligations
+// (tests to run, untested touched functions) and block the stop ONCE per
+// distinct change with a reason that names them. "This session's" is read
+// from the transcript: dirty paths an edit tool targeted or a shell command
+// named, written since the session began (by the file's modification time);
+// a tree left dirty before the session does not gate a turn that changed
+// nothing. By default any test run since the session's last code change
+// lets the stop pass, whatever it ran and however it went (`testedSince`,
+// `lastCodeChange` in lib/test-gate.mjs): the stop is held for a session
+// that ran no test since its last code change, and nothing is asked of the
+// server for one that ran some. A documentation file changed after the run
+// holds nothing.
 //
-// With LOOM_TEST_GATE=block nothing is named at edit time, and the Stop
-// holds: if the working tree has uncommitted changes THIS SESSION made in a
-// loom-indexed repo, ask `code.test_gate` for the change's obligations (tests
-// to run, untested touched functions) and block the stop ONCE per distinct
-// change with a reason that names them. "This session's" is read from the
-// transcript: dirty paths an edit tool targeted or a shell command named,
-// written since the session began (by the file's modification time); a tree
-// left dirty before the session does not gate a turn that changed nothing.
-// The stop passes only when a Claude Code transcript shows the named tests
-// ran on the tree as it stands (`runAnswered`); a Codex rollout answers
-// nothing there, so its stop blocks.
+// With LOOM_TEST_GATE=block nothing is named at edit time, and the stop
+// passes only when a Claude Code transcript shows the named tests ran on the
+// tree as it stands (`runAnswered`); a Codex rollout answers nothing there,
+// so its stop blocks.
 //
 // Fail-open everywhere: no token, not an indexed repo, clean tree, nothing
 // of the tree touched this session, server down, second stop on the same
-// change — the agent stops as normal. Without a transcript path
-// LOOM_TEST_GATE=block takes the whole dirty tree as the change.
+// change — the agent stops as normal. Without a transcript path the default
+// holds no stop, and LOOM_TEST_GATE=block takes the whole dirty tree as the
+// change.
 // LOOM_TEST_GATE=off disables both; LOOM_TEST_GATE_DEPTH (1-3) sets the hops.
 
 import crypto from "node:crypto";
@@ -60,11 +65,13 @@ import {
   gateMode,
   gatePayload,
   gateSignature,
+  lastCodeChange,
   newestChange,
   renderGate,
   runAnswered,
   sessionScope,
   sessionStart,
+  testedSince,
   testsIn,
   writtenSince,
 } from "../lib/test-gate.mjs";
@@ -90,8 +97,7 @@ async function advise(payload, token) {
 }
 
 async function main() {
-  // The line at edit time is the default's, the hold at Stop is LOOM_TEST_GATE=block's.
-  if (MODE !== (AFTER_TOOL ? "advise" : "block")) {
+  if (MODE === "off" || (AFTER_TOOL && MODE === "block")) {
     scheduleExit(0);
     return;
   }
@@ -131,6 +137,11 @@ async function main() {
   const rows = transcript ? readAllLines(transcript) : [];
   const changed = transcript ? writtenSince(root, sessionScope(dirty, rows, { root, cwd }), sessionStart(rows)) : dirty;
   if (!changed.length) {
+    scheduleExit(0);
+    return;
+  }
+  // The default holds the stop of a session whose transcript shows no test run since its last code change.
+  if (MODE === "advise" && (!transcript || testedSince(rows, lastCodeChange(root, changed)))) {
     scheduleExit(0);
     return;
   }
