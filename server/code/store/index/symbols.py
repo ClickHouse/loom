@@ -368,7 +368,10 @@ class SymbolsMixin(CodeRepoBase):
                 "path": path,
             },
         )
-        # sorted: the candidates come in no order, and the read takes the first 4,000
+        # The candidates come in no order and the read takes 4,000 keys. Sorted, the cut
+        # keeps the compiler tier's keys first, the tier the ranking prefers, then the
+        # parser tier's, each in qualified-name order: a name with more keys than that
+        # loses its last parser-tier definitions on every request.
         keys = sorted((str(r["tier"]), str(r["qualified_name"]), str(r["symbol_id"])) for r in cand)
         if not keys:
             return []

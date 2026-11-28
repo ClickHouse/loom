@@ -18,12 +18,8 @@ from server.core.datetimes import naive_utc_now as _now
 
 
 def _nearest_first(rows: list[dict[str, Any]], *keys: str) -> list[dict[str, Any]]:
-    """The rows of a vector-ranked read, nearest first, rows at one distance in `keys`
-    order. The statement sorts on the bare distance alone, the one sort the codes-first
-    read takes (`vector_search_settings`), and ClickHouse returns rows at one distance
-    in the order it read them. Equal distances are common: chunks with one text have
-    one vector. Which of the rows at the read's last distance it returns stays its
-    choice."""
+    """`rows` nearest first, rows at one distance in `keys` order: the statement that
+    read them may sort on the distance alone."""
     return sorted(rows, key=lambda r: (r["distance"], *(r[k] for k in keys)))
 
 

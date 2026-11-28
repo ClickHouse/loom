@@ -169,6 +169,22 @@ async def test_rows_of_one_score_fill_the_pool_with_demoted_rows_after_the_sourc
     assert [r["path"].startswith("src/") for r in found] == [True] * 40 + [False] * 60
 
 
+@pytest.mark.asyncio
+async def test_of_two_equal_votes_at_the_pools_last_slot_the_better_rank_is_kept() -> None:
+    """The test row matches one more term and is the leg's first row. At half weight it
+    votes 0.5 / 61, the same number as the 1 / 122 of the source row at rank 62, and the
+    60 source rows between them vote more. A pool of 61 has one slot for the two: the
+    row at rank 1 takes it, so the pool is the leg's first 61 rows."""
+    repo = _repo(_row("tests/test_merge.py", "merge tree select"), _rows("src/m", 300))
+    found = await repo.lexical_search_chunks(
+        "o", "n", "m", ["merge", "tree", "select"], [1.0, 1.0, 1.0], pool=61, noise_penalty=0.5
+    )
+    assert [(r["lex_rank"], bool(r["in_pool"])) for r in found] == [
+        (rank, True) for rank in range(1, 62)
+    ]
+    assert found[0]["path"] == "tests/test_merge.py"
+
+
 def _chunk(path: str, line: int, tag: str = "") -> str:
     """One chunk of `path` that starts at `line` and holds the lexeme `merge`."""
     cid = uuid.uuid5(uuid.NAMESPACE_URL, f"{path}:{line}:{tag}")
