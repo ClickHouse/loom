@@ -44,6 +44,19 @@ embedding provider. To let Loom draft the answer, set `synthesize` to `true` wit
 to let Loom reuse a cached draft. The corresponding MCP tool is
 [`loom_code_ask`](../reference/operations/code.md#codeask).
 
+To verify a citation, open its file and line range in the repository browser at
+the result's `as_of.commit`. Check that those lines support the claim. If the
+result has no recorded commit or you cannot read those lines, report the citation
+as unchecked.
+
+For more context around a cited function, try passing `path:start_line` as `name`
+to [`code.symbol`](../reference/operations/code.md#codesymbol) with
+`include_body: true`. For example, use `name: "src/cache.py:42"`. Use the same
+organization and code namespace. If a returned definition covers the cited line
+in that file, inspect its body. Comparing the commit for
+[the definition's index tier](../features/code-index/freshness.md) in
+`code.index_status` with the result's `as_of.commit` is a consistency check.
+
 Use `as_of` when available to check the indexed branch and commit behind the result.
 Check `abstain`, `partial` and their reasons before displaying an answer. To test
 the integration, start with a question whose source you can verify, then ask one
