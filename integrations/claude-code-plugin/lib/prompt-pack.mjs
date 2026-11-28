@@ -231,8 +231,7 @@ export function renderPack(res, { cap = 3, header } = {}) {
   // carries no confidence: that number says the index holds an answer, not that
   // these pointers are it.
   const lead =
-    header ||
-    "Loom index pointers for this prompt, candidates: Read a line range to check one, search if none fits:";
+    header || "Loom index pointers for this prompt, candidates: Read a line range to check one, search if none fits:";
   return { text: `${lead}\n${lines.join("\n")}` };
 }
 
