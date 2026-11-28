@@ -12,6 +12,7 @@ from server.core.ch import CHClient, get_client, query_tag
 from server.core.ch_errors import error_code
 from server.core.ch_names import database, qualify
 from server.core.leases import LOCK_INSERT, LOCK_RELEASE, key_exists
+from server.core.logging_config import request_id_var
 
 log = logging.getLogger(__name__)
 
@@ -82,8 +83,9 @@ def _log_unavailable(
             max(0, round((now - progress.changed) * 1000)) if progress.changed is not None else 0
         )
         log.warning(
-            "Session protection proof refused: stage=%s exception=%s code=%s "
+            "Session protection proof refused: request_id=%s stage=%s exception=%s code=%s "
             "elapsed_ms=%s stage_elapsed_ms=%s expired=%s completed_ms=%s",
+            request_id_var.get() or "unavailable",
             progress.stage,
             type(error).__name__,
             error_code(error),
