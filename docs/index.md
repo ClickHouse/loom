@@ -2,13 +2,13 @@
 seo:
   description: Install Loom, connect agents to shared memory, and find guides for deploying and operating Loom.
   title: Agent memory and code search documentation
-mode: wide
+mode: center
 pagination: false
 ---
 
-# ClickHouse Loom documentation
+# Loom documentation
 
-Give agents access to shared memory, cited documents, and indexed code through MCP, HTTP, or the SDKs.
+Set up Loom and connect your agents to shared memory, cited documents, and indexed code.
 
 [Install Loom](getting-started/quickstart.md)
 [Try the playground](https://loom.clickhouse.com/playground/source-change)

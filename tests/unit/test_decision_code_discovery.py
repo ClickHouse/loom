@@ -66,7 +66,7 @@ def index(monkeypatch):
         return world.result
 
     async def thresholds(org, ns):
-        return 0.3, 0.22
+        return 0.3, 0.22, 0.62
 
     async def all_state(self, org, namespace):
         return {

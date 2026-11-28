@@ -126,7 +126,9 @@ impl Client {
     /// Only `CallOptions::timeout` and `CallOptions::request_id` apply. The
     /// SDK resends only on a 429, after the server's hint and within the
     /// client's pacing budget. A refused HTTP/2 stream returns a transport
-    /// error without a retry.
+    /// error without a retry. For a method that can write, a 5xx without
+    /// an explicit retry flag or a code proving the handler did not run
+    /// is reported as nonretryable: the server may already have applied it.
     pub async fn request(&self, request: RouteRequest) -> Result<RouteResponse, Error> {
         self.request_with_options(request, CallOptions::default())
             .await
@@ -235,6 +237,7 @@ impl Client {
                     continue;
                 }
             }
+            error.mark_maybe_applied(method.is_safe());
             log::error!(target: "clickhouse_loom", "{route} failed status={} elapsed_ms={} attempts={attempts} rid={request_id}", status.as_u16(), started.elapsed().as_millis());
             return Err(CallFailure {
                 error: Error::Api(Box::new(error)),

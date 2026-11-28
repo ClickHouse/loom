@@ -7476,6 +7476,7 @@ impl CodeBlameRangeInput {
 pub struct CodeCalibrateOutput {
     pub noise_floor: f64,
     pub abstain_threshold: f64,
+    pub rerank_skip_above: f64,
     pub embedder_model: String,
     pub positives: Integer,
     pub distractors: Integer,

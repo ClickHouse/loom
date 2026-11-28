@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { readContainerPulls, readGitHubRepository, readReleaseDownloads } from "./oss-sources.mjs";
 
 function isAuthorized(request, secret) {
   if (!secret) return false;
@@ -28,20 +29,28 @@ export async function snapshotOss(request, env = process.env, fetcher = fetch, n
   warehouse.searchParams.set("wait_end_of_query", "1");
 
   try {
-    const response = await fetcher("https://api.github.com/repos/ClickHouse/loom", {
-      redirect: "error",
-      signal: AbortSignal.timeout(4000),
-    });
-    if (!response.ok) return new Response(null, { status: 502 });
-    const { stargazers_count, forks_count } = await response.json();
-    const values = { stars: stargazers_count, forks: forks_count };
-    if (!Object.values(values).every((value) => Number.isSafeInteger(value) && value >= 0)) {
-      return new Response(null, { status: 502 });
-    }
+    const sources = { fetcher, signal: AbortSignal.timeout(4_000) };
+    const [repository, releaseDownloads, containerPulls] = await Promise.all([
+      readGitHubRepository(sources),
+      readReleaseDownloads(sources),
+      readContainerPulls(sources),
+    ]);
     const day = now.toISOString().slice(0, 10);
-    const rows = Object.entries(values).map(([metric, value]) =>
-      JSON.stringify({ day, source: "github", artifact: "ClickHouse/loom", metric, value }),
-    );
+    const rows = [
+      { source: "github", artifact: "ClickHouse/loom", metric: "stars", value: repository?.stargazers_count },
+      { source: "github", artifact: "ClickHouse/loom", metric: "forks", value: repository?.forks_count },
+      {
+        source: "github",
+        artifact: "ClickHouse/loom",
+        metric: "release_asset_downloads_total",
+        value: releaseDownloads,
+      },
+      { source: "ghcr", artifact: "ghcr.io/clickhouse/loom", metric: "container_pulls_total", value: containerPulls },
+    ]
+      .filter(({ value }) => Number.isSafeInteger(value) && value >= 0)
+      .map((row) => JSON.stringify({ day, ...row }));
+    if (!rows.length) return new Response(null, { status: 502 });
+
     const auth = Buffer.from(`${LOOM_TELEMETRY_CLICKHOUSE_USER}:${LOOM_TELEMETRY_CLICKHOUSE_PASSWORD}`).toString(
       "base64",
     );

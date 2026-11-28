@@ -18,7 +18,7 @@ const Outline = mobile ? "details" : "div";
 {(headings.length > 0 || (mobile && Astro.slots.has("default"))) && (
   <Outline class:list={[
     "docs-outline",
-    mobile && "group mx-auto mb-6 max-w-content rounded-blume border border-border xl:hidden",
+    mobile && "docs-outline-mobile group mx-auto mb-6 max-w-content rounded-blume border border-border xl:hidden",
   ]}>
     {mobile ? (
       <summary class="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
@@ -48,6 +48,12 @@ const Outline = mobile ? "details" : "div";
 <style>
   .docs-outline :global(a:not(:hover, :focus, [aria-current="location"])) {
     color: var(--click-global-color-text-muted);
+  }
+
+  .docs-outline-mobile blume-toc {
+    max-block-size: min(18rem, 40dvh);
+    overflow-y: auto;
+    scrollbar-width: thin;
   }
 
   .docs-outline :global(a[aria-current="location"]) {

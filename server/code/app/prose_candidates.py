@@ -84,7 +84,7 @@ async def _discover(org: str, result: CodeDiscovery) -> None:
         return
     embedder = get_embedder()
     model = embedder.model_name
-    threshold, noise = await resolve_code_thresholds(org, ns)
+    threshold, noise, confident = await resolve_code_thresholds(org, ns)
     # The public handler persists queries in code-scoped traces and cursor pools.
     # Document quotations keep their source access boundary, even in a dry run.
     out = await search.search(
@@ -102,6 +102,7 @@ async def _discover(org: str, result: CodeDiscovery) -> None:
         embedding_model=model,
         abstain_threshold=threshold,
         noise_floor=noise,
+        confident_similarity=confident,
         deadline_ms=1500,
     )
     if out.partial or out.epistemic == "partial" or out.legs_timed_out:
