@@ -23,6 +23,7 @@ import os from "node:os";
 import {
   envNumber,
   git,
+  planeEnabled,
   readStdinJson,
   resolveScope,
   resolveServerUrl,
@@ -89,7 +90,7 @@ function dispatch(post, cursorFile, advanceTo, rollbackTo) {
 
 async function main() {
   const event = (process.argv[2] || "").trim() || "SessionEnd";
-  if (!briefEnabled()) return scheduleExit(0);
+  if (!planeEnabled("memory") || !briefEnabled()) return scheduleExit(0);
   if (!resolveToken()) return scheduleExit(0);
   const payload = await readStdinJson();
   const sessionId = String(payload.session_id || "");

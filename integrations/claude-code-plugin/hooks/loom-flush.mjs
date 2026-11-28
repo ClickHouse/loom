@@ -5,10 +5,15 @@
 // requests are bounded by the LOOM_HOOK_TIMEOUT_MS the spawner set, and a
 // hard exit backs that bound.
 //
+// Every job is a memory-plane hook's (the conversation, a brief, the session
+// hand-off), so an install whose mode leaves memory out delivers none: a job
+// file left by a session of another mode is removed unsent.
+//
 // Usage: node loom-flush.mjs <job-file.json>
 
 import { runFlushJob } from "../lib/flush-job.mjs";
 import {
+  planeEnabled,
   postBounded,
   requestTimeoutMs,
   resolveServerUrl,
@@ -45,7 +50,7 @@ async function main() {
     /* unreadable or garbage: nothing to deliver */
   }
   const token = resolveToken();
-  if (job && typeof job === "object") {
+  if (planeEnabled("memory") && job && typeof job === "object") {
     const serverUrl = resolveServerUrl();
     await runFlushJob(job, {
       // Without a token every post fails, so an optimistic cursor rolls back.

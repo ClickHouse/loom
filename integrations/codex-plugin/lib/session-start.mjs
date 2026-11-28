@@ -10,7 +10,6 @@
 import { envNumber, envSwitch, hookClient } from "./loom-client.mjs";
 import { recalledDataBlock } from "./prompt-recall.mjs";
 import { sessionRunId } from "./run-hook.mjs";
-import { toolsetParts, unknownUnion } from "./toolset.mjs";
 import { blockKeyFor } from "./working-memory.mjs";
 
 /** The recent-runs shortlist in the session-start primer, off unless
@@ -78,7 +77,8 @@ export function repoTagLine(repo, { ownEntry = false } = {}) {
 
 /**
  * The SessionStart output, "" when no part has text (the hook's code block
- * always has, so its session is silent only with LOOM_CODE_MAP off):
+ * always has, so its session is silent only with LOOM_CODE_MAP off or
+ * without the code plane):
  * first-session, server-version and duplicate-mount notices, the checkout's
  * line (its code namespace, then its memory tag), the memory primer under a
  * heading when context.pack rendered one, then the task, brief, collections
@@ -149,25 +149,13 @@ export function notIndexedLine(remotes = []) {
 /** Whether the session's MCP entry is the Claude Code plugin's own, which
  *  Claude Code marks by running the plugin's hooks with CLAUDE_PLUGIN_ROOT.
  *  That entry's helper binds loom_code_* calls to the checkout's repository
- *  when the checkout resolved to an indexed one, its URL names
- *  the `plugin` profile and its toolset is the plugin's `toolset` option. Any
+ *  when the checkout resolved to an indexed one, its URL names the `coding`
+ *  toolset and the `plugin` profile, and the plugin's `mode` option picks
+ *  the planes it lists. Any
  *  other wiring (Codex, whose hooks name their client, or a hand-wired client)
  *  mounts an entry these hooks cannot read, so its primer says all of it. */
 export function ownsMcpEntry(env = process.env, client = hookClient(process.argv, env)) {
   return Boolean(env.CLAUDE_PLUGIN_ROOT) && client === "claude-code";
-}
-
-/** Whether the startup instructions of the plugin's own entry say how to route
- *  a code lookup: the server sends that paragraph to a toolset with a `coding`
- *  part, read as the server does (parts split on `+`, a space or a comma,
- *  lower-cased), and an unset option is its default, `coding`. Any other
- *  toolset (`all`, `core`, `tracker`) gets the general rules, which route no
- *  code lookup, so the primer keeps the arbitration there. So does a union the
- *  server does not serve (`unknownUnion`): it takes the deployment's default
- *  toolset, which this cannot know. */
-export function instructionsRouteCode(toolset) {
-  const parts = toolsetParts(toolset || "coding");
-  return parts.includes("coding") && !unknownUnion(parts);
 }
 
 /** One line for the primer naming the code namespace every loom_code_* call
@@ -243,8 +231,7 @@ function fetchedAt(status) {
 
 // The taught arbitration, for a session whose startup instructions do not
 // carry the routing: a wiring whose MCP entry this plugin does not mount
-// (Codex, a hand-wired client), and the plugin's own entry on a toolset
-// without a `coding` part (`instructionsRouteCode`). Injected only when the
+// (Codex, a hand-wired client). Injected only when the
 // repo is actually indexed so it never confuses sessions on other projects.
 const CODE_ARBITRATION =
   "# Loom code index: this repository is indexed (per-merge fresh).\n" +

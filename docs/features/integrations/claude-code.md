@@ -11,6 +11,9 @@ The `loom` plugin for Claude Code does three things in one install:
   reads and tree-wide greps are redirected to `code.*` operations, and an edit gets the
   file's rules before it, and its blast radius and the tests linked to the file after it.
 
+Installed for one of the two, memory or the code index, it does only that one's part
+([Modes](#modes)).
+
 Source: `integrations/claude-code-plugin/`, Node ESM scripts with no dependencies. The
 Codex build runs the same scripts; see [codex.md](codex.md).
 
@@ -71,6 +74,16 @@ end of this section are the exceptions. The plugin sends:
   stops it);
 - in agent mode, the workload's identity token and `LOOM_CLIENT_ID`, to the server's
   `/oauth/token`, in exchange for a Loom token.
+
+The plugin's [mode](#modes) narrows the list. In `code` mode the hooks send no tool call's
+input, output or error, no chat turn, no session turns for extraction, no working-memory
+note and no brief, and fetch no recalled memory. They still send each prompt's text as a
+code-index search (`code.search`; `LOOM_PROMPT_PACK=off` stops it), the run record (the
+first prompt and the last reply; `LOOM_RUN_LEDGER=off` stops it), token usage and the
+model name (`LOOM_USAGE=off` stops it), and the code-index items above: a redirected
+grep's symbol, the read and grep records, diff outlines and the repository's identity.
+In `memory` mode they send nothing to the code index: no remote's owner and name to
+`code.repos`, no redirect, no read or grep record and no diff outline.
 
 [What the hooks do](#what-the-hooks-do) lists the hooks behind these requests. A
 client-side redaction removes common credential shapes from the prompts, tool calls, turns,
@@ -157,12 +170,12 @@ Install either this plugin or `loom-code-skill`, not both; the plugin already sh
 `loom-code` skill. Update with `claude plugin update loom@loom`: hooks ship with the
 plugin, not the server.
 
-| Option        | Default                                        | Meaning                                                                               |
-| ------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `server_url`  | `$LOOM_BASE_URL`, else `http://localhost:7777` | Loom base URL, no trailing slash                                                      |
-| `token`       | empty                                          | a writer JWT, stored as a sensitive value                                             |
-| `toolset`     | `coding`                                       | the MCP listing (`?toolset=`), e.g. `coding+tracker`; every op stays callable by name |
-| `local_first` | `false`                                        | `true` stands the code shunt down (same as `LOOM_CODE_LOCAL_FIRST=on`)                |
+| Option        | Default                                        | Meaning                                                                   |
+| ------------- | ---------------------------------------------- | ------------------------------------------------------------------------- |
+| `server_url`  | `$LOOM_BASE_URL`, else `http://localhost:7777` | Loom base URL, no trailing slash                                          |
+| `token`       | empty                                          | a writer JWT, stored as a sensitive value                                 |
+| `mode`        | `both`                                         | `both`, `memory` or `code`: the planes the session uses ([Modes](#modes)) |
+| `local_first` | `false`                                        | `true` stands the code shunt down (same as `LOOM_CODE_LOCAL_FIRST=on`)    |
 
 Every option is optional; Claude Code asks once, and an empty answer falls back to the
 [lookups below](#configuration).
@@ -197,9 +210,8 @@ Check the setup in this order:
    have separate versions; updating the server does not update the plugin.
 2. Open `/mcp` in Claude Code. Check that Loom is connected and lists `loom_code_symbol`,
    `loom_code_callers` and `loom_code_search`. A connected server without these tools
-   cannot serve Claude's code lookups. Use the plugin's `toolset=coding` option.
-   `toolset=all` omits code tools when the server's `LOOM_MCP_CODE_TOOLS` is false;
-   it is not a substitute for `coding`.
+   cannot serve Claude's code lookups. The plugin's entry lists them in every
+   [mode](#modes) but `memory`.
 3. Run `/loom:loom-status` for runtime, server, token and namespace checks. Never share
    tokens or authorization headers in a support report.
 4. Check the SessionStart output for the matched repository and code namespace. Compare
@@ -227,10 +239,11 @@ when needed.
 Other toolsets, a union such as `coding+tracker` included, request upfront
 loading for `loom_code_search`, `loom_code_grep`, `loom_code_symbol`,
 `loom_search` and `loom_op` where listed. The published plugin's entry names
-`schema_profile=plugin`: every tool of the toolset in the compact shapes. On
-its default `coding` toolset a session loads two code tools up front and finds
-the others, the memory tools among them, through tool search; any other value
-of the plugin's `toolset` option loads the five tools above, where listed.
+`schema_profile=plugin` on the `coding` toolset: every tool of the toolset in
+the compact shapes. A session loads two code tools up front and finds
+the others, the memory tools among them, through tool search. In
+[code mode](#modes) the entry lists the code tools alone, with the same two up
+front; in memory mode it lists no code tool and loads none up front.
 
 `LOOM_MCP_ALWAYS_LOAD_TOOLS=auto` selects the defaults above. Supply a comma-separated
 list of operations such as `code.symbol` or synthetic tool names such as `loom_op`
@@ -241,11 +254,11 @@ MCP connections receive routing for the available Loom capabilities, including
 memory, documents, code, issues, tasks and records. Prefer a fitting listed tool;
 use `loom_op` help to discover an unlisted operation. The assistant toolset has
 only its listed read tools. This guidance does not depend on plugin hooks.
-On a toolset with a `coding` part the plugin's own connection gets one
+The plugin's own connection gets one
 paragraph instead, because its hooks say the rest when it applies: the
 checkout's code namespace at session start, the Loom call in place of a local
 read they refuse, a file's memories before an edit and recalled memories beside
-the prompt. On `all`, `core` or `tracker` it gets the routing above.
+the prompt. In a one-plane [mode](#modes) the paragraph is that plane's sentence.
 A first-step memory pack requires a default memory namespace; code tools use
 the supplied code scope. Instructions guide tool choice and do not prove a
 lookup occurred.
@@ -447,9 +460,51 @@ carry `repo:<id>`, a hash of the normalised `origin` URL (`LOOM_REPO_REMOTE` ove
 the remote), so two clones of different repositories with the same directory name do
 not share memory.
 
+## Modes
+
+The `mode` install option picks which of Loom's planes a session uses, so an install
+that wants one of them pays only for that one:
+
+```bash
+claude plugin install loom@loom --config mode=code
+```
+
+| Mode             | The hooks                                                                             | The MCP entry lists                          |
+| ---------------- | ------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `both` (default) | capture the session, recall memory and answer from the code index                     | 23 tools: every tool of the `coding` toolset |
+| `memory`         | capture the session and recall memory; no request reaches the code index              | 10 tools: the listing without its code tools |
+| `code`           | answer from the code index; nothing of the session is captured, recalled or extracted | 13 tools: the code tools alone               |
+
+- **Code mode** captures nothing: no tool observation, chat turn, brief, working-memory
+  note or session hand-off. The server has no session to extract facts from, so it makes
+  no model call for one. The hooks read no memory either: no primer pack, no recall and
+  no file memories. The code shunt, the prompt's code pointers, the blast radius and the
+  test gate work as in `both`; the shunt's `gh` issue-search redirect and the mentor
+  hints, which each name the other plane's tools, are off.
+- **Memory mode** sends no `code.*` request and lists no `loom_code_*` tool: no redirect
+  of a read or grep, no code pointers, no blast radius, no test gate, and no
+  `X-Loom-Code-Scope` header. The pre-edit lookup covers your own namespace. A
+  repository's team rules are found through its code index, so they need `both`.
+- **Every mode keeps the run ledger**: `run.begin` with the first prompt, `run.complete`
+  with the last reply, and `cost.record_turns` with the token usage.
+  `LOOM_RUN_LEDGER=off` and `LOOM_USAGE=off` turn them off. SessionStart also probes
+  `GET /v1/health` in every mode, for the hooks' request bound.
+- **The hook processes still start.** The wiring is the same in every mode; a script
+  whose plane is off sends no request and prints nothing.
+- **The three skills are listed in every mode**: a skill's description is fixed text the
+  client loads at start.
+- **The listing needs a server that reads `?mode=`** ([MCP reference](../../reference/mcp.md)).
+  An older server ignores it and lists both planes; the hooks follow the mode either way.
+
+Codex and a hand-wired client have no install option: set `LOOM_MODE` for their hooks.
+The Codex plugin's MCP entry is fixed and lists what it always did. Under Claude Code
+the option outranks the variable, since the option is also what the MCP entry's URL
+carries. `hooks/HOOKS.md` names each hook script's plane.
+
 ## The MCP entry and its header helper
 
-The plugin's `.mcp.json` points at `<server_url>/mcp?toolset=<toolset>` and gets its
+The plugin's `.mcp.json` points at
+`<server_url>/mcp?toolset=coding&schema_profile=plugin&mode=<mode>` and gets its
 headers from `bin/loom-mcp-headers.mjs`. Claude Code runs the helper in the plugin root,
 so the URL ends in `#${CLAUDE_PROJECT_DIR}`: Claude Code hands the helper the URL with the
 project directory filled in, and never sends the fragment to the server. The helper
@@ -463,7 +518,8 @@ sends:
   first-session sign-up.
 - `X-Loom-Code-Scope: <org>/<namespace>`, the code namespace the project's checkout
   resolves to. The server applies it to every `code.*` call that names no namespace, so
-  the model does not have to pass one. `LOOM_MCP_CODE_SCOPE=off` disables it.
+  the model does not have to pass one. `LOOM_MCP_CODE_SCOPE=off` disables it, and an
+  entry in memory mode sends none and looks no repository up.
 
 The checkout's repository is found from its remotes (`origin`, then `upstream`, then the
 rest) through `code.repos`. A GitHub fork with no index of its own resolves to its

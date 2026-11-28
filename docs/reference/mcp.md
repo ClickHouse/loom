@@ -32,6 +32,13 @@ Query parameters on the URL select what `tools/list` shows for that connection:
   plugin whose hooks carry the routing: the compact shapes, every tool of the
   toolset listed with the repository header or without it, and, on a toolset
   with a `coding` part, startup instructions of one paragraph. `LOOM_MCP_SCHEMA_PROFILE` does not take it.
+- `?mode=` narrows a `plugin` connection on a toolset with a `coding` part to one
+  plane, for a plugin installed in that mode. `memory` lists the toolset without
+  its `code.*` tools and loads none up front. `code` lists the `code.*` tools
+  alone, with the repository header or without it, and no prompt and no
+  resource. The startup paragraph says that plane's sentence. `both`, any other
+  value, and a `mode` beside another profile change nothing. The lists follow
+  the URL alone, so a shared cache may keep them.
 
 Compact coding connections describe the common source workflows in the
 startup instructions. Find the other tools through discovery. When the `coding`
@@ -64,7 +71,8 @@ refusals keep the tool names they spell.
 The coding-agent plugins send the `X-Loom-Code-Scope` header for a checkout they
 resolve to a repository, so those connections are bound. The Codex plugin's URL
 names no profile and the Claude Code plugin's names `plugin`, so both list the
-memory tools. The lists of a `coding` connection whose URL carries
+memory tools; the Claude Code plugin installed in code mode (`?mode=code`) lists
+the code tools alone. The lists of a `coding` connection whose URL carries
 `schema_profile=compact` follow that header, so their `cacheScope` is `private`
 with the header or without it.
 

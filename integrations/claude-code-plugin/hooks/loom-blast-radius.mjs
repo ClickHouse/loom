@@ -30,6 +30,7 @@ import path from "node:path";
 import {
   git,
   gitToplevel,
+  planeEnabled,
   postBounded,
   readStdinJson,
   DIFF_ARGS,
@@ -45,8 +46,9 @@ import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 import { blastPayload, blastSignature, decideEmit, impactBody, renderBlast } from "../lib/blast-radius.mjs";
 import { adviceFiles, adviceLines, gateMode } from "../lib/test-gate.mjs";
 
-const ENABLED = envSwitch("LOOM_BLAST_RADIUS", true);
-const ADVISE = gateMode() === "advise";
+const CODE = planeEnabled("code");
+const ENABLED = CODE && envSwitch("LOOM_BLAST_RADIUS", true);
+const ADVISE = CODE && gateMode() === "advise";
 const MAX_NAMES = Number(process.env.LOOM_BLAST_MAX_NAMES || 5);
 const DEPTH = Math.min(2, Math.max(1, Number(process.env.LOOM_BLAST_DEPTH || 1)));
 const PER_HOP = Math.min(500, Math.max(1, Number(process.env.LOOM_BLAST_PER_HOP || 50)));

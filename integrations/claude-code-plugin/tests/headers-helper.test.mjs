@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 process.env.LOOM_HOOK_NO_MAIN = "1";
-import { checkoutScope, headersFor, hookToken, projectDir } from "../bin/loom-mcp-headers.mjs";
+import { checkoutScope, entryMode, headersFor, hookToken, projectDir } from "../bin/loom-mcp-headers.mjs";
 import { cachePathFor, scopeHeader } from "../lib/repo-scope.mjs";
 import { execSync } from "node:child_process";
 import { hostEnv, withTmpdir } from "./host-env.mjs";
@@ -74,11 +74,11 @@ test("the plugin's .mcp.json uses the helper and a localhost default URL", () =>
   const block = JSON.parse(fs.readFileSync(fileURLToPath(new URL("../.mcp.json", import.meta.url)), "utf8"));
   const loom = block.mcpServers.loom;
   assert.equal(loom.type, "http");
-  // the toolset is a setting; the profile is the plugin's own listing and instructions;
+  // the profile is the plugin's own listing and instructions, the mode the planes it carries;
   // the fragment carries the project directory to the helper
   assert.equal(
     loom.url,
-    "${user_config.server_url}/mcp?toolset=${user_config.toolset}&schema_profile=plugin#${CLAUDE_PROJECT_DIR}",
+    "${user_config.server_url}/mcp?toolset=coding&schema_profile=plugin&mode=${user_config.mode}#${CLAUDE_PROJECT_DIR}",
   );
   assert.equal(loom.headersHelper, 'node "${CLAUDE_PLUGIN_ROOT}/bin/loom-mcp-headers.mjs"');
   assert.equal(loom.headers, undefined, "no static header: the helper supplies it");
@@ -174,6 +174,30 @@ test("projectDir: the fragment as it is, whatever the path holds", () => {
   const dir = `/home/me/odd #50% $(id) \`x\` "q" it's`;
   assert.equal(projectDir({ CLAUDE_CODE_MCP_SERVER_URL: `http://h/mcp?toolset=coding#${dir}` }), dir);
   assert.equal(projectDir({}), process.cwd());
+});
+
+test("an entry in memory mode names no repository and looks none up", async () => {
+  const at = (url, env = {}) => entryMode({ CLAUDE_CODE_MCP_SERVER_URL: url, ...env });
+  assert.equal(at("http://h/mcp?toolset=coding&schema_profile=plugin&mode=memory#/p"), "memory");
+  // the fragment is the project directory, whatever it holds
+  assert.equal(at("http://h/mcp?mode=code#/p?mode=memory"), "code");
+  assert.equal(at("http://h/mcp?mode=${user_config.mode}#/p"), "both");
+  // a URL that names none (the Codex entry): the hooks' own setting
+  assert.equal(at("http://h/mcp?toolset=coding", { LOOM_MODE: "memory" }), "memory");
+  assert.equal(at("http://h/mcp?toolset=coding"), "both");
+  const { tmp } = sandbox();
+  const repo = gitRepo();
+  const calls = [];
+  const post = async (op) => {
+    calls.push(op);
+    return null;
+  };
+  const env = { CLAUDE_CODE_MCP_SERVER_URL: `http://h/mcp?mode=memory#${repo}` };
+  assert.equal(await withTmpdir(tmp, () => checkoutScope(repo, { env, token: "t", post })), null);
+  assert.deepEqual(calls, []);
+  const code = { CLAUDE_CODE_MCP_SERVER_URL: `http://h/mcp?mode=code#${repo}` };
+  await withTmpdir(tmp, () => checkoutScope(repo, { env: code, token: "t", post }));
+  assert.equal(calls[0], "code.repos");
 });
 
 test("checkoutScope: cache miss → one bounded lookup that also fills the cache", async () => {

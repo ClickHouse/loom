@@ -10,6 +10,7 @@
 
 import {
   envSwitch,
+  planeEnabled,
   readStdinJson,
   resolveScope,
   resolveToken,
@@ -36,7 +37,9 @@ async function main() {
   const recalledKeys = readRecalledStash(sid);
   const journal = readJournal(sid);
   removeFile(recalledStashPath(sid));
-  if (envSwitch("LOOM_SESSION_MEMORY", true) && resolveToken()) handOff(payload, journal, recalledKeys);
+  if (planeEnabled("memory") && envSwitch("LOOM_SESSION_MEMORY", true) && resolveToken()) {
+    handOff(payload, journal, recalledKeys);
+  }
   scheduleExit(0);
 }
 

@@ -5,11 +5,15 @@
 // The block is `context.pack` (a curated, sectioned primer: pinned slots,
 // profile, relevant memories, procedures, recent runs), plus the checkout's
 // line (its code namespace and memory tag), the task inbox line, the recording
-// line where the toolset lists the conversation tools, and first-session
-// notices. The checkout's line is always there (outside an indexed checkout it
-// says why no index was looked up), so a start that prints nothing is a fault
-// (no token, no answer from the server) unless LOOM_CODE_MAP is off and nothing
-// else has text. Before any of it the hook saves the token
+// line for a wiring whose MCP entry may list the conversation tools, and
+// first-session notices. Each part is one plane's (`planeEnabled`): the code
+// namespace and the repo map are code, every other part memory, so an install
+// in one mode asks for and prints that plane's parts alone; the health probe
+// and the notices run in every mode. Where the code plane runs the checkout's
+// line is always there (outside an indexed checkout it says why no index was
+// looked up), so a start that prints nothing is a fault (no token, no answer
+// from the server) unless LOOM_CODE_MAP is off and nothing else has text.
+// Before any of it the hook saves the token
 // it was given for the MCP header helper (lib/plugin-options.mjs) and, with no
 // credential at all, signs the machine up (lib/first-session.mjs).
 //
@@ -21,6 +25,7 @@ import {
   envSwitch,
   gitToplevel,
   hookClient,
+  planeEnabled,
   probeHealth,
   postBounded,
   readStdinJson,
@@ -43,7 +48,6 @@ import {
   codeArbitration,
   codeScopeLine,
   indexStatusBody,
-  instructionsRouteCode,
   localFirstBlock,
   renderPrimer,
   matchNoteLine,
@@ -53,17 +57,11 @@ import {
   startPackBody,
 } from "../lib/session-start.mjs";
 import { checkoutRemotes, lookupIndexedRepo } from "../lib/repo-scope.mjs";
-import {
-  listsConversationTools,
-  readRecording,
-  recordingFromNamespace,
-  recordingPrimerLine,
-  writeRecording,
-} from "../lib/recording.mjs";
+import { readRecording, recordingFromNamespace, recordingPrimerLine, writeRecording } from "../lib/recording.mjs";
 import { teamRulesLine } from "../lib/file-context.mjs";
 import { applyPluginOptions, helperEnvHidden, installTokenNotice, saveInstall } from "../lib/plugin-options.mjs";
 import { cacheIsFresh, countsBody, renderTaskLine, summarizeCounts } from "../lib/task-inbox.mjs";
-import { listBody, renderCollectionsLine, toolsetAllows } from "../lib/collections-line.mjs";
+import { listBody, renderCollectionsLine } from "../lib/collections-line.mjs";
 import { briefPrimerEnabled, primerLine } from "../lib/session-brief.mjs";
 import { readJsonFile, sweepStaleStateFiles, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
@@ -118,27 +116,31 @@ async function main() {
     })
     .catch(() => "");
 
+  const memory = planeEnabled("memory");
+  const code = planeEnabled("code");
   // The model must not log turns itself: the Stop hook does when the owner's
-  // Record conversations switch is on. The plugin's own entry says it only
-  // where its toolset lists the tools that would.
-  const conversationTools = !ownsMcpEntry() || listsConversationTools(process.env.CLAUDE_PLUGIN_OPTION_TOOLSET);
+  // Record conversations switch is on. The plugin's own entry lists no tool
+  // that would, so only another wiring's session is told.
+  const conversationTools = memory && !ownsMcpEntry();
 
   // The primer's parts are independent bounded reads: run them side by side,
   // so a hung server costs the session one request bound, not one per part.
   const [versionLine, result, codeBlock, taskLine, briefsLine, recording, collectionsText] = await Promise.all([
     health,
-    postBounded(
-      "context.pack",
-      startPackBody(scope, payload, { tokenBudget, runId: sessionRunId(payload.session_id) || "" }),
-      { token, serverUrl },
-    ),
+    memory
+      ? postBounded(
+          "context.pack",
+          startPackBody(scope, payload, { tokenBudget, runId: sessionRunId(payload.session_id) || "" }),
+          { token, serverUrl },
+        )
+      : null,
     // Code-plane orientation for an indexed checkout (LOOM_CODE_MAP=false
     // drops it; the map's budget is additive to the primer's).
-    envSwitch("LOOM_CODE_MAP", true) ? buildCodeBlock(scope, token, checkoutDir(payload)) : "",
-    envSwitch("LOOM_TASK_INBOX_LINE", true) ? taskInboxLine(scope, token) : "",
-    briefPrimerEnabled() ? savedBriefsLine(scope, token) : "",
+    code && envSwitch("LOOM_CODE_MAP", true) ? buildCodeBlock(scope, token, checkoutDir(payload)) : "",
+    memory && envSwitch("LOOM_TASK_INBOX_LINE", true) ? taskInboxLine(scope, token) : "",
+    memory && briefPrimerEnabled() ? savedBriefsLine(scope, token) : "",
     conversationTools ? recordingState(scope, token) : null,
-    envSwitch("LOOM_COLLECTIONS_LINE", true) ? collectionsLine(scope, token) : "",
+    memory && envSwitch("LOOM_COLLECTIONS_LINE", true) ? collectionsLine(scope, token) : "",
   ]);
 
   // A user-scope MCP entry duplicating this plugin's mount.
@@ -147,7 +149,8 @@ async function main() {
     renderPrimer({
       notices: [firstSessionNotice, versionLine, dup, optionNotice],
       project: scope.project,
-      repo: scope.repo,
+      // The tag is for a memory save: a session that lists no memory tool is not told it.
+      repo: memory ? scope.repo : null,
       rendered: result && typeof result.rendered === "string" ? result.rendered : "",
       codeBlock,
       lines: [taskLine, briefsLine, collectionsText],
@@ -195,27 +198,22 @@ async function taskInboxLine(scope, token) {
 
 /** A few lines naming the collections this token can read (`collection.list`), so an agent
  *  can write into one or say where a hit came from without being told the names. Cached a
- *  minute per (server, org, token, toolset), the failures too; "" when there are none or on any error. */
+ *  minute per (server, org, token), the failures too; "" when there are none or on any error. */
 async function collectionsLine(scope, token) {
-  // A read-only toolset routes no write, and the assistant toolset neither tool the line names.
-  const allows = toolsetAllows(process.env.CLAUDE_PLUGIN_OPTION_TOOLSET);
-  if (!scope || !scope.org || !allows) return "";
+  if (!scope || !scope.org) return "";
   // The answer is the token's own (its grants in the org): two agents sharing this home with
   // their own tokens never read each other's line. tmpStatePath hashes the key again.
   const tokenId = createHash("sha256")
     .update(String(token || ""))
     .digest("hex")
     .slice(0, 16);
-  const cp = tmpStatePath(
-    "collections",
-    `${resolveServerUrl()}|${scope.org}|${tokenId}|${process.env.CLAUDE_PLUGIN_OPTION_TOOLSET || ""}`,
-  );
+  const cp = tmpStatePath("collections", `${resolveServerUrl()}|${scope.org}|${tokenId}`);
   const cached = readJsonFile(cp, null);
   if (cacheIsFresh(cached)) return cached.line;
   const result = await postBounded("collection.list", listBody(scope), { token, serverUrl: resolveServerUrl() });
   let line = "";
   try {
-    line = renderCollectionsLine(result, allows);
+    line = renderCollectionsLine(result);
   } catch {
     // A Node built without Intl: the primer goes on without the lines.
   }
@@ -290,7 +288,8 @@ async function buildCodeBlock(scope, token, cwd) {
     [
       matchNoteLine(entry, remotes),
       [codeScopeLine(hit, { ownEntry }), ...after].filter(Boolean).join(" "),
-      teamRulesLine(hit),
+      // Team rules are memory the pre-edit lookup delivers.
+      planeEnabled("memory") ? teamRulesLine(hit) : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -320,13 +319,11 @@ async function buildCodeBlock(scope, token, cwd) {
       ? await postBounded("code.map", { token_budget: budget, ...indexStatusBody(hit) }, { token, serverUrl })
       : null;
   const mapText = map && typeof map.map === "string" ? map.map.trim() : "";
-  // The plugin's own entry on a toolset with a `coding` part says how to route a
-  // lookup, so its primer names the checkout and says when the mirror stalled;
-  // any other toolset, and another wiring, gets the routing here.
-  const head =
-    ownEntry && instructionsRouteCode(process.env.CLAUDE_PLUGIN_OPTION_TOOLSET)
-      ? scopeLines(staleMirrorLine(status))
-      : [scopeLine, codeArbitration(status).trim()].filter(Boolean).join("\n\n");
+  // The plugin's own entry says how to route a lookup, so its primer names the
+  // checkout and says when the mirror stalled; another wiring gets the routing here.
+  const head = ownEntry
+    ? scopeLines(staleMirrorLine(status))
+    : [scopeLine, codeArbitration(status).trim()].filter(Boolean).join("\n\n");
   return mapText ? `${head}\n\n${mapText}` : head;
 }
 

@@ -40,7 +40,11 @@ from server.transport.mcp_identity import (
 )
 from server.transport.mcp_op import keep_first_marks
 from server.transport.mcp_op import reachable as loom_op_reachable
-from server.transport.mcp_schemas import PLUGIN_SCHEMA_PROFILE, resolve_schema_profile
+from server.transport.mcp_schemas import (
+    PLUGIN_SCHEMA_PROFILES,
+    plugin_plane,
+    resolve_schema_profile,
+)
 from server.transport.mcp_tools import (
     _emit_mcp_event,
     assistant_connection,
@@ -568,7 +572,7 @@ async def _initialize_instructions(
     coding = "coding" in toolset_parts(toolset)
     if coding and _plugin_connection(schema_profile):
         profile = await _profile_section(auth, defaults) if auth is not None else ""
-        return _plugin_instructions(toolset, defaults) + profile
+        return _plugin_instructions(toolset, defaults, schema_profile) + profile
     rules = (
         _coding_instructions(toolset, defaults, schema_profile=schema_profile)
         if coding
@@ -599,22 +603,31 @@ async def _initialize_instructions(
 
 def _plugin_connection(schema_profile: str | None) -> bool:
     """Whether the URL names the plugin profile: a coding-agent plugin's connection."""
-    return str(schema_profile or "").lower() == PLUGIN_SCHEMA_PROFILE
+    return str(schema_profile or "").lower() in PLUGIN_SCHEMA_PROFILES
 
 
-def _plugin_instructions(toolset: str | None, defaults: dict[str, Any] | None) -> str:
+def _plugin_instructions(
+    toolset: str | None, defaults: dict[str, Any] | None, schema_profile: str | None = None
+) -> str:
     """The startup text of a coding-agent plugin's connection: what the tool families
     are for, in one paragraph. The upfront tools' own descriptions say when to call
     them, the client's tool search names the deferred ones, and the plugin's hooks say
     the rest when it applies: the checkout's code namespace at session start, the Loom
     call in place of a local read they refuse, a file's memories before an edit and
-    recalled memories beside the prompt."""
+    recalled memories beside the prompt. A connection that lists one plane
+    (``schema_profile``, the URL's own value) gets that plane's sentence alone."""
     tool = _tool_refs(toolset)
+    plane = plugin_plane(schema_profile)
+    code = (
+        f"Use Loom first for unchanged indexed code and tests ({tool['code.search']} finds "
+        "behavior), local tools for edits, tests, Git and working-copy changes."
+    )
+    if plane == "code":
+        return name_ops_for_toolset(code, toolset, schema_profile)
     save = tool["memory.set"]
     text = (
-        f"Use Loom first for unchanged indexed code and tests ({tool['code.search']} finds "
-        "behavior), local tools for edits, tests, Git and working-copy changes. "
-        "`loom_search` recalls saved memory, "
+        ("" if plane == "memory" else code + " ")
+        + "`loom_search` recalls saved memory, "
         + (f"{save} saves a fact when the user asks, and " if save else "and ")
         + '`loom_op` (`op="help"`) finds other operations.'
     )
@@ -625,7 +638,7 @@ def _plugin_instructions(toolset: str | None, defaults: dict[str, Any] | None) -
             if names
             else " This token can read no namespace."
         )
-    return name_ops_for_toolset(text, toolset)
+    return name_ops_for_toolset(text, toolset, schema_profile)
 
 
 def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:

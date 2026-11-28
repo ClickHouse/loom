@@ -17,7 +17,9 @@
 // helper runs in. The resolved repository (the cache the shunt and the
 // primer share, else one bounded lookup) becomes `X-Loom-Code-Scope:
 // org/namespace`, which the server applies to every loom_code_* call that
-// names no namespace. LOOM_MCP_CODE_SCOPE=off disables.
+// names no namespace. LOOM_MCP_CODE_SCOPE=off disables. An entry in memory
+// mode (`?mode=memory` on its URL, which is where the helper can read the
+// plugin's `mode` option) names no repository and looks none up.
 //
 // No token and not an agent → the helper waits for the SessionStart hook,
 // which Claude Code runs while it connects the MCP entry and which holds the
@@ -36,6 +38,7 @@ import {
   gitToplevel,
   hookClient,
   loomConfigPath,
+  pluginMode,
   readConfigFile,
   resolveServerUrl,
   resolveToken,
@@ -62,13 +65,22 @@ export function projectDir(env = process.env) {
   return at >= 0 ? url.slice(at + 1) : process.cwd();
 }
 
+/** The entry's mode: the `mode` of its URL as Claude Code substituted it,
+ *  else the hooks' own setting (a URL without one: the Codex entry). */
+export function entryMode(env = process.env) {
+  const named = String(env.CLAUDE_CODE_MCP_SERVER_URL || "")
+    .split("#")[0]
+    .match(/[?&]mode=([^&]*)/);
+  return pluginMode(named ? { CLAUDE_PLUGIN_OPTION_MODE: named[1] } : env);
+}
+
 /** The session's indexed repository for the project directory `dir`: the
  *  shared cache, else one bounded lookup (which also fills the cache).
  *  Outside a checkout the repository named by LOOM_CODE_REPO / `code_repo`
- *  stands in; null when there is neither, without a token, or when
- *  disabled. */
+ *  stands in; null when there is neither, without a token, in memory mode,
+ *  or when disabled. */
 export async function checkoutScope(dir = process.cwd(), { env = process.env, token = "", post } = {}) {
-  if (!envSwitch("LOOM_MCP_CODE_SCOPE", true, env)) return null;
+  if (entryMode(env) === "memory" || !envSwitch("LOOM_MCP_CODE_SCOPE", true, env)) return null;
   // Only an absolute directory: git would read "" or a relative one (an
   // unsubstituted `${CLAUDE_PROJECT_DIR}`) against the helper's own directory.
   const root = isAbsolute(dir) ? gitToplevel(dir) : "";

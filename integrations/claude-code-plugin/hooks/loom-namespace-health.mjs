@@ -22,6 +22,7 @@
 
 import {
   envSwitch,
+  planeEnabled,
   postBounded,
   readStdinJson,
   requestTimeoutMs,
@@ -34,7 +35,7 @@ import {
 import { auditBody, decideAsk, decideAudit, healthPayload, renderHealth } from "../lib/namespace-health.mjs";
 import { readJsonFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
-const ENABLED = envSwitch("LOOM_NAMESPACE_HEALTH", true);
+const ENABLED = planeEnabled("memory") && envSwitch("LOOM_NAMESPACE_HEALTH", true);
 
 /** The line for the session's namespace: "" when there is nothing to say. */
 async function verdict(payload, token) {
