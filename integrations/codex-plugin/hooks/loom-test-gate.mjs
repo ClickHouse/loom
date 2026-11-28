@@ -2,13 +2,14 @@
 // loom-test-gate — PostToolUse (Bash|PowerShell) and Stop.
 //
 // PostToolUse, the default (LOOM_TEST_GATE unset): after a shell command
-// that changed files in a loom-indexed repo, ask `code.test_gate` which
-// tests the index links to each one and attach ONE line per file naming
-// their command, once per file per session. The line rides the tool result,
-// so it costs no model request, and it arrives while the file is still
-// being edited. An edit tool's call gets the same line from
-// loom-blast-radius, the one hook wired for those tools. The stop is never
-// held: whether the tests then ran is the agent's to judge.
+// that changed files in a loom-indexed repo, ask `code.test_gate` about each
+// one and attach ONE line per file naming the command of the tests the
+// index links to it, or of the file itself when it is a test; once per file
+// and once per test per session. The line rides the tool result, so it
+// costs no model request, and it arrives while the file is still being
+// edited. An edit tool's call gets the same line from loom-blast-radius, the
+// one hook wired for those tools. The stop is never held: whether the tests
+// then ran is the agent's to judge.
 //
 // Stop, with LOOM_TEST_GATE=block: the gate holds the stop instead, and
 // names nothing at edit time. If the working tree has uncommitted changes

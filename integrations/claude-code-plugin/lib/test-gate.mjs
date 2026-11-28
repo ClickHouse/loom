@@ -1,11 +1,12 @@
 // Helpers for the loom-test-gate hook (unit-tested).
 //
-// The gate names the tests the index links to a change, from
-// `code.test_gate`. By default it names them when the file is edited: the
-// tool call that changed a file carries one line with the command, once per
-// file per session, and the stop is never held (`adviceFiles`, `adviceLine`).
-// Whether a session then ran the tests is the agent's to judge: a hook that
-// reads shell text to decide it blocks sessions that did.
+// The gate names the tests a change obliges, from `code.test_gate`. By
+// default it names them when the file is edited: the tool call that changed
+// a file carries one line with the command of the tests the index links to
+// it, or of the file itself when it is a test, once per file per session,
+// and the stop is never held (`adviceFiles`, `adviceLine`). Whether a
+// session then ran the tests is the agent's to judge: a hook that reads
+// shell text to decide it blocks sessions that did.
 //
 // With LOOM_TEST_GATE=block the gate holds the stop instead. When the agent
 // is about to stop with uncommitted changes in a loom-indexed repo, it asks
@@ -164,23 +165,33 @@ function runList(tests, { maxRuns, python }) {
 }
 
 /**
- * The edit-time line for `rel`: the commands of the tests the index links
- * to it, or "" when it links none this checkout has. A changed test file is
- * the gate's own row, not a link, so an edit to a test names nothing. The
- * functions the index links no test to are not named: the graph is a floor,
- * and the line has no reply in which the agent could say so.
+ * The tests of a `code.test_gate` answer about `rel` alone that the
+ * edit-time line names: the ones the checkout has. For a source file they
+ * are the tests the index links to it; for a test file, the file itself.
+ * A file under a tests directory that no runner takes (a fixture, a
+ * conftest) is not a test to run for its own change.
  */
-export function renderAdvice(rel, gate, { maxRuns = 4, maxNames = 4, python, testExists } = {}) {
-  const tests = (gate && Array.isArray(gate.tests) ? gate.tests : []).filter(
-    (t) => t && t.why !== "changed_test" && t.test_path && (!testExists || testExists(String(t.test_path))),
+export function adviceTests(rel, gate, testExists) {
+  return (gate && Array.isArray(gate.tests) ? gate.tests : []).filter(
+    (t) =>
+      t && t.test_path && (t.run || String(t.test_path) !== rel) && (!testExists || testExists(String(t.test_path))),
   );
+}
+
+/**
+ * The edit-time line for `rel` from `tests` (see `adviceTests`), or "" when
+ * there are none: their commands, then the tests no runner is known for. No
+ * function the index links no test to is named: the graph is a floor, and
+ * the line has no reply in which the agent could say so.
+ */
+export function renderAdvice(rel, tests, { maxRuns = 4, maxNames = 4, python } = {}) {
   const parts = [runList(tests, { maxRuns, python }).text].filter(Boolean);
   const unknown = [...new Set(tests.filter((t) => !t.run).map((t) => String(t.test_path)))];
   if (unknown.length) {
     const more = unknown.length - maxNames;
     parts.push(`no known runner: ${unknown.slice(0, maxNames).join(", ")}${more > 0 ? ` (+${more})` : ""}`);
   }
-  return parts.length ? `Loom: tests the index links to ${rel}: ${parts.join(" · ")}` : "";
+  return parts.length ? `Loom tests for ${rel}: ${parts.join(" · ")}` : "";
 }
 
 /** `runs` with every `pytest <path>` folded into the first one: one command to
@@ -452,14 +463,23 @@ export function adviceFiles(payload, { cwd, root = "" } = {}) {
   return { root: top, files };
 }
 
+/** `map` without its oldest keys beyond `max`. */
+function newest(map, max = 300) {
+  const keys = Object.keys(map);
+  for (const k of keys.slice(0, Math.max(0, keys.length - max))) delete map[k];
+  return map;
+}
+
 /**
  * The additional context for `files` (from `adviceFiles`): one line per
- * file the index links to tests, "" when it links none. Each file is asked
- * about once per session, whatever the server answers, so a server that is
- * down costs a session one bounded request per file and not one per tool
- * call. A file whose change is comments only is not asked about and stays
- * unasked: it owes no test until it changes code. Only the diff's paths,
- * hunk ranges and function names are sent (`diffHeaders`).
+ * file that has tests to name, "" when none has. Each file is asked about
+ * once per session, whatever the server answers, so a server that is down
+ * costs a session one bounded request per file and not one per tool call. A
+ * file whose change is comments only is not asked about and stays unasked:
+ * it owes no test until it changes code. A test is named once per session:
+ * the test file a session edits after the source file it tests adds no
+ * second line with the same command. Only the diff's paths, hunk ranges and
+ * function names are sent (`diffHeaders`).
  */
 export async function adviceLine(payload, files, { root, repo, token, depth = gateDepth() } = {}) {
   const asked = files
@@ -469,11 +489,10 @@ export async function adviceLine(payload, files, { root, repo, token, depth = ga
     ])
     .filter(([, diff]) => !commentOnlyDiff(diff));
   if (!asked.length) return "";
-  const seen = { ...readSessionState("testadvice", payload.session_id).seen };
+  const state = () => readSessionState("testadvice", payload.session_id);
+  const seen = { ...state().seen };
   for (const [rel] of asked) seen[rel] = Date.now();
-  const keys = Object.keys(seen);
-  if (keys.length > 300) keys.slice(0, keys.length - 300).forEach((k) => delete seen[k]);
-  writeSessionState("testadvice", payload.session_id, { seen });
+  writeSessionState("testadvice", payload.session_id, { ...state(), seen: newest(seen) });
   const gates = await Promise.all(
     asked.map(([rel, diff]) =>
       postBounded(
@@ -490,10 +509,18 @@ export async function adviceLine(payload, files, { root, repo, token, depth = ga
       ),
     ),
   );
-  const needsPython = gates.some((gate) => (gate?.tests || []).some((t) => isPytest(t?.run)));
-  const opts = { python: needsPython ? checkoutPython(root) : undefined, testExists: testsIn(root) };
+  const named = { ...state().named };
+  const testExists = testsIn(root);
+  const tests = asked.map(([rel], i) => {
+    const fresh = adviceTests(rel, gates[i], testExists).filter((t) => !named[t.test_path]);
+    for (const t of fresh) named[t.test_path] = Date.now();
+    return fresh;
+  });
+  if (!tests.some((t) => t.length)) return "";
+  writeSessionState("testadvice", payload.session_id, { ...state(), named: newest(named) });
+  const python = tests.flat().some((t) => isPytest(t.run)) ? checkoutPython(root) : undefined;
   return asked
-    .map(([rel], i) => renderAdvice(rel, gates[i], opts))
+    .map(([rel], i) => renderAdvice(rel, tests[i], { python }))
     .filter(Boolean)
     .join("\n");
 }

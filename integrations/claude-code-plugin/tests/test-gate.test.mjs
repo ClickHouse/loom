@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   advicePayload,
+  adviceTests,
   checkoutPython,
   decideBlock,
   gateMode,
@@ -44,10 +45,10 @@ test("the gate advises at edit time unless LOOM_TEST_GATE says block or off", ()
 });
 
 test("the edit-time line names the commands of the tests the index links to the file", () => {
-  const text = renderAdvice("src/a.py", GATE, { python: ".venv/bin/python" });
+  const text = renderAdvice("src/a.py", adviceTests("src/a.py", GATE), { python: ".venv/bin/python" });
   assert.equal(
     text,
-    "Loom: tests the index links to src/a.py: .venv/bin/python -m pytest tests/unit/test_a.py · no known runner: src/x/tests/gtest_parts.cpp",
+    "Loom tests for src/a.py: .venv/bin/python -m pytest tests/unit/test_a.py · no known runner: src/x/tests/gtest_parts.cpp",
   );
   // No function is named: the graph is a floor, and the line asks for no reply.
   assert.doesNotMatch(text, /renameTempPartAndAdd|no test reaches|links no test/);
@@ -56,29 +57,37 @@ test("the edit-time line names the commands of the tests the index links to the 
   });
 });
 
-test("an edited test file, a test the checkout lacks and an empty answer name nothing", () => {
+test("a changed test names its own command; a file no runner takes, a test the checkout lacks and an empty answer name nothing", () => {
+  const line = (rel, gate, testExists) => renderAdvice(rel, adviceTests(rel, gate, testExists));
   const own = { tests: [{ test_path: "tests/test_a.py", why: "changed_test", run: "pytest tests/test_a.py" }] };
-  assert.equal(renderAdvice("tests/test_a.py", own), "");
+  assert.equal(line("tests/test_a.py", own), "Loom tests for tests/test_a.py: pytest tests/test_a.py");
+  // A fixture or a conftest under tests/ is the gate's row for itself, with no runner.
+  const fixture = { tests: [{ test_path: "tests/conftest.py", why: "changed_test", run: "", run_unknown: true }] };
+  assert.equal(line("tests/conftest.py", fixture), "");
   const gone = { tests: [{ test_path: "tests/gone.py", why: "test_map", run: "pytest tests/gone.py" }] };
-  assert.equal(renderAdvice("src/a.py", gone, { testExists: () => false }), "");
-  assert.match(renderAdvice("src/a.py", gone, { testExists: () => true }), /: pytest tests\/gone\.py$/);
+  assert.equal(
+    line("src/a.py", gone, () => false),
+    "",
+  );
+  assert.equal(
+    line("src/a.py", gone, () => true),
+    "Loom tests for src/a.py: pytest tests/gone.py",
+  );
   for (const none of [null, {}, { tests: [] }, { untested: [{ qualified_name: "m::f" }] }]) {
-    assert.equal(renderAdvice("src/a.py", none), "");
+    assert.equal(line("src/a.py", none), "");
   }
   assert.equal(advicePayload(""), null);
 });
 
 test("the edit-time line folds pytest files into one command and counts the commands it leaves out", () => {
-  const many = {
-    tests: ["a", "b", "c", "d", "e", "f"].map((n) => ({
-      test_path: `tests/test_${n}.py`,
-      why: "graph_hop",
-      run: `pytest tests/test_${n}.py`,
-    })),
-  };
+  const many = ["a", "b", "c", "d", "e", "f"].map((n) => ({
+    test_path: `tests/test_${n}.py`,
+    why: "graph_hop",
+    run: `pytest tests/test_${n}.py`,
+  }));
   assert.equal(
     renderAdvice("src/a.py", many),
-    "Loom: tests the index links to src/a.py: pytest tests/test_a.py tests/test_b.py tests/test_c.py tests/test_d.py (+2 more)",
+    "Loom tests for src/a.py: pytest tests/test_a.py tests/test_b.py tests/test_c.py tests/test_d.py (+2 more)",
   );
 });
 
@@ -977,7 +986,7 @@ test("with LOOM_TEST_GATE=block the hook blocks a change whose tests never ran a
 test("a changed file's tests ride the tool call that changed it, once, and the stop is never held", async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-advice-")));
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-advice-tmp-")));
-  for (const f of ["src/a.py", "src/b.py", "src/old.py", "tests/test_a.py", "tests/test_b.py"]) {
+  for (const f of ["src/a.py", "src/b.py", "src/old.py", "tests/test_a.py", "tests/test_b.py", "tests/test_c.py"]) {
     fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true });
     fs.writeFileSync(path.join(dir, f), "def f():\n    return 1\n");
   }
@@ -1065,13 +1074,13 @@ test("a changed file's tests ride the tool call that changed it, once, and the s
     // A command that changes nothing, or only reads a file left dirty before the session, asks nothing.
     assert.equal(await shell("ls src; cat src/old.py"), null);
     assert.deepEqual(asked, []);
-    // One command edits a source file and its test: one line, for the source file.
+    // One command edits a source file and its test: one line, since the test is named once.
     write("src/a.py", "def g():\n    return 2\n");
     write("tests/test_a.py", "def test_g():\n    assert True\n");
     const edit = "python - <<'EOF'\nopen('src/a.py','a').write('x')\nopen('tests/test_a.py','a').write('y')\nEOF";
     const first = await shell(edit);
     assert.equal(first.hookSpecificOutput.hookEventName, "PostToolUse");
-    assert.match(context(first), /^Loom: tests the index links to src\/a\.py: (?:\S+ -m )?pytest tests\/test_a\.py$/);
+    assert.match(context(first), /^Loom tests for src\/a\.py: (?:\S+ -m )?pytest tests\/test_a\.py$/);
     assert.equal(first.decision, undefined);
     assert.deepEqual(asked.sort(), ["/v1/code.test_gate src/a.py", "/v1/code.test_gate tests/test_a.py"]);
     // Later commands that name the file, a test run among them, add nothing and ask nothing.
@@ -1088,7 +1097,7 @@ test("a changed file's tests ride the tool call that changed it, once, and the s
       context(edited),
       /^Loom blast radius for src\/b\.py \(edited m::g\): 1 caller in 1 file: m::caller \(c\.py\)\. /,
     );
-    assert.match(context(edited), / Loom: tests the index links to src\/b\.py: (?:\S+ -m )?pytest tests\/test_b\.py$/);
+    assert.match(context(edited), / Loom tests for src\/b\.py: (?:\S+ -m )?pytest tests\/test_b\.py$/);
     assert.doesNotMatch(context(edited), /tests reaching it/);
     // The shell hook leaves an edit tool's call to that hook, and the file is asked about once.
     assert.equal(
@@ -1099,6 +1108,14 @@ test("a changed file's tests ride the tool call that changed it, once, and the s
       null,
     );
     assert.equal(await shell("sed -i s/2/3/ src/b.py"), null);
+    // The test of a file already named adds no second line when it changes; another test names itself.
+    write("tests/test_b.py", "def test_g():\n    assert True\n");
+    assert.equal(await shell("sed -i s/1/2/ tests/test_b.py"), null);
+    write("tests/test_c.py", "def test_g():\n    assert True\n");
+    assert.match(
+      context(await shell("sed -i s/1/2/ tests/test_c.py")),
+      /^Loom tests for tests\/test_c\.py: (?:\S+ -m )?pytest tests\/test_c\.py$/,
+    );
     // A comment-only change owes no test and stays unasked until it changes code.
     write("src/old.py", "# a note\n");
     execFileSync("git", ["checkout", "-q", "--", "src/old.py"], { cwd: dir });
@@ -1126,7 +1143,7 @@ test("a changed file's tests ride the tool call that changed it, once, and the s
       blocking,
     );
     assert.match(context(radius), /tests reaching it: 1 \(test_b\.py\)/);
-    assert.doesNotMatch(context(radius), /tests the index links/);
+    assert.doesNotMatch(context(radius), /Loom tests for/);
     const stopped = await run("loom-test-gate", "Stop", { session_id: "b", transcript_path: "" }, blocking);
     assert.equal(stopped.decision, "block");
     // LOOM_TEST_GATE=off: neither.

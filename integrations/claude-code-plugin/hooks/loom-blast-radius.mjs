@@ -9,9 +9,9 @@
 // cheap to fix.
 //
 // The test gate's edit-time line rides the same context: the first edit of a
-// file this session also asks `code.test_gate` which tests the index links
-// to it and names their command (lib/test-gate.mjs), in place of the radius's
-// own count of tests. This hook is the only one wired for an edit tool, so an
+// file this session also asks `code.test_gate` for the file's tests and names
+// their command (lib/test-gate.mjs), in place of the radius's own count of
+// tests. This hook is the only one wired for an edit tool, so an
 // edit gets one line. LOOM_TEST_GATE=block or off leaves the radius alone.
 //
 // Fail-open everywhere: no token, not an indexed repo, untracked file, empty

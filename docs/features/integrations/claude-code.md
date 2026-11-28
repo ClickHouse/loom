@@ -9,7 +9,7 @@ The `loom` plugin for Claude Code does three things in one install:
   call, and the agent has nothing to remember to do.
 - **Steers the agent to the code index** inside a Loom-indexed repository. Whole-file
   reads and tree-wide greps are redirected to `code.*` operations, and an edit gets the
-  file's rules before it and its blast radius after it.
+  file's rules before it, and its blast radius and the tests linked to the file after it.
 
 Source: `integrations/claude-code-plugin/`, Node ESM scripts with no dependencies. The
 Codex build runs the same scripts; see [codex.md](codex.md).
@@ -388,12 +388,13 @@ index or a failed request. Edits performed through `Bash`, including scripts usi
 
 The test gate's line does follow a shell edit. It runs on `PostToolUse` after `Bash` and
 `PowerShell`, and rides the blast-radius hook after `Edit`, `Write` and `MultiEdit`. It
-emits one line per changed file, `Loom: tests the index links to <file>: <command>`, the
-first time the session changes that file, and only when the command names the file's
-path, the file differs from `HEAD`, it was written after the session began, and the index
-links it to a test the checkout has. It stays quiet for an edited test file, a
-comment-only change, an untracked file, a file already asked about in the session, an
-unavailable index or a failed request, and always with `LOOM_TEST_GATE=block` or `off`.
+emits one line per changed file, `Loom tests for <file>: <command>`, the first time the
+session changes that file, and only when the command names the file's path, the file
+differs from `HEAD`, it was written after the session began, and it has a test to name:
+one the index links to it and the checkout has, or the file itself when it is a test. It
+stays quiet for a file whose tests an earlier line named, a comment-only change, an
+untracked file, a file already asked about in the session, an unavailable index or a
+failed request, and always with `LOOM_TEST_GATE=block` or `off`.
 
 Headless sessions support `hookSpecificOutput.additionalContext`; ordinary visible
 assistant output does not prove whether that context reached the model. Capture
@@ -477,7 +478,7 @@ The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
 | PreToolUse (Edit, Write, MultiEdit, NotebookEdit) | `loom-file-context.mjs`     | what Loom knows about the file about to change (`memory.for_file`): your rules and the repository's shared rules and design decisions; once per file per 30 min                                                                                                                                                                                                                 | `LOOM_FILE_CONTEXT=off`                                                                                     |
 | PostToolUse (Loom tools)                          | `loom-mentor-hint.mjs`      | lifts a result's `hint` into context, once per hint code per session                                                                                                                                                                                                                                                                                                            | `LOOM_MENTOR_HINTS=off`                                                                                     |
 | PostToolUse (Edit, Write, MultiEdit)              | `loom-blast-radius.mjs`     | one line from `code.impact`: callers, tests reaching the change, co-change files not yet touched; on a file's first edit, the test gate's line beside it in place of the tests                                                                                                                                                                                                  | `LOOM_BLAST_RADIUS=off`                                                                                     |
-| PostToolUse (Bash, PowerShell)                    | `loom-test-gate.mjs`        | one line per file the command changed, naming the command of the tests `code.test_gate` links to it; once per file per session, on the tool result, and never a blocked stop ([the test gate](#the-test-gate))                                                                                                                                                                  | `LOOM_TEST_GATE=off`                                                                                        |
+| PostToolUse (Bash, PowerShell)                    | `loom-test-gate.mjs`        | one line per file the command changed, naming the command of the file's tests (`code.test_gate`); once per file and per test per session, on the tool result, and never a blocked stop ([the test gate](#the-test-gate))                                                                                                                                                        | `LOOM_TEST_GATE=off`                                                                                        |
 | PostToolUse, PostToolUseFailure, Stop, SessionEnd | `loom-record.mjs`           | runs the event's recording scripts (the rows below for those events, the gates excepted) in one process: detached after a tool call and at Stop, so the session does not wait for their requests, and in the hook itself at SessionEnd                                                                                                                                          | each script's own                                                                                           |
 | PostToolUse, PostToolUseFailure (any tool)        | `loom-capture.mjs`          | one episodic observation per tool call (`observe.record`); a failed call is typed `error`                                                                                                                                                                                                                                                                                       | none                                                                                                        |
 | Stop, SessionEnd                                  | `loom-conversation.mjs`     | appends new chat turns to the conversation plane (`conversation.append`)                                                                                                                                                                                                                                                                                                        | `LOOM_CAPTURE_CONVERSATIONS=false`                                                                          |
@@ -595,24 +596,26 @@ Beyond the off switches in the table:
 ## The test gate
 
 The test gate tells the agent which tests constrain a file when it changes the file. In
-an indexed checkout, the tool call that first changes a file in a session comes back with
-one extra line:
+an indexed checkout, the tool call that first changes a file comes back with one extra
+line when Loom has a test to name for it:
 
 ```text
-Loom: tests the index links to src/flask/blueprints.py: python3 -m pytest tests/test_blueprints.py
+Loom tests for src/flask/blueprints.py: python3 -m pytest tests/test_blueprints.py
 ```
 
-- **What it names.** The tests `code.test_gate` links to the file through its name, the
-  mined test map or the call graph, each of them present in the checkout, as one command
-  where the harness is known (`LOOM_CODE_TEST_GATE_RUN_TEMPLATES` on the server adds
-  yours) and by path where it is not. For pytest it names the checkout's interpreter
-  without starting it.
-- **When.** Once per file per session, on the result of the edit tool or shell command
-  that changed the file. It costs no model request, and a session that never runs the
-  tests has still been told which ones they are.
+- **What it names.** For a source file, the tests `code.test_gate` links to it through
+  its name, the mined test map or the call graph, each of them present in the checkout.
+  For a test file, the file itself. A test is given as one command where the harness is
+  known (`LOOM_CODE_TEST_GATE_RUN_TEMPLATES` on the server adds yours) and by path where
+  it is not. For pytest the line names the checkout's interpreter without starting it.
+- **When.** Once per file and once per test per session, on the result of the edit tool
+  or shell command that changed the file. It costs no model request, and a session that
+  never runs the tests has still been told which ones they are.
 - **What it does not do.** It does not check that the tests ran, and it never holds the
   end of a session. Whether a session ran the right tests cannot be read reliably from
-  its shell commands, so that judgement stays with the agent and with CI.
+  its shell commands, so that judgement stays with the agent and with CI. It names no
+  function the index links no test to, and a source file the index links to no test gets
+  no line.
 
 To hold the stop instead, set `LOOM_TEST_GATE=block` in the environment Claude Code starts
 in. The gate then prints nothing at edit time, and blocks "done" once per distinct change

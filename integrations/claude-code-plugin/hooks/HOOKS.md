@@ -282,18 +282,19 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   namespace.audit over the last day (sample_limit=0); a critical finding
   gives the agent one line naming the codes and /loom-optimize, as a
   block-once reason. Later stops make no call.
-- **loom-test-gate.** Names the tests the index links to a changed file.
-  By default it does so when the file changes and never holds the stop:
-  after a Bash or PowerShell command (and, through loom-blast-radius, after
-  an edit tool) it takes the dirty paths the call named or targeted that
-  were written since the session's first row, asks code.test_gate about
-  each one not asked about yet this session (`adviceFiles`, `adviceLine` in
+- **loom-test-gate.** Names the tests of a changed file. By default it
+  does so when the file changes and never holds the stop: after a Bash or
+  PowerShell command (and, through loom-blast-radius, after an edit tool)
+  it takes the dirty paths the call named or targeted that were written
+  since the session's first row, asks code.test_gate about each one not
+  asked about yet this session (`adviceFiles`, `adviceLine` in
   lib/test-gate.mjs; at most four per call; a comment-only change is not
-  asked about) and prints one line per file naming the commands of the
-  linked tests the checkout has, as additionalContext on that tool result:
-  no model request, and no reading of shell text to decide whether tests
-  ran. A changed test file names nothing. A call that names no unasked
-  dirty file costs one git call and no request.
+  asked about) and prints one line per file as additionalContext on that
+  tool result: the commands of the tests the index links to the file that
+  the checkout has, or the file's own command when it is a test. A test is
+  named once per session. The line costs no model request, and nothing
+  reads shell text to decide whether tests ran. A call that names no
+  unasked dirty file costs one git call and no request.
   With LOOM_TEST_GATE=block it holds the stop instead and prints nothing at
   edit time: with uncommitted changes this session made in a loom-indexed
   repo (dirty paths the transcript shows an edit tool targeted or a shell
