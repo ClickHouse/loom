@@ -272,3 +272,22 @@ test("a server that answers with an error leaves the file unseen, so its edit as
     box.done();
   }
 });
+
+test("an edit lookup the server did not answer is not repeated at the next edit, and the file stays unseen for a read", async () => {
+  const box = sandbox();
+  const down = await loom("error");
+  const up = await loom();
+  try {
+    assert.equal((await hook(box, down.url, "PreToolUse", edit(box, "src/a.py"))).context, "");
+    assert.equal((await hook(box, down.url, "PreToolUse", edit(box, "src/a.py"))).context, "");
+    assert.deepEqual(down.asked, ["src/a.py"], "one edit lookup per file within the window");
+    const r = await hook(box, up.url, "PostToolUse", read(box, "src/a.py"));
+    assert.ok(r.context.includes(RENDERED), "no block was shown, so the read asks");
+    assert.equal((await hook(box, up.url, "PreToolUse", edit(box, "src/a.py"))).context, "", "the read showed it");
+    assert.deepEqual(up.asked, ["src/a.py"]);
+  } finally {
+    down.close();
+    up.close();
+    box.done();
+  }
+});

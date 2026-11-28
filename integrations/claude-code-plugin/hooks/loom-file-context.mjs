@@ -29,7 +29,8 @@
 //   - Before an edit: a file seen within LOOM_FILE_CONTEXT_TTL_MIN (default
 //     30) is not asked about again, so the tenth edit costs nothing and a
 //     rule written mid-session still arrives; the request has the hooks'
-//     bound.
+//     bound. A lookup the server did not answer holds off the file's next
+//     edit lookup for as long, and leaves the file unseen for a read.
 //
 //   LOOM_FILE_CONTEXT=off             disable
 //   LOOM_FILE_CONTEXT_TOKENS=300      budget for the block's rows other than decisions
@@ -148,7 +149,12 @@ async function beforeEdit(payload, token) {
   if (!file) return;
   const cwd = payload.cwd || process.cwd();
   const key = seenKey(payload.agent_id, realPath(path.resolve(cwd, file)));
-  if (!decideInject(readSessionState(STATE, payload.session_id), key, Date.now(), TTL_MS).inject) return;
+  // An edit lookup the server did not answer is kept under its own key: it
+  // holds off the file's next edit lookup, and the file stays unseen for a read.
+  const unanswered = `unanswered-edit\n${key}`;
+  const state = readSessionState(STATE, payload.session_id);
+  const now = Date.now();
+  if (!decideInject(state, key, now, TTL_MS).inject || !decideInject(state, unanswered, now, TTL_MS).inject) return;
 
   const root = gitToplevel(cwd);
   const rel = relativeForLookup(root, file, cwd);
@@ -165,9 +171,8 @@ async function beforeEdit(payload, token) {
     post: postBounded,
     bound: { token, serverUrl: resolveServerUrl() },
   });
-  // Record the lookup whether or not it hit: an empty answer is also an answer
-  // for this session.
-  remember(payload.session_id, [key]);
+  // An empty answer is also an answer for this session.
+  remember(payload.session_id, [rendered === null ? unanswered : key]);
 
   if (rendered) {
     const teamNamespace = teamRulesNamespace(entry, scope);

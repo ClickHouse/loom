@@ -293,7 +293,8 @@ record: the run and its usage counters.
   compaction drops the blocks. After a read a file already asked about is
   not asked about again, and costs no git call and no request. Before an
   edit a file asked about in the last 30 min (LOOM_FILE_CONTEXT_TTL_MIN) is
-  not asked about again.
+  not asked about again; an edit lookup the server did not answer counts for
+  the file's edits alone, so a read of it still asks.
   A read's lookups are bounded: at most three files per call, asked side by
   side and given up after 1 s, with the process ended by 2 s whatever hangs;
   40 per session; and none after three the server did not answer. A file
