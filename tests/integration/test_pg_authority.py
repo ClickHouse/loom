@@ -2602,6 +2602,18 @@ async def test_a_reject_is_the_authoritys_head_and_clickhouses_row(
     await _published(pg_conn, org)
     assert _live_sweep_vectors(ch_client, org, ns, "a") >= 1
     before = int((await _head_row(pg_conn, org, ns, "k"))["version"])
+
+    # A new set answers at commit; reject copies the vectors already published.
+    async def document_published() -> bool:
+        rows = ch_client.query(
+            "SELECT status, version FROM loom.memory_embeddings FINAL "
+            "WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = 'k'",
+            settings=_SEQUENTIAL,
+            parameters={"org": org, "ns": ns},
+        ).result_rows
+        return rows == [("active", before)]
+
+    await eventually(document_published, description="the initial vector is published")
     body = {"namespace": ns, "agent": "a", "memory_key": "k", "rejection_reason": "wrong"}
     rejected = await call("memory.reject", body)
     assert rejected.status_code == 200 and rejected.json()["rejected"] is True, rejected.text
