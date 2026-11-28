@@ -1,0 +1,10 @@
+/.github/CODEOWNERS      @zlareb1
+/.github/workflows/     @zlareb1
+/scripts/release/       @zlareb1
+/install.sh             @zlareb1
+/server/auth/           @zlareb1
+/server/identity/       @zlareb1
+/server/erasure/        @zlareb1
+/server/transport/      @zlareb1
+/deploy/apparmor/       @zlareb1
+/dev/seccomp/           @zlareb1
