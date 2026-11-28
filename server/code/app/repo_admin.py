@@ -68,13 +68,11 @@ def _is_platform_admin() -> bool:
     call is no platform admin's (an MCP endpoint in `open` mode takes one that
     sends no bearer)."""
     from server.auth.context import current_auth
-    from server.operations.base import Role
 
     auth = current_auth()
     if auth is None:
         return not settings.auth_actually_required()
-    flat = not auth.has_ns_roles() and not auth.impersonated_by
-    return flat and auth.has_role(Role.PLATFORM_ADMIN)
+    return authz.is_own_platform_admin(auth)
 
 
 def _require_platform_admin() -> None:

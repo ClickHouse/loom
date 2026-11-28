@@ -1,7 +1,8 @@
 """Restricted namespaces: a read needs a token that names the
 namespace AND a live direct grant. Every widening rule — org-readable code,
-visibility=public, wildcard claims, service-account inheritance, platform
-roles — is off there, and the directory lookup fails closed."""
+visibility=public, wildcard claims and service-account inheritance — is off
+there. Platform authority admits only registered repository reads; the
+directory lookup fails closed."""
 
 from __future__ import annotations
 
@@ -155,7 +156,8 @@ async def test_other_org_is_refused(restricted) -> None:
 
 
 @pytest.mark.asyncio
-async def test_platform_admin_has_no_content_bypass(restricted) -> None:
+async def test_platform_admin_needs_two_factors_outside_registered_repositories(restricted) -> None:
+    # A directory-only namespace is not a registered repository, despite its code prefix.
     await _denied(_flat(namespaces=("*",), roles=(Role.PLATFORM_ADMIN,)))
     restricted["grants"][(ORG, NS, "alice@x")] = Role.VIEWER
     await authz.check_authorized(

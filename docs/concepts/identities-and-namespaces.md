@@ -117,10 +117,14 @@ refuses joins.
 A **restricted** namespace (`classification=restricted` on its directory row, or on its
 entry in `LOOM_CODE_REPOS_JSON`) admits a call only when the token belongs to the
 namespace's org, names the namespace literally (not through `*`), holds a role there that
-reaches the operation's role, and the token's own subject holds a live direct grant. No
-org-readable rule, public visibility, wildcard, inherited service-account grant,
-`org_admin` or `platform_admin` bypasses it, and a refusal does not reveal whether the
-namespace exists. Fan-outs, context packs and rollups skip restricted namespaces the
+reaches the operation's role, and the token's own subject holds a live direct grant.
+An authenticated platform administrator using its own unscoped authority can also read
+registered repositories, including restricted ones, subject to deployment tenancy and
+the restricted serving kill switch. This does not extend to scoped or delegated tokens,
+impersonation, writes or other namespace kinds
+([repository read authority](../architecture/security.md#restricted-namespaces)). No
+org-readable rule, public visibility, wildcard, inherited service-account grant or
+`org_admin` bypasses restriction, and a refusal does not reveal whether the namespace exists. Fan-outs, context packs and rollups skip restricted namespaces the
 caller cannot read, and each admitted request is audited. The step-by-step setup is in
 [Tokens and grants](../guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted).
 
