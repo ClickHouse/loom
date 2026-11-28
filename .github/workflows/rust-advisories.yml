@@ -1,0 +1,43 @@
+name: Rust dependency advisories
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+    paths:
+      - "sdk/rust/**"
+      - ".github/workflows/rust-advisories.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/rust/**"
+      - ".github/workflows/rust-advisories.yml"
+  schedule:
+    - cron: "37 6 * * 2"
+
+permissions:
+  contents: read
+
+jobs:
+  rust-advisories:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Cargo Deny
+        working-directory: ${{ runner.temp }}
+        run: |
+          archive=cargo-deny-0.22.0-x86_64-unknown-linux-musl.tar.gz
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.22.0/$archive" -o "$archive"
+          echo "98c56e6a408bfa5c3c60744b6015aaa6aa08f743fdeb88386d06fca035bb1786  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" --strip-components=1 cargo-deny-0.22.0-x86_64-unknown-linux-musl/cargo-deny
+      - name: Check Rust advisories and dependency sources
+        working-directory: sdk/rust
+        run: |
+          cargo generate-lockfile
+          sha256sum Cargo.lock >> "$GITHUB_STEP_SUMMARY"
+          "$RUNNER_TEMP/cargo-deny" --locked --all-features check advisories sources
