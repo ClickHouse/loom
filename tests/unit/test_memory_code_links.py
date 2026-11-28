@@ -6252,7 +6252,7 @@ async def test_a_busy_repository_leaves_the_others_linked_and_waits_for_its_pass
     # repository a is linked; b's memory is parked on the `*` marker its pass resolves
     assert by_state == {("ma", "code-a"): "fresh", ("mb", "code-b"): "pending"}
     assert [r["qualified_name"] for r in table.rows if r["memory_id"] == "mb"] == ["*"]
-    assert (result.linked, len(result.errors)) == (1, 1)
+    assert (result.linked, len(result.errors)) == (1, 0)  # contention is logged only
 
 
 @pytest.mark.asyncio
@@ -6373,3 +6373,54 @@ async def test_a_link_an_older_build_inserted_after_a_pass_read_is_rechecked_at_
     await one_pass()  # settled: the recheck made the digest differ once, then it holds
     await one_pass()
     assert rechecked == [["late"]]
+
+
+@pytest.mark.asyncio
+async def test_a_lost_link_at_a_steady_head_is_not_rechecked_by_later_passes(monkeypatch) -> None:
+    # a lost link keeps its checked commit, so a recheck rewrites it as another version:
+    # the digest counts it by key and commit, as the store's does, and stays put
+    lost = _full({"memory_id": "m", "state": "missing", "checked_commit": "h0", "version": 1})
+    table = [lost]
+    cursors: dict[str, str] = {}
+    rechecks: list[int] = []
+
+    async def digest(org, cns, head):
+        return str([(a["memory_id"], a["checked_commit"]) for a in table])
+
+    async def read_behind(org, cns, head):
+        return list(table)
+
+    async def recheck_rows(org, cns, head, files, result, links):
+        rechecks.append(len(links))
+        table[:] = [a | {"version": a["version"] + 1} for a in table]  # rewritten, still lost
+        return set(), set()
+
+    async def get(name):
+        return cursors.get(name, "")
+
+    async def put(name, value):
+        cursors[name] = value
+
+    async def unparsed(org, cns):
+        return set()
+
+    async def set_unparsed(org, cns, paths):
+        return None
+
+    monkeypatch.setattr(code_links.store, "behind", read_behind)
+    monkeypatch.setattr(code_link_recheck, "_recheck_rows", recheck_rows)
+    monkeypatch.setattr(code_link_recheck, "_unparsed", unparsed)
+    monkeypatch.setattr(code_link_recheck, "_set_unparsed", set_unparsed)
+    monkeypatch.setattr(code_links.code, "link_cursor", get)
+    monkeypatch.setattr(code_links.code, "set_link_cursor", put)
+    for _ in range(3):
+        now = await digest("o", "code-a", "h1")
+        await code_link_recheck._catch_up(
+            "o",
+            "code-a",
+            "h1",
+            now,
+            None,
+            code_link_pass.PassResult(),  # type: ignore[arg-type]
+        )
+    assert rechecks == []

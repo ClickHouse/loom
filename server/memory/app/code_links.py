@@ -164,7 +164,7 @@ async def _link_repository(
         memories = [r for r in memories if r["mid"] not in parked]
     if not await _insert_at_head(org, cns, rows_out + store.tombstones(gone)):
         # its pending scan, under the lease, links them at its own head
-        result.errors.append(f"link {org}/{cns}: a recheck is ahead of these links")
+        link_pass.log.debug("link %s/%s: a recheck is ahead of these links", org, cns)
         return waiting + [_awaiting(r, cns) for r in memories], []
     result.linked += len(rows_out)
     result.unlinked += len(gone)

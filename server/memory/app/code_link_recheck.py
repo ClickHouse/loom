@@ -125,7 +125,7 @@ async def _recheck_repository(
     files = link_pass.RepoReads(org, cns)
     head = await code.indexed_head(org, cns)
     checked = await code.checked_head(org, cns)
-    behind = await store.behind_digest(org, cns, head) if head else ""
+    behind = await store.behind_digest(org, cns, head) if head else ""  # before any link read
     await _recheck_pending(org, cns, head, files, result)
     await rehash.refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
@@ -320,8 +320,9 @@ async def _catch_up(
     nothing, so a link an older build inserted after the last pass read the table, built
     at another commit, would keep its state. The pass records a digest of the links not
     checked at `head`, taken before it read any link (`now`), so none it missed is
-    vouched for; when the next one finds it changed, those links are rechecked. A pass
-    that moved links makes the next digest differ once more, and that recheck is a no-op."""
+    vouched for; when the next one finds it changed, those links are rechecked. Links
+    that were rechecked leave the set, and lost ones keep their digest, so a catch-up
+    that moved links is followed by one that rechecks nothing."""
     seen = link_pass.Cursor[dict[str, str]](f"behind/{org}/{cns}", {})
     before = await seen.read()
     if before.get("head") == head and before.get("links") != now:

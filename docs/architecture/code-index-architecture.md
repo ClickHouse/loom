@@ -703,11 +703,12 @@ sequential read, which `loom doctor` checks through `select_sequential_consisten
 A build without the lease, such as the previous build during a rolling upgrade, can
 insert a link built at an older commit after a pass read the table. A pass at an
 unchanged head follows nothing, so each pass records a digest of the live links not
-checked at its head (`store.behind_digest`, over each key and version). It takes the
-digest before it reads any link. The next pass at that head rechecks those links from
+checked at its head (`store.behind_digest`, over each key and version, and over each
+key and commit for a lost link). It takes the digest before it reads any link. The next pass at that head rechecks those links from
 their own checked commit (`_catch_up`) when the digest changed. The check compares
-digests and never timestamps, so no host's clock matters. A pass that moved links
-changes the digest once more, and the catch-up after it rechecks nothing.
+digests and never timestamps, so no host's clock matters. A recheck
+moves the links it finds out of that set, and a lost link keeps its digest when the
+recheck rewrites it, so the catch-up after it rechecks nothing.
 
 ## Invariants
 

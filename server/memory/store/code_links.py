@@ -462,10 +462,13 @@ _BEHIND = (
 async def behind_digest(
     org: str, code_namespace: str, head: str, *, ch: _CHClient | None = None
 ) -> str:
-    """A digest of the live links not checked at `head`, each by key and version: it
-    changes whenever one is written, relinked or removed."""
+    """A digest of the live links not checked at `head`: it changes whenever one is
+    inserted, relinked or removed. A lost link keeps its commit when a recheck rewrites
+    it, so it counts by key and commit, not version: rechecking it changes nothing.
+    One aggregate over the repository's live links, on every pass."""
     rows = await (ch or _default_client()).query_all(
-        f"SELECT count() AS n, hex(groupBitXor(sipHash64({_KEY}, version))) AS d "
+        f"SELECT count() AS n, hex(groupBitXor(if(state IN ('unresolved', 'missing'), "
+        f"sipHash64({_KEY}, checked_commit), sipHash64({_KEY}, version)))) AS d "
         + _BEHIND.format(_LIVE=_LIVE),
         params={"org": org, "cns": code_namespace, "head": head},
     )
