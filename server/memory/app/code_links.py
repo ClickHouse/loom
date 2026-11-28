@@ -132,31 +132,43 @@ async def _link_org(
     result.unlinked += len(stale)
     linked: list[str] = []
     for cns, memories in todo.items():
-        files = link_pass.RepoReads(org, cns)
-        try:
-            rows_out, gone, unparsed = await link_each(org, cns, memories, existing, files)
-        except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
-            result.failed(f"link {org}/{cns}: {e}", e, f"{cns}:link")
-            out += [_awaiting(r, cns) for r in memories]
-            continue
-        if unparsed:
-            paths = ", ".join(sorted({path for _, path in unparsed}))
-            result.errors.append(f"link {org}/{cns}: did not parse: {paths}")
-            out += [_awaiting(r, cns) for r, _ in unparsed]
-            waiting = {r["mid"] for r, _ in unparsed}
-            memories = [r for r in memories if r["mid"] not in waiting]
-        if not await _insert_at_head(org, cns, rows_out + store.tombstones(gone)):
-            # its pending scan, under the lease, links them at its own head
-            result.errors.append(f"link {org}/{cns}: a recheck is ahead of these links")
-            out += [_awaiting(r, cns) for r in memories]
-            continue
-        result.linked += len(rows_out)
-        result.unlinked += len(gone)
-        linked += [r["mid"] for r in memories]
+        waiting, made = await _link_repository(org, cns, memories, existing, result)
+        out += waiting
+        linked += made
     await store.insert(out)
     if linked and rereads:
         read = {r["mid"]: r["inputs"] for memories in todo.values() for r in memories}
         await _relink_rewritten(org, linked, read, result, rereads - 1)
+
+
+async def _link_repository(
+    org: str,
+    cns: str,
+    memories: list[dict[str, Any]],
+    existing: dict[str, list[LinkRow]],
+    result: link_pass.PassResult,
+) -> tuple[list[LinkRow], list[str]]:
+    """Link one repository's `memories`: the `*` markers of those that must wait, and the
+    ids of those linked."""
+    files = link_pass.RepoReads(org, cns)
+    try:
+        rows_out, gone, unparsed = await link_each(org, cns, memories, existing, files)
+    except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
+        result.failed(f"link {org}/{cns}: {e}", e, f"{cns}:link")
+        return [_awaiting(r, cns) for r in memories], []
+    waiting = [_awaiting(r, cns) for r, _ in unparsed]
+    if unparsed:
+        paths = ", ".join(sorted({path for _, path in unparsed}))
+        result.errors.append(f"link {org}/{cns}: did not parse: {paths}")
+        parked = {r["mid"] for r, _ in unparsed}
+        memories = [r for r in memories if r["mid"] not in parked]
+    if not await _insert_at_head(org, cns, rows_out + store.tombstones(gone)):
+        # its pending scan, under the lease, links them at its own head
+        result.errors.append(f"link {org}/{cns}: a recheck is ahead of these links")
+        return waiting + [_awaiting(r, cns) for r in memories], []
+    result.linked += len(rows_out)
+    result.unlinked += len(gone)
+    return waiting, [r["mid"] for r in memories]
 
 
 async def _insert_at_head(org: str, cns: str, inserted: list[LinkRow]) -> bool:

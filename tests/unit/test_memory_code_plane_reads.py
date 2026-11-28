@@ -582,7 +582,7 @@ async def test_a_lesson_names_no_place_in_a_trunk_the_caller_may_not_read(monkey
     (lesson,) = await _lessons(
         monkeypatch, [_renamed("m1")], [_excerpt("m1", "k1")], [], has_mirror=False
     )
-    assert (lesson["code_state"], "code_moved" in lesson) == ("moved", False)
+    assert (lesson["code_state"], "code_moved" in lesson) == ("unknown", False)
 
 
 @pytest.mark.asyncio

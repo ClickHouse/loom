@@ -687,15 +687,25 @@ A recheck pass follows a repository's links from its checked head to its indexed
 under the repository's lease, and a writer that links a memory inserts its links under
 the same lease. A pass that starts after the insert reads the new links. A pass that ran
 before the writer took the lease checked a head the writer's links were not built at,
-so the writer finds the indexed head moved, inserts nothing and raises `LeaseBusy`; the
-link worker retries the queue page, which builds the links at the new head. A writer
-that finds the lease held waits `memory_code_links_interval_seconds` for the next pass
-the same way. No link is stored in a state that waits for a pass, and the read side
-trusts a link only when the checked head is the indexed head.
+so the writer finds the indexed head moved and inserts nothing: it parks that
+repository's memories behind the `*` marker (the other repositories of the batch are
+inserted and the queue cursor moves on), and the pending scan, which runs under the
+lease, links them at its own head. A writer that finds the lease held does the same. No
+link is stored in a state that waits for a pass, and the read side trusts a link only
+when the checked head is the indexed head.
 
-The indexed head is read under `sequential_reads()`, so a head another replica indexed
-is seen. That holds when the state writes are visible to a sequential read, as
-`loom doctor` checks for `select_sequential_consistency`.
+The indexed head, and every read a pass makes of the links, run under
+`sequential_reads()`, so a head another replica indexed and a link another replica
+inserted under the lease are seen. That holds when the state writes are visible to a
+sequential read, as `loom doctor` checks for `select_sequential_consistency`.
+
+A build without the lease (the previous one during a rolling upgrade) can insert a link
+built at an older commit after a pass read the table. A pass at an unchanged head follows
+nothing, so each pass records, before it reads any link, a digest of the live links not
+checked at its head (`store.behind_digest`: each key and version). The next pass at that
+head finds the digest changed and rechecks those links from their own checked commit
+(`_catch_up`). The digest is compared, never a timestamp, so no host's clock matters; a
+pass that moved links changes the digest once more and its next catch-up is a no-op.
 
 ## Invariants
 

@@ -25,6 +25,7 @@ from server.code.domain.anchor import (
 from server.code.domain.declaration import fingerprint_version
 from server.code.domain.index.repos import repo_for_namespace
 from server.code.domain.successor import Side, Successor, close_to, elsewhere, successor
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app import code_link_policy as policy
@@ -90,8 +91,10 @@ async def recheck_all(result: link_pass.PassResult) -> None:
         granted = (left + rest - 1) // rest
         budget = link_pass.Budget(judgements=granted)
         try:
-            async with link_pass.repository_locks.lease(link_pass.lock_name(org, cns)):
-                await _recheck_repository(org, cns, budget, result)
+            # sequential reads see a link another replica inserted under the lease
+            with sequential_reads():
+                async with link_pass.repository_locks.lease(link_pass.lock_name(org, cns)):
+                    await _recheck_repository(org, cns, budget, result)
         except LeaseBusy:
             pass  # another pass is checking this repository
         except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
@@ -109,8 +112,9 @@ async def recheck_repository(org: str, cns: str) -> link_pass.PassResult | None:
     if not settings.memory_code_links_enabled or (org, cns) not in await store.code_namespaces():
         return None
     result = link_pass.PassResult()
-    async with link_pass.repository_locks.lease(link_pass.lock_name(org, cns)):
-        await _recheck_repository(org, cns, link_pass.Budget(judgements=0), result)
+    with sequential_reads():
+        async with link_pass.repository_locks.lease(link_pass.lock_name(org, cns)):
+            await _recheck_repository(org, cns, link_pass.Budget(judgements=0), result)
     return result
 
 
@@ -121,6 +125,7 @@ async def _recheck_repository(
     files = link_pass.RepoReads(org, cns)
     head = await code.indexed_head(org, cns)
     checked = await code.checked_head(org, cns)
+    behind = await store.behind_digest(org, cns, head) if head else ""
     await _recheck_pending(org, cns, head, files, result)
     await rehash.refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
@@ -140,6 +145,8 @@ async def _recheck_repository(
             checked = cut_at
         await _follow(org, cns, checked, head, files, result)
         await code.set_checked_head(org, cns, head)
+    if head:
+        await _catch_up(org, cns, head, behind, files, result)
     result.wide_ranges += files.wide_ranges
     await policy.apply_policies(org, cns, head, files, budget, result)
 
@@ -265,8 +272,26 @@ async def _retry_unparsed(
     paths = await _unparsed(org, cns)
     if not paths or not head:
         return
+    still, failed = await _recheck_rows(
+        org, cns, head, files, result, await store.for_paths(org, [cns], sorted(paths))
+    )
+    if failed:
+        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
+    await _set_unparsed(org, cns, still)
+
+
+async def _recheck_rows(
+    org: str,
+    cns: str,
+    head: str,
+    files: link_pass.RepoReads,
+    result: link_pass.PassResult,
+    links: list[LinkRow],
+) -> tuple[set[str], set[str]]:
+    """Recheck `links` at `head`, each from the commit it was last checked at; the paths
+    that still do not parse, and those that failed this time."""
     by_commit: dict[str, list[LinkRow]] = defaultdict(list)
-    for a in await store.for_paths(org, [cns], sorted(paths)):
+    for a in links:
         by_commit[a["checked_commit"]].append(a)
     still, failed = set[str](), set[str]()
     for commit, rows in by_commit.items():
@@ -280,9 +305,32 @@ async def _retry_unparsed(
         )
         await _write_moves(await _current_moves(org, moves), head)
         result.rechecked += len(moves)
-    if failed:
-        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
-    await _set_unparsed(org, cns, still)
+    return still, failed
+
+
+async def _catch_up(
+    org: str,
+    cns: str,
+    head: str,
+    now: str,
+    files: link_pass.RepoReads,
+    result: link_pass.PassResult,
+) -> None:
+    """Recheck the links a pass at `head` never saw. A pass at an unchanged head follows
+    nothing, so a link an older build inserted after the last pass read the table, built
+    at another commit, would keep its state. The pass records a digest of the links not
+    checked at `head`, taken before it read any link (`now`), so none it missed is
+    vouched for; when the next one finds it changed, those links are rechecked. A pass
+    that moved links makes the next digest differ once more, and that recheck is a no-op."""
+    seen = link_pass.Cursor[dict[str, str]](f"behind/{org}/{cns}", {})
+    before = await seen.read()
+    if before.get("head") == head and before.get("links") != now:
+        links = await store.behind(org, cns, head)
+        still, failed = await _recheck_rows(org, cns, head, files, result, links)
+        await _set_unparsed(org, cns, await _unparsed(org, cns) | still)
+        if failed:
+            result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
+    await seen.write({"head": head, "links": now})
 
 
 async def _unparsed(org: str, cns: str) -> set[str]:

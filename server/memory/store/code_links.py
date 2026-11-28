@@ -453,6 +453,36 @@ async def _for_code(
     )
 
 
+_BEHIND = (
+    "{_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
+    "AND state != 'pending' AND checked_commit != {{head:String}}"
+)
+
+
+async def behind_digest(
+    org: str, code_namespace: str, head: str, *, ch: _CHClient | None = None
+) -> str:
+    """A digest of the live links not checked at `head`, each by key and version: it
+    changes whenever one is written, relinked or removed."""
+    rows = await (ch or _default_client()).query_all(
+        f"SELECT count() AS n, hex(groupBitXor(sipHash64({_KEY}, version))) AS d "
+        + _BEHIND.format(_LIVE=_LIVE),
+        params={"org": org, "cns": code_namespace, "head": head},
+    )
+    return f"{rows[0]['n']}:{rows[0]['d']}"
+
+
+async def behind(
+    org: str, code_namespace: str, head: str, *, ch: _CHClient | None = None
+) -> list[LinkRow]:
+    """The live links not checked at `head`."""
+    rows = await (ch or _default_client()).query_all(
+        "SELECT * " + _BEHIND.format(_LIVE=_LIVE),
+        params={"org": org, "cns": code_namespace, "head": head},
+    )
+    return _links(rows)
+
+
 async def stale_fingerprints(
     org: str,
     code_namespace: str,
