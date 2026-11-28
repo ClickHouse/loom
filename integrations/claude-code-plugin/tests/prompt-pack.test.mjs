@@ -39,14 +39,15 @@ test("accept follows the index's own abstain and risk label, or a named confiden
 test("renderPack caps and deduplicates one answer without hiding later evidence", () => {
   const reply = { ...RES, results: [RES.results[0], ...RES.results] };
   const first = renderPack(reply, { cap: 3 });
-  assert.match(first.text, /confidence 0\.81/);
+  // The confidence says the index holds an answer, not that these pointers are it: not shown.
+  assert.doesNotMatch(first.text, /confidence|0\.81/);
   assert.match(first.text, /- src\/A.cpp:10-40 DB::A::run — void run\(\)/);
   assert.equal(first.text.split("\n").length, 4);
   assert.equal(first.text.match(/src\/A.cpp/g).length, 1);
   // Candidates under a prefix the server knows as Loom's own words; nothing tells the model to stop looking.
   assert.match(
     first.text,
-    /^Loom index pointers for this prompt \(confidence 0\.81\); Read a line range to check one:\n/,
+    /^Loom index pointers for this prompt, candidates: Read a line range to check one, search if none fits:\n/,
   );
   assert.doesNotMatch(first.text, /do not|search again/i);
   assert.equal(

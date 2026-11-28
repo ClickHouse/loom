@@ -5947,6 +5947,7 @@ class CodeCalibrateBody(TypedDict, total=False):
 class CodeCalibrateOutput(TypedDict, total=False):
     noise_floor: Required[float]
     abstain_threshold: Required[float]
+    rerank_skip_above: Required[float]
     embedder_model: Required[str]
     positives: Required[int]
     distractors: Required[int]

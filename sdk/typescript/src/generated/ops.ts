@@ -429,6 +429,7 @@ export interface CodeCalibrateInput {
 export interface CodeCalibrateOutput {
   noise_floor: number;
   abstain_threshold: number;
+  rerank_skip_above: number;
   embedder_model: string;
   positives: number;
   distractors: number;
