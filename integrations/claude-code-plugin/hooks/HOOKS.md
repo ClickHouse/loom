@@ -98,7 +98,8 @@ receives on stdout.
 | UserPromptSubmit, detached                                     | loom-run              | prompt, session_id                 | none                     | run.begin on the first prompt; appends the turn journal                                                                                                                                                               | `LOOM_RUN_LEDGER=off`              |
 | UserPromptSubmit, detached                                     | loom-namespace-health | cwd, session_id                    | none                     | namespace.audit, once per session; the verdict goes to the session's state file                                                                                                                                       | `LOOM_NAMESPACE_HEALTH=off`        |
 | PreToolUse Read\|Grep\|Bash                                    | loom-code-shunt       | tool_name, tool_input, cwd         | JSON permission decision | code.repos; one code.outline, code.symbol or tracker.duplicate_check before a deny; deny text                                                                                                                         | `LOOM_CODE_SHUNT=off`              |
-| PreToolUse Edit\|Write\|MultiEdit\|NotebookEdit                | loom-file-context     | tool_input, session_id             | JSON additionalContext   | memory.for_file                                                                                                                                                                                                       | `LOOM_FILE_CONTEXT=off`            |
+| PreToolUse Edit\|Write\|MultiEdit\|NotebookEdit                | loom-file-context     | tool_input, session_id, agent_id   | JSON additionalContext   | memory.for_file, unless this agent context was shown the file in the last 30 min                                                                                                                                      | `LOOM_FILE_CONTEXT=off`            |
+| PostToolUse Read\|Grep\|Bash                                   | loom-file-context     | tool_*, cwd, session_id, agent_id  | JSON additionalContext   | memory.for_file for each file of the checkout the call read that this agent context has not been shown: at most three per call, 40 per session                                                                        | `LOOM_FILE_CONTEXT=off`            |
 | PostToolUse loom tools                                         | loom-mentor-hint      | tool_name, tool_response           | JSON additionalContext   | none                                                                                                                                                                                                                  | `LOOM_MENTOR_HINTS=off`            |
 | PostToolUse Edit\|Write\|MultiEdit                             | loom-blast-radius     | tool_input, cwd, transcript head   | JSON additionalContext   | code.impact; code.test_gate for a file's first edit (`LOOM_TEST_GATE=off` or `block` stops that one)                                                                                                                  | `LOOM_BLAST_RADIUS=off`            |
 | PostToolUse Bash\|PowerShell                                   | loom-test-gate        | tool_input, cwd, transcript head   | JSON additionalContext   | code.test_gate for each changed file the command names, once per file                                                                                                                                                 | `LOOM_TEST_GATE=off` or `block`    |
@@ -107,6 +108,7 @@ receives on stdout.
 | PreCompact                                                     | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
 | PreCompact                                                     | loom-working-memory   | transcript, cwd                    | none                     | working_memory.set                                                                                                                                                                                                    | `LOOM_WORKING_MEMORY=off`          |
 | PreCompact                                                     | loom-session-brief    | transcript, cwd                    | none                     | session.brief_save via the flusher                                                                                                                                                                                    | `LOOM_SESSION_BRIEF=off`           |
+| PreCompact                                                     | loom-file-context     | session_id                         | none                     | none: forgets which files the session was shown                                                                                                                                                                       | `LOOM_FILE_CONTEXT=off`            |
 | Stop, detached                                                 | loom-capture          | session_id                         | none                     | observe.crystallize                                                                                                                                                                                                   | no token                           |
 | Stop, detached                                                 | loom-conversation     | transcript, last_assistant_message | none                     | conversation.append via the flusher                                                                                                                                                                                   | `LOOM_CAPTURE_CONVERSATIONS=false` |
 | Stop, detached                                                 | loom-usage            | transcript                         | none                     | cost.record_turns                                                                                                                                                                                                     | `LOOM_USAGE=off`                   |
@@ -204,14 +206,38 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   session's scope, cached a minute per (server, org, namespace); when inboxes
   the namespace owns hold tasks in triage or todo, one line names the counts
   and `task.pull`. Silent on an empty board, a 404, a 403 or a slow server.
-- **loom-file-context.** Before Edit/Write, asks memory.for_file what Loom
-  knows about the target file (its files[] facet, the person's namespace and
-  the repository's team-rules namespace) and injects, as additionalContext, a
-  heading the plugin writes, the server's text inside a recalled-data block
-  whose tags carry an id only this install can compute, and after the
-  block, in the plugin's words, how to remove a wrong team rule and read
-  rows left out (each only when the server's text ends with that footer). One lookup per
-  (session, file) per 30 min; fail-open; never a permission decision.
+- **loom-file-context.** After a local read of a file in the checkout and
+  before Edit/Write, asks memory.for_file what Loom knows about the file (its
+  files[] facet, the person's namespace and the repository's team-rules
+  namespace) and injects, as additionalContext on the read's result or
+  before the edit, a heading the plugin writes, the server's text unchanged
+  inside a recalled-data block whose tags carry an id only this install can
+  compute, and after the block, in the plugin's words, how to remove a wrong
+  team rule and read rows left out (each only when the server's text ends
+  with that footer). The block costs no model request, and a file with no
+  memory adds nothing. A read is Read's file, a Grep of one file, and in a
+  shell command each file read whole or by a line range (`cat`, `sed -n`,
+  `head`, `tail`, an awk NR range) or searched by name (`grep pattern file`),
+  as lib/shell-command.mjs parses the command; one it cannot follow (a
+  heredoc, a read piped onward, a script that opens the file) starts no
+  lookup. Under Claude Code a call the code shunt refused starts no
+  PostToolUse hook, so nothing is looked up for it.
+  One lookup per session, agent context and file: the files shown are kept
+  by their path on disk, under the subagent's id (`agent_id`) for a call a
+  subagent made, so a subagent's read leaves the main agent's block for the
+  main agent's own read or edit. PreCompact forgets them, since a
+  compaction drops the blocks. After a read a file already asked about is
+  not asked about again, and costs no git call and no request. Before an
+  edit a file asked about in the last 30 min (LOOM_FILE_CONTEXT_TTL_MIN) is
+  not asked about again.
+  A read's lookups are bounded: at most three files per call, asked side by
+  side and given up after 1 s, with the process ended by 2 s whatever hangs;
+  40 per session; and none after three the server did not answer. A file
+  past those bounds, or whose lookup was not answered, stays unseen, so its
+  next read or its edit asks. The block's size is the server's: rows other
+  than decisions and constraints within LOOM_FILE_CONTEXT_TOKENS (300), and
+  decisions and constraints whole up to the server's
+  `memory_for_file_whole_tokens`. Fail-open; never a permission decision.
   LOOM_FILE_CONTEXT=off disables.
 - **loom-code-shunt.** In a loom-indexed repo, a whole-file Read or `cat` of
   a file longer than LOOM_SHUNT_MAX_LINES (default 800) is denied with the

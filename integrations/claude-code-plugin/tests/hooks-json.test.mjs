@@ -57,6 +57,29 @@ test("one hook names a changed file's tests per tool: the blast radius after an 
   assert.equal(gate.args[1], "PostToolUse", "the script reads its event from this argument");
 });
 
+test("the file context is wired after a read, before an edit and at a compaction", () => {
+  // After a read it adds the file's memory to the tool result, and a call the
+  // shunt refused never gets there; a compaction drops the blocks, so the
+  // script forgets which files it showed.
+  const groups = (event) =>
+    manifest.hooks[event].filter((g) => g.hooks.some((h) => h.args[0].endsWith("/hooks/loom-file-context.mjs")));
+  assert.deepEqual(
+    groups("PostToolUse").map((g) => g.matcher),
+    ["Read|Grep|Bash"],
+  );
+  const shunt = manifest.hooks.PreToolUse.find((g) => g.hooks.some((h) => h.args[0].endsWith("loom-code-shunt.mjs")));
+  assert.equal(groups("PostToolUse")[0].matcher, shunt.matcher, "the reads the shunt judges");
+  assert.deepEqual(
+    groups("PreToolUse").map((g) => g.matcher),
+    ["Edit|Write|MultiEdit|NotebookEdit"],
+  );
+  assert.equal(groups("PreCompact").length, 1);
+  for (const event of ["PostToolUse", "PreToolUse", "PreCompact"]) {
+    const h = groups(event)[0].hooks.find((x) => x.args[0].endsWith("loom-file-context.mjs"));
+    assert.equal(h.args[1], event, "the script reads its event from this argument");
+  }
+});
+
 test("the SessionEnd hook declares a timeout: Claude Code gives the event 1.5 s by default", () => {
   // The launcher runs the event's five recording scripts in its own process
   // and waits for them: a slow server or a loaded machine passes the default

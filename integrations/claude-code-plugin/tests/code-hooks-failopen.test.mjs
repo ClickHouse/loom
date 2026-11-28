@@ -129,8 +129,14 @@ const HOOK_NAMES = [
 test("malformed, empty and non-object stdin: every code hook exits 0 and prints nothing", async () => {
   const tmp = freshTmp();
   for (const hook of HOOK_NAMES) {
-    // The test gate reads its input at a Stop in either mode, and after a shell command.
-    const starts = hook === "loom-test-gate.mjs" ? [{}, { env: BLOCKING }, { event: "PostToolUse" }] : [{}];
+    // The test gate reads its input at a Stop in either mode, and after a shell command;
+    // the file context before an edit, after a read and at a compaction.
+    const starts =
+      hook === "loom-test-gate.mjs"
+        ? [{}, { env: BLOCKING }, { event: "PostToolUse" }]
+        : hook === "loom-file-context.mjs"
+          ? [{}, { event: "PostToolUse" }, { event: "PreCompact" }]
+          : [{}];
     for (const stdin of ["{not json", "", "[]", "null", '"text"', "42"]) {
       for (const how of starts) {
         const as = `${hook} ${JSON.stringify(how)} on ${JSON.stringify(stdin)}`;
@@ -174,6 +180,9 @@ test("no token: nothing is asked of the server and nothing is printed", async ()
     fs.appendFileSync(path.join(dir, "src/a.cpp"), "int g() { return 1; }\n");
     const r = await run("loom-test-gate.mjs", shell, { tmp, url, token: "", event: "PostToolUse" });
     assert.equal(r.code + r.out, "0");
+    // After a read the file context would look the file up.
+    const afterRead = await run("loom-file-context.mjs", read, { tmp, url, token: "", event: "PostToolUse" });
+    assert.equal(afterRead.code + afterRead.out, "0");
     assert.deepEqual(seen, []);
   });
 });
