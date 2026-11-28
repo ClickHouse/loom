@@ -799,6 +799,47 @@ async def test_a_function_moved_with_an_edit_is_followed_past_a_new_export_list(
     assert [(x["path"], x["state"]) for x in await _links(gone)] == [("src/mv/c.py", "unresolved")]
 
 
+_LONG_ROWS = (
+    "def fetch_rows(conn, n, start=0):\n    rows = []\n    for i in range(start, n):\n"
+    "        row = conn.read(i)\n        if row:\n            rows.append(row)\n"
+    "    return rows\n"
+)
+
+
+async def test_a_definition_renamed_as_it_moves_to_another_file_is_followed(env) -> None:
+    repo = env
+    keep = "def keep():\n    return 0\n"
+    c1 = repo.commit({"src/widgets/io.py": keep + "\n\n" + _LONG_ROWS})
+    await _index(TRUNK, repo, c1, ["src/widgets/io.py"])
+    mid = await _remember(MEM, "fetch-rows", "`fetch_rows` drops empty rows")
+    await _pass()
+    # one commit takes it out of io.py and brings it into a new file under another name
+    moved = {
+        "src/widgets/io.py": keep,
+        "src/widgets/rows.py": _LONG_ROWS.replace("fetch_rows", "warm_up"),
+    }
+    c2 = repo.commit(moved)
+    await _index(TRUNK, repo, c2, list(moved))
+    result = await _pass()
+    assert result.wide_ranges == 0
+    (link,) = await _links(mid)
+    assert (link["path"], link["symbol"], link["state"]) == (
+        "src/widgets/rows.py",
+        "src.widgets.rows::warm_up",
+        "moved",
+    )
+    # served, on the definition it is now, with its text as written
+    assert (await _search(MEM, "fetch_rows drops empty rows")).get("fetch-rows") == "moved"
+    lessons = await _lessons(TRUNK, "warm_up")
+    assert [(x["memory_key"], x["code_state"]) for x in lessons] == [("fetch-rows", "moved")]
+    assert (await _row(mid)).value == "`fetch_rows` drops empty rows"
+    # a later commit that removes it brings nothing in: the code is gone
+    c3 = repo.commit({"src/widgets/rows.py": None})
+    await _index(TRUNK, repo, c3, ["src/widgets/rows.py"])
+    await _pass()
+    assert [x["state"] for x in await _links(mid)] == ["missing"]
+
+
 async def test_a_file_link_follows_its_cited_lines_and_the_definition_its_memory_names(
     env,
 ) -> None:
@@ -1531,6 +1572,101 @@ async def test_validate_counts_only_repositories_the_caller_may_read(env) -> Non
     assert (await stale_for((MEM, TRUNK))).count == 1
     memory_only = await stale_for((MEM,))
     assert (memory_only.count, memory_only.samples) == (0, [])
+
+
+async def test_validate_lists_the_edit_a_followed_rename_allows_and_an_update_applies_it(
+    env,
+) -> None:
+    """After a rename the link follows, the memory's text still says the old name. The
+    report lists the edit its spelling allows, or why none is offered, and writes
+    nothing; memory.update with the listed hash applies it, the link pass links the
+    revised memory where the code is, and a caller who may not read the repository is
+    told nothing."""
+    from fastapi import HTTPException
+
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.identity.api.models_namespace_catalog import NamespaceValidateInput
+    from server.identity.app.namespace_validate import handle_namespace_validate
+    from server.memory.api.models_crud import MemoryUpdateInput
+    from server.memory.app.update import handle_memory_update
+    from server.operations.base import Role
+
+    repo = env
+    path = "src/widgets/io.py"
+    src = "def fetch_rows(conn, n):\n    rows = conn.read(n)\n    return [r for r in rows if r]\n"
+    c1 = repo.commit({path: src})
+    await _index(TRUNK, repo, c1, [path])
+    text = "`fetch_rows` drops empty rows"
+    mid = await _remember(MEM, "fetch-rows", text)
+    # a word of the prose links inside the memory's files, and is never edited
+    await _remember(MEM, "fetch-rows-prose", "fetch_rows drops empty rows", files=[path])
+    await _pass()
+    c2 = repo.commit({path: src.replace("fetch_rows", "load_rows")})
+    await _index(TRUNK, repo, c2, [path])
+    await _pass()
+
+    async def renames_for(namespaces: tuple[str, ...]) -> Any:
+        set_current_auth(
+            AuthInfo(
+                subject="it@example.com",
+                org=ORG,
+                namespaces=namespaces,
+                roles=(Role.VIEWER,),
+                is_service_account=False,
+            )
+        )
+        try:
+            report = await handle_namespace_validate(NamespaceValidateInput(org=ORG, namespace=MEM))
+        finally:
+            set_current_auth(None)
+        return next(f for f in report.findings if f.check == "code_rename_edits")
+
+    listed = await renames_for((MEM, TRUNK))
+    assert listed.count == 2 and listed.totals == {"edits": 1, "prose_occurrence": 1}
+    by_key = {s["memory_key"]: s for s in listed.samples}
+    assert by_key["fetch-rows-prose"]["reason"] == "prose_occurrence"
+    offered = by_key["fetch-rows"]
+    assert offered["memory_id"] == mid
+    assert offered["edits"] == [{"start": 1, "end": 11, "old": "fetch_rows", "new": "load_rows"}]
+    # the listed hash is the one memory.get serves: the report cites the same revision
+    cited = {e.memory_key: e.content_sha256 for e in listed.evidence}
+    assert offered["content_sha256"] == cited["fetch-rows"]
+    # nothing was written
+    assert (await _row(mid)).value == text
+    hidden = await renames_for((MEM,))
+    assert (hidden.count, hidden.samples, hidden.totals) == (0, [], {})
+
+    (edit,) = offered["edits"]
+    revised = text[: edit["start"]] + edit["new"] + text[edit["end"] :]
+    applied = await handle_memory_update(
+        MemoryUpdateInput(
+            org=ORG,
+            namespace=MEM,
+            memory_key="fetch-rows",
+            value=revised,
+            if_match_sha256=offered["content_sha256"],
+        )
+    )
+    assert applied.updated and (await _row(mid)).value == "`load_rows` drops empty rows"
+    # the same edit against the value it was planned from is refused once that is gone
+    with pytest.raises(HTTPException) as refused:
+        await handle_memory_update(
+            MemoryUpdateInput(
+                org=ORG,
+                namespace=MEM,
+                memory_key="fetch-rows",
+                value=revised,
+                if_match_sha256=offered["content_sha256"],
+            )
+        )
+    assert refused.value.status_code == 409
+    await _pass()
+    (link,) = await _links(mid)
+    assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "fresh")
+    after = await renames_for((MEM, TRUNK))
+    assert after.totals == {"prose_occurrence": 1}
+    assert [s["memory_key"] for s in after.samples] == ["fetch-rows-prose"]
 
 
 async def test_validate_counts_unlinked_code_memories_by_cause(env) -> None:
@@ -3593,6 +3729,33 @@ async def test_a_removed_method_never_moves_to_a_namesake_in_another_class(env) 
         ("src.rw::Reader::read_rows", "missing")
     ]
     assert await _lessons(TRUNK, "Writer.read_rows") == []
+
+
+async def test_a_method_moved_to_another_class_with_its_text_reads_changed(env) -> None:
+    # thirty tokens or more: its text tells it from any other method of that name, and
+    # what surrounds it is no longer what the memory saw
+    method = (
+        "    def read_rows(self, conn, start=0):\n        rows = []\n"
+        "        for i in range(start, self.limit):\n            row = conn.read(i)\n"
+        "            if row:\n                rows.append(row)\n        return rows\n"
+    )
+    other = "    def other(self):\n        return 1\n"
+    c1 = env.commit({"src/rw.py": "class Reader:\n    limit = 3\n\n" + method + "\n" + other})
+    await _index(TRUNK, env, c1, ["src/rw.py"])
+    mid = await _remember(MEM, "rw", "`Reader.read_rows` reads three rows", files=["src/rw.py"])
+    await _pass()
+    moved = (
+        "class Reader:\n    limit = 3\n\n" + other + "\n\nclass Writer:\n    limit = 4\n\n" + method
+    )
+    c2 = await _relink_once(env, "src/rw.py", moved)
+    (link,) = await _links(mid)
+    assert (link["symbol"], link["state"], link["changed_since"]) == (
+        "src.rw::Writer::read_rows",
+        "changed",
+        c2,
+    )
+    lessons = await _lessons(TRUNK, "Writer.read_rows")
+    assert [(x["memory_key"], x["code_state"]) for x in lessons] == [("rw", "changed")]
 
 
 @pytest.mark.parametrize("path", ["io.cpp", "io/reader.cpp"])

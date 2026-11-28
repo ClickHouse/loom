@@ -8705,6 +8705,7 @@ export interface NamespaceValidateFinding {
   count: number;
   samples?: Array<Record<string, unknown>>;
   detail: string;
+  totals?: Record<string, number>;
 }
 
 export interface NamespaceValidateOutput {

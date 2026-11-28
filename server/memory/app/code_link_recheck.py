@@ -25,7 +25,7 @@ from server.code.domain.anchor import (
 )
 from server.code.domain.declaration import fingerprint_version
 from server.code.domain.index.repos import repo_for_namespace
-from server.code.domain.successor import Side, Successor, close_to, successor
+from server.code.domain.successor import Side, Successor, close_to, elsewhere, successor
 from server.core.datetimes import naive_utc_now
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app import code_link_policy as policy
@@ -145,6 +145,7 @@ async def _recheck_repository(
             checked = cut_at
         await _follow(org, cns, checked, head, files, result)
         await code.set_checked_head(org, cns, head)
+    result.wide_ranges += files.wide_ranges
     await policy.apply_policies(org, cns, head, files, budget, result)
 
 
@@ -161,7 +162,9 @@ _PATHS_PER_WRITE = 50
 _LOST_SEARCHED_DAYS = 30
 
 
-# files of namesakes a lost link is weighed against: past it, the answer is unsure
+# files of namesakes a lost link is weighed against: past it, the answer is unsure; and
+# files a range may change for a renamed definition to be looked for in them: past it, a
+# live link is read as if nothing was renamed and an unresolved one stays unresolved
 _MAX_ELSEWHERE = 32
 
 
@@ -368,19 +371,22 @@ async def _recheck(
             if new is None and r.before.state != "missing":
                 renamed = Successor(None, uncertain=True)  # cannot tell: a live link is unsure
             far = new or []
-        # moved to another module with an edit: never for a link already missing, nor
-        # one the same-file search left unsure, unless the new definitions there were
-        # each compared with it and none is close
+        # found under no name it had: looked for where it may have moved, never for a
+        # link already missing, nor one the same-file search left unsure, unless the new
+        # definitions there were each compared with it and none is close
         unsure = renamed.uncertain
-        moved_and_edited = (
-            bool(far)
+        sought = (
+            r.lost
             and renamed.definition is None
             and (not unsure or renamed.unmatched)
             and r.before.state != "missing"
             and locate(r.before, r.now, r.defs, elsewhere=far) is None
         )
-        if moved_and_edited:
+        if sought and far:  # to another module with an edit
             renamed = await _moved_and_edited(files, r.before, r.row, far, head)
+        # or under another name, where the same-file search found no new definition
+        if sought and not unsure and not mirror_unsure and renamed == Successor(None):
+            renamed = await _renamed_elsewhere(files, r, head)
         after = recheck(
             r.before,
             path_now=r.now,
@@ -547,6 +553,40 @@ async def _moved_and_edited(
     close = await asyncio.to_thread(close_to, was[0], d, then, now)
     files.successors[key] = Successor(d) if close else Successor(None, uncertain=True)
     return files.successors[key]
+
+
+async def _renamed_elsewhere(files: link_pass.RepoReads, r: _Read, head: str) -> Successor:
+    """What the lost link's definition became in another file or scope
+    (`successor.elsewhere`), among the definitions new since `_searched_from` in the
+    files changed since. Nothing, as before this search, when the range brought no
+    definition in, changed more than `_MAX_ELSEWHERE` files or cannot be read, or the
+    link's last-read text cannot. A link already unresolved is unsure over a range not
+    searched: its range starts at its own commit and only grows, and the candidates
+    that left it unresolved may still be there."""
+    checked, path = r.row["checked_commit"], r.before.read_path
+    base = _searched_from(r.before, r.row, r.range)
+    key = ("renamed", checked, path, r.before.qualified_name, base, head)
+    if (known := files.successors.get(key)) is not None:
+        return known
+    turnover = await files.turnover(base, head, limit=_MAX_ELSEWHERE)
+    if turnover is None:
+        return Successor(None, uncertain=r.before.state == "unresolved")
+    if not any(side.defs for side in turnover.new):
+        return Successor(None)
+    try:
+        old = await files.at(checked, path) if checked and await files.has(checked) else None
+    except code.ParseFailed:
+        old = None
+    was = [d for d in old.defs if d.qualified_name == r.before.qualified_name] if old else []
+    if old is None or not was:
+        return Successor(None)
+    # comparing texts is CPU work: off the loop, once per definition and pass
+    then = Side(path, old.defs, old.lines)
+    found = await asyncio.to_thread(
+        elsewhere, was[0], then, turnover.new, turnover.gone, turnover.kept
+    )
+    files.successors[key] = found
+    return found
 
 
 async def _renamed(

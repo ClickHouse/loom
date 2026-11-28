@@ -8,6 +8,12 @@ definitions that stayed. When new definitions there may be it but none certainly
 answer is uncertain, never a removal. When no declaration of them has a text close to it,
 under any name, it is not among them (`unmatched`): it may still have moved to another
 file.
+
+Where that search finds nothing, the definition may have been renamed as it moved to
+another file or scope (`elsewhere`): among the definitions the changed files did not have
+before, the one with its exact shape, or the one of its own name with a close text. A
+small definition is told by neither: it is followed there only with its scope, under a
+name of its own words.
 """
 
 from __future__ import annotations
@@ -137,6 +143,154 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
     # new definitions there and no text of theirs close to it: it is not among them
     unmatched = bool(pool) and not contested and _none_close(was, in_scope, before, now)
     return Successor(None, uncertain=bool(pool) or contested, unmatched=unmatched)
+
+
+def elsewhere(
+    was: Definition,
+    before: Side,
+    new: Sequence[Side],
+    gone: Sequence[Side],
+    kept: Sequence[Side] = (),
+) -> Successor:
+    """What `was` (in `before`) became in another file or scope, where the search of its
+    own found nothing. `new` holds, file by file, the definitions a file did not define
+    before; `gone` those whose name left their file, `was` among them: one new definition
+    is the successor of one of them at most; `kept` those the changed files still define
+    under a name they had.
+
+    The one with its exact shape is it renamed alone; else the one of its own name with
+    a close text is it edited, when no definition of that name that stayed is close too
+    (`_same_name`). A small definition is followed only with its scope and under a name
+    of its own words (`_may_be`). A member is carried unless its class came with it
+    unchanged. Several that may be it, or one another removed definition may have
+    become, are uncertain."""
+    small = len(_TOKEN.findall(before.text(was))) < _SMALL
+    vacated = small and _vacated(_scope_of(was), before, gone)
+    had = {side.path: side for side in kept}
+    arrived = [
+        (d, side)
+        for side in new
+        for d in side.defs
+        if not small or _may_be(was, before, d, side, had.get(side.path), vacated)
+    ]
+    rivals = [
+        (r, side)
+        for side in gone
+        for r in side.defs
+        if (side.path, r.qualified_name) != (before.path, was.qualified_name)
+    ]
+    found = _same_shape(was, before, arrived, [r for r, _ in rivals])
+    if found is not None:
+        return found
+    stayed = [(d, side) for side in kept for d in side.defs]
+    return _same_name(was, before, arrived, rivals, stayed)
+
+
+def _may_be(
+    was: Definition, before: Side, d: Definition, now: Side, had: Side | None, vacated: bool
+) -> bool:
+    """Whether a small `was` may be `d` in another file or scope. Under `_SMALL` tokens
+    a text is mostly its signature, and its own name is one any class may define
+    (`__iter__`, `close`): it goes only with its scope, module level to module level or
+    into the successor of its class. A class has one only once no member of it is left
+    in its file (`vacated`): that class renamed alone, or the one keeping its members,
+    weighed with those it already had (`had`: what `now`'s file kept), so a class that
+    took two methods in is not it. And only under a name of its own words (`_read_rows`,
+    `read_rows_v2`): one shared word is no kinship among every changed file, where two
+    stubs have one shape (`class ReadError(Exception): pass`, `RetryError`)."""
+    a, b = _words(was.name), _words(d.name)
+    if not a or _unversioned(a) != _unversioned(b):
+        return False
+    scope, target = _scope_of(was), _scope_of(d)
+    if not scope or not target:
+        return scope == target
+    if not vacated:
+        return False
+    if _renamed_alone(scope, target, before, now):
+        return True
+    old, kept = _layout(before)[0][scope], _layout(now)[0][target]
+    own = _layout(had)[0][target] if had is not None else set()
+    shared = len(old & kept)
+    return shared >= _MIN_SHARED and shared / len(old | kept | own) >= _KEPT_MEMBERS
+
+
+def _vacated(scope: str, before: Side, gone: Sequence[Side]) -> bool:
+    """No member of `scope` is left in `before`'s file: each is among `gone`. Its own
+    name may stay, as an alias of the class it became."""
+    left = {_unnumbered(r) for side in gone if side.path == before.path for r in side.defs}
+    names = {_unnumbered(d) for d in before.defs}
+    return all(n in left for n in names if n.startswith(scope + "."))
+
+
+def _same_shape(
+    was: Definition,
+    before: Side,
+    arrived: list[tuple[Definition, Side]],
+    rivals: list[Definition],
+) -> Successor | None:
+    """`was` renamed alone into one of `arrived`: the only one with its exact shape.
+    None when no such definition arrived."""
+    shape, name = was.shape.exact, _bare(was)
+    if not shape:
+        return None
+    same = [(d, side) for d, side in arrived if d.shape.exact == shape]
+    rivals = [r for r in rivals if r.shape.exact == shape]
+    # a removed definition and a new one of this shape under one name are each other's
+    paired = ({_bare(d) for d, _ in same} & {_bare(r) for r in rivals}) - {name}
+    same = [(d, side) for d, side in same if _bare(d) not in paired]
+    rivals = [r for r in rivals if _bare(r) not in paired]
+    if own := [(d, side) for d, side in same if _bare(d) == name]:
+        # under its own name: only another removed definition of that name contests it
+        same, rivals = own, [r for r in rivals if _bare(r) == name]
+    if len(same) == 1 and not rivals:
+        d, side = same[0]
+        carried = _left_its_class(was, before, d, side)
+        return Successor(d, exact=not carried, carried=carried)
+    return Successor(None, uncertain=True) if same else None
+
+
+def _same_name(
+    was: Definition,
+    before: Side,
+    arrived: list[tuple[Definition, Side]],
+    rivals: list[tuple[Definition, Side]],
+    stayed: list[tuple[Definition, Side]],
+) -> Successor:
+    """`was` edited as it moved to another scope: the only one of `arrived` with its
+    bare name and a close text. Not when a removed namesake is close to that one as
+    well, nor when a namesake that `stayed` is close to `was`: a name sibling classes
+    share (`get`, `__call__`) has close texts under names that never moved, and one of
+    those, which never inherits a link, may be what `was` became."""
+    name, text = _bare(was), before.text(was)
+
+    def like(found: list[tuple[Definition, Side]]) -> list[tuple[Definition, Side, float | None]]:
+        return [(d, s, _similar(text, was, s.text(d), d)) for d, s in found if _bare(d) == name]
+
+    scores = like(arrived)
+    close = [(d, side) for d, side, score in scores if score is not None and score >= _CLOSE]
+    unknown = any(score is None for _, _, score in scores)
+    if len(close) == 1 and not unknown:
+        d, side = close[0]
+        contested = any(
+            _bare(r) == name and _maybe_close(r, d, then, side) for r, then in rivals
+        ) or any(score is None or score >= _CLOSE for _, _, score in like(stayed))
+        if not contested:
+            return Successor(d, carried=_left_its_class(was, before, d, side))
+    return Successor(None, uncertain=bool(close) or unknown)
+
+
+def _left_its_class(was: Definition, before: Side, d: Definition, now: Side) -> bool:
+    """`d` is not among what surrounded `was`: one of them is a member, and `was`'s class
+    is not `d`'s with nothing but its name changed."""
+    scope, target = _scope_of(was), _scope_of(d)
+    if not scope and not target:
+        return False
+    return not (scope and target and _renamed_alone(scope, target, before, now))
+
+
+def _bare(d: Definition) -> str:
+    """`d`'s own name, the index's ordinal dropped."""
+    return unnumbered(bare_name(d.qualified_name))
 
 
 def _renamed_alone(scope: str, target: str, before: Side, now: Side) -> bool:

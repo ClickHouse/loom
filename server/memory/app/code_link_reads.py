@@ -81,14 +81,23 @@ async def current_links(org: str, links: list[LinkRow]) -> list[LinkRow]:
     return [a for h in heads for a in current(org, h, by_mid.get(str(h["mid"]), []))]
 
 
+# the states of a link whose code is not what its memory was written against
+STALE = ("changed", "unresolved", "missing")
+
+
 async def stale_links(
-    org: str, namespace: str, keys: Sequence[str] | None = None, *, limit: int
+    org: str,
+    namespace: str,
+    keys: Sequence[str] | None = None,
+    *,
+    limit: int,
+    states: Sequence[str] = STALE,
 ) -> list[dict[str, Any]]:
-    """Up to `limit` of the namespace's changed, unresolved and missing links into
-    repositories the caller may read, of its served memories (those under `keys` when
-    given) as they are now, one per memory, newest check first; each with its memory_key,
-    memory_id, code_namespace, path, qualified_name, state, changed_since, checked_at and
-    `total`, the number of memories they are of."""
+    """Up to `limit` of the namespace's links in `states` (changed, unresolved and
+    missing unless given) into repositories the caller may read, of its served memories
+    (those under `keys` when given) as they are now, one per memory, newest check first;
+    each with its memory_key, memory_id, code_namespace, path, qualified_name, state,
+    changed_since, checked_at and `total`, the number of memories they are of."""
     trunk = code.trunk_namespace(org, namespace)
     tagged = [] if trunk else _tag_namespaces(org)
     seen = await readable_namespaces(org, {trunk, *(cns for _, cns in tagged)} - {""})
@@ -97,7 +106,7 @@ async def stale_links(
     return await store.stale_of_served(
         org,
         namespace,
-        ["changed", "unresolved", "missing"],
+        list(states),
         memory_keys=keys,
         trunk=trunk,
         tag_namespaces=tagged,
