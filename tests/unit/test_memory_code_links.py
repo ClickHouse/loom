@@ -6325,6 +6325,49 @@ async def test_the_pending_scan_never_expires_a_parked_link(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
+async def test_a_file_link_is_not_dropped_beside_a_move_the_current_check_discards(
+    monkeypatch,
+) -> None:
+    stale = code_link_recheck.Move(_parked("", "a::f"), None)
+    drop = code_link_recheck.Move(_parked("a.py", ""), None)
+    written: list[Any] = []
+
+    async def pending(org, cns, **kw):
+        return [], None
+
+    async def resolve_pending(org, cns, head, files, result, rows):
+        return [stale]
+
+    async def reanchor(*a, **k):
+        return []
+
+    async def discard_stale(org, moves):
+        return [m for m in moves if m is not stale]
+
+    async def beside(org, cns, moves):
+        return [drop] if moves else []  # a drop is built only for a move that stands
+
+    async def write(moves, head):
+        written.extend(moves)
+
+    async def no_cursor(name):
+        return ""
+
+    monkeypatch.setattr(code_links.store, "pending", pending)
+    monkeypatch.setattr(code_links.code, "link_cursor", no_cursor)
+    monkeypatch.setattr(code_link_recheck, "_reanchor", reanchor)
+    monkeypatch.setattr(code_link_recheck, "_resolve_pending", resolve_pending)
+    monkeypatch.setattr(code_link_recheck, "_current_moves", discard_stale)
+    monkeypatch.setattr(code_link_recheck, "_file_links_beside", beside)
+    monkeypatch.setattr(code_link_recheck, "_write_moves", write)
+    files = code_link_pass.RepoReads("o", "code-a")
+    await code_link_recheck._recheck_pending(
+        "o", "code-a", "c2", files, code_link_pass.PassResult()
+    )
+    assert written == []
+
+
+@pytest.mark.asyncio
 async def test_a_pass_sets_its_cursor_before_reading_links_and_clears_it_after_the_checkpoint(
     monkeypatch,
 ) -> None:

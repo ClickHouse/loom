@@ -654,8 +654,9 @@ async def _recheck_pending(
     moves += await _resolve_pending(
         org, cns, head, files, result, [r for r in rows if not r["path"]]
     )
+    moves = await _current_moves(org, moves)  # a drop beside a stale move must not outlive it
     moves += await _file_links_beside(org, cns, moves)
-    await _write_moves(await _current_moves(org, moves), head)
+    await _write_moves(moves, head)
     result.rechecked += len(moves)
     if nxt != after:
         await cursor.write({"before": before, "after": list(nxt)} if nxt else {})
