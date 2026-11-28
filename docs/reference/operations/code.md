@@ -1577,10 +1577,10 @@ Find implementations by question, behavior or identifier using `query`.
 | `abstain` | `bool` | true = the server does not stand behind these results (they may still be listed); `abstain_code` says why. |
 | `abstain_code` | `Literal['', 'no_match', 'below_threshold', 'low_calibrated_confidence', 'not_covered', 'pattern_too_broad', 'identifier_absent', 'off_domain']` | Why it abstained: no_match (nothing survived) \| below_threshold (top cosine under the abstain threshold) \| low_calibrated_confidence \| not_covered (path outside the index) \| pattern_too_broad \| identifier_absent (no file names it) \|… |
 | `abstain_reason` | `str` | Human-readable reason for the abstain, with what to do instead; "" when not abstaining. |
-| `retrieval_risk` | `Literal['low', 'medium', 'high', 'abstain']` | Calibrated risk band from `retrieval_confidence`: low (>= 0.75), medium (>= 0.55), high, or abstain (below the abstain cut-off or the top cosine under its threshold). |
-| `retrieval_confidence` | `float` | Calibrated confidence 0-1 from the top similarity, its margin over the second hit, `route_agreement` and the pool size; 0.0 on an abstain with no results. |
+| `retrieval_risk` | `Literal['low', 'medium', 'high', 'abstain']` | Risk band of `retrieval_confidence`, at the deployment's cut-offs: low, medium, high, or abstain (below the abstain cut-off or the top cosine under its threshold). |
+| `retrieval_confidence` | `float` | Confidence 0-1 that the index holds an answer, not that the first result is the right one: the vector leg's best cosine on the embedder's calibrated scale, near 0 for a question about other code; 0.5 when no vector leg ran, 0.0 on an… |
 | `route_agreement` | `float` | Share (0-1) of the retrieval routes that ran and agreed: the primary hit, lexical and vector legs sharing a top-10 chunk, a fuzzy-symbol hit; 1.0 on an exact symbol hit. |
-| `calibration_explanation` | `str` | The calibration inputs as text (top_similarity, margin, route_agreement, ...), plus the legs the answer ranked without past the deadline. |
+| `calibration_explanation` | `str` | The calibration inputs as text (top_similarity and the two calibrated cosines it is read between), plus the legs the answer ranked without past the deadline. |
 | `tokens_returned` | `int` | Estimated tokens of the served page (results, history section and annotations). |
 | `constrained` | `bool` | Constrained search: true when a pattern / path filter narrowed the pool; `matched_files` is the pre-count of files the constraint admits (0 when unconstrained or not counted). |
 | `matched_files` | `int` | How many files the pattern / path constraint admits; 0 when unconstrained or not counted. |

@@ -633,29 +633,29 @@ with the largest `penalty / (60 + rank)` instead:
 
 The vector leg and the concept leg are not cut.
 
-`retrieval_confidence` estimates the chance that the first three results hold a file
-the answer is in. It reads the two content legs before any prior reorders them
-(`code/domain/index/search_confidence.py`, `code/app/search/calibrate.py`) and is the
-product of two terms:
+`retrieval_confidence` says whether the index holds an answer at all. It is the vector
+leg's best cosine, read on the embedder's calibrated scale before any prior reorders
+the rows (`code/domain/index/search_confidence.py`, `code/app/search/calibrate.py`):
 
-- **Similarity: does the index hold an answer?** The vector leg's best cosine, read on
-  the embedder's calibrated scale: 0 at the midpoint between the abstain threshold and
-  the cosine of a confident hit (`rerank_skip_above` in the namespace's calibration,
-  else in the embedder's boot calibration, else `LOOM_LLM_RERANK_SKIP_ABOVE`), 1 at
-  that cosine. An absolute cosine is not comparable across embedding models. A
-  question about another repository scores under the midpoint, so its confidence is
-  near 0 whatever the lexical leg returns.
-- **Agreement: is the best unit the right one?** 0.9 when the lexical leg's first 200
-  rows hold the vector leg's first unit, 0.65 when they hold another unit of its file,
-  0.4 when neither. A leg that did not answer counts as the middle case.
+- **The scale.** 0 at the midpoint between the abstain threshold and the cosine of a
+  confident hit (`rerank_skip_above` in the namespace's calibration, else in the
+  embedder's boot calibration, else `LOOM_LLM_RERANK_SKIP_ABOVE`), 1 at that cosine.
+  An absolute cosine is not comparable across embedding models: one scores unrelated
+  text 0.2, another 0.7.
+- **What it separates.** A question about another repository or another subject
+  scores near 0. A question the index can answer scores near 1.
+- **What it does not separate.** Among questions the index can answer, a result that
+  holds the file to change and one that does not score alike. A high confidence is
+  not evidence that the first result is the right one.
+- **No cosine.** A search with no vector leg (no embedder, a lexical-only request, a
+  failed leg) reads 0.5: it never abstains on a similarity nobody measured and never
+  reads `low`.
 
-A search with no cosine (no embedder, a lexical-only request, a failed vector leg)
-reads 0.45. `retrieval_risk` bands the confidence: `abstain` below
+`retrieval_risk` bands the confidence: `abstain` below
 `LOOM_CODE_SEARCH_ABSTAIN_CONFIDENCE_BELOW` (0.15) or when the best cosine is under the
 abstain threshold, `medium` from `LOOM_CODE_SEARCH_MEDIUM_RISK_FROM` (0.35), `low` from
-`LOOM_CODE_SEARCH_LOW_RISK_FROM` (0.60), `high` between. The bands are set for these
-levels: a confident cosine reads `medium` unconfirmed and `low` once the lexical leg
-returns its unit or its file.
+`LOOM_CODE_SEARCH_LOW_RISK_FROM` (0.70), `high` between. `route_agreement` is reported
+beside it and is not part of it.
 
 After relevance ranking, per-file saturation spreads broad search results across
 files. It is skipped for an explicit path, a symbol route, test intent, or a

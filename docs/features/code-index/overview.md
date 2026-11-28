@@ -272,13 +272,12 @@ generated from the same schemas.
   | `off_domain`                                   | no file of this namespace is near the question                                        | check the namespace                        |
 
 - **`retrieval_risk`** (`low`, `medium`, `high`, `abstain`) bands
-  `retrieval_confidence`, the search's estimate that the first results hold the code
-  asked about. `low`: the best semantic match is as close as a confident hit for the
-  embedding model, and the word search returns the same unit or file. `medium`: as
-  close, but the word search does not confirm it. `high` and `abstain`: the best match
-  is little closer than unrelated text, as for a question about another repository.
-  Treat `medium` and `high` as leads to verify
-  ([how it is computed](../../architecture/code-index-architecture.md#query-patterns)).
+  `retrieval_confidence`, the search's estimate that the index holds an answer to the
+  question. `low`: the best semantic match is about as close as a confident hit for
+  the embedding model. `high` and `abstain`: it is little closer than unrelated text,
+  as for a question about another repository. A search with no semantic leg reads
+  `medium`. The band does not say which result is right: verify the results at any
+  band ([how it is computed](../../architecture/code-index-architecture.md#query-patterns)).
 - **Coverage is a floor.** `coverage_floor: true` means the index holds every chunk the
   chunker admitted, not every byte. Files over `LOOM_CODE_INGEST_MAX_FILE_BYTES`,
   vendored and generated trees, and excluded paths are absent. An empty grep does not

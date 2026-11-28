@@ -168,9 +168,9 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         new=0.15,
         why=(
             "code.search confidence is computed on a new scale: the best cosine read "
-            "against the embedder's calibration, times how far the lexical leg confirms "
-            "it. A question the index cannot answer scores under 0.15. A deployment that "
-            "set the variable for the old scale should unset it."
+            "between the embedder's calibrated abstain threshold and its cosine of a "
+            "confident hit. A question the index cannot answer scores near 0. A "
+            "deployment that set the variable for the old scale should unset it."
         ),
     ),
     DefaultChange(
@@ -179,18 +179,20 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         old=0.4,
         new=0.35,
         why=(
-            "On the new code.search confidence scale a confident cosine the lexical leg "
-            "does not confirm scores 0.40 and reads medium risk."
+            "On the new code.search confidence scale most questions about another "
+            "repository score under 0.35. A deployment that set the variable for the "
+            "old scale should unset it."
         ),
     ),
     DefaultChange(
         version="1.3.1",
         name="code_search_low_risk_from",
         old=0.55,
-        new=0.6,
+        new=0.7,
         why=(
-            "On the new code.search confidence scale low risk starts where the lexical "
-            "leg returns the vector leg's best unit, or its file with a confident cosine."
+            "On the new code.search confidence scale low risk starts above what a "
+            "question about another repository scores. A deployment that set the "
+            "variable for the old scale should unset it."
         ),
     ),
 )

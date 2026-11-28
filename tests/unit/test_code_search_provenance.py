@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from server.code.api.models_search import CodeSearchInput
 from server.code.app import common as cc
 from server.code.app import search as cs
+from server.code.app.search.calibrate import route_agreement
 from server.code.app.search.fusion import leg_provenance
 from server.code.app.search.state import _POOL
 from server.code.app.search.track import track_verdict
@@ -208,63 +209,96 @@ def test_wire_drops_empty_provenance_and_keeps_a_set_one() -> None:
 # ---- legs-aware calibration --------------------------------------------------
 
 
-class _TopRepo(_Repo):
-    """The vector leg's first unit is `top` in `path`; the lexical pool stays [a, b]."""
+def test_route_agreement_counts_leg_agreement_only_when_both_legs_ran() -> None:
+    assert route_agreement(legs_agree=True, both_legs=True, fuzzy_hit=True) == 1.0
+    assert route_agreement(legs_agree=True, both_legs=True, fuzzy_hit=False) == 0.667
+    assert route_agreement(legs_agree=False, both_legs=True, fuzzy_hit=True) == 0.667
+    assert route_agreement(legs_agree=False, both_legs=False, fuzzy_hit=True) == 1.0
+    # a stale True cannot leak in when one leg did not run
+    assert route_agreement(legs_agree=True, both_legs=False, fuzzy_hit=False) == 0.5
 
-    def __init__(self, top: str, path: str, *, distance: float = 0.1) -> None:
-        super().__init__()
-        self.top, self.path, self.distance = top, path, distance
+
+def test_single_leg_route_agreement_is_not_penalised_for_the_missing_leg() -> None:
+    # fuzzy hit on every arm: the hybrid legs agree on `a`, so hybrid = 3/3;
+    # a single leg has one extra route (fuzzy) and reaches 2/2 — the same 1.0.
+    hybrid = _search(_Repo(fuzzy=True), _Embedder())
+    lexical = _search(_Repo(fuzzy=True), _Embedder(), legs="lexical")
+    vector = _search(_Repo(fuzzy=True), _Embedder(), legs="vector")
+    assert hybrid.route_agreement == lexical.route_agreement == vector.route_agreement == 1.0
+    # without the fuzzy vote a single leg is 1/2 and so is a disagreeing hybrid 2/3 > 1/2:
+    # the single leg is scored on what ran, never below a hybrid whose legs disagreed
+    lexical_no_fuzzy = _search(_Repo(), _Embedder(), legs="lexical")
+    assert lexical_no_fuzzy.route_agreement == 0.5
+    assert not lexical_no_fuzzy.abstain
+
+
+class _CosineRepo(_Repo):
+    """The vector leg's best row sits at `cosine`; the lexical pool stays [a, b]."""
+
+    def __init__(self, cosine: float, *, fuzzy: bool = False) -> None:
+        super().__init__(fuzzy=fuzzy)
+        self.cosine = cosine
 
     async def vector_search_chunks(self, *a, **k):
         self.calls.append("vector")
-        return [{**_vec(self.top, self.distance), "path": self.path}, _vec("c", 0.6)]
+        return [_vec("a", 1.0 - self.cosine), _vec("c", 0.9)]
 
 
-def test_confidence_reads_whether_the_lexical_leg_confirms_the_vector_legs_first_unit() -> None:
-    same_unit = _search(_TopRepo("a", "src/a.cpp"), _Embedder())
-    same_file = _search(_TopRepo("a2", "src/a.cpp"), _Embedder())
-    neither = _search(_Repo(), _Embedder())
-    got = [
-        (r.route_agreement, r.retrieval_confidence, r.retrieval_risk)
-        for r in (same_unit, same_file, neither)
-    ]
-    assert got == [(1.0, 0.9, "low"), (0.5, 0.65, "low"), (0.0, 0.4, "medium")]
-    assert "legs_agree=True" in same_unit.score_explanation
-    assert "legs_agree=False" in same_file.score_explanation
-    assert same_unit.calibration_explanation == (
-        "top_similarity=0.90, similarity=1.00, leg_agreement=1.00"
+def _calibrated(cosine: float, **kw: Any) -> tuple[float, str, str]:
+    # the scale under test: abstain threshold 0.30, confident cosine 0.62, ramp from 0.46
+    res = _search(_CosineRepo(cosine, **kw), _Embedder())
+    return res.retrieval_confidence, res.retrieval_risk, res.abstain_code
+
+
+def test_confidence_is_the_vector_legs_best_cosine_on_the_calibrated_scale() -> None:
+    assert _calibrated(0.9) == (1.0, "low", "")
+    assert _calibrated(0.62) == (1.0, "low", "")
+    assert _calibrated(0.54) == (0.5, "medium", "")
+    # between the abstain threshold and the middle of the range: where a question about
+    # other code scores, so the unit both legs returned is still not an answer
+    assert _calibrated(0.42) == (0.0, "abstain", "low_calibrated_confidence")
+    assert _calibrated(0.2) == (0.0, "abstain", "below_threshold")
+    res = _search(_CosineRepo(0.54), _Embedder())
+    assert res.top_similarity == 0.54
+    assert res.calibration_explanation == (
+        "top_similarity=0.54, abstain_threshold=0.30, confident_similarity=0.62"
     )
 
 
-def test_a_cosine_where_unrelated_text_sits_reads_no_confidence() -> None:
-    # between the abstain threshold (0.30) and the middle of the range to a confident
-    # cosine (0.62): the unit both legs found is still not an answer
-    res = _search(_TopRepo("a", "src/a.cpp", distance=0.58), _Embedder())
-    assert res.top_similarity == 0.42 and res.retrieval_confidence == 0.0
-    assert res.abstain and res.abstain_code == "low_calibrated_confidence"
-    # halfway up the ramp the confirmed unit reads a medium risk, not an abstain
-    half = _search(_TopRepo("a", "src/a.cpp", distance=0.46), _Embedder())
-    assert half.retrieval_confidence == 0.45 and half.retrieval_risk == "medium"
-    below = _search(_TopRepo("a", "src/a.cpp", distance=0.8), _Embedder())
-    assert below.abstain and below.abstain_code == "below_threshold"
+def test_the_scale_is_the_callers_calibration() -> None:
+    # an embedder that scores unrelated text 0.7: the cosine that read 1.0 above is noise
+    res = _search(_CosineRepo(0.72), _Embedder(), abstain_threshold=0.64, confident_similarity=0.8)
+    assert res.retrieval_confidence == 0.0 and res.abstain_code == "low_calibrated_confidence"
 
 
-def test_a_single_leg_run_is_not_scored_as_a_disagreement() -> None:
-    vector = _search(_Repo(), _Embedder(), legs="vector")
-    assert (vector.route_agreement, vector.retrieval_confidence) == (0.5, 0.65)
-    lexical = _search(_Repo(), _Embedder(), legs="lexical")
-    assert (lexical.route_agreement, lexical.retrieval_risk) == (0.5, "medium")
-    assert lexical.top_similarity == 0.0 and "no vector leg" in lexical.calibration_explanation
+def test_no_other_route_moves_the_confidence() -> None:
+    # the lexical leg returning the same unit, a fuzzy-symbol hit and a single-leg run
+    # change `route_agreement`, never the confidence
+    hybrid = _search(_CosineRepo(0.54), _Embedder())
+    fuzzy = _search(_CosineRepo(0.54, fuzzy=True), _Embedder())
+    vector = _search(_CosineRepo(0.54), _Embedder(), legs="vector")
+    assert (hybrid.route_agreement, fuzzy.route_agreement, vector.route_agreement) == (
+        0.667,
+        1.0,
+        0.5,
+    )
+    assert hybrid.retrieval_confidence == fuzzy.retrieval_confidence == 0.5
+    assert vector.retrieval_confidence == 0.5
 
 
-def test_a_run_without_a_cosine_does_not_abstain_on_the_similarity_stand_in() -> None:
-    # per-namespace calibration can put the abstain threshold anywhere; a vector leg
-    # the request skipped, or one with no embedder, must not abstain the result on a
-    # cosine nobody measured, nor read low risk
-    res = _search(_Repo(fuzzy=True), _Embedder(), legs="lexical", abstain_threshold=0.45)
-    degraded = _search(_Repo(fuzzy=True), None, abstain_threshold=0.45)
-    for r in (res, degraded):
-        assert not r.abstain and r.retrieval_risk == "medium"
+def test_a_run_without_a_cosine_reads_medium_whatever_the_calibration() -> None:
+    # a vector leg the request skipped, or a deployment with no embedder: nobody measured
+    # a similarity, so the result neither abstains on one nor reads low risk
+    for threshold in (0.30, 0.45, 0.64):
+        skipped = _search(
+            _Repo(fuzzy=True), _Embedder(), legs="lexical", abstain_threshold=threshold
+        )
+        no_embedder = _search(_Repo(fuzzy=True), None, abstain_threshold=threshold)
+        for res in (skipped, no_embedder):
+            assert not res.abstain and res.abstain_code == ""
+            assert (res.retrieval_confidence, res.retrieval_risk) == (0.5, "medium")
+            assert res.top_similarity == 0.0, "the stand-in is not reported as a cosine"
+            assert res.calibration_explanation == "no vector leg, top_similarity unknown"
 
 
 # ---- track_path --------------------------------------------------------------

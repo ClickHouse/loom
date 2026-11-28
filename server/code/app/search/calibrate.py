@@ -16,25 +16,23 @@ def _calibrate(
     confident_similarity: float,
 ) -> bool:
     """Calibrate the result and decide abstention on what the two content legs
-    returned, before any prior reorders it; returns whether they found the same unit.
+    returned, before any prior reorders it; returns whether the two legs agreed.
 
     The lexical rows read here are the leg's own first rows (`st.lexical_head`), not
     the pool it cut on the path penalties: the penalties are priors, and no prior
     decides abstention."""
     result, constrained = st.result, st.constrained
-    vector_rows = st.vector_rows
-    agreement = _leg_agreement(st)
+    lexical_rows, vector_rows = st.lexical_head, st.vector_rows
     if vector_rows:
         top_sim = 1.0 - float(vector_rows[0]["distance"])
-        similarity = search_confidence.similarity_term(
+        confidence = search_confidence.similarity_term(
             top_sim,
             abstain_threshold=abstain_threshold,
             confident_similarity=confident_similarity,
         )
-        confidence = search_confidence.confidence(similarity, agreement)
         explanation = (
-            f"top_similarity={top_sim:.2f}, similarity={similarity:.2f}, "
-            f"leg_agreement={agreement:.2f}"
+            f"top_similarity={top_sim:.2f}, abstain_threshold={abstain_threshold:.2f}, "
+            f"confident_similarity={confident_similarity:.2f}"
         )
     else:
         # No cosine to read: the request skipped the vector leg, no embedder is
@@ -46,6 +44,11 @@ def _calibrate(
     # only a real cosine is reported; the stand-in is not one
     result.top_similarity = round(top_sim, 4) if vector_rows else 0.0
 
+    lex_ids = {str(r["chunk_id"]) for r in lexical_rows[:10]}
+    vec_ids = {str(r["chunk_id"]) for r in vector_rows[:10]}
+    both_legs = bool(lexical_rows) and bool(vector_rows)
+    legs_agree = both_legs and bool(lex_ids & vec_ids)
+
     risk = search_confidence.risk_band(
         confidence,
         abstain_below=float(settings.code_search_abstain_confidence_below),
@@ -55,7 +58,9 @@ def _calibrate(
     calibration = RetrievalCalibration(
         confidence=round(confidence, 3),
         risk="abstain" if top_sim < abstain_threshold else risk,
-        route_agreement=agreement,
+        route_agreement=route_agreement(
+            legs_agree=legs_agree, both_legs=both_legs, fuzzy_hit=st.fuzzy_hit
+        ),
         explanation=explanation + (", constrained=true" if constrained else ""),
     )
     result.retrieval_confidence = calibration.confidence
@@ -80,20 +85,14 @@ def _calibrate(
             else " (grep the working tree instead of trusting these)"
         )
 
-    return agreement == 1.0
+    return legs_agree
 
 
-def _leg_agreement(st: _SearchState) -> float:
-    """How far the lexical leg confirms the vector leg's first unit. A leg that did
-    not answer (skipped by the request, failed, dropped by the deadline, no embedder)
-    is neither a confirmation nor its absence; a lexical leg that answered with no row
-    confirms nothing."""
-    answered = (
-        st.run_lexical
-        and bool(st.vector_rows)
-        and not st.work.get("lexical_leg_failed")
-        and "lexical" not in st.result.legs_timed_out
-    )
-    if not answered:
-        return search_confidence.AGREEMENT_UNKNOWN
-    return search_confidence.leg_agreement(st.vector_rows, st.lexical_head)
+def route_agreement(*, legs_agree: bool, both_legs: bool, fuzzy_hit: bool) -> float:
+    """The share of the retrieval routes that ran and agreed: the primary hit, the two
+    content legs sharing a top-10 chunk, a fuzzy-symbol hit. Leg agreement is a route
+    only when both legs ran and returned rows, so a single-leg run (`legs="lexical"` or
+    `"vector"`, no embedder, a failed leg) is not scored as "the legs disagreed"."""
+    possible = 2 + int(both_legs)
+    votes = 1 + int(legs_agree and both_legs) + int(fuzzy_hit)
+    return round(votes / possible, 3)

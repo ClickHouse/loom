@@ -1765,13 +1765,14 @@ class CodeSettings(BaseModel):
     # question about another repository does.
     code_search_abstain_confidence_below: float = 0.15
     # The code.search confidence from which a result reads `retrieval_risk`
-    # "medium"; below it the result reads "high". A hit as similar as a confident
-    # one that the lexical leg does not confirm scores 0.40.
+    # "medium"; below it the result reads "high": most questions about another
+    # repository score under it.
     code_search_medium_risk_from: float = 0.35
     # The code.search confidence from which a result reads `retrieval_risk` "low":
-    # the lexical leg returns the vector leg's best unit, or its file with a
-    # confident cosine. The coding-agent plugins send their prompt pointers from it.
-    code_search_low_risk_from: float = 0.60
+    # the best cosine is close to that of a confident hit, above what a question about
+    # another repository scores. The coding-agent plugins send their prompt pointers
+    # from it.
+    code_search_low_risk_from: float = 0.70
     # The question kinds the hypothetical answer votes on.
     code_search_hyde_kinds: str = "responsibility"
     # Cap on the hypothetical-answer (HyDE) leg's candidate list, as a multiple of the

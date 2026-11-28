@@ -2135,14 +2135,15 @@ settings:
   # code_search_abstain_confidence_below: 0.15
 
   # The code.search confidence from which a result reads `retrieval_risk` "medium";
-  # below it the result reads "high". A hit as similar as a confident one that the
-  # lexical leg does not confirm scores 0.40. [restart]
+  # below it the result reads "high": most questions about another repository score
+  # under it. [restart]
   # code_search_medium_risk_from: 0.35
 
   # The code.search confidence from which a result reads `retrieval_risk` "low": the
-  # lexical leg returns the vector leg's best unit, or its file with a confident cosine.
-  # The coding-agent plugins send their prompt pointers from it. [restart]
-  # code_search_low_risk_from: 0.6
+  # best cosine is close to that of a confident hit, above what a question about another
+  # repository scores. The coding-agent plugins send their prompt pointers from it.
+  # [restart]
+  # code_search_low_risk_from: 0.7
 
   # The question kinds the hypothetical answer votes on. [restart]
   # code_search_hyde_kinds: "responsibility"
