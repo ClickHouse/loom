@@ -10,6 +10,7 @@ import {
   adoptionGrowthForRange,
   adoptionPaths,
   csvBody,
+  dailyActivityForRange,
   relativeChange,
   summarizeOss,
 } from "./adoption-view.mjs";
@@ -85,6 +86,21 @@ test("retains the cumulative baseline and sorts the selected growth periods", ()
     cumulative_active: 50,
   };
   assert.deepEqual(adoptionGrowthForRange([july], monthly, "2026-08-01"), [{ ...july, current: false }]);
+});
+
+test("finds actual daily account and process observations in the selected window", () => {
+  const first = { grain: "day", period: "2026-11-26", active_accounts: 0, serving_processes: null };
+  const measured = { grain: "day", period: "2026-11-27", active_accounts: 11, serving_processes: 35 };
+  const rows = [
+    { grain: "week", period: "2026-11-23", serving_processes: 90 },
+    { grain: "day", period: "2026-11-28", active_accounts: 15, serving_processes: 60 },
+    measured,
+    { grain: "day", period: "2026-11-25", serving_processes: 1 },
+    first,
+  ];
+  assert.deepEqual(dailyActivityForRange(rows, "active_accounts", "2026-11-26", "2026-11-28"), [first, measured]);
+  assert.deepEqual(dailyActivityForRange(rows, "serving_processes", "2026-11-26", "2026-11-28"), [measured]);
+  assert.deepEqual(dailyActivityForRange(rows, "serving_processes", "2026-11-26", "2026-11-27"), []);
 });
 
 test("projects only an in-progress period with every completed day represented", () => {
@@ -321,4 +337,18 @@ test("compares full annual SDK windows when historical daily rows are available"
   const [downloads] = summarizeOss([{ id: "npm", isDownload: true, history }], 365, "2027-01-01");
   assert.equal(downloads.days, 365);
   assert.equal(downloads.change, 0.5);
+});
+
+test("the stars CSV keeps the UTC snapshots separate from GitHub reporting days", () => {
+  const stars = {
+    id: "stars",
+    history: [
+      { day: "2026-11-23", value: 12, reconstructed: true },
+      { day: "2026-11-24", value: 14 },
+    ],
+  };
+  assert.deepEqual(adoptionCsv("stars", [], [], [stars]), [
+    ["day_utc", "github_stars"],
+    ["2026-11-24", 14],
+  ]);
 });

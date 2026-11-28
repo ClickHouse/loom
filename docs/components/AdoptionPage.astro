@@ -11,6 +11,7 @@ import type { readAdoptionPage } from "../lib/adoption-request.mjs";
 import {
   adoptionGrowthForRange,
   adoptionPaths,
+  dailyActivityForRange,
   daysBefore,
   periodOffset,
   thresholds,
@@ -59,13 +60,10 @@ const directoryFallback = ranked == null && requestedDirectoryDays === 30;
 const summary = selfHosted.totals?.find(
   ({ range_days, comparison }) => range_days === days && comparison === "current",
 );
-const latestAccounts = selfHosted.activity
-  .filter(
-    ({ grain, period, active_accounts }) =>
-      grain === "day" && period >= cutoff && period < today && Number.isFinite(active_accounts),
-  )
-  .sort((left, right) => right.period.localeCompare(left.period))
-  .at(0);
+const accountReports = dailyActivityForRange(selfHosted.activity, "active_accounts", cutoff, today);
+const firstAccounts = accountReports[0];
+const latestAccounts = accountReports.at(-1);
+const latestInstances = dailyActivityForRange(selfHosted.activity, "serving_processes", cutoff, today).at(-1);
 const overview = [
   {
     label: "Active domains",
@@ -83,11 +81,17 @@ const overview = [
     note: latestAccounts ? `Reported ${showDay(latestAccounts.period)} UTC` : "User data unavailable",
   },
   { label: "Active installations", value: summary?.active, note: "At least one successful request" },
+  {
+    label: "Active instances",
+    value: latestInstances?.serving_processes,
+    note: latestInstances ? `Reported ${showDay(latestInstances.period)} UTC` : "Instance data unavailable",
+  },
   { label: "Successful requests", value: summary?.operations, note: "Across all Loom features" },
 ];
 
 const growthMetrics = [
   { value: "installations", label: "Installations" },
+  { value: "instances", label: "Instances" },
   { value: "accounts", label: "Users" },
   { value: "requests", label: "Requests" },
 ] as const;
@@ -182,12 +186,10 @@ const sdkSeries = groupDailySeries(selectedSdk?.history ?? [], grain, { start: c
 const stars = oss.find(({ id }) => id === "stars");
 const starSeries = groupDailySeries(stars?.history ?? [], grain, {
   start: cutoff,
-  end: daysBefore(today, -1),
+  end: today,
   kind: "gauge",
-}).map((point) => ({
-  ...point,
-  current: point.current || (stars?.day === today && point.day === periodStart(today, grain)),
-}));
+  includeCurrent: true,
+});
 const distribution = oss.filter(({ id }) => id === "releases" || id === "pulls");
 const selectedDistribution =
   distribution.find(({ id }) => id === input("distribution")) ??
@@ -197,6 +199,7 @@ const distributionSeries = groupDailySeries(selectedDistribution?.history ?? [],
   start: cutoff,
   end: today,
   kind: "gauge",
+  includeCurrent: true,
 });
 const moreSdks = [
   ["Go SDK", "/docs/reference/go-sdk"],
@@ -284,7 +287,14 @@ const state = Object.fromEntries(
         </form>
         {selectedGrowth === "installations"
           ? <AdoptionGrowth rows={growth} {grain} rangeStart={cutoff} rangeEnd={lastDay} />
-          : <AdoptionActivity rows={events} {grain} view={selectedGrowth} rangeStart={cutoff} rangeEnd={lastDay} />}
+          : <AdoptionActivity
+              rows={events}
+              {grain}
+              view={selectedGrowth}
+              rangeStart={cutoff}
+              rangeEnd={lastDay}
+              firstAccountReport={firstAccounts && showDay(firstAccounts.period)}
+            />}
       </section>
 
       <AdoptionDomainDirectory
@@ -433,7 +443,8 @@ const state = Object.fromEntries(
       <section class="adoption-section" id="repository" aria-labelledby="repository-title">
         <div class="section-heading">
           <Title type="h2" size="lg" id="repository-title">GitHub stars</Title>
-          {starSeries.length > 0 && <AdoptionDownload {path} {state} dataset="stars" label="Export stars CSV" />}
+          {stars?.history.some(({ reconstructed }) => !reconstructed) &&
+            <AdoptionDownload {path} {state} dataset="stars" label="Export UTC totals CSV" />}
         </div>
         <Panel className="stars-chart" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
           <AdoptionTrend
@@ -441,11 +452,13 @@ const state = Object.fromEntries(
             rows={starSeries}
             {grain}
             mode="line"
-            fitObservedRange
             axisStart={periodStart(cutoff, grain)}
             axisEnd={periodStart(stars?.day === today ? today : lastDay, grain)}
             emptyMessage="Star history is unavailable for this window."
           />
+          {stars?.history.some(({ reconstructed }) => reconstructed) && (
+            <Text size="sm" color="muted">Earlier points use GitHub’s daily star counts and reporting calendar.</Text>
+          )}
         </Panel>
       </section>
 
@@ -472,7 +485,7 @@ const state = Object.fromEntries(
             {grain}
             kind="gauge"
             axisStart={cutoff}
-            axisEnd={lastDay}
+            axisEnd={selectedDistribution.day === today ? today : lastDay}
             observedLabel="Cumulative snapshot"
             growthLabel={"Net change per " + grain}
           />
@@ -501,7 +514,7 @@ const state = Object.fromEntries(
   .adoption-window { display: grid; gap: 0.2rem; text-align: end; }
   .overview { margin-block-end: clamp(1.35rem, 3vw, 2.25rem); }
   .metrics, .sdk-metrics, .two-column { display: grid; gap: 0.75rem; }
-  .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .sdk-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .counters, .two-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .two-column > :only-child { grid-column: 1 / -1; }
@@ -534,7 +547,10 @@ const state = Object.fromEntries(
   .sdk-list { display: flex; flex-wrap: wrap; gap: 0 1rem; list-style: none; padding: 0; margin-block: 0.65rem 0; }
   .sdk-list :global(a) { display: inline-flex; align-items: center; min-block-size: 2.75rem; }
   .adoption-cta { margin-block-start: clamp(1.4rem, 3vw, 2.75rem); }
-  @media (max-width: 60rem) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 60rem) {
+    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .metrics > :last-child { grid-column: 1 / -1; }
+  }
   @media (max-width: 43rem) { .two-column, .sdk-metrics { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 38rem) { .adoption-window { text-align: start; } }
   @media (max-width: 26rem) {
