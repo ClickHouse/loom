@@ -120,7 +120,7 @@ class MemoryForFileOutput(BaseModel):
     hits: list[_MemoryForFileHit]
     # Prompt-ready block: decisions and constraints whole, the other rows cut at token_budget.
     # A row that names code says on its line its code state, the commit its link was
-    # anchored at and the day it was last written, and one sentence after the header says
+    # anchored at and the day it was first written, and one sentence after the header says
     # what was compared: no code for an unlinked row, the repository as indexed for the
     # others, never the caller's checkout. Empty when total == 0.
     rendered: str = ""

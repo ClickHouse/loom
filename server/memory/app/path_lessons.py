@@ -30,6 +30,7 @@ from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
 from server.memory.domain import code_change
 from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
+from server.memory.domain.files import names_file
 from server.memory.domain.lemmatize import snowball_stem_tokens
 from server.memory.domain.recall import query_tokens
 from server.memory.store import code_links
@@ -71,7 +72,7 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
     if excerpt is None:
         return None
     state = str(hit.get("code_state") or "")
-    if not state and code_change.names_file(excerpt):
+    if not state and names_file(excerpt):
         state = code_change.UNLINKED  # it says where code is, with no comparison to show
     lesson: dict[str, Any] = {
         "path": path,
@@ -82,7 +83,7 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
     }
     if hit.get("code_rev"):
         lesson["rev"] = str(hit["code_rev"])[:12]
-    if state and isinstance(written := hit.get("updated_at"), datetime):
+    if state and isinstance(written := hit.get("created_at"), datetime):
         lesson["written"] = written.date().isoformat()
     if hit.get("code_changed_since"):
         lesson["changed_since"] = str(hit["code_changed_since"])
@@ -293,7 +294,7 @@ async def lessons_for_paths(
     what the memory was written against), `unlinked` for a row with no link whose text
     names a file by its path, '' for one that names the file only in `files`; `rev`, the
     first 12 characters of the commit that link was anchored at, for a linked row;
-    `written`, the day a row with a code state was last written;
+    `written`, the day a row with a code state was first written;
     `changed_since`, the commit that put its code in a `changed`, `unresolved` or `missing`
     state, when one is known; `code_moved`, its links to code in the file that is now at
     another path or symbol than the row was written against, when there are any; and

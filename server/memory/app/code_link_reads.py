@@ -17,6 +17,7 @@ from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import configured_repos
 from server.memory.api.models_crud import CodeLink
 from server.memory.domain import code_change
+from server.memory.domain.files import names_file
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
@@ -295,13 +296,13 @@ async def _annotation_reads(
 
 def unlinked(hit: Any) -> bool:
     """The hit was read from a memory's own row, shows no link state and its text names a
-    file (`code_change.names_file`): the read has no comparison with code to show for
+    file (`files.names_file`): the read has no comparison with code to show for
     it. A link it holds is pending or in a repository the caller may not read."""
-    if hit.code_state or getattr(hit, "_row_identity", None) is None:
+    if getattr(hit, "code_state", "") or getattr(hit, "_row_identity", None) is None:
         return False
     row = getattr(hit, "row", None)  # a listed row (the startup recall), not a search hit
     text = getattr(hit, "content_excerpt", None) if row is None else row.value
-    return code_change.names_file(str(text or ""))
+    return names_file(str(text or ""))
 
 
 async def annotate_hits(input: Any, hits: list[Any]) -> None:
@@ -313,11 +314,14 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
     memory was written against (`relocated`; the links themselves on `_code_links`),
     mark for a lower rank (`_code_ranked_down`) the hits whose code changed or went,
     and drop, in place, the hits about code that is gone (`code_change.hidden`). When
-    the links cannot be read no hit is annotated."""
+    the links cannot be read a hit gets the `unlinked` label alone, which needs no link."""
     try:
         memories, seen, policies = await _annotation_reads(input, hits)
     except Exception as e:  # noqa: BLE001 — the links are additive to the read
         log.debug("code links unavailable: %s", e)
+        for h in hits:
+            if unlinked(h):
+                h.code_state = code_change.UNLINKED
         return
     kept = []
     for h, m in zip(hits, memories, strict=True):

@@ -208,6 +208,11 @@ def test_section_says_check_for_a_row_whose_rejected_option_the_diff_adds() -> N
     assert spill["names"] == ["DB::SpillingHashSet"] and spill["pinned"] is True
     assert spill["code_state"] == "changed" and spill["line"].startswith("- design/spill")
     assert sec["rows_total"] == 3 and not sec["truncated"] and sec["causes"] == []
+    # a row with a code state: the section says once what that state was compared with
+    assert (
+        sec["note"] == "code_state and rev describe the repository as indexed, not your checkout."
+    )
+    assert "note" not in _section(rows[1:], DIFF)
 
 
 def test_section_without_a_diff_is_unknown_and_without_rows_none() -> None:
@@ -261,10 +266,14 @@ def test_section_keeps_whole_rows_within_its_budget_and_the_verdict_reads_every_
     assert sec["verdict"] == "check" and sec["causes"] == ["diff_cut"]
 
 
-def _listing(for_file_stub: Any, since: dict[tuple[str, str], str] | None = None) -> Any:
+def _listing(
+    for_file_stub: Any,
+    since: dict[tuple[str, str], str] | None = None,
+    rev: dict[tuple[str, str], str] | None = None,
+) -> Any:
     """A `listing_rows` over a stub of the memory.for_file handler: its hits as dicts with
-    a memory_id (the writer and key) and the commit `since` names for (path, key), the
-    code-links read not skipped."""
+    a memory_id (the writer and key), the commit `since` names for (path, key) and the
+    anchor commit `rev` names for it, the code-links read not skipped."""
 
     async def _rows(inp: Any, *, whole_only: bool = False) -> tuple[list[dict[str, Any]], bool]:
         assert whole_only  # decisions and constraints only, typed or tagged
@@ -274,6 +283,7 @@ def _listing(for_file_stub: Any, since: dict[tuple[str, str], str] | None = None
             | {
                 "memory_id": f"{h.agent}/{h.memory_key}",
                 "code_changed_since": (since or {}).get((inp.path, h.memory_key), ""),
+                "code_rev": (rev or {}).get((inp.path, h.memory_key), ""),
             }
             for h in out.hits
         ]
@@ -339,7 +349,8 @@ async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constrain
 
     monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
     since = {("src/b.cpp", "design/a"): "c1"}
-    monkeypatch.setattr(for_file, "listing_rows", _listing(_for_file, since))
+    rev = {("src/a.cpp", "design/a"): "a0", ("src/b.cpp", "design/a"): "b1"}
+    monkeypatch.setattr(for_file, "listing_rows", _listing(_for_file, since, rev))
     rows, left, full, _, _ = await code_plane_reads.decisions_for_paths(
         "acme", "code-widgets", ["src/a.cpp", "src/b.cpp", "src/a.cpp"], limit=5
     )
@@ -347,7 +358,9 @@ async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constrain
     assert [r["memory_key"] for r in rows] == ["design/rule", "design/a"]
     assert rows[1]["code_state"] == "changed"  # worst over both paths
     assert rows[1]["code_changed_since"] == "c1"  # and the commit of that path's state
+    assert rows[1]["code_rev"] == "b1"  # and the anchor of that path's link, not the first's
     assert "commit c1" in rows[1]["line"]  # which the brief's line names
+    assert "(code_state=changed rev=b1)" in rows[1]["line"]
     assert rows[1]["text"] == "Decided design/a."
     assert rows[1]["line"].startswith("- design/a [decision]")
     assert "(its code changed" in rows[1]["line"]

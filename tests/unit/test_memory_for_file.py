@@ -43,6 +43,8 @@ def _row(key: str, value: str, **over: Any) -> dict[str, Any]:
         "status": "active",
         "agent": "claude-code",
         "updated_at": datetime(2026, 9, 11, 12, 0),
+        # its first write: the day a line prints beside a code state
+        "created_at": datetime(2026, 3, 2, 9, 0),
         "matched_files": ["src/a.cpp"],
     }
     base.update(over)
@@ -822,7 +824,7 @@ def test_an_unpinned_decision_whose_code_changed_notes_only_the_code() -> None:
     said, line = _lines([_decision("design/c", pinned=False, code_state="changed")])[1:3]
     assert said == _INDEXED
     assert line.startswith(
-        "- Decision (by alice, 3 days ago) (code_state=changed written=2026-09-22) (its code"
+        "- Decision (by alice, 3 days ago) (code_state=changed written=2026-03-02) (its code"
         " changed since it was written: check before relying on it): Decided X because Y."
     )
 
@@ -830,7 +832,7 @@ def test_an_unpinned_decision_whose_code_changed_notes_only_the_code() -> None:
 def test_a_note_names_the_commit_its_code_changed_at() -> None:
     hit = _decision("design/c", pinned=False, code_state="changed", code_changed_since="ab" * 20)
     assert _lines([hit])[2].startswith(
-        "- Decision (by alice, 3 days ago) (code_state=changed written=2026-09-22) (its code"
+        "- Decision (by alice, 3 days ago) (code_state=changed written=2026-03-02) (its code"
         " changed since it was written, commit abababababab: check before relying on it):"
         " Decided X because Y."
     )
@@ -863,10 +865,10 @@ def test_a_line_whose_code_moved_names_where_it_is_now() -> None:
     plain = _row("rules/plain", json.dumps("Keep 64."), code_state="moved", code_moved=[])
     assert _lines([moved, edited, plain])[1:] == [
         _INDEXED,
-        f"- rules/moved (code_state=moved written=2026-09-11) (code moved: {_MOVED_NOW}): Keep 32.",
-        "- rules/edited (code_state=changed written=2026-09-11) (its code changed since it was"
+        f"- rules/moved (code_state=moved written=2026-03-02) (code moved: {_MOVED_NOW}): Keep 32.",
+        "- rules/edited (code_state=changed written=2026-03-02) (its code changed since it was"
         f" written, commit abababababab: check before relying on it; {_MOVED_NOW}): Keep 48.",
-        "- rules/plain (code_state=moved written=2026-09-11): Keep 64.",
+        "- rules/plain (code_state=moved written=2026-03-02): Keep 64.",
     ]
 
 
@@ -881,8 +883,8 @@ def test_a_row_that_names_code_says_its_state_revision_and_write_day() -> None:
     assert (past["code_state"], rule.get("code_state")) == ("unlinked", None)
     assert _lines([fresh, past, rule])[1:] == [
         code_change.compared(["fresh", "unlinked"]),
-        f"- rules/fresh (code_state=fresh rev=ba5eba5eba5e written=2026-09-11): {cited}",
-        f"- notes/past (code_state=unlinked written=2026-09-11): {cited}",
+        f"- rules/fresh (code_state=fresh rev=ba5eba5eba5e written=2026-03-02): {cited}",
+        f"- notes/past (code_state=unlinked written=2026-03-02): {cited}",
         "- rules/plain: Keep 64.",
     ]
     # each clause is about a row the block prints
@@ -897,6 +899,21 @@ def test_the_sentence_is_inside_the_budget_and_goes_with_the_row_it_is_about() -
     text, tokens, truncated = mff.render_block("src/a.cpp", [*long, past], 110, home="me", now=_NOW)
     assert truncated and tokens <= 110 and len(text) <= 110 * mff.CHARS_PER_TOKEN
     assert "notes/past" not in text and code_change.NOT_COMPARED not in text
+
+
+def test_a_row_left_out_takes_its_sentence_with_it() -> None:
+    """The row that prints with the sentence pays for it: a block that leaves its only
+    unlinked row out has the whole budget for its other rows."""
+    plain = [_row(f"notes/n{i}", json.dumps("n" * 100)) for i in range(2)]
+    past = _row("notes/past", json.dumps("p" * 200 + " src/a.cpp"), code_state="unlinked")
+    both, _, _ = mff.render_block("src/a.cpp", plain, 10_000, home="me", now=_NOW)
+    # room for the two plain rows and the "… more" line, to the character
+    more = mff._more_line("src/a.cpp", 1)
+    budget = (len(both) + 1 + len(more)) // mff.CHARS_PER_TOKEN + 1
+    hits = [plain[0], past, plain[1]]
+    text, tokens, truncated = mff.render_block("src/a.cpp", hits, budget, home="me", now=_NOW)
+    assert text.splitlines()[1:] == [*both.splitlines()[1:], more]
+    assert truncated and tokens <= budget and code_change.NOT_COMPARED not in text
 
 
 def test_a_moved_note_counts_against_the_token_budget() -> None:
@@ -977,7 +994,7 @@ async def test_the_block_and_the_hit_name_moved_code_only_from_current_readable_
     if case == "current":
         assert [m.model_dump(exclude_defaults=True) for m in hit.code_moved] == [_MOVED]
         assert (
-            f"- rules/moved (code_state=moved written=2026-09-11) (code moved: {_MOVED_NOW}):"
+            f"- rules/moved (code_state=moved written=2026-03-02) (code moved: {_MOVED_NOW}):"
             " Keep 32."
         ) in out.rendered
         rows, _ = await mff.listing_rows(request)

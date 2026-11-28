@@ -134,7 +134,7 @@ async def test_a_linked_memory_is_read_by_its_identity_while_it_holds_the_linked
     ]
     served = await code_plane_reads.served_excerpts("o", ["n"], linked, limit=3, ch=ch)
     assert [(r["memory_key"], r["excerpt"]) for r in served] == [("k1", "text of k1")]
-    assert served[0]["updated_at"]  # when it was last written, for the lesson's `written`
+    assert served[0]["created_at"]  # when it was first written, for the lesson's `written`
 
 
 async def test_no_memory_named_reads_nothing() -> None:

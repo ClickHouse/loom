@@ -1124,9 +1124,9 @@ async def _startup_lines(monkeypatch, served, *, pinned=(), recent=(), top_k=2) 
         h["mid"]: SimpleNamespace(
             **h,
             confidence=1.0,
-            valid_at=None,
-            created_at=datetime(2026, 1, 1),
-            updated_at=datetime(2026, 1, 9),  # its last write
+            valid_at=datetime(2026, 1, 1),  # what the text is about
+            created_at=datetime(2026, 1, 9),  # its first write
+            updated_at=datetime(2026, 2, 3),  # an unpin or a lock since
         )
         for h in served.heads
     }
@@ -1201,7 +1201,8 @@ async def test_a_startup_pack_names_where_a_memorys_moved_code_is_now(served, mo
     lines = await _startup_lines(monkeypatch, served, recent=["m", "edited", "other"], top_k=3)
     by_key = {ln.split()[1]: ln.split("] ", 1) for ln in lines}
     label, text = by_key["[memory:agent-a/m"]
-    # the day beside the state is the row's last write, the `date=` label its first
+    # the day beside the state is the row's first write, which no later unpin or lock
+    # moves; the `date=` label is the day the text is about
     assert label.endswith(" date=2026-01-01 code_state=moved written=2026-01-09")
     assert text == f"(code moved: {_NOW}) claim"
     label, text = by_key["[memory:agent-a/edited"]

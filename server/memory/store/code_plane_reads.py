@@ -24,7 +24,7 @@ async def served_excerpts(
     """The best `limit` served rows of `namespaces` among `memories` (live, unexpired,
     not `high`), each read by its identity, the table's sort key, and kept only while
     that identity still holds its memory_id; with the complete value as text (a JSON
-    string value decoded) and when it was last written, for a code read's lessons. Best
+    string value decoded) and when it was first written, for a code read's lessons. Best
     is a memory not in `changed` (its code still matches), then pinned, then the most
     confident: a file with many linked memories reads no more excerpts than the answer
     serves. Each slice of `memories` keeps its own `limit`, so the caller ranks and cuts
@@ -36,7 +36,7 @@ async def served_excerpts(
         """
         SELECT toString(memory_id) AS mid, memory_key, namespace,
                if(startsWith(value, '"'), JSONExtractString(value), value) AS excerpt,
-               pinned, confidence, updated_at
+               pinned, confidence, created_at
         FROM loom.memory FINAL
         WHERE org = {org:String} AND namespace IN {nss:Array(String)}
           AND (namespace, agent, user_id, session_id, memory_key, memory_id)

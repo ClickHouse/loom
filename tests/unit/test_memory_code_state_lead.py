@@ -11,8 +11,9 @@ from typing import Any, get_args
 import pytest
 
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
-from server.memory.app import code_link_reads, path_lessons, search_pages
-from server.memory.domain import code_change
+from server.memory.app import code_link_reads, for_file, path_lessons, search_pages
+from server.memory.domain import code_change, files
+from server.memory.store import rows
 
 # a record of a past fix as an agent wrote it: a line beside the file, a line phrase and
 # the change as diff text
@@ -69,9 +70,13 @@ def test_a_reply_says_once_what_was_compared_for_the_states_it_serves() -> None:
 
 
 def test_a_text_names_a_file_by_a_path_with_a_directory() -> None:
-    assert code_change.names_file("the cause is in src/core/print_helpers.py:8")
+    assert files.names_file("the cause is in src/core/print_helpers.py:8")
     for text in ("saved as notes.txt", "see README.md", "https://example.com/a/b.py", "and/or"):
-        assert not code_change.names_file(text)
+        assert not files.names_file(text)
+    # the one pattern answers as the whole detector does
+    for text in (_RECORD, "./a.py", "././src/a.py:12", "www.example.com/docs/index.html", "v1/2"):
+        whole = any("/" in name for name in files.detect_value_files(text))
+        assert files.names_file(text) is whole
 
 
 def test_the_revision_is_the_anchor_of_the_first_link_in_the_worst_state() -> None:
@@ -118,6 +123,67 @@ async def test_a_hit_whose_text_names_a_file_and_holds_no_link_is_unlinked(
     assert [h.code_rev for h in hits] == [""] * 4
     assert not any(h._code_ranked_down for h in hits)
     assert hits[0].content_excerpt == _RECORD
+
+
+@pytest.mark.asyncio
+async def test_a_search_whose_links_cannot_be_read_still_labels_a_hit_unlinked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The label needs no link: page one of a search says what its later pages say."""
+
+    async def unreadable(input: Any, hits: list[Any]) -> Any:
+        raise RuntimeError("no link store")
+
+    monkeypatch.setattr(code_link_reads, "_annotation_reads", unreadable)
+    hits = [_hit("past_fix", _RECORD), _hit("chunk", _RECORD, row=False), _hit("plain_fact")]
+    search = MemorySearchInput(org="o", namespace="agent-a", agent="a", query="q")
+    await code_link_reads.annotate_hits(search, hits)
+    assert [(h.memory_key, h.code_state) for h in hits] == [
+        ("past_fix", "unlinked"),
+        ("chunk", ""),
+        ("plain_fact", ""),
+    ]
+    # nothing else is annotated: a later read of the links still knows they were not read
+    assert all(h._code_links is None and not h._code_ranked_down for h in hits)
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        {"pinned": False},  # memory.unpin
+        {"lock_mode": "value", "lock_reason": "reviewed"},  # memory.lock
+        {"lock_mode": "", "lock_reason": ""},  # memory.unlock
+    ],
+)
+def test_a_write_that_leaves_the_text_alone_does_not_move_the_printed_day(
+    write: dict[str, Any],
+) -> None:
+    """An unpin, a lock and an unlock stamp `updated_at` and carry `created_at`: the day
+    beside the state stays the first write's."""
+    first = datetime(2026, 3, 2, 10, 0)
+    said = "Keep 32 buckets (src/a.cpp:8)."
+    head = rows.MemoryRow.from_snapshot(
+        {
+            "org": "o",
+            "namespace": "team",
+            "agent": "a",
+            "memory_key": "rules/buckets",
+            "memory_type": "semantic",
+            "value": json.dumps(said),
+            "pinned": True,
+            "created_at": first,
+            "updated_at": first,
+        }
+    )
+    row = rows.build_memory_version_row(head, version=2, updated_at=rows.written_now(), **write)
+    assert row["updated_at"] != first and row["value"] == json.dumps(said)
+    hit = row | {"code_state": "unlinked"}
+    assert for_file.listing_line(hit) == (
+        f"- rules/buckets{' (pinned)' if row['pinned'] else ''}"
+        f" (code_state=unlinked written=2026-03-02): {said}"
+    )
+    lesson = path_lessons._lesson(hit, "src/a.cpp")
+    assert lesson is not None and lesson["written"] == "2026-03-02"
 
 
 def test_the_output_says_what_was_compared_for_the_hits_it_was_built_with() -> None:
@@ -167,7 +233,7 @@ def test_a_parked_page_holds_link_states_only_and_its_reader_labels_the_hit_agai
 def test_a_lesson_that_names_code_carries_its_state_revision_and_write_day() -> None:
     def row(key: str, text: str, **code: Any) -> dict[str, Any]:
         written = datetime(2026, 3, 2, 10, 0)
-        hit = {"memory_key": key, "namespace": "team", "value": f'"{text}"', "updated_at": written}
+        hit = {"memory_key": key, "namespace": "team", "value": f'"{text}"', "created_at": written}
         return hit | code
 
     said = "Keep 32 buckets (src/a.cpp:8)."

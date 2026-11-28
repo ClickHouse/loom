@@ -440,7 +440,8 @@ async def _pack_startup_recall(st: _PackState) -> None:
             author=author_label([getattr(r, "actor", "")]),
             code_state=_code_label(h),
             code_rev=str(getattr(h, "code_rev", "") or ""),
-            code_written=_written(r),
+            # first written: a pin, a lock or a restore moves `updated_at`, never this
+            code_written=r.created_at.isoformat() if r.created_at else "",
         )
         for h in hits
         for r in [h.row]
@@ -523,13 +524,6 @@ def _code_label(hit: Any) -> str:
     there (`code_change.label`), the state alone otherwise; '' when it names no code."""
     state, commit = _code_state_and_commit(hit)
     return code_change.label(state, commit) or state
-
-
-def _written(row: Any) -> str:
-    """When a listed row was last written: its `updated_at`, or `created_at` for a row
-    never written again."""
-    written = getattr(row, "updated_at", None) or row.created_at
-    return written.isoformat() if written else ""
 
 
 def _code_state_and_commit(hit: Any) -> tuple[str, str]:

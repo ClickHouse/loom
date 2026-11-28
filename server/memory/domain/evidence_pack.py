@@ -113,9 +113,6 @@ def pack_evidence(
     citations: list[str] = []
     groups: list[str] = []
     truncated = False
-    # room for the sentence is kept whenever a candidate would need it
-    compared = code_change.compared(_state(item) for item in ordered)
-    room = char_budget - (len(compared) + 1 if compared else 0)
     served: list[str] = []
     for item in ordered:
         group = item.group or item.source or "fact"
@@ -126,8 +123,9 @@ def pack_evidence(
         code += f" written={item.code_written[:10]}" if code and item.code_written else ""
         labels = f"source={item.source}{item.author}{_derived(item)}{date}{marker}{code}"
         line = one_item(f"- [{label_part(item.citation)} {labels}] {item.text}")
-        tentative = "\n".join([*lines, line])
-        if len(tentative) > room:
+        # the line fits with the sentence the list then opens with
+        said = code_change.compared([*served, _state(item)])
+        if len("\n".join([*lines, line])) + (len(said) + 1 if said else 0) > char_budget:
             truncated = True
             break
         lines.append(line)

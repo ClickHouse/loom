@@ -77,7 +77,7 @@ class _LessonsOut(BaseModel):
     # memory was written against; `unlinked` for a row with no link whose text names a
     # file by its path, which the read has no comparison for; '' for a row that names the
     # file only in `files`. `rev` is the first 12 characters of the commit that link was
-    # anchored at, `written` the day a row with a code state was last written. Both
+    # anchored at, `written` the day a row with a code state was first written. Both
     # describe the repository as indexed, not the caller's checkout. `changed_since` is
     # the commit that put its code in a `changed`, `unresolved` or `missing` state, when
     # known; `code_moved` lists its links to code in the file that is now at another path

@@ -600,7 +600,7 @@ The links are read where the code is:
   root that it ends in), each with its `code_state`, within `code_result_lessons_tokens`. Each
   row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `rev` (the first 12
   characters of the commit its link was anchored at) for a linked row, `written` (the day it
-  was last written) for a row with a code state, `changed_since` (the
+  was first written) for a row with a code state, `changed_since` (the
   commit that put its code in a changed, unresolved or missing state) when one is known, and
   `supersedes_key` when it replaces an older row, and `code_moved` (its links to code in the
   file that is now at another path or symbol than it was written against) when there are
@@ -642,6 +642,12 @@ The links are read where the code is:
 - Each of those reads says of a memory that names code which state it is in, the commit
   its link was anchored at (`code_rev` on a search hit, `rev` on a line or a lesson) and
   the day it was written (`created_at` on a search hit, `written` on a line or a lesson).
+  That day is the `created_at` of the row the read serves, never its `updated_at`: an
+  unpin, a lock, an unlock or a label does not move it. On `memory.for_file`, a lesson and
+  the startup recall it is the memory's first write. On a search hit it is the search
+  document's, which a write of the text (`memory.set`, `memory.update_by_id`) and
+  `memory.restore` stamp again, so a search shows a later day than `memory.for_file` for
+  a memory whose text was written again or restored.
   The commit is the repository's indexed head when the link was made or last re-anchored;
   for a link made after its memory that is a later commit than the writer worked at.
   A search hit read from a memory's own row that shows no link state, and whose text
@@ -655,8 +661,10 @@ The links are read where the code is:
   for an `unlinked` memory, and for every other state the repository as Loom indexed
   it, which is not the caller's checkout. That sentence is `code_note` on
   `memory.search`, the first line of a reader block, of a `context.pack` block and of
-  `loom_search`'s plain lines, and the line after the header of a `memory.for_file`
-  block.
+  `loom_search`'s plain lines, the line after the header of a `memory.for_file`
+  block, and the `note` of a review brief's `rationale` section, whose rows carry the
+  `memory.for_file` line. A block takes the sentence's room from the budget of the row
+  that prints with it, so a row left out takes its part of the sentence with it.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read, and the edits that bring a memory's
   text up to a rename its link followed.

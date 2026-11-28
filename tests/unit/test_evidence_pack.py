@@ -45,3 +45,20 @@ def test_pack_evidence_limits_each_group_before_overflow() -> None:
     second_a = packed.rendered.find("[a2")
     assert first_b != -1 and second_a != -1
     assert first_b < second_a
+
+
+def test_a_line_left_out_takes_its_sentence_with_it() -> None:
+    """Room for what was compared is taken with the line it is about: a list that leaves
+    its only unlinked line out has the whole budget for its other lines."""
+    plain = [
+        EvidenceItem(citation=f"memory:ns/{key}", text=key * 40, score=score)
+        for key, score in (("a", 3.0), ("b", 2.0))
+    ]
+    past = EvidenceItem(citation="memory:ns/c", text="c" * 40, score=1.0, code_state="unlinked")
+    both = pack_evidence(plain, char_budget=10_000).rendered
+    packed = pack_evidence([*plain, past], char_budget=len(both))
+    assert packed.rendered == both and packed.truncated
+    # with room for the line and its sentence the list opens with it
+    whole = pack_evidence([*plain, past], char_budget=10_000).rendered.splitlines()
+    assert whole[0] == "Loom shows no code comparison for memories marked unlinked."
+    assert len(whole) == 4
