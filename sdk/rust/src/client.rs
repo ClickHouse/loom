@@ -211,7 +211,10 @@ impl Client {
     /// Call any dotted wire operation, decoding its response as `T`.
     ///
     /// Known operations use generated identity and retry policies. Unknown operations
-    /// receive bound org/namespace and retry only failures before connection.
+    /// receive the client's org and namespace and are treated as non-idempotent.
+    /// They can retry connection failures and responses that show the handler did
+    /// not run (HTTP 408 or `AUTH_UNAVAILABLE`), subject to the retry policy.
+    /// HTTP 429 uses the client's separate pacing budget.
     pub async fn call<T: DeserializeOwned>(
         &self,
         op: &str,
@@ -346,7 +349,8 @@ impl Client {
                     }
                     let mut error = ApiError::from_response(status.as_u16(), &headers, &bytes);
                     error.request_id.get_or_insert_with(|| request_id.clone());
-                    if status.as_u16() == 429 && self.pacing && idempotent {
+                    // The server answers a 429 before running any operation.
+                    if status.as_u16() == 429 && self.pacing {
                         let delay = pacing_delay(
                             error.retry_after_s,
                             self.ratelimit_max_wait.saturating_sub(paced),
@@ -360,7 +364,9 @@ impl Client {
                             continue;
                         }
                     }
-                    let allowed = idempotent
+                    // A status retry runs the operation again. Only a declared
+                    // idempotent one is safe, unless the answer proves nothing ran.
+                    let allowed = (idempotent || error.handler_never_ran())
                         && status.as_u16() != 429
                         && retry.statuses.contains(&status.as_u16())
                         && !error.forbids_retry();
@@ -380,6 +386,10 @@ impl Client {
                     .is_some_and(|budget| delay > budget.saturating_sub(slept))
             {
                 log::error!(target: "clickhouse_loom", "{op} failed status={status} elapsed_ms={} attempts={sent} rid={request_id}", started.elapsed().as_millis());
+                let mut error = error;
+                if let Error::Api(api) = &mut error {
+                    api.mark_maybe_applied(idempotent);
+                }
                 return Err(CallFailure {
                     error,
                     metadata: Some(Box::new(metadata)),
@@ -576,13 +586,12 @@ fn valid_operation(op: &str) -> bool {
 }
 
 pub(crate) fn pacing_delay(hint: Option<f64>, budget: Duration) -> Duration {
-    let hint = hint
-        .filter(|s| s.is_finite() && *s <= 60.0)
-        .unwrap_or(1.0)
-        .max(0.0);
-    Duration::from_secs_f64(hint)
-        .min(Duration::from_secs(5))
-        .min(budget)
+    let seconds = hint.filter(|s| s.is_finite()).unwrap_or(1.0).max(0.0);
+    // A shorter wait would resend before the server asked us to.
+    Duration::try_from_secs_f64(seconds)
+        .ok()
+        .filter(|delay| *delay <= budget)
+        .unwrap_or_default()
 }
 
 fn env_value(name: &str) -> Option<String> {
@@ -655,16 +664,19 @@ mod tests {
     }
 
     #[test]
-    fn pacing_caps_hints_and_budget_and_does_not_spin_on_zero() {
+    fn pacing_waits_for_the_hint_only_when_it_fits() {
         for (hint, budget, expected) in [
             (None, 15, 1),
-            (Some(61.0), 15, 1),
-            (Some(60.0), 15, 5),
-            (Some(30.0), 2, 2),
+            (None, 0, 0),
+            (Some(61.0), 15, 0),
+            (Some(60.0), 60, 60),
+            (Some(8.0), 15, 8),
+            (Some(30.0), 2, 0),
             (Some(0.0), 15, 0),
             (Some(1.0), 0, 0),
             (Some(-1.0), 15, 0),
             (Some(f64::NAN), 15, 1),
+            (Some(f64::MAX), 15, 0),
         ] {
             assert_eq!(
                 pacing_delay(hint, Duration::from_secs(budget)),
