@@ -7,15 +7,18 @@ writes and the name rule, with documents written as the sync worker and as a cal
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
 import pytest
 
+from tests.integration._eventually import overrides_adopted
 from tests.integration._resources import unique_org
 from tests.integration._sources import CONFIG, NAME, seed_source
 
@@ -205,6 +208,58 @@ def test_a_source_on_a_plain_namespace_serves_check_and_sync_now(
     assert _post(control_plane_url, "knowledge.source.inspect", named).status_code == 200
     removed = _post(control_plane_url, "knowledge.source.remove", {**named, "confirm": NAME})
     assert removed.status_code == 200, removed.text
+
+
+@pytest.fixture
+def self_service_off(control_plane_url: str) -> Iterator[None]:
+    """Self-service document sources off through a runtime override, cleared after."""
+    tok = os.environ.get("LOOM_API_KEY")
+    headers = {"Authorization": f"Bearer {tok}"} if tok else {}
+
+    def _set(body: dict[str, Any]) -> None:
+        r = httpx.post(
+            f"{control_plane_url}/v1/admin/settings.set",
+            json={"name": "knowledge_source_self_service_enabled", **body},
+            headers=headers,
+            timeout=10.0,
+        )
+        assert r.status_code == 200, r.text
+        asyncio.run(overrides_adopted())
+
+    _set({"value": False})
+    try:
+        yield
+    finally:
+        _set({"clear": True})
+
+
+def test_the_list_says_self_service_is_on_by_default(
+    control_plane_url: str, plain_source: Any
+) -> None:
+    org, ns = plain_source
+    listed = _post(control_plane_url, "knowledge.source.list", {"org": org, "namespace": ns})
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["self_service"] is True
+
+
+def test_self_service_off_refuses_add_and_rotate_and_keeps_the_reads(
+    control_plane_url: str, plain_source: Any, self_service_off: None
+) -> None:
+    org, ns = plain_source
+    named = {"org": org, "namespace": ns, "name": NAME}
+    add = {**named, "name": "other", "kind": "gdrive", "config": CONFIG, "credential": "{}"}
+    for op, body in (
+        ("knowledge.source.add", add),
+        ("knowledge.source.rotate", {**named, "credential": "{}"}),
+    ):
+        out = _post(control_plane_url, op, body)
+        assert out.status_code == 422, (op, out.text)
+        assert out.json()["detail"]["code"] == "SELF_SERVICE_OFF", (op, out.text)
+    listed = _post(control_plane_url, "knowledge.source.list", {"org": org, "namespace": ns})
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["self_service"] is False
+    assert [s["name"] for s in listed.json()["sources"]] == [NAME]
+    assert _post(control_plane_url, "knowledge.source.inspect", named).status_code == 200
 
 
 def test_add_takes_a_namespace_that_is_not_a_repository(control_plane_url: str) -> None:
