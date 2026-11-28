@@ -211,7 +211,10 @@ impl Client {
     /// Call any dotted wire operation, decoding its response as `T`.
     ///
     /// Known operations use generated identity and retry policies. Unknown operations
-    /// receive bound org/namespace and retry only failures before connection.
+    /// receive the client's org and namespace and are treated as non-idempotent.
+    /// They can retry connection failures and responses that show the handler did
+    /// not run (HTTP 408 or `AUTH_UNAVAILABLE`), subject to the retry policy.
+    /// HTTP 429 uses the client's separate pacing budget.
     pub async fn call<T: DeserializeOwned>(
         &self,
         op: &str,
