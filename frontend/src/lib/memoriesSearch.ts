@@ -35,7 +35,7 @@ export async function* listPages(
 ): AsyncGenerator<MemoryListResponse & { done: boolean }> {
   for (let offset = 0, n = 0; n < MAX_PAGES && !opts.signal.aborted; n++) {
     const page = await listMemories(id, limit, { ...opts, offset });
-    const read = page.rows_read ?? page.entries.length;
+    const read = page.rows_read || page.entries.length;
     offset += read;
     yield { ...page, done: !read || offset >= page.total };
     if (!read || offset >= page.total) return;

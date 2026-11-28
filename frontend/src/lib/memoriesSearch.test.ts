@@ -65,6 +65,16 @@ describe("resolveSearchWriter under a narrowed token", () => {
     expect(vi.mocked(listMemories).mock.calls.map((c) => c[2]?.offset)).toEqual([0, 1]);
   });
 
+  it("advances by the entries when the server reports no rows read", async () => {
+    vi.mocked(storedToken).mockReturnValue(jwt({}));
+    const row = (k: string) => ({ memory_key: k, agent: "claude-desktop", user_id: "u1", session_id: "s1" });
+    vi.mocked(listMemories)
+      .mockResolvedValueOnce({ entries: [row("x")], rows_read: 0, total: 2, truncated: true } as never)
+      .mockResolvedValueOnce({ entries: [row("deploy_note")], rows_read: 0, total: 2, truncated: false } as never);
+    expect(await resolveSearchWriter(identity, hit, ABORT)).toMatchObject({ user_id: "u1" });
+    expect(vi.mocked(listMemories).mock.calls.map((c) => c[2]?.offset)).toEqual([0, 1]);
+  });
+
   it("names no writer when the list is not read to its end", async () => {
     vi.mocked(storedToken).mockReturnValue(jwt({}));
     vi.mocked(listMemories).mockResolvedValue({ entries: [], rows_read: 0, total: 5, truncated: true } as never);
