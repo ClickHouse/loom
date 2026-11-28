@@ -31,6 +31,10 @@ def test_the_lead_names_the_state_then_the_revision_and_write_day_it_is_given() 
     assert code_change.lead("changed", "ba5e" * 10, "2026-03-02T10:00:00") == (
         " (code_state=changed rev=ba5eba5eba5e written=2026-03-02)"
     )
+    # a read of the memory's row names the day of its first write as that
+    assert code_change.lead("unlinked", first_written="2026-03-02T10:00:00") == (
+        " (code_state=unlinked first_written=2026-03-02)"
+    )
 
 
 def test_a_hit_note_reads_a_model_as_its_dump_and_names_the_day_the_hit_was_written() -> None:
@@ -180,10 +184,59 @@ def test_a_write_that_leaves_the_text_alone_does_not_move_the_printed_day(
     hit = row | {"code_state": "unlinked"}
     assert for_file.listing_line(hit) == (
         f"- rules/buckets{' (pinned)' if row['pinned'] else ''}"
-        f" (code_state=unlinked written=2026-03-02): {said}"
+        f" (code_state=unlinked first_written=2026-03-02): {said}"
     )
     lesson = path_lessons._lesson(hit, "src/a.cpp")
-    assert lesson is not None and lesson["written"] == "2026-03-02"
+    assert lesson is not None and lesson["first_written"] == "2026-03-02"
+
+
+def test_a_rewritten_row_says_first_written_on_a_row_read_and_written_on_a_hit() -> None:
+    """A write of the text carries the row's `created_at` and stamps a new search
+    document: a `memory.for_file` line and a lesson name the first day as
+    `first_written`, a search hit names the day of the text it serves as `written`."""
+    first, again = datetime(2026, 3, 2, 10, 0), datetime(2026, 4, 1, 8, 0)
+    said = "Keep 64 buckets (src/a.cpp:8)."
+    head = rows.MemoryRow.from_snapshot(
+        {
+            "org": "o",
+            "namespace": "team",
+            "agent": "a",
+            "memory_key": "rules/buckets",
+            "memory_type": "semantic",
+            "value": json.dumps("Keep 32 buckets (src/a.cpp:8)."),
+            "created_at": first,
+            "updated_at": first,
+        }
+    )
+    row = rows.build_revision_row(
+        head, {"value": json.dumps(said), "version": 2, "updated_at": again}
+    )
+    assert (row["value"], row["created_at"], row["updated_at"]) == (json.dumps(said), first, again)
+    read = row | {"code_state": "fresh", "code_rev": "ba5e" * 10}
+    assert for_file.listing_line(read) == (
+        f"- rules/buckets (code_state=fresh rev=ba5eba5eba5e first_written=2026-03-02): {said}"
+    )
+    lesson = path_lessons._lesson(read, "src/a.cpp")
+    assert lesson is not None and "written" not in lesson
+    assert (lesson["first_written"], lesson["excerpt"]) == ("2026-03-02", said)
+    # the search document of the rewritten text is created at that write
+    document = rows.search_document_row(
+        row | {"run_id": "-", "source_class": "user"},
+        embedding_model="test",
+        embedding=[0.0],
+        key_embedding=[],
+        key_text="",
+        excerpt=said,
+    )
+    assert document["created_at"] != first
+    hit = _hit(
+        "rules/buckets",
+        said,
+        code_state="fresh",
+        code_rev="ba5e" * 10,
+        created_at=again.isoformat(),
+    )
+    assert code_change.hit_note(hit) == " (code_state=fresh rev=ba5eba5eba5e written=2026-04-01)"
 
 
 def test_the_output_says_what_was_compared_for_the_hits_it_was_built_with() -> None:
@@ -247,11 +300,11 @@ def test_a_lesson_that_names_code_carries_its_state_revision_and_write_day() -> 
         "excerpt": said,
         "code_state": "fresh",
         "rev": "ba5eba5eba5e",
-        "written": "2026-03-02",
+        "first_written": "2026-03-02",
     }
     # an unlinked row says so and keeps the text it was written with
     past = path_lessons._lesson(row("past", said), "src/a.cpp")
-    assert past is not None and (past["code_state"], past["excerpt"], past["written"]) == (
+    assert past is not None and (past["code_state"], past["excerpt"], past["first_written"]) == (
         "unlinked",
         said,
         "2026-03-02",

@@ -824,7 +824,7 @@ def test_an_unpinned_decision_whose_code_changed_notes_only_the_code() -> None:
     said, line = _lines([_decision("design/c", pinned=False, code_state="changed")])[1:3]
     assert said == _INDEXED
     assert line.startswith(
-        "- Decision (by alice, 3 days ago) (code_state=changed written=2026-03-02) (its code"
+        "- Decision (by alice, 3 days ago) (code_state=changed first_written=2026-03-02) (its code"
         " changed since it was written: check before relying on it): Decided X because Y."
     )
 
@@ -832,7 +832,7 @@ def test_an_unpinned_decision_whose_code_changed_notes_only_the_code() -> None:
 def test_a_note_names_the_commit_its_code_changed_at() -> None:
     hit = _decision("design/c", pinned=False, code_state="changed", code_changed_since="ab" * 20)
     assert _lines([hit])[2].startswith(
-        "- Decision (by alice, 3 days ago) (code_state=changed written=2026-03-02) (its code"
+        "- Decision (by alice, 3 days ago) (code_state=changed first_written=2026-03-02) (its code"
         " changed since it was written, commit abababababab: check before relying on it):"
         " Decided X because Y."
     )
@@ -865,10 +865,10 @@ def test_a_line_whose_code_moved_names_where_it_is_now() -> None:
     plain = _row("rules/plain", json.dumps("Keep 64."), code_state="moved", code_moved=[])
     assert _lines([moved, edited, plain])[1:] == [
         _INDEXED,
-        f"- rules/moved (code_state=moved written=2026-03-02) (code moved: {_MOVED_NOW}): Keep 32.",
-        "- rules/edited (code_state=changed written=2026-03-02) (its code changed since it was"
+        f"- rules/moved (code_state=moved first_written=2026-03-02) (code moved: {_MOVED_NOW}): Keep 32.",
+        "- rules/edited (code_state=changed first_written=2026-03-02) (its code changed since it was"
         f" written, commit abababababab: check before relying on it; {_MOVED_NOW}): Keep 48.",
-        "- rules/plain (code_state=moved written=2026-03-02): Keep 64.",
+        "- rules/plain (code_state=moved first_written=2026-03-02): Keep 64.",
     ]
 
 
@@ -883,8 +883,8 @@ def test_a_row_that_names_code_says_its_state_revision_and_write_day() -> None:
     assert (past["code_state"], rule.get("code_state")) == ("unlinked", None)
     assert _lines([fresh, past, rule])[1:] == [
         code_change.compared(["fresh", "unlinked"]),
-        f"- rules/fresh (code_state=fresh rev=ba5eba5eba5e written=2026-03-02): {cited}",
-        f"- notes/past (code_state=unlinked written=2026-03-02): {cited}",
+        f"- rules/fresh (code_state=fresh rev=ba5eba5eba5e first_written=2026-03-02): {cited}",
+        f"- notes/past (code_state=unlinked first_written=2026-03-02): {cited}",
         "- rules/plain: Keep 64.",
     ]
     # each clause is about a row the block prints
@@ -994,7 +994,7 @@ async def test_the_block_and_the_hit_name_moved_code_only_from_current_readable_
     if case == "current":
         assert [m.model_dump(exclude_defaults=True) for m in hit.code_moved] == [_MOVED]
         assert (
-            f"- rules/moved (code_state=moved written=2026-03-02) (code moved: {_MOVED_NOW}):"
+            f"- rules/moved (code_state=moved first_written=2026-03-02) (code moved: {_MOVED_NOW}):"
             " Keep 32."
         ) in out.rendered
         rows, _ = await mff.listing_rows(request)

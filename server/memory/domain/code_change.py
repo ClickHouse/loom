@@ -22,12 +22,13 @@ on the reads that serve its links (`relocation`, `note`): the text still says th
 name.
 
 A read says of every memory that names code which state it is in, the indexed commit
-its link was anchored at and the day it was written (`lead`): the `created_at` of the
-row the read serves, which a pin, a lock or a label does not move. One that names a file and
-shows no link is `unlinked`, a label a read gives and no store holds: the read has no
-comparison with code to show for it. A reply that serves a memory with a state says once
-what was compared (`compared`): the repository as Loom indexed it, never the caller's
-checkout.
+its link was anchored at and a day (`lead`), which a pin, a lock or a label does not
+move: `first_written`, the memory's first write, on a read of its row (`memory.for_file`,
+a lesson, the startup recall), and `written`, the write of the text served, on a search
+hit. One that names a file and shows no link is `unlinked`, a label a read gives and no
+store holds: the read has no comparison with code to show for it. A reply that serves a
+memory with a state says once what was compared (`compared`): the repository as Loom
+indexed it, never the caller's checkout.
 """
 
 from __future__ import annotations
@@ -152,17 +153,25 @@ def label(state: str, commit: str = "") -> str:
     return f"{state}@{commit[:12]}" if commit else state
 
 
-def lead(state: str, rev: str = "", written: str = "") -> str:
+def written_on(written: str = "", first_written: str = "") -> str:
+    """` written=<day>` for the day the text a read serves was written (a search hit's),
+    ` first_written=<day>` for the day of a memory's first write (a read of its row,
+    which a later write of the text does not move); '' when the read knows neither."""
+    if written:
+        return f" written={written[:10]}"
+    return f" first_written={first_written[:10]}" if first_written else ""
+
+
+def lead(state: str, rev: str = "", written: str = "", *, first_written: str = "") -> str:
     """` (code_state=<state> rev=<commit> written=<day>)` ahead of a line's `note` for a
     memory that names code: its state, the indexed commit its worst link was anchored at
-    (`anchored_commit`) when it holds one, and the day the row the read serves was
-    created when that is known: a memory's first write, never its `updated_at`, which an
-    unpin, a lock or a restore stamps. '' for a memory that names no code."""
+    (`anchored_commit`) when it holds one, and the day the read knows (`written_on`):
+    never an `updated_at`, which an unpin, a lock or a restore stamps. '' for a memory
+    that names no code."""
     if not state:
         return ""
     at = f" rev={rev[:12]}" if rev else ""
-    on = f" written={written[:10]}" if written else ""
-    return f" (code_state={state}{at}{on})"
+    return f" (code_state={state}{at}{written_on(written, first_written)})"
 
 
 def _read(hit: Any, name: str) -> Any:
@@ -171,8 +180,8 @@ def _read(hit: Any, name: str) -> Any:
 
 def hit_note(hit: Any) -> str:
     """`lead` and `note` for a search hit (the model or its dump); the day is its search
-    document's (`created_at`): the first write of a memory whose text was not written
-    again or restored, the last of those writes otherwise."""
+    document's (`created_at`), printed as `written`: the first write of a memory whose
+    text was not written again or restored, the last of those writes otherwise."""
     state, written = str(_read(hit, "code_state") or ""), str(_read(hit, "created_at") or "")
     return lead(state, str(_read(hit, "code_rev") or ""), written) + note(
         state, str(_read(hit, "code_changed_since") or ""), _read(hit, "code_moved") or []

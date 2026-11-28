@@ -440,8 +440,9 @@ async def _pack_startup_recall(st: _PackState) -> None:
             author=author_label([getattr(r, "actor", "")]),
             code_state=_code_label(h),
             code_rev=str(getattr(h, "code_rev", "") or ""),
-            # first written: a pin, a lock or a restore moves `updated_at`, never this
-            code_written=r.created_at.isoformat() if r.created_at else "",
+            # the row's first write: a pin, a lock or a write of the text moves
+            # `updated_at`, never this
+            code_first_written=r.created_at.isoformat() if r.created_at else "",
         )
         for h in hits
         for r in [h.row]

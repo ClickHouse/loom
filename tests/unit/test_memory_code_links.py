@@ -1161,16 +1161,22 @@ async def _startup_lines(monkeypatch, served, *, pinned=(), recent=(), top_k=2) 
     ("held", "state", "policy", "kept_current", "label"),
     [
         ({}, "missing", "", True, None),  # the code is gone and nobody holds the memory
-        ({"pinned": 1}, "missing", "", True, "code_state=missing@c0ffeec0ffee written=2026-01-09]"),
-        ({}, "changed", "", True, "code_state=changed@c0ffeec0ffee written=2026-01-09]"),
+        (
+            {"pinned": 1},
+            "missing",
+            "",
+            True,
+            "code_state=missing@c0ffeec0ffee first_written=2026-01-09]",
+        ),
+        ({}, "changed", "", True, "code_state=changed@c0ffeec0ffee first_written=2026-01-09]"),
         (
             {},
             "missing",
             code_change.FLAG,
             True,
-            "code_state=missing@c0ffeec0ffee written=2026-01-09]",
+            "code_state=missing@c0ffeec0ffee first_written=2026-01-09]",
         ),
-        ({}, "missing", "", False, "code_state=missing@c0ffeec0ffee written=2026-01-09]"),
+        ({}, "missing", "", False, "code_state=missing@c0ffeec0ffee first_written=2026-01-09]"),
     ],
 )
 async def test_a_startup_pack_with_no_query_reads_code_state_as_a_search_does(
@@ -1203,7 +1209,7 @@ async def test_a_startup_pack_names_where_a_memorys_moved_code_is_now(served, mo
     label, text = by_key["[memory:agent-a/m"]
     # the day beside the state is the row's first write, which no later unpin or lock
     # moves; the `date=` label is the day the text is about
-    assert label.endswith(" date=2026-01-01 code_state=moved written=2026-01-09")
+    assert label.endswith(" date=2026-01-01 code_state=moved first_written=2026-01-09")
     assert text == f"(code moved: {_NOW}) claim"
     label, text = by_key["[memory:agent-a/edited"]
     assert "code_state=changed@c0ffeec0ffee" in label and text == f"(code moved: {_NOW}) claim"

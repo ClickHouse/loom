@@ -83,8 +83,8 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
     }
     if hit.get("code_rev"):
         lesson["rev"] = str(hit["code_rev"])[:12]
-    if state and isinstance(written := hit.get("created_at"), datetime):
-        lesson["written"] = written.date().isoformat()
+    if state and isinstance(first := hit.get("created_at"), datetime):
+        lesson["first_written"] = first.date().isoformat()
     if hit.get("code_changed_since"):
         lesson["changed_since"] = str(hit["code_changed_since"])
     if hit.get("code_moved"):
@@ -294,7 +294,7 @@ async def lessons_for_paths(
     what the memory was written against), `unlinked` for a row with no link whose text
     names a file by its path, '' for one that names the file only in `files`; `rev`, the
     first 12 characters of the commit that link was anchored at, for a linked row;
-    `written`, the day a row with a code state was first written;
+    `first_written`, the day a row with a code state was first written;
     `changed_since`, the commit that put its code in a `changed`, `unresolved` or `missing`
     state, when one is known; `code_moved`, its links to code in the file that is now at
     another path or symbol than the row was written against, when there are any; and

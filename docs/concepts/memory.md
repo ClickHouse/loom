@@ -599,8 +599,8 @@ The links are read where the code is:
   (a bare filename, `search/handler.py`; an absolute path is trusted to name a file below the
   root that it ends in), each with its `code_state`, within `code_result_lessons_tokens`. Each
   row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `rev` (the first 12
-  characters of the commit its link was anchored at) for a linked row, `written` (the day it
-  was first written) for a row with a code state, `changed_since` (the
+  characters of the commit its link was anchored at) for a linked row, `first_written` (the
+  day it was first written) for a row with a code state, `changed_since` (the
   commit that put its code in a changed, unresolved or missing state) when one is known, and
   `supersedes_key` when it replaces an older row, and `code_moved` (its links to code in the
   file that is now at another path or symbol than it was written against) when there are
@@ -641,13 +641,14 @@ The links are read where the code is:
   another path or symbol.
 - Each of those reads says of a memory that names code which state it is in, the commit
   its link was anchored at (`code_rev` on a search hit, `rev` on a line or a lesson) and
-  the day it was written (`created_at` on a search hit, `written` on a line or a lesson).
-  That day is the `created_at` of the row the read serves, never its `updated_at`: an
-  unpin, a lock, an unlock or a label does not move it. On `memory.for_file`, a lesson and
-  the startup recall it is the memory's first write. On a search hit it is the search
-  document's, which a write of the text (`memory.set`, `memory.update_by_id`) and
-  `memory.restore` stamp again, so a search shows a later day than `memory.for_file` for
-  a memory whose text was written again or restored.
+  a day, under a label that says which day it is. `first_written` is the day of the
+  memory's first write: a `memory.for_file` line, a lesson (the field `first_written`)
+  and a startup recall line print it, and no later write moves it. `written` is the day
+  the text served was written: a line of a search hit prints it from the hit's
+  `created_at`, the search document's, which a write of the text (`memory.set`,
+  `memory.update_by_id`) and `memory.restore` stamp again. For a memory whose text was
+  written again or restored, `written` is therefore a later day than `first_written`.
+  Neither is the row's `updated_at`: an unpin, a lock, an unlock or a label moves neither.
   The commit is the repository's indexed head when the link was made or last re-anchored;
   for a link made after its memory that is a later commit than the writer worked at.
   A search hit read from a memory's own row that shows no link state, and whose text

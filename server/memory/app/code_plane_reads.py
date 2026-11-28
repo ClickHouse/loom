@@ -78,9 +78,9 @@ async def lessons_for_symbol(
 ) -> list[dict[str, Any]]:
     """The served memories of `namespaces` linked to this symbol, current ones first,
     each with the state of the symbol's code on the branch read, `rev` (the first 12
-    characters of the commit its link was anchored at), `written` (the day it was first
-    written) and `code_moved` when the read found that code at another path or symbol
-    than the memory was written against (`_moved_here`).
+    characters of the commit its link was anchored at), `first_written` (the day it was
+    first written) and `code_moved` when the read found that code at another path or
+    symbol than the memory was written against (`_moved_here`).
     `fresh_at_commit` restricts the answer to lessons confirmed fresh at that revision.
     Otherwise an unreadable branch uses trunk's state."""
     from server.code.app import memory_links as code
@@ -147,7 +147,7 @@ async def lessons_for_symbol(
             "excerpt": str(row["excerpt"]),
             "code_state": state,
             "rev": str(a.get("anchored_commit") or "")[:12],
-            "written": str(row.get("created_at") or "")[:10],
+            "first_written": str(row.get("created_at") or "")[:10],
             "changed_since": a["changed_since"] if state == "changed" else "",
             "suggestion": suggestion,
         }

@@ -33,8 +33,12 @@ class EvidenceItem:
     code_state: str = ""
     # The commit its worst link was anchored at (` rev=…` on the line); "" with no link.
     code_rev: str = ""
-    # When a memory that names code was written (` written=<day>` on the line).
+    # When the text served of a memory that names code was written, for a search hit
+    # (` written=<day>` on the line).
     code_written: str = ""
+    # When a memory that names code was first written, for an item read from its row
+    # (` first_written=<day>` on the line).
+    code_first_written: str = ""
 
 
 @dataclass(frozen=True)
@@ -120,7 +124,8 @@ def pack_evidence(
         date = f" date={item.temporal_anchor[:10]}" if item.temporal_anchor else ""
         code = f" code_state={item.code_state}" if item.code_state else ""
         code += f" rev={item.code_rev[:12]}" if item.code_rev else ""
-        code += f" written={item.code_written[:10]}" if code and item.code_written else ""
+        if code:
+            code += code_change.written_on(item.code_written, item.code_first_written)
         labels = f"source={item.source}{item.author}{_derived(item)}{date}{marker}{code}"
         line = one_item(f"- [{label_part(item.citation)} {labels}] {item.text}")
         # the line fits with the sentence the list then opens with

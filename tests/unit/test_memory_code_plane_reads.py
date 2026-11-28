@@ -287,7 +287,7 @@ async def test_a_lesson_reads_changed_where_the_definition_differs_from_the_link
         ("k2", "changed", "c2"),
     ]
     # each says the day it was first written beside its state
-    assert {o["written"] for o in out} == {"2026-03-02"}
+    assert {o["first_written"] for o in out} == {"2026-03-02"}
     assert changed_read == [{"m2"}]  # the read ranks a changed memory last before its cut
     # a branch still holding the definition k2 was written against reads it fresh
     branch = [("src/a.py", "src.a::Reader::read", "h0")]

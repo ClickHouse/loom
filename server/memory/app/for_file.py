@@ -195,9 +195,9 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     """`(pinned)` for a pinned row, `(source changed)` for a decision tagged
     `source-changed`, `(outcome: failed)` for a decision whose recorded outcome failed,
     and, for a row with a code state, that state with the commit its link was anchored
-    at and the day the row was first written (`code_change.lead`; a pin, a lock or a
-    restore moves `updated_at`, never that day), then a note when its linked code changed
-    or went, or is now at another name or path.
+    at and the day the row was first written (`first_written` of `code_change.lead`; a
+    pin, a lock or a write of the text moves `updated_at`, never that day), then a note
+    when its linked code changed or went, or is now at another name or path.
     An extracted decision nobody pinned is the normal case and carries no pin mark."""
     tags = hit.get("tags") or []
     out = " (pinned)" if hit.get("pinned") else ""
@@ -206,9 +206,9 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     if decision and FAILURE_TAG in tags:
         out += " (outcome: failed)"
     state, commit = str(hit.get("code_state") or ""), str(hit.get("code_changed_since") or "")
-    written = hit.get("created_at")
-    day = written.isoformat() if isinstance(written, datetime) else ""
-    out += code_change.lead(state, str(hit.get("code_rev") or ""), day)
+    first = hit.get("created_at")
+    day = first.isoformat() if isinstance(first, datetime) else ""
+    out += code_change.lead(state, str(hit.get("code_rev") or ""), first_written=day)
     return out + code_change.note(state, commit, hit.get("code_moved") or [])
 
 
