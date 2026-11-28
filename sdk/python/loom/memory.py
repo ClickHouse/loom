@@ -456,6 +456,8 @@ class MemorySearchHit:
     # hidden `duplicate` row, that row's memory_key; None otherwise.
     resolved_from: str | None = None
     version: int = 0
+    # The exact decimal revision, when the server sent one; "" otherwise.
+    version_text: str = field(default="", kw_only=True)
     # Ingest time (ISO); "" when unknown.
     created_at: str = ""
     # Provenance class (asserted | extracted | observed | derived | imported |
@@ -655,6 +657,7 @@ def _parse_search_hit(r: dict[str, Any]) -> MemorySearchHit:
         superseded_at=_opt_str(r.get("superseded_at")),
         resolved_from=_opt_str(r.get("resolved_from")),
         version=int(r.get("version") or 0),
+        version_text=str(r.get("version_text") or ""),
         created_at=str(r.get("created_at") or ""),
         source_class=str(r.get("source_class") or ""),
         source_resource_id=str(r.get("source_resource_id") or ""),
