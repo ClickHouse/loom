@@ -304,26 +304,31 @@ def listing_line(hit: dict[str, Any]) -> str:
     return _row_line(hit, naive_utc_now(), str(hit.get("namespace") or ""), whole=False)
 
 
-def _ceiling_hides(hits: list[dict[str, Any]], rows: list[str], whole_chars: int) -> bool:
-    """Whether a decision or constraint left out at the ceiling supersedes older rows, with
-    every other row kept: then the block has a "… more" line for those."""
-    used = 0
-    for h, row in zip(hits, rows, strict=True):
-        if not _is_whole(h):
-            continue
-        if h.get("value_truncated") or used + len(row) + 1 > whole_chars:
-            if h.get("supersedes_ids"):
-                return True
-            continue
-        used += len(row) + 1
-    return False
-
-
 def _compared_chars(states: set[str]) -> int:
     """The characters what was compared takes in a block whose rows are in `states`
     (`code_change.compared`), its newline included; 0 when none of them names code."""
     said = code_change.compared(states)
     return len(said) + 1 if said else 0
+
+
+def _ceiling_hides(hits: list[dict[str, Any]], rows: list[str], whole_chars: int) -> bool:
+    """Whether a decision or constraint left out at the ceiling supersedes older rows, with
+    every other row kept: then the block has a "… more" line for those. Each one is
+    charged as `render_block` charges it: its line and what the sentence on what was
+    compared grows by after the rows printed above it."""
+    used = 0
+    said: set[str] = set()  # the code states of the rows printed so far
+    for h, row in zip(hits, rows, strict=True):
+        state = str(h.get("code_state") or "")
+        if _is_whole(h):
+            cost = len(row) + 1 + _compared_chars(said | {state}) - _compared_chars(said)
+            if h.get("value_truncated") or used + cost > whole_chars:
+                if h.get("supersedes_ids"):
+                    return True
+                continue
+            used += cost
+        said.add(state)
+    return False
 
 
 def render_block(

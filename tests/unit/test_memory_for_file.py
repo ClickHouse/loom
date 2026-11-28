@@ -460,6 +460,34 @@ def test_a_more_line_from_a_left_out_constraint_fits_the_budget(
     assert any(ln.startswith("- … ") and "lists them" in ln for ln in lines)
 
 
+def test_a_more_line_from_a_constraint_left_out_by_its_sentence_fits_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A constraint whose line fits the ceiling and whose sentence on what was compared
+    does not is left out, and takes the older note with it: the "… more" line that adds
+    is inside the budget the notes alone would fill."""
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
+    older = _row("notes/old", json.dumps("Keep 32."), namespace="me")
+    newer = _superseding(
+        "rules/new", older, "n" * 100, "me", tags=["constraint"], code_state="fresh"
+    )
+    line = len(mff._row_line(newer, _NOW, "me")) + 1
+    assert line <= 200 < line + len(_INDEXED) + 1
+    header = "Loom: 3 memories anchored to src/a.cpp — read before editing:"
+    used = len(header) + len("- notes/old: Keep 32.") + 1
+    filler = _row(
+        "notes/f", json.dumps("f" * (240 - used - 1 - len("- notes/f: "))), namespace="me"
+    )
+    text, _, truncated = mff.render_block(
+        "src/a.cpp", [newer, older, filler], 60, home="me", now=_NOW
+    )
+    lines = text.splitlines()
+    assert truncated is True and "rules/new [constraint]" not in text and _INDEXED not in text
+    budgeted = "\n".join(ln for ln in lines if "decision or constraint" not in ln)
+    assert len(budgeted) <= 60 * mff.CHARS_PER_TOKEN
+    assert any(ln.startswith("- … ") and "lists them" in ln for ln in lines)
+
+
 def test_notes_that_fit_exactly_print_beside_a_constraint_left_out_at_the_ceiling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
