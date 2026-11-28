@@ -117,7 +117,7 @@ async def search(
         pr_leg_before=pr_leg_before,
         llm_legs=llm_legs,
     )
-    fused, fusion_kind = _fuse(st, st.lexical_rows)
+    fused, fusion_kind = _fuse(st)
     if not fused and st.history_units:
         _serve_history_anchors(st, top_k=top_k, token_budget=token_budget, bodies=bodies)
         return result
@@ -134,12 +134,9 @@ async def search(
         )
         return result
 
-    # Calibration reads the legs' own order, before any prior: the lexical leg's first
-    # rows, which differ from its pool when it cut the pool on the path penalties
-    cut = st.lexical_head != st.lexical_rows
     legs_agree = _calibrate(
         st,
-        _fuse(st, st.lexical_head)[0] if cut else fused,
+        fused,
         run_vector=st.run_vector,
         noise_floor=noise_floor,
         abstain_threshold=abstain_threshold,

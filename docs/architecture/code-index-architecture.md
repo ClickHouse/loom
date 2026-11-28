@@ -602,38 +602,6 @@ index tokenizer. The score counts only whole app lexemes and rejects partial mat
 from the gate. Underscore-only lexemes use the exact score within the same tenant,
 model and path scope because the text index has no token for them.
 
-For a question about the implementation, ranking multiplies the score of a test,
-example or benchmark path and of a prose file by a penalty. A test word in the query
-turns off the test-path penalty, the fan-in prior, the kind prior and saturation, and
-leaves the prose penalty on. A doc word turns off the prose penalty only.
-
-The lexical leg cuts its pool on the same two penalties. Fusion gives a row of the leg
-`1 / (60 + rank)`, and ranking multiplies that vote by the penalty of the row's path. A
-pool of the leg's first 200 rows by rank therefore drops source rows whose vote counts
-for more than the vote of the test and prose rows it keeps. The leg keeps the 200 rows
-with the largest `penalty / (60 + rank)` instead:
-
-- **A row keeps its rank in the whole leg** and votes with it, so a row in the pool
-  scores what it would if the leg returned every row. A source row admitted from rank
-  340 votes `1 / 400`.
-- **A test or prose row leaves the pool only when 200 rows count for more.** The leg's
-  first-ranked test row votes `0.35 / 61`, as much as a source row at rank 114, and
-  stays.
-- **Rows with one score rank by their penalty, the undemoted first, and then in file
-  order.** The score is a sum of idfs over the query words a chunk holds, so the rows
-  of a one-word or two-word query tie by the thousand, and ClickHouse returns equal
-  rows in the order it read them. Without the penalty key the order the table holds
-  them in would decide which of them are ranked first, and with them the pool.
-- **The scan reads a bounded depth.** No row past rank `260 / f - 60` can be in the
-  pool, where `f` is the smallest factor a path can get: 2,912 rows for the default
-  penalties together, 980 for the prose penalty alone, at most 10,000.
-- **Calibration does not read the cut.** The statement also returns the leg's own
-  first 200 rows, and leg agreement, the top similarity and abstention are computed on
-  those, as without the penalties. A penalty reaches them only as the order of rows
-  with one score.
-
-The vector leg and the concept leg are not cut.
-
 ClickHouse returns rows that are equal in a sort in the order it read them, which
 changes with the parts of the table and the threads of the read. So that the same
 request gets the same answer, every ranked read of the search ends its order in keys
@@ -642,7 +610,6 @@ that identify the row:
 - **Chunks:** the path, the start line and the chunk id, so the earlier lines of a file
   come first. The lexical leg, the definition leg, the chunks a history or card vote
   brings, the exact rescore of a shortlist and `track_path` close their order this way.
-- **Equal votes in the pool cut:** the better rank in the leg first.
 - **Pull requests:** the newer merge, then the higher number.
 - **Symbols:** the path, the start line and the symbol id after the ranking keys.
 - **The vector leg and the card leg:** the statement sorts on the distance alone, the
