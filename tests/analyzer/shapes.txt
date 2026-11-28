@@ -2,7 +2,6 @@
 # <shape12>\t<first 200 chars, literals masked>; sorted. Regenerate with
 #   python -m tests.analyzer.corpus --write
 # and review the diff: a new line is a new statement shape.
-001824490f23	SELECT org, namespace, agent, user_id, session_id, memory_key, actor, toString(memory_id) AS mid, value, tags, files, toString(content_sha256) AS sha, CAST(status AS String) AS status, tombstoned_at,
 001eb6c5587e	SELECT DISTINCT canonical_text FROM loom.entity_canonical_map FINAL WHERE org = {org:String} AND namespace IN {namespaces:Array(String)} AND mention_text IN {mentions:Array(String)} AND tombstoned_at
 0028ff84bbed	SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND has(tags, {tag:String}) ORDER BY updated_at DESC
 004f2544bc01	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
@@ -2244,6 +2243,7 @@ f7c04f2fe996	SELECT count() AS n FROM loom.document_blobs WHERE org = {org:Strin
 f8081de4841b	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 f833c025305d	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 f83401bb2bae	SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = {name:String} AND (created_by IN {subs:Array(String)} OR hasAny(lineage, {subs:Array(String)})) AND revoked_at IS NULL AND
+f83f4bc3fef2	SELECT org, namespace, agent, user_id, session_id, memory_key, actor, toString(memory_id) AS mid, value, tags, files, toString(content_sha256) AS sha, CAST(status AS String) AS status, tombstoned_at,
 f8544e732b91	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 f86ba4e3e00f	SELECT conflict_threshold, duplicate_threshold, default_conflict_policy FROM loom.namespaces FINAL WHERE org = {org:String} AND namespace = {ns:String} LIMIT ?
 f86df7b89de1	SELECT chunk_id, path, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.code_chunks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND embedding_model = {model:String} A

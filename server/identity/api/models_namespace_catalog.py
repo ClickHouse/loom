@@ -284,6 +284,9 @@ class _NamespaceValidateFinding(FindingContract):
     samples: list[dict[str, Any]] = Field(default_factory=list)
     # One sentence: what the check means and what to do about a hit.
     detail: str
+    # `count` by the check's own classes, for a check that names them in its `detail`
+    # (`code_rename_edits`: `edits`, or the reason no edit is offered); empty otherwise.
+    totals: dict[str, int] = Field(default_factory=dict)
 
 
 class NamespaceValidateOutput(BaseModel):

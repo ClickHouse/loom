@@ -19,6 +19,8 @@ from server.operations import toolsets
 from server.transport import mcp_descriptions
 
 _STALE_LINKS = code_link_reads.stale_links  # the real read, before `_no_code_links`
+# the checks read from the code links rather than with SQL of their own
+_CODE_LINK_CHECKS = ("code_links_stale", "code_rename_edits")
 
 
 class _CH:
@@ -69,7 +71,7 @@ async def test_clean_namespace_is_healthy_and_lists_every_check(
     assert out.healthy is True
     assert (out.errors, out.warnings, out.infos) == (0, 0, 0)
     names = [f.check for f in out.findings]
-    assert set(names) == {*nv._CHECKS, "code_links_stale", *nv._CODE_UNLINKED}
+    assert set(names) == {*nv._CHECKS, *_CODE_LINK_CHECKS, *nv._CODE_UNLINKED}
     assert "unresolved_evidence" in names
     assert all(f.count == 0 and f.samples == [] for f in out.findings)
     assert out.skipped == []
@@ -137,8 +139,9 @@ async def test_one_failing_check_is_skipped_not_raised(monkeypatch: pytest.Monke
     out = await nv.handle_namespace_validate(_inp())
     assert out.skipped == ["orphan_vectors: RuntimeError"]
     assert "orphan_vectors" not in [f.check for f in out.findings]
-    # every other check, the stale code links and the unlinked memories by cause
-    assert len(out.findings) == len(nv._CHECKS) + len(nv._CODE_UNLINKED)
+    # every other check, the two read from the code links and the unlinked memories by cause
+    others = len(nv._CHECKS) - 1
+    assert len(out.findings) == others + len(_CODE_LINK_CHECKS) + len(nv._CODE_UNLINKED)
     assert out.healthy is True
 
 
@@ -290,7 +293,11 @@ async def test_stale_code_links_count_memories_and_sample_the_links_read(
 
     asked: list[Any] = []
 
-    async def stale_links(org: str, namespace: str, keys: Any = None, *, limit: int) -> Any:
+    async def stale_links(
+        org: str, namespace: str, keys: Any = None, *, limit: int, states: Any = ()
+    ) -> Any:
+        if "moved" in states:
+            return []  # the rename check's read
         asked.append((keys, limit))
         return [link("new")]
 
@@ -304,7 +311,7 @@ async def test_stale_code_links_count_memories_and_sample_the_links_read(
 
 
 def test_every_check_declares_its_kind_version_and_uncertainty() -> None:
-    assert set(nv._CONTRACT) == {*nv._CHECKS, "code_links_stale", *nv._CODE_UNLINKED}
+    assert set(nv._CONTRACT) == {*nv._CHECKS, *_CODE_LINK_CHECKS, *nv._CODE_UNLINKED}
     assert {r.kind for r in nv._CONTRACT.values()} == {
         "contract_violation",
         "usage_heuristic",
@@ -419,7 +426,7 @@ async def test_stale_code_links_are_named_skipped_while_the_code_registry_is_unr
     out = await nv.handle_namespace_validate(_inp())
     # every check that reads which repositories are configured
     assert out.skipped == [
-        f"{check}: RegistryUnread" for check in ("code_links_stale", *nv._CODE_UNLINKED)
+        f"{check}: RegistryUnread" for check in (*_CODE_LINK_CHECKS, *nv._CODE_UNLINKED)
     ]
     assert out.coverage.complete is False
 
@@ -487,4 +494,91 @@ async def test_a_failed_unlinked_read_skips_its_four_checks_and_no_other(
     monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
     out = await nv.handle_namespace_validate(_inp())
     assert out.skipped == [f"{check}: TimeoutError" for check in nv._CODE_UNLINKED]
-    assert reads == 1 and {f.check for f in out.findings} == {*nv._CHECKS, "code_links_stale"}
+    assert reads == 1 and {f.check for f in out.findings} == {*nv._CHECKS, *_CODE_LINK_CHECKS}
+
+
+@pytest.mark.asyncio
+async def test_rename_edits_are_listed_with_their_totals_by_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A memory whose link followed a rename is listed with the edits its text allows,
+    or the reason it gets none; the totals count every memory read, not only the
+    samples. Information: it never makes a namespace unhealthy, even under `strict`."""
+    from server.memory.app import code_renames
+
+    asked: list[Any] = []
+    edit = {"start": 1, "end": 10, "old": "read_rows", "new": "fetch_rows"}
+
+    def memory(n: int, **more: Any) -> dict[str, Any]:
+        return {"memory_key": f"k{n}", "memory_id": f"00000000-0000-0000-0000-{n:012d}", **more}
+
+    found = [
+        memory(1, edits=[edit], content_sha256="a" * 64),
+        memory(2, reason="prose_occurrence"),
+        memory(3, reason="old_name_still_defined"),
+        memory(4, reason="prose_occurrence"),
+    ]
+
+    async def planned(org: str, namespace: str, keys: Any = None) -> list[dict[str, Any]]:
+        asked.append((org, namespace, keys))
+        return found
+
+    monkeypatch.setattr(code_renames, "planned", planned)
+    monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
+    out = await nv.handle_namespace_validate(_inp(keys=["k1"], sample_limit=2, strict=True))
+    renames = next(f for f in out.findings if f.check == "code_rename_edits")
+    assert renames.count == 4 and renames.samples == found[:2]
+    assert renames.samples_complete is False and renames.severity == "info"
+    assert renames.totals == {"edits": 1, "old_name_still_defined": 1, "prose_occurrence": 2}
+    assert (out.infos, out.warnings, out.errors, out.healthy) == (4, 0, 0, True)
+    assert "memory.update" in renames.detail and "if_match_sha256" in renames.detail
+    assert asked == [("o", "ns", ["k1"])]
+    # no sample asked for: every memory is still counted, by outcome
+    out = await nv.handle_namespace_validate(_inp(sample_limit=0))
+    renames = next(f for f in out.findings if f.check == "code_rename_edits")
+    assert (renames.count, renames.samples) == (4, []) and sum(renames.totals.values()) == 4
+    assert asked[-1] == ("o", "ns", None)
+    # a check with no classes of its own carries no totals
+    assert all(f.totals == {} for f in out.findings if f.check != "code_rename_edits")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rename_read_skips_its_check_and_no_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import code_renames
+
+    async def planned(org: str, namespace: str, keys: Any = None) -> list[dict[str, Any]]:
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(code_renames, "planned", planned)
+    monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
+    out = await nv.handle_namespace_validate(_inp())
+    assert out.skipped == ["code_rename_edits: TimeoutError"]
+    assert "code_rename_edits" not in {f.check for f in out.findings}
+
+
+@pytest.mark.asyncio
+async def test_rename_edits_list_nothing_of_a_repository_the_caller_may_not_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The listing starts from the links into repositories the caller may read: with
+    none readable, no memory, link or index row is read and nothing is listed."""
+    from server.memory.app import code_renames
+
+    async def none_readable(org: str, namespaces: set[str]) -> set[str]:
+        return set()
+
+    async def unread(*args: Any, **kw: Any) -> Any:
+        raise AssertionError("nothing is read of an unreadable repository")
+
+    monkeypatch.setattr(code_link_reads, "stale_links", _STALE_LINKS)
+    monkeypatch.setattr(code_link_reads.code, "trunk_namespace", lambda org, ns: "secret-code")
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", none_readable)
+    for name in ("stale_of_served", "memory_heads", "for_memories"):
+        monkeypatch.setattr(code_renames.store, name, unread)
+    monkeypatch.setattr(code_renames.code, "candidates", unread)
+    monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
+    out = await nv.handle_namespace_validate(_inp())
+    renames = next(f for f in out.findings if f.check == "code_rename_edits")
+    assert (renames.count, renames.samples, renames.totals) == (0, [], {})

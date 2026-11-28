@@ -11,6 +11,7 @@ from server.code.domain.anchor import (
     cited_fingerprint,
     cited_lines,
     cited_names,
+    code_spans,
     local_name,
     mentions,
     recheck,
@@ -499,3 +500,83 @@ def test_a_go_package_renamed_in_place_keeps_the_link() -> None:
     here = [_d("pkg/x.go", "pkg.rows::B::Read", "h2")]
     after = recheck(link, path_now="pkg/x.go", here=here, head="c2")
     assert (after.state, after.qualified_name) == ("changed", "pkg.rows::B::Read")
+
+
+def _spans(text: str) -> list[str]:
+    """Each name `text` writes as code, as the text spells it there."""
+    return [text[s.start - len(s.receiver) : s.end] for s in code_spans(text)[0]]
+
+
+def test_code_spans_are_the_names_written_as_code_where_they_are() -> None:
+    text = "`Reader.get` calls ns::load_rows, then cfg.read_rows() and flush_all(); `load()` too"
+    spans, quoted = code_spans(text)
+    assert [(s.name, text[s.start : s.end]) for s in spans] == [
+        ("Reader.get", "Reader.get"),
+        ("ns::load_rows", "ns::load_rows"),
+        ("cfg.read_rows", "cfg.read_rows"),
+        ("flush_all", "flush_all"),
+        ("load", "load"),
+    ]
+    assert quoted == []
+
+
+def test_a_word_of_the_prose_is_no_code_span() -> None:
+    # `mentions` reads these inside a memory's files; a rewrite may not
+    assert _spans("read_rows retries and fetchRows does not; Reader.get is hot") == []
+
+
+def test_a_receiver_is_kept_apart_from_the_name_it_precedes() -> None:
+    text = "`self.read_rows` and this.fetchRows() leak"
+    spans, _ = code_spans(text)
+    assert [(s.receiver, s.name) for s in spans] == [("self.", "read_rows"), ("this.", "fetchRows")]
+    assert [text[s.start : s.end] for s in spans] == ["read_rows", "fetchRows"]
+
+
+def test_quoted_code_names_nothing() -> None:
+    fenced = "run:\n```python\nload_rows()\n```\nthen `load_rows`"
+    spans, quoted = code_spans(fenced)
+    assert [s.name for s in spans] == ["load_rows"] and fenced[spans[0].start :].startswith("load")
+    assert [fenced[a:b] for a, b in quoted] == ["```python\nload_rows()\n```"]
+    for text, held in (
+        ("see https://example.org/api/load_rows() for it", "https://example.org/api/load_rows()"),
+        ('the "ns::load_rows" key', '"ns::load_rows"'),
+        ("the 'load_rows()' key", "'load_rows()'"),
+        ("`rows = load_rows(conn)`", "`rows = load_rows(conn)`"),
+        ("`python tools/load_rows.py`", "`python tools/load_rows.py`"),
+    ):
+        spans, quoted = code_spans(text)
+        assert spans == [] and [text[a:b] for a, b in quoted] == [held], text
+    # an unclosed fence quotes the rest; an apostrophe inside a word opens no quote
+    assert code_spans("```\nload_rows()")[0] == []
+    assert _spans("it doesn't call `load_rows` when the reader isn't ready") == ["load_rows"]
+
+
+def test_a_name_joined_to_something_longer_is_no_code_span() -> None:
+    for text in (
+        "pass --load_rows() to enable",
+        "pass --mode=`fast_path`",
+        "in tools/load_rows() and tools/`load_rows`",
+        "ping @`load_rows` or #load_rows()",
+        "the file `load_rows`.py and ns::load_rows.py",
+        "x.ns::load_rows and ns::load_rows.attr()",
+        "`load_rows`'s rows",
+    ):
+        assert _spans(text) == [], text
+    # the end of a sentence joins nothing
+    assert _spans("It calls `load_rows`. Then ns::load_rows.") == ["load_rows", "ns::load_rows"]
+
+
+def test_a_pytest_node_id_holds_no_code_span() -> None:
+    assert _spans("tests/test_io.py::TestReader::test_read fails; `TestReader` is slow") == [
+        "TestReader"
+    ]
+
+
+def test_reading_code_spans_is_linear_in_the_text() -> None:
+    from tests.unit.step_count import steps
+
+    def work(n: int) -> int:
+        text = " ".join(f'`read_rows_{i}` a.b.c{i}-d "q{i}" A::b{i} http://x/{i}' for i in range(n))
+        return steps(lambda: code_spans(text))
+
+    assert work(1600) / work(200) < 12

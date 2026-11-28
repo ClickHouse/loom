@@ -1751,6 +1751,9 @@ async def test_stale_links_read_only_repositories_the_caller_may_read(monkeypatc
     assert asked["states"] == ["changed", "unresolved", "missing"] and asked["keys"] == ["k"]
     assert asked["trunk"] == "" and asked["readable"] == ["code-a"] and asked["limit"] == 3
     assert asked["tag_namespaces"] == [("repo:acme/a", "code-a"), ("repo:acme/s", "code-secret")]
+    # the states asked for, under the same scope
+    await code_link_reads.stale_links("o", "ns", limit=3, states=("moved",))
+    assert asked["states"] == ["moved"] and asked["readable"] == ["code-a"]
     monkeypatch.setattr(code_link_reads, "readable_namespaces", lambda org, nss: _async(set()))
     assert await code_link_reads.stale_links("o", "ns", limit=3) == []  # nothing readable
 

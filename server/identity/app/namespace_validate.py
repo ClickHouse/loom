@@ -6,7 +6,7 @@ just finished writing whether it left its own namespace consistent. This
 handler is that call: the same class of invariants, scoped to one
 (org, namespace), returned with samples the caller can act on.
 
-Eighteen checks, each a read over existing tables (the four `code_unlinked_*` share
+Nineteen checks, each a read over existing tables (the four `code_unlinked_*` share
 one). No mutation, no new storage. A check that fails to run is reported in `skipped` and the
 rest still return — the report closes a task, it must never fail one. Under
 Postgres the checks start once ClickHouse holds what the namespace committed
@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -401,6 +402,23 @@ _CONTRACT: dict[str, RuleContract] = {
             "A memory that still holds after its code changed is counted until someone checks it."
         ),
     ),
+    # Its predicate is the planner's (`code_rename.plan`) and the names the link pass
+    # reads as code (`anchor.code_spans`): a change to either raises this version.
+    "code_rename_edits": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions=(
+            f"Only the {code_unlinked.SCANNED} memories whose `moved` link was last checked "
+            "are read (all under `keys` when given), only in repositories the caller may "
+            "read, and no high-sensitivity memory. A link whose code also changed is "
+            "`code_links_stale`'s."
+        ),
+        uncertainty=(
+            "An edit is offered on the spelling and the index alone: whether the sentence "
+            "still holds once the name is swapped is for whoever applies it to read. The "
+            "words that mark a sentence as being about the name are English."
+        ),
+    ),
     "code_unlinked_no_repository": RuleContract(
         "usage_heuristic",
         1,
@@ -480,6 +498,39 @@ async def _code_links_stale(params: dict[str, Any]) -> list[dict[str, Any]]:
         }
         for a in links
     ]
+
+
+# Planned by the code links rather than with SQL: the same links, and the index, decide
+# which name may be swapped.
+_CODE_RENAME_EDITS = (
+    "info",
+    "A memory whose linked code was renamed or moved and followed there: the link is at "
+    "the new name or path and the memory's text still says the old one. Each sample "
+    "carries either `edits` (replace `old` with `new` at `start`..`end` of the text) "
+    "with the `content_sha256` they are of, or the `reason` no edit is offered; `totals` "
+    "counts the memories by `edits` and by reason. Nothing is written: to apply, read "
+    "the edited sentence, then memory.update the key with the revised text and "
+    "`if_match_sha256` set to the sample's `content_sha256`. Only repositories you may "
+    "read are counted.",
+)
+
+
+class _RenameEdits:
+    """`code_rename_edits`'s rows in the shape the SQL checks give, and their totals by
+    outcome once they are read."""
+
+    def __init__(self, params: dict[str, Any]) -> None:
+        self.params = params
+        self.totals: dict[str, int] = {}
+
+    async def rows(self) -> list[dict[str, Any]]:
+        from server.memory.app import code_renames
+
+        params = self.params
+        found = await code_renames.planned(params["org"], params["ns"], params["keys"] or None)
+        counts = Counter(str(m.get("reason") or code_renames.OFFERED) for m in found)
+        self.totals = dict(sorted(counts.items()))
+        return [{"total": len(found), **m} for m in found[: params["lim"]]]
 
 
 # A served memory that names code and holds no link, by cause: a read shows it exactly
@@ -568,6 +619,7 @@ async def _validate(input: NamespaceValidateInput, rules: RuleLog) -> NamespaceV
         severity: str,
         detail: str,
         query: Callable[[], Awaitable[list[dict[str, Any]]]],
+        totals: Callable[[], dict[str, int]] = dict,
     ) -> None:
         try:
             rows = await query()
@@ -592,6 +644,7 @@ async def _validate(input: NamespaceValidateInput, rules: RuleLog) -> NamespaceV
                 samples_complete=total <= len(samples),
                 exceptions=rule.exceptions,
                 uncertainty=rule.uncertainty,
+                totals=totals(),
             )
         )
 
@@ -599,6 +652,8 @@ async def _validate(input: NamespaceValidateInput, rules: RuleLog) -> NamespaceV
     for name, (severity, detail, sql) in _CHECKS.items():
         await run(name, severity, detail, functools.partial(ch.query_all, sql, params=params))
     await run("code_links_stale", *_CODE_LINKS_STALE, functools.partial(_code_links_stale, params))
+    renames = _RenameEdits(params)
+    await run("code_rename_edits", *_CODE_RENAME_EDITS, renames.rows, lambda: renames.totals)
     unlinked = _code_unlinked(params)
     for name, (cause, detail) in _CODE_UNLINKED.items():
         await run(name, "info", detail, functools.partial(unlinked, cause))
