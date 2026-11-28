@@ -516,8 +516,8 @@ class CodeCallersOutput(_LessonsOut):
     # treesitter_only_files, external_calls, ctor_edges_absent (a
     # constructor seed with no edge in an index that predates constructor
     # calls through factories), scip_stale_files (a compiler-tier edge
-    # served from a file changed since that tier last ran), truncated (the
-    # walk stopped short of the graph)}.
+    # served from a file changed since that tier last ran, or one it skipped),
+    # truncated (the walk stopped short of the graph)}.
     epistemic: str = "lower_bound"
     # Why `epistemic` is `lower_bound`, from the set above; empty when it is `exact`.
     causes: list[str] = Field(default_factory=list)

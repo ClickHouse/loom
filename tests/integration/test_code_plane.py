@@ -329,7 +329,7 @@ async def test_scip_tier_coexists_and_wins(code_env) -> None:
             ],
         }
     )
-    stats = await apply_delta(repo, org, ns, delta)
+    stats = await apply_delta(repo, org, ns, delta, tier="clang")
     assert stats.symbols_new == 1 and stats.edges_new == 1
 
     rows = await repo.symbols_by_name(org, ns, "DB::Squasher::flush")
@@ -339,7 +339,7 @@ async def test_scip_tier_coexists_and_wins(code_env) -> None:
     assert str(rows[0]["tier"]) == "scip"
 
     # idempotent re-apply converges (no new rows)
-    stats2 = await apply_delta(repo, org, ns, delta)
+    stats2 = await apply_delta(repo, org, ns, delta, tier="clang")
     assert stats2.symbols_new == 0 and stats2.edges_new == 0
 
 
@@ -1093,7 +1093,7 @@ async def test_edit_context_does_not_attach_indirect_example_to_an_overload(
             ],
         }
     )
-    await apply_delta(repo, org, ns, delta)
+    await apply_delta(repo, org, ns, delta, tier="clang")
 
     result = await handle_code_edit_context(
         CodeEditContextInput(org=org, namespace=ns, name="DB::value", include_lessons=False)

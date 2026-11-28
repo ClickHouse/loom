@@ -496,12 +496,12 @@ def _convert(tmp_path: Path) -> dict:
     docs = _docs()
     with (
         patch.object(scip_to_delta, "_ensure_scip_pb2", return_value=_PB),
-        patch.object(scip_to_delta, "_stream_documents", lambda data, pb, **_: iter(docs)),
+        patch.object(scip_to_delta, "_indexed_documents", lambda *a: enumerate(docs)),
         patch.object(scip_to_delta, "_top_level_records", lambda data: iter([])),
         patch.object(
             scip_to_delta,
             "_ctor_overloads",
-            lambda records, pb: {
+            lambda data, pb, skips: {
                 "DB::Widget": [
                     "(scip:49f6e7a06ebc5aa8)",
                     "(scip:d4f767463ce0a6b3)",

@@ -67,7 +67,10 @@ async def test_all_state_many_reads_every_namespace_in_one_statement() -> None:
     out = await repo.all_state_many([("o", "a"), ("o", "b"), ("o", "empty")])
     assert len(ch.sqls) == 1
     assert "(org, namespace) IN {pairs:Array(Tuple(String, String))}" in ch.sqls[0]
-    assert ch.params[0] == {"pairs": [("o", "a"), ("o", "b"), ("o", "empty")]}
+    assert ch.params[0] == {
+        "pairs": [("o", "a"), ("o", "b"), ("o", "empty")],
+        "stale": "scip_stale:",
+    }
     assert out[("o", "a")]["git_head"]["value"] == "aaa"
     assert out[("o", "a")]["table_counts"]["detail"] == "aaa||"
     assert out[("o", "b")] == {"git_head": {"value": "bbb", "detail": "", "updated_at": "t"}}

@@ -37,7 +37,7 @@ async def test_out_of_scope_files_are_skipped():
         return repo_config(path_prefixes=("src/", "base/", "programs/", "tests/queries/"))
 
     with patch("server.code.domain.index.repos.repo_for_namespace", return_value=_Cfg()):
-        stats = await apply_delta(repo, "org", "ns", delta)
+        stats = await apply_delta(repo, "org", "ns", delta, tier="clang")
 
     assert stats.files == 1
     assert stats.files_skipped_out_of_scope == 2
@@ -98,12 +98,12 @@ async def test_a_kind_change_rewrites_an_unmoved_symbol():
         return repo_config(path_prefixes=("src/",))
 
     with patch("server.code.domain.index.repos.repo_for_namespace", return_value=_Cfg()):
-        stats = await apply_delta(repo, "org", "ns", delta)
+        stats = await apply_delta(repo, "org", "ns", delta, tier="clang")
     assert stats.symbols_new == 1 and stats.symbols_tombstoned == 0
     # same lines, same kind: the live row is kept
     repo.live_symbols_for_path.return_value[0]["kind"] = "function"
     with patch("server.code.domain.index.repos.repo_for_namespace", return_value=_Cfg()):
-        stats = await apply_delta(repo, "org", "ns", delta)
+        stats = await apply_delta(repo, "org", "ns", delta, tier="clang")
     assert stats.symbols_new == 0
 
 
@@ -135,7 +135,7 @@ async def test_paths_the_entry_excludes_are_skipped_too():
         )
 
     with patch("server.code.domain.index.repos.repo_for_namespace", return_value=_Cfg()):
-        stats = await apply_delta(repo, "org", "ns", delta)
+        stats = await apply_delta(repo, "org", "ns", delta, tier="clang")
 
     assert stats.files == 1
     assert stats.files_skipped_excluded == 2

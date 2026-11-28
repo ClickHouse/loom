@@ -172,6 +172,9 @@ class _Repo:
     async def set_state(self, org: str, ns: str, key: str, value: str, **_: Any) -> None:
         self.state[key] = value
 
+    async def scip_stale_marks(self, org: str, ns: str, tier: str) -> set[str]:
+        return set()
+
 
 @pytest.mark.asyncio
 async def test_the_apply_takes_the_file_a_round_at_a_time(
@@ -181,7 +184,7 @@ async def test_the_apply_takes_the_file_a_round_at_a_time(
     path = tmp_path / "delta.json"
     _write(path, 30)
     repo = _Repo()
-    stats = await apply_delta(repo, "o", "code-x", open_delta(path))  # type: ignore[arg-type]
+    stats = await apply_delta(repo, "o", "code-x", open_delta(path), tier="clang")  # type: ignore[arg-type]
     assert stats.files == 31  # 30 entries and the deleted path
     assert [len(r) for r in repo.rounds] == [14, 14, 3]
     assert repo.rounds[-1][-1] == "src/gone.cpp" and stats.ctor_calls_recorded
@@ -360,7 +363,7 @@ async def test_a_failed_apply_releases_the_file(
     monkeypatch.setattr(scip_delta, "_apply_files", failing)
     before = _fds()
     with pytest.raises(RuntimeError):
-        await apply_delta(_Repo(), "o", "code-x", delta)  # type: ignore[arg-type]
+        await apply_delta(_Repo(), "o", "code-x", delta, tier="clang")  # type: ignore[arg-type]
     assert _fds() == before
 
 
@@ -391,7 +394,7 @@ async def test_an_apply_cancelled_mid_read_releases_the_file_once_the_read_ends(
     # Unrelated cyclic garbage must close its descriptors before the baseline.
     gc.collect()
     before = _fds()
-    task = asyncio.create_task(apply_delta(_Repo(), "o", "code-x", delta))  # type: ignore[arg-type]
+    task = asyncio.create_task(apply_delta(_Repo(), "o", "code-x", delta, tier="clang"))  # type: ignore[arg-type]
     assert await asyncio.to_thread(in_read.wait, 10)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

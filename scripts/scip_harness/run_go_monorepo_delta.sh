@@ -62,6 +62,8 @@ else
 fi
 
 run_module() {
+  # an xargs child: without these a failed conversion would pass as `tail`'s exit
+  set -o pipefail
   local dir=$1 work
   work=$(mktemp -d)
   trap 'rm -rf "$work"' RETURN
@@ -103,9 +105,9 @@ run_module() {
     return 0
   fi
   if [[ -n "${DELTA_OUT_DIR:-}" ]]; then
-    DELTA_OUT="$DELTA_OUT_DIR/${prefix//\//__}.json" convert_delta "${args[@]}" | tail -1
+    DELTA_OUT="$DELTA_OUT_DIR/${prefix//\//__}.json" convert_delta "${args[@]}" | tail -1 || return 1
   else
-    convert_delta "${args[@]}" | tail -1
+    convert_delta "${args[@]}" | tail -1 || return 1
   fi
   echo "done $dir"
 }

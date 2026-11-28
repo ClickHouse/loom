@@ -836,7 +836,7 @@ async def test_apply_delta_records_the_apply_not_the_callers_input(
     if outcome != "missing":
         path.write_text("{" if outcome == "bad" else json.dumps({"commit": "a" * 40}))
 
-    async def apply(*_: Any) -> Any:
+    async def apply(*_: Any, **__: Any) -> Any:
         if outcome == "boom":
             raise RuntimeError("clickhouse down")
         return scip_delta.ScipApplyStats()

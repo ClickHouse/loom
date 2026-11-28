@@ -41,6 +41,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("loom.code_index.compiler_tier")
 
+# The line the converter (scripts/scip_harness/scip_to_delta.py) writes for each
+# document it skipped; a harness run logs the first few of them and the count.
+SKIPPED_WARNING = "scip_to_delta: warning: skipped document"
+_SKIPPED_LOGGED = 5
+
 # The exit code every tier harness gives when the window's base commit is
 # not in the checkout (history rewritten, a squashed or force-pushed branch):
 # the window cannot be diffed, and only a full index can bring the tier back.
@@ -563,12 +568,13 @@ def gone_documents(live: set[str], delta: DeltaFile, producer: str) -> list[str]
     """The live compiler-tier paths of `producer`'s languages the full-run delta does
     not mention, joined with the paths it already marks deleted — sorted, so the apply
     is deterministic. Another tier's documents in the same namespace are never gone:
-    a full TypeScript run must not retire the Python tier's rows."""
+    a full TypeScript run must not retire the Python tier's rows. Neither is a document
+    the converter skipped (`skipped_files`): the file is there, and its rows stay."""
     from server.code.domain.index.compiler_tiers import owns_path
 
     present = set(delta.paths)
     mine = {p for p in live if owns_path(producer, p)}
-    return sorted((mine - present) | set(delta.deleted_files))
+    return sorted(((mine - present) | set(delta.deleted_files)) - set(delta.skipped_files))
 
 
 def resolve_binary(configured: str) -> Path:
@@ -698,13 +704,16 @@ async def run_harness(
     repository's own build files, so only the checkout, `out_dir` and `writable`
     are writable; the checkout's .git stays read-only (a hook or config planted
     there would run outside the sandbox later), as do the harness scripts.
-    RuntimeError naming the timeout past `timeout_s`."""
+    RuntimeError naming the timeout past `timeout_s`. The converter skips a document
+    that fails, or stops on it with `code_scip_stop_on_failed_document`; the first
+    skipped documents' warning lines are logged here, and how many there were."""
     from server.core.paths import SCIP_HARNESS_DIR
 
+    stop = "1" if settings.code_scip_stop_on_failed_document else "0"
     try:
         done = await run_job(
             ["bash", str(harness), str(checkout), *args],
-            env=env,
+            env={**env, "SCIP_STOP_ON_FAILED_DOCUMENT": stop},
             timeout_s=timeout_s,
             writable=[checkout, out_dir, *writable],
             readonly=[checkout / ".git", SCIP_HARNESS_DIR, *readonly],
@@ -713,4 +722,10 @@ async def run_harness(
         )
     except TimeoutError:
         raise tier_health.ToolOutputError(f"harness timed out after {timeout_s}s") from None
-    return done.returncode, done.stdout.decode("utf-8", "replace")
+    out = done.stdout.decode("utf-8", "replace")
+    skipped = list(dict.fromkeys(ln for ln in out.splitlines() if ln.startswith(SKIPPED_WARNING)))
+    for line in skipped[:_SKIPPED_LOGGED]:
+        logger.warning("%s: %s", harness.name, line)
+    if len(skipped) > _SKIPPED_LOGGED:
+        logger.warning("%s: %d documents skipped in all", harness.name, len(skipped))
+    return done.returncode, out

@@ -250,6 +250,7 @@ class DeltaFile:
         self._path, self._stamp = path, stamp
         self.commit, self.features = header.commit, header.features
         self.deleted_files = parsed.deleted
+        self.skipped_files = parsed.skipped
         # each entry's path, counted bytes and characters, by index
         self.paths, self._nodes, self._chars = parsed.paths, parsed.nodes, parsed.chars
         self._round_nodes, self._max_bytes = round_nodes, max_bytes  # as read at open
@@ -333,7 +334,8 @@ class DeltaFile:
 # Any other key is checked for its shape and size only, and neither it nor its value is
 # kept.
 _HEADER = frozenset({"delta_version", "commit", "base", "features"})
-_READ = _HEADER | {"files", "deleted_files"}
+_PATH_LISTS = frozenset({"deleted_files", "skipped_files"})
+_READ = _HEADER | {"files"} | _PATH_LISTS
 # each header field as `ScipDelta` checks it, so a value past its cap is refused as it
 # is read, not held while the entries are parsed
 _HEADER_FIELDS: dict[str, TypeAdapter[Any]] = {
@@ -349,11 +351,13 @@ def _header_value(key: str, value: Any) -> Any:
         raise ValueError(f"delta invalid: {key!r}") from None
 
 
-def _deleted_path(value: Any) -> str:
+def _listed_path(value: Any, key: str) -> str:
+    """One path of `deleted_files` or `skipped_files`."""
+    what = key.removesuffix("_files")
     if not isinstance(value, str):
-        raise ValueError("delta invalid: a deleted path is not a string")
+        raise ValueError(f"delta invalid: a {what} path is not a string")
     if len(value.encode()) > PATH_BYTES:
-        raise ValueError(f"delta invalid: a deleted path is over {PATH_BYTES} bytes")
+        raise ValueError(f"delta invalid: a {what} path is over {PATH_BYTES} bytes")
     return value
 
 
@@ -362,9 +366,9 @@ def _deleted(paths: list[str]) -> list[ScipFile]:
 
 
 def _skip(values: _Values, key: str) -> None:
-    """Read past a top-level value: the deleted paths one at a time, as `open_delta`
-    reads them, any other value whole."""
-    if key == "deleted_files":
+    """Read past a top-level value: a path list one path at a time, as `open_delta`
+    reads it, any other value whole."""
+    if key in _PATH_LISTS:
         for _ in _array(values):
             values.span()
     else:
@@ -391,11 +395,12 @@ def _count(path: Path, fd: int, stamp: _Stamp, max_nodes: int) -> None:
 
 @dataclass
 class _Parsed:
-    """What the checking parse keeps: the small header values, the deleted paths, and
-    each entry's path, counted bytes and characters."""
+    """What the checking parse keeps: the small header values, the deleted and skipped
+    paths, and each entry's path, counted bytes and characters."""
 
     header: dict[str, Any] = field(default_factory=dict)
     deleted: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
     paths: list[str] = field(default_factory=list)
     nodes: array[int] = field(default_factory=lambda: array("I"))
     chars: array[int] = field(default_factory=lambda: array("Q"))
@@ -410,9 +415,13 @@ def _parse(values: _Values) -> _Parsed:
             if key in seen:
                 raise ValueError(f"delta invalid: {key!r} twice")
             seen.add(key)
-        if key == "deleted_files":
+        if key in _PATH_LISTS:
             # one path at a time: a long list is many small values, not one large one
-            out.deleted = [_deleted_path(values.value()) for _ in _array(values)]
+            listed = [_listed_path(values.value(), key) for _ in _array(values)]
+            if key == "deleted_files":
+                out.deleted = listed
+            else:
+                out.skipped = listed
         elif key == "files":
             for index, _ in enumerate(_array(values)):
                 text, nodes = values.text(index)

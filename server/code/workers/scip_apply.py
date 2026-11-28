@@ -22,6 +22,10 @@ from server.workers.status import record_pass
 
 logger = logging.getLogger("loom.workers.code_scip_apply")
 
+# The delta versions this worker applies. A version-2 delta lists skipped files, whose
+# stale marks a build that applies version 1 only does not write, so that build refuses it.
+DELTA_VERSIONS = (1, 2)
+
 
 @dataclass
 class CodeScipApplyResult:
@@ -45,6 +49,15 @@ def watermark_key_for(producer: str) -> str:
     if low in ("go", "scip-go") or low.startswith("scip-go"):
         return "scip_commit_go"
     return "scip_commit"
+
+
+def tier_for(producer: str) -> str:
+    """The compiler tier an upload's producer applies for: the one whose watermark it
+    moves (`watermark_key_for`)."""
+    from server.code.domain.index.compiler_tiers import TIERS
+
+    key = watermark_key_for(producer)
+    return next(t.producer for t in TIERS if t.watermark_key == key)
 
 
 async def run_pass() -> CodeScipApplyResult:
@@ -89,9 +102,11 @@ async def _run(result: CodeScipApplyResult) -> None:
                 # The uploader reads `code.scip_status`: the first bad field, not its value.
                 where = ".".join(str(x) for x in e.errors()[0]["loc"]) or "the top"
                 raise ValidationError(f"the batch is not a SCIP delta (at {where})") from e
-            if delta.delta_version != 1:
+            if delta.delta_version not in DELTA_VERSIONS:
                 raise ValidationError(f"unsupported delta_version {delta.delta_version}")
-            stats = await apply_delta(repo, org, ns, delta)
+            stats = await apply_delta(
+                repo, org, ns, delta, tier=tier_for(str(batch.get("producer") or ""))
+            )
             await repo.upsert_scip_batch(
                 org,
                 ns,

@@ -567,6 +567,9 @@ class _IndexRepo:
     async def set_state(self, org, ns, key, value, detail="") -> None:
         self.states.append(key)
 
+    async def scip_stale_marks(self, org: str, ns: str, tier: str) -> set[str]:
+        return set()
+
 
 def _delta() -> Any:
     from server.code.app.index.scip_delta import ScipDelta
@@ -593,7 +596,7 @@ async def test_apply_delta_publishes_rows_and_watermarks_while_held(monkeypatch)
     monkeypatch.setattr(scip_delta, "_path_refusal", lambda *a: lambda p: False)
     repo = _IndexRepo()
     with _inside_lease(HeldLease()):
-        await scip_delta.apply_delta(repo, "acme", "code-web", _delta())  # type: ignore[arg-type]
+        await scip_delta.apply_delta(repo, "acme", "code-web", _delta(), tier="clang")  # type: ignore[arg-type]
     assert repo.inserted and repo.states
 
 
@@ -608,7 +611,7 @@ async def test_a_lease_lost_mid_round_publishes_no_row_or_watermark(monkeypatch)
     lease = HeldLease()
     repo = _IndexRepo(on_read=lambda: setattr(lease, "lost", True))
     with _inside_lease(lease), pytest.raises(EntryLockLost):
-        await scip_delta.apply_delta(repo, "acme", "code-web", _delta())  # type: ignore[arg-type]
+        await scip_delta.apply_delta(repo, "acme", "code-web", _delta(), tier="clang")  # type: ignore[arg-type]
     assert repo.inserted == [] and repo.states == []
 
 

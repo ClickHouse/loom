@@ -44,7 +44,7 @@ async def _scip_apply_only(
             file=sys.stderr,
         )
     print(f"applying {args.apply_delta} ({len(delta.paths)} files)…")
-    stats = await apply_delta(repo, org, ns, delta)
+    stats = await apply_delta(repo, org, ns, delta, tier="clang")
     # scip-full runs scip-clang only, so its delta moves the C++ watermark, also
     # where clang is an extra tier beside the entry's own.
     key = watermark_key_for("clang")

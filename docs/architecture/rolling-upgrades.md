@@ -989,6 +989,18 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     N-1 reads as any other version. `renamed` is one more number in the pass outcome. No
     gate holds the rollout.
 
+68. **A SCIP delta that lists skipped files** (`skipped_files`, written by
+    `scripts/scip_harness/scip_to_delta.py`) is `delta_version` 2; one that lists none
+    stays 1. N's `code_scip_apply` applies both and marks each skipped file stale. N-1's
+    applies version 1 only and ignores `skipped_files`, so it fails a version-2 batch
+    (`unsupported delta_version 2`) and leaves the tier's watermark, and a rollback past
+    N does the same; `loom code scip-retry <batch_id>` applies it once N runs the
+    workers, as long as no later batch for that tier has applied (a retry after one
+    would move the watermark back). A compiler-tier worker applies the delta its own build's harness wrote. In
+    `tests/unit/test_code_scip_skipped_documents.py`, a converted upload with a skipped
+    document fails under a worker that applies version 1 only and applies with its mark
+    under N's. No gate holds the rollout.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

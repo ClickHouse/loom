@@ -122,7 +122,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipPyDeltaResu
                 delta,
                 PRODUCER,
             )
-        stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
+        stats = await apply_delta(repo, cfg.org, cfg.namespace, delta, tier=PRODUCER)
     await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
     result.deltas_applied += 1
     logger.info(

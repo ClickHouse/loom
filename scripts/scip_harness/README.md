@@ -35,6 +35,22 @@ The in-server workers call the scripts by path with
 rerun as a full index; no delta is written. Any other exit is a failed run. The converter prints one `delta: N files, …` summary
 line, then `wrote <file> (sha …)`.
 
+A document the converter cannot parse or convert (a string that is not UTF-8,
+say) is skipped: it is named once on stderr (`scip_to_delta: warning: skipped
+document …`) and counted in the summary line. It is listed in the delta's
+`skipped_files` when it is one of the files the delta converts (a window's
+own, or any in a full run). The rest of the index converts. In a run over
+every document (no `--changed-files`), a failed document whose path cannot be
+read (one that is not UTF-8, say) fails the run: the server would read its
+file as gone. The server keeps
+that file's compiler rows and marks them stale until a later delta converts
+it. A delta that lists skipped files is `delta_version` 2, which a server that
+applies version 1 only refuses. With
+`SCIP_STOP_ON_FAILED_DOCUMENT=1` (the server sets it from
+`LOOM_CODE_SCIP_STOP_ON_FAILED_DOCUMENT`) `convert_delta` passes
+`--stop-on-failed-document`, and such a document fails the run. An index whose
+records cannot be read to the end fails the run either way.
+
 ## Requirements
 
 - a ClickHouse checkout that `cmake -G Ninja` can configure (the harness

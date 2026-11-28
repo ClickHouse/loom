@@ -8,8 +8,9 @@ code_scip_apply worker. Symbol ids come from the SAME shared hash
 
 Apply semantics per touched file: upsert every symbol/edge the delta
 emits for it, tombstone scip rows in that file the delta no longer emits;
-files in `deleted_files` tombstone entirely. Idempotent — re-applying the
-same delta converges to the same live set.
+files in `deleted_files` tombstone entirely. A file in `skipped_files` (its
+document failed to convert) keeps its rows and is marked stale. Idempotent —
+re-applying the same delta converges to the same live set.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from server.code.app.index.entry_lock import check_held
 from server.code.domain.extract.treesitter import symbol_id
+from server.code.domain.index.state import SCIP_STALE_PREFIX
 from server.code.store.index import CodeRepo, build_row
 from server.workers import pass_context
 
@@ -82,6 +84,8 @@ class ScipDelta(BaseModel):
     base: str = Field(default="", max_length=64)
     files: list[ScipFile] = Field(default_factory=list)
     deleted_files: list[str] = Field(default_factory=list)
+    # documents the converter skipped: their rows stay, marked stale
+    skipped_files: list[str] = Field(default_factory=list)
     features: list[Annotated[str, Field(max_length=64)]] = Field(
         default_factory=list, max_length=16
     )
@@ -99,6 +103,7 @@ class _Delta(Protocol):
 
     commit: str
     deleted_files: list[str]
+    skipped_files: list[str]
     features: list[str]
 
     def rounds(self, max_files: int, keep: Callable[[str], bool]) -> Generator[list[ScipFile]]: ...
@@ -225,18 +230,24 @@ def _has_round_reads(repo: Any) -> bool:
     return isinstance(repo, CodeRepo) or getattr(repo, "supports_round_reads", False) is True
 
 
-async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: _Delta) -> ScipApplyStats:
+async def apply_delta(
+    repo: CodeRepo, org: str, ns: str, delta: _Delta, *, tier: str
+) -> ScipApplyStats:
     """Apply `delta` a round of files at a time, each round read off the event loop;
-    its deleted paths go last."""
+    its deleted paths go last. `tier` is the compiler tier the delta comes from: its
+    skipped files are marked stale under it (`_mark_stale`)."""
     stats = ScipApplyStats()
     prefixes = _indexable_prefixes(org, ns)
     refused = _path_refusal(org, ns)
+
+    def out_of_scope(path: str) -> bool:
+        return bool(prefixes) and not any(path.startswith(p) for p in prefixes)
 
     def keep(path: str) -> bool:
         # Server-side scope enforcement: a full scip index sweeps the whole compile
         # graph (contrib/, build/, system headers). Only the repo's configured
         # prefixes belong in the index.
-        if prefixes and not any(path.startswith(p) for p in prefixes):
+        if out_of_scope(path):
             stats.files_skipped_out_of_scope += 1
             return False
         # The entry's path denylist (exclude globs, the built-in rules) binds the
@@ -250,6 +261,7 @@ async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: _Delta) -> ScipA
 
     rounds = delta.rounds(APPLY_ROUND_FILES, keep)
     reading = False
+    refreshed: set[str] = set()
     try:
         while True:
             reading = True
@@ -257,6 +269,7 @@ async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: _Delta) -> ScipA
             reading = False
             if batch is None:
                 break
+            refreshed.update(f.path for f in batch)
             await _apply_files(repo, org, ns, delta.commit, batch, stats)
             del batch  # freed before the next round is read
     finally:
@@ -264,6 +277,9 @@ async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: _Delta) -> ScipA
         # its thread keeps it until that read returns and the rounds are collected
         if not reading:
             rounds.close()
+    # a skipped file the entry would not keep is never marked: nothing would clear it
+    skipped = {p for p in delta.skipped_files if not out_of_scope(p) and not refused(p)}
+    await _mark_stale(repo, org, ns, tier, delta.commit, skipped, refreshed)
     if FEATURE_CTOR_CALLS in delta.features:
         check_held()
         await repo.set_state(
@@ -275,6 +291,30 @@ async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: _Delta) -> ScipA
         )
         stats.ctor_calls_recorded = True
     return stats
+
+
+async def _mark_stale(
+    repo: Any,
+    org: str,
+    ns: str,
+    tier: str,
+    commit: str,
+    skipped: set[str],
+    refreshed: set[str],
+) -> None:
+    """One write of `tier`'s rows only (`SCIP_STALE_PREFIX`): each skipped file marked at
+    `commit`, and the mark of each file this delta applied or deleted emptied. Another
+    tier's marks are never read or written, so tiers applying side by side keep both."""
+    refreshed -= skipped
+    if not (skipped or refreshed):
+        return
+    prefix = f"{SCIP_STALE_PREFIX}{tier}:"
+    marked = await repo.scip_stale_marks(org, ns, tier) if refreshed else set()
+    rows = {prefix + p: commit for p in sorted(skipped)}
+    rows.update({prefix + p: "" for p in sorted(marked & refreshed)})
+    if rows:
+        check_held()
+        await repo.set_states(org, ns, rows)
 
 
 async def _apply_files(

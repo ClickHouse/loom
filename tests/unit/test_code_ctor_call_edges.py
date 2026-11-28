@@ -351,12 +351,12 @@ def _convert(tmp_path: Path, *, changed=None, source: bool = True, full: bool = 
     docs = _docs()
     with (
         patch.object(scip_to_delta, "_ensure_scip_pb2", return_value=_PB),
-        patch.object(scip_to_delta, "_stream_documents", lambda data, pb, **_: iter(docs)),
+        patch.object(scip_to_delta, "_indexed_documents", lambda *a: enumerate(docs)),
         patch.object(scip_to_delta, "_top_level_records", lambda data: iter([])),
         patch.object(
             scip_to_delta,
             "_ctor_overloads",
-            lambda records, pb: {
+            lambda data, pb, skips: {
                 "DB::Widget": [
                     "(scip:49f6e7a06ebc5aa8)",
                     "(scip:d4f767463ce0a6b3)",
@@ -474,6 +474,9 @@ class _ApplyRepo:
     async def set_state(self, org, ns, key, value, detail=""):
         self.state.append((key, value, detail))
 
+    async def scip_stale_marks(self, org: str, ns: str, tier: str) -> set[str]:
+        return set()
+
 
 @pytest.mark.asyncio
 async def test_apply_carries_confidence_and_records_the_feature() -> None:
@@ -510,7 +513,7 @@ async def test_apply_carries_confidence_and_records_the_feature() -> None:
     )
     repo = _ApplyRepo()
     with patch("server.code.app.index.scip_delta._indexable_prefixes", return_value=()):
-        stats = await apply_delta(repo, "o", "n", delta)  # type: ignore[arg-type]
+        stats = await apply_delta(repo, "o", "n", delta, tier="clang")  # type: ignore[arg-type]
     confs = sorted(float(r["confidence"]) for r in repo.rows["code_edges"])
     assert confs == [0.8, 1.0]
     assert stats.ctor_calls_recorded is True
@@ -525,7 +528,7 @@ async def test_apply_without_the_feature_writes_no_state() -> None:
     delta = ScipDelta.model_validate({"commit": "c0ffee", "files": []})
     repo = _ApplyRepo()
     with patch("server.code.app.index.scip_delta._indexable_prefixes", return_value=()):
-        stats = await apply_delta(repo, "o", "n", delta)  # type: ignore[arg-type]
+        stats = await apply_delta(repo, "o", "n", delta, tier="clang")  # type: ignore[arg-type]
     assert stats.ctor_calls_recorded is False and repo.state == []
 
 

@@ -151,7 +151,7 @@ async def test_first_run_is_full_over_every_module_and_applies_each_delta(monkey
     monkeypatch.setattr(w, "_module_dirs", AsyncMock(return_value=["lib", "svc"]))
     applied: list[str] = []
 
-    async def fake_apply(repo, org, ns, delta):
+    async def fake_apply(repo, org, ns, delta, **_):
         applied.append(delta.paths[0])
         from server.code.app.index.scip_delta import ScipApplyStats
 
@@ -257,7 +257,7 @@ async def test_a_changed_generated_rule_releases_a_refused_delta(monkeypatch, tm
         )
         return "done lib\n"
 
-    async def fake_apply(repo, org, ns, delta):
+    async def fake_apply(repo, org, ns, delta, **_):
         from server.code.app.index.scip_delta import ScipApplyStats
 
         return ScipApplyStats(files=0)
