@@ -54,7 +54,7 @@ def test_hunk_context_name_extraction() -> None:
 
 
 def test_parse_unified_diff_full_ranges_and_names() -> None:
-    ranges, names = diff._parse_unified_diff_full(DIFF)
+    ranges, names, _ = diff._parse_unified_diff_full(DIFF)
     assert ranges["src/Core/BaseSettings.h"] == [(707, 713), (313, 320)]
     assert names["src/Core/BaseSettings.h"] == {"BaseSettings::write"}
     assert names["src/Common/maskURIPassword.h"] == {"maskPresignedURLParameters"}

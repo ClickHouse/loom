@@ -104,6 +104,20 @@ def _parse_unified_diff_full(
     return ranges, names, changes
 
 
+def _file_header_at(lines: list[str], i: int, *, body_seen: bool) -> bool:
+    """Whether `lines[i]` opens the next file's header where a hunk's counts still expect
+    lines: the hunk came without its lines, or with fewer than its header counts. A
+    `--- ` and `+++ ` pair inside a body is a removed and an added line unless a hunk
+    header (or the end of the diff) follows it."""
+    line = lines[i]
+    after = lines[i + 1 : i + 3] + ["@@", "@@"]  # the end of the diff reads as a header
+    if line.startswith("+++ "):
+        return not body_seen or after[0].startswith("@@")
+    if line.startswith("--- ") and after[0].startswith("+++ "):
+        return not body_seen or after[1].startswith("@@")
+    return False
+
+
 def _hunk_body(
     lines: list[str], i: int, old_start: int, old_left: int, new_left: int
 ) -> tuple[list[tuple[int, int]], list[int], int]:
@@ -121,9 +135,7 @@ def _hunk_body(
         if line.startswith("\\"):  # "\ No newline at end of file"
             i += 1
             continue
-        # The next file's header, when the hunk came without its lines.
-        nxt = lines[i + 1] if i + 1 < len(lines) else ""
-        if not seen and line.startswith("--- ") and nxt.startswith("+++ "):
+        if _file_header_at(lines, i, body_seen=seen):
             break
         if line.startswith("-") and old_left > 0:
             if in_run and removed and removed[-1][1] == old - 1:

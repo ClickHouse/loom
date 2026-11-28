@@ -469,13 +469,17 @@ and adds `unmapped_changes` to `causes`.
 
 Each row of `tests` is one test file with the kind of evidence in `why`, strongest first:
 
-| `why`           | The test file                                                                 | Says about a touched definition             |
-| --------------- | ----------------------------------------------------------------------------- | ------------------------------------------- |
-| `changed_test`  | is in the diff                                                                | nothing; a changed test runs                |
-| `coverage`      | executed it in an imported coverage run the index verified                    | it ran (`links_to`)                         |
-| `static_call`   | holds a test a call chain links to it (`hop`, `callers`, `confidence`, `via`) | a test reaches it (`links_to`)              |
-| `file_neighbor` | calls `callees` other definitions of the edited files                         | nothing; it is the nearest test of the file |
-| `test_map`      | is tied to the file by mined history                                          | nothing                                     |
+- `changed_test`: the file is in the diff. It says nothing about a touched definition; a
+  changed test runs.
+- `coverage`: an imported coverage run the index verified measured the file executing a
+  touched definition, named in `links_to`.
+- `static_call`: a call chain links one of the file's tests to a touched definition
+  (`links_to`), with the nearest `hop`, how many of its tests do (`callers`) and a
+  `confidence`.
+- `file_neighbor`: the file calls `callees` other definitions of the edited files. It is
+  the nearest test of the file and says nothing about a touched definition.
+- `test_map`: mined history ties the file to an edited file, and says nothing about a
+  touched definition.
 
 A `static_call` row carries `via` when the chain does not start at the definition itself:
 `constructor` (the test calls the class of a touched `__init__` or `__new__`), `enclosing`

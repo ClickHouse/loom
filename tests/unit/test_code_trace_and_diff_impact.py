@@ -65,6 +65,15 @@ def test_diff_parse_new_side_ranges() -> None:
     assert "Gone.cpp" not in str(set(ranges) - {"src/A.cpp"})
 
 
+def test_a_hunk_shorter_than_its_counts_does_not_swallow_the_next_file() -> None:
+    """A hunk with fewer lines than its header counts ends at the next file's header."""
+    one = "--- a/{p}\n+++ b/{p}\n@@ -{n},2 +{n},3 @@ f()\n+x\n"
+    diff = one.format(p="src/A.cpp", n=12) + one.format(p="tests/t.sql", n=1) + "+++ b/src/B.cpp\n"
+    ranges, _, changes = _parse_unified_diff_full(diff)
+    assert list(ranges) == ["src/A.cpp", "tests/t.sql", "src/B.cpp"]
+    assert changes["src/A.cpp"] == [Hunk("f", (), (11,))] and changes["src/B.cpp"] == []
+
+
 def test_diff_parse_tolerates_garbage() -> None:
     assert _parse_unified_diff_full("not a diff\n@@ nonsense @@\n")[0] == {}
 
