@@ -3862,8 +3862,9 @@ settings:
   # memory_code_links_mirror_naming_files: 200
 
   # Files under the entry's prefixes a lost link's commit range may change for the
-  # mirror to be searched (at most 20,000: each is an argument to git); past it, the
-  # code index alone decides. [restart]
+  # mirror to be searched, for its name and, in a range of more than 32 files, for its
+  # lines (at most 20,000: each is an argument to git); past it, the code index alone
+  # decides. [restart]
   # memory_code_links_mirror_changed_files: 5000
 
   # --- memory chunks ---

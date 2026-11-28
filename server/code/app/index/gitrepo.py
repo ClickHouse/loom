@@ -18,6 +18,7 @@ import os
 import re
 import signal
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
@@ -387,7 +388,7 @@ async def run_bounded(
 async def grep_paths(
     git_dir: str,
     rev: str,
-    literal: str,
+    literal: str | Sequence[str],
     pathspecs: tuple[str, ...],
     *,
     limit: int = 50,
@@ -395,10 +396,12 @@ async def grep_paths(
     literal_paths: bool = False,
     word: bool = False,
 ) -> list[str]:
-    """Paths at `rev` whose content contains `literal` (fixed string, case sensitive; as
-    a whole word with `word`), under `pathspecs` (file paths taken as written with
-    `literal_paths`, else pathspecs with their magic) — `git grep -l -F`. Exit 1 with
-    nothing on stderr is git's "no match", not an error."""
+    """Paths at `rev` whose content contains `literal`, or one of several (fixed strings,
+    case sensitive; as a whole word with `word`), under `pathspecs` (file paths taken as
+    written with `literal_paths`, else pathspecs with their magic) — `git grep -l -F`.
+    Exit 1 with nothing on stderr is git's "no match", not an error."""
+    literals = [literal] if isinstance(literal, str) else list(literal)
+    shown = literals[0][:40] if literals else ""
     try:
         proc = await asyncio.create_subprocess_exec(
             "git",
@@ -411,8 +414,7 @@ async def grep_paths(
             "-z",
             "-F",
             *(["-w"] if word else []),
-            "-e",
-            literal,
+            *(arg for one in literals for arg in ("-e", one)),
             _rev(rev),
             "--",
             *pathspecs,
@@ -422,13 +424,13 @@ async def grep_paths(
         )
     except OSError as e:  # an argument list past the system's limit, or no git to run
         if e.errno == errno.E2BIG:
-            raise ArgumentsTooLong(f"git grep {literal[:40]}: {len(pathspecs)} paths") from None
+            raise ArgumentsTooLong(f"git grep {shown}: {len(pathspecs)} paths") from None
         logger.warning("git grep did not start: %s", e)  # the cause, for the operator
-        raise GitError(f"git grep {literal[:40]} did not start") from None
+        raise GitError(f"git grep {shown} did not start") from None
     try:
         out, err = await communicate_or_kill(proc, timeout_s=timeout_s)
     except TimeoutError:
-        raise GrepTimedOut(f"git grep {literal[:40]} timed out") from None
+        raise GrepTimedOut(f"git grep {shown} timed out") from None
     if proc.returncode == 1 and not err.strip():
         return []
     if proc.returncode != 0:
