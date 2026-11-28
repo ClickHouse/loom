@@ -134,12 +134,49 @@ publication. Derived memory and cached results must not extend access.
 
 ## Requirements for refresh and retirement
 
-The runtime does not yet schedule refresh or accept worker uploads. Loom must
-schedule and claim bounded refresh jobs. Each claim targets one worker and
-the approved source revision, with a lease and a monotonically fenced attempt.
-The worker must upload an idempotent completion for the exact claim. The server
-must check the fence, deadline, registration and current connection before
-accepting writes and advance the checkpoint only for an accepted result. “Sync now”
+The queue stores metadata for a selected resource, never its body. A schedule
+and a manual request derive the same kind of per-resource task. Reclaiming a
+lease assigns a new fence from a noncycling sequence without changing the task
+key. An old fence cannot return after a queue row is pruned. Changing the source,
+selection, account, or approval generation invalidates existing work. The store
+filters claims by the supplied organization, namespace, and worker. The
+worker API must derive those fields from authenticated scope. A claim page
+reports how many exhausted rows it retired so the worker can distinguish
+progress from an idle poll. Recheck the requester, destination, and exact
+selection at acceptance.
+
+Admission serializes on the source, allows one unfinished batch of at most 64
+items, and keeps at most 128 queue entries. The next admission under a changed
+assignment fences and cancels old unfinished work without touching its completed
+receipts. Completed receipts expire after 24 hours. A later admission can remove
+expired queue metadata. It leaves stored copies, source checkpoints and existing
+unmarked rows in place. If the source is
+busy or retained receipts fill the budget, admission leaves the due cursor in
+place. The shortest cadence depends on selection size and the receipt budget:
+12 minutes for one document and 24 hours for 64 documents. The estimate leaves
+room for one extra batch. Manual requests share the budget and can defer a
+scheduled batch. Elapsed periods can coalesce into one batch. For manual refresh,
+Loom issues one bounded offer for the exact current selection, owner, and destination.
+Submitting it repeats the original result while the offer is current; an expired
+or superseded offer cannot create more work. If an offer expires while a batch
+is being staged, admission rolls back the batch and records the observed time.
+A backwards clock adjustment cannot reopen an expired offer once the observation
+commits. Immediate work is due at the current database wall time, independent
+of the offer clock. A busy queue leaves an unexpired offer open.
+
+The queue does not yet have a worker-facing API or a runner. Its lease and
+checkpoint tests perform no document writes. Treat the upload, copy acceptance,
+and cutover described below as requirements for enabling refresh.
+
+Each stored refresh claim targets one worker and the approved source revision. Settlement checks the deadline against the
+Postgres wall clock after acquiring the row lock. A backwards adjustment can
+extend an unreclaimed lease or an unpruned receipt, even after an earlier time
+check refused it. Replacement and cancellation invalidate the old claim
+permanently. Production activation requires a qualified clock and expiry policy.
+To enable refresh, the worker must upload an idempotent completion for the exact
+claim. The server must check the fence, deadline, registration and current
+connection before accepting a write, and advance the checkpoint only for an
+accepted result. “Sync now”
 requests the same work as a schedule. Interruptions leave copies and originals
 intact; stale completion does not renew permission or replace a copy. Partial
 pages, missing items, timeouts and ambiguous errors do not prove deletion.
@@ -161,3 +198,39 @@ identity only when the owner authorizes a replacement connection and the old and
 new resource identities have a verified one-to-one binding. An unmapped copy
 keeps its old address and erasure history. Deployment requires compatible builds,
 an approved worker binding and a separate operator cutover.
+
+## Qualification targets and transition
+
+Qualify remote MCP over Streamable HTTP with server verification. Local server
+commands and a stdio bridge are out of scope. A profile declares the read operations it permits. Resource
+listing or reading requires the corresponding capability. Tools require
+explicit validated mappings and schemas for search and read. Server names,
+descriptions and read-only hints do not grant permission. Missing revision,
+listing, permission or deletion evidence disables the behavior that depends on
+it. Qualification must exercise resources and mapped tools with the same worker.
+Synthetic servers cannot qualify a particular provider.
+
+The worker can use an independently provisioned account. A delegated account
+host needs a requester-bound read and a service lifecycle that can run without
+an agent session. If its existing integration does not delegate those rights,
+its agents can continue to use that integration directly. Loom may only read
+its authorized indexed copies; it cannot borrow an account or treat those
+copies as live. Enabling browser consent also requires an encrypted credential
+store with qualified one-use state, token rotation, revocation and retention.
+
+Keep native and worker registration data distinct during the rolling upgrade.
+Before switching an existing source, confirm the current owner, collection,
+selected resources and effective reader access. Pause the old refresh path
+before enabling the replacement schedule. Ask each owner to link the approved
+worker connection; a retired credential never enrolls an account. A source
+without a verified resource mapping keeps its existing documents and provenance
+and needs explicit reconfiguration for refresh. It does not get guessed
+endpoints, a different reader's credentials or a background fallback.
+
+The removal change must list every retired operation or input and name removed
+wire fields in `ignored_args`. The older build may keep reading the additive
+schema until the operator cutover. Removing a code path does not delete stored
+copies, originals, uploads, credentials, checkpoints or history. Use normal
+retention and erasure for those records. Keep manual import available and verify
+its reads, existing source links and protection under both builds before
+switching live traffic.

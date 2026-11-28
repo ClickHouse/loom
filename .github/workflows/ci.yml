@@ -1133,6 +1133,7 @@ jobs:
           tests/integration/test_pg_durable_publish.py
           tests/integration/test_pg_pipeline_metrics.py
           tests/integration/test_knowledge_pg_heads.py
+          tests/integration/test_mcp_worker_pg_refresh.py
           tests/integration/test_knowledge.py
           tests/integration/test_knowledge_upsert.py
           tests/integration/test_knowledge_delete.py
