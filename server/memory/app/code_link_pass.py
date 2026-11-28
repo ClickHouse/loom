@@ -303,7 +303,7 @@ class RepoReads:
                     pass  # the index holds nothing of a file that does not parse
             return found
 
-        return await self._once(("turnover", base, head), read)
+        return await self._once(("turnover", base, head, limit), read)
 
     async def _file_turnover(
         self, scope: code.IngestScope, base: str, old: str, head: str, now: str, found: Turnover
