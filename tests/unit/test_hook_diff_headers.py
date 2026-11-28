@@ -1,6 +1,7 @@
 """The code-plane hooks send `diffHeaders(diff)` in place of the whole diff; the
-server must read the same ranges and function names from it as from the whole
-diff (`_parse_unified_diff_full`), with no changed line in what is sent."""
+server must read the same ranges, function names and old-side changed lines from it
+as from the whole zero-context diff (`_parse_unified_diff_full`), with no changed
+line in what is sent."""
 
 from __future__ import annotations
 
@@ -81,7 +82,9 @@ def test_the_server_reads_the_same_ranges_and_names(tmp_path: Path) -> None:
     diff = _diff()
     sent = _headers(diff, tmp_path)
     assert _parse_unified_diff_full(sent) == _parse_unified_diff_full(diff)
-    ranges, names = _parse_unified_diff_full(sent)
+    ranges, names, changes = _parse_unified_diff_full(sent)
+    # the first hunk replaces old line 10, the new file's hunk inserts at its top
+    assert (changes["src/a.cpp"][0].removed, changes["n.py"][0].inserted) == (((10, 10),), (0,))
     assert {
         "PrivateKey::verify",
         "Foo::bar",

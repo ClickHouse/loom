@@ -685,7 +685,7 @@ async def _repack(args: argparse.Namespace) -> int:
             # No hunks would read as "every function in these files changed".
             skipped += 1
             continue
-        hunks, names = _parse_unified_diff_full(diff)
+        hunks, names, _ = _parse_unified_diff_full(diff)
         rows = await repo.functions_for_paths(org, ns, files[:60], limit=400)
         touched: list[dict[str, Any]] = []
         for r in rows:

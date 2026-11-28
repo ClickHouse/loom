@@ -144,3 +144,42 @@ async def measured_for(
         unmeasured_paths=[p for p in src_paths if p not in files],
     )
     return out
+
+
+async def measured_definitions(
+    repo: CodeRepo, org: str, ns: str, rows: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """What a coverage run measured of each definition row (`symbol_id`, `path`,
+    `start_line`, `end_line`): symbol_id -> {executed, commit}. A definition is absent
+    unless the run measured its file at the commit the index parsed both the file and the
+    definition's span at; one measured unexecuted also needs the run at the index
+    watermark, as the coverage claim's `uncovered` does. No coverage rows, one read."""
+    paths = list(dict.fromkeys(str(r.get("path") or "") for r in rows if r.get("path")))
+    files = await repo.coverage_files_for(org, ns, paths) if paths else {}
+    if not files:
+        return {}
+    kinds = tuple(sorted({str(r.get("kind") or "function") for r in rows}))
+    (head, indexed), extents = await asyncio.gather(
+        source_identities(repo, org, ns, list(files)),
+        repo.functions_for_paths(org, ns, list(files), limit=2000, kinds=kinds, with_revision=True),
+    )
+    parsed_at = {
+        (str(e["symbol_id"]), int(e["start_line"] or 0), int(e["end_line"] or 0)): str(
+            e.get("extent_commit") or ""
+        ).rstrip("\0")
+        for e in extents
+    }
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        path, sid = str(r.get("path") or ""), str(r.get("symbol_id") or "")
+        start, end = int(r.get("start_line") or 0), int(r.get("end_line") or 0)
+        if path not in files or start <= 0 or end < start:
+            continue
+        commit = str(files[path].get("commit_sha") or "")
+        span_commit = parsed_at.get((sid, start, end), "")
+        if not verified_source(path, commit, head, indexed, {path: {span_commit}}):
+            continue
+        executed = cr.intersects(cr.json_ranges(str(files[path].get("lines") or "[]")), start, end)
+        if executed or commit == head:
+            out[sid] = {"executed": executed, "commit": commit}
+    return out

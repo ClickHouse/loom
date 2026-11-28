@@ -1064,6 +1064,7 @@
 7ba38135d909	WITH (SELECT toFloat64(count()) FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL) AS n_keys, (SELECT mapFromArrays(groupArray(s), groupA
 7baded054596	SELECT count() AS n FROM loom.knowledge_ingestions WHERE org = {org:String} AND namespace = {ns:String} AND ?
 7bb1d4059098	SELECT (SELECT count() FROM ( SELECT e.org AS org, e.namespace AS namespace, e.memory_key AS memory_key FROM ( SELECT org, namespace, agent, user_id, memory_key FROM loom.entity_vectors FINAL WHERE to
+7bb3901d8e50	SELECT path, uniqExact(to_symbol_id) AS callees FROM ( SELECT tier, to_symbol_id, from_symbol_id, path, line, argMax(tombstoned_at IS NULL, version) AS is_live FROM loom.code_edges WHERE org = {org:St
 7bb9d891b190	SELECT thread_id, msg_id, role, content_excerpt AS embedded_text, ts, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.conversation_embeddings FINAL WHERE org = {org:String} AND nam
 7bcba9ce8741	SELECT state_value FROM loom.code_index_state FINAL WHERE org = {org:String} AND namespace = {ns:String} AND state_key = ? LIMIT ?
 7c06e9fdda88	ALTER TABLE loom.knowledge_uploads DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?

@@ -403,7 +403,7 @@ exists. These call shapes are not captured output from a document/code qualifica
 | `code.callers`          | who calls this, `depth` hops; an override also reports the base declaration's callers                                                         |
 | `code.callees`          | what this calls, `depth` hops                                                                                                                 |
 | `code.impact`           | blast radius of a symbol, or of `files` / a `diff`: callers, tests reaching the change, co-change partners                                    |
-| `code.test_gate`        | which tests a change obliges, and which touched functions no test reaches                                                                     |
+| `code.test_gate`        | which tests a change obliges, which touched definitions a coverage run measured unexecuted, and which the index links no test to              |
 | `code.tests_for`        | which tests cover something                                                                                                                   |
 | `code.test_home`        | where a new test belongs                                                                                                                      |
 | `code.coverage_claim`   | "is this already tested?"                                                                                                                     |
@@ -436,7 +436,7 @@ for row in r.get("co_change_missing", []):
     print("usually changes with this diff:", row)
 ```
 
-The diff shape returns the symbols the hunks overlap, the tests that reach them, and
+The diff shape returns the functions the changed lines sit in, the tests that reach them, and
 `co_change_missing`; `files` alone treats every function in those files as changed.
 Both shapes return `owners`: recency-weighted PR authors over the seed paths, with
 `exclude_authors` (normally the change's own author) removed. The index holds merged
@@ -458,6 +458,43 @@ the clients that use that interface.
 Report the indexed revision, the callers and tests found, the contract checks
 performed, and any consumers outside the available scope. A caller list identifies
 where to investigate; it does not establish that an API remains compatible.
+
+### Find the tests a change obliges
+
+`code.test_gate` takes `files` and/or a `diff` against the revision the index holds: the
+working tree against `HEAD`, a pull request against its merge base. Each changed line
+touches the innermost function or class it sits in, so a diff with three lines of context
+touches only the definitions it edits. A line outside every definition touches nothing
+and adds `unmapped_changes` to `causes`.
+
+Each row of `tests` is one test file with the kind of evidence in `why`, strongest first:
+
+| `why`           | The test file                                                                 | Says about a touched definition             |
+| --------------- | ----------------------------------------------------------------------------- | ------------------------------------------- |
+| `changed_test`  | is in the diff                                                                | nothing; a changed test runs                |
+| `coverage`      | executed it in an imported coverage run the index verified                    | it ran (`links_to`)                         |
+| `static_call`   | holds a test a call chain links to it (`hop`, `callers`, `confidence`, `via`) | a test reaches it (`links_to`)              |
+| `file_neighbor` | calls `callees` other definitions of the edited files                         | nothing; it is the nearest test of the file |
+| `test_map`      | is tied to the file by mined history                                          | nothing                                     |
+
+A `static_call` row carries `via` when the chain does not start at the definition itself:
+`constructor` (the test calls the class of a touched `__init__` or `__new__`), `enclosing`
+(it calls the function a touched nested function is defined in) or `fixture` (it reaches
+through a fixture). Within a kind the nearest hop is first, then the file linked to more
+of the touched definitions, then the one with more tests doing so.
+
+The touched definitions land in two lists with different meanings:
+
+- `untested` holds the definitions an imported coverage run measured unexecuted, with the
+  run's `commit`. It is empty unless such a run exists at a revision the index verified.
+- `unlinked` holds the definitions no coverage run measured and no call chain links a test
+  to. It does not say that no test runs them: tests reach code through fixtures,
+  string-dispatched entry points and public APIs the call graph holds no edge for. A
+  `file_neighbor` or `test_map` row never takes a definition off this list.
+
+`obligations` is true while `tests` or `untested` is non-empty. `epistemic` is `measured`
+when a verified coverage run settled every touched definition and every changed line sat
+in one, and `lower_bound` otherwise; the op never answers `exact`.
 
 ## History, PRs and releases
 

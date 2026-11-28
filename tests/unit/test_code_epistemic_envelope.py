@@ -179,6 +179,12 @@ class _Repo:
     async def test_map_for(self, org, ns, paths, *, limit=30):
         return []
 
+    async def test_files_calling(self, org, ns, ids, *, limit=30):
+        return []
+
+    async def coverage_files_for(self, org, ns, paths):
+        return {}
+
     async def pr_history_for(self, org, ns, *, paths, limit):
         return []
 
@@ -426,7 +432,9 @@ async def test_test_gate_carries_envelope(intel) -> None:
         out = await gate.handle_code_test_gate(
             CodeTestGateInput(org="o", namespace="n", files=["src/A.cpp"])
         )
-    assert out.epistemic == "lower_bound" and out.causes == ["unresolved_calls"]
+    # the graph's own cause, then the gate's: no coverage run measured the touched function
+    assert out.epistemic == "lower_bound"
+    assert out.causes == ["unresolved_calls", "no_coverage"]
     assert out.by_hop_counts == {1: 2, 2: 3}
 
 

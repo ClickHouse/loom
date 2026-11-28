@@ -29,7 +29,11 @@ from server.code.app.symbol.coverage import (
     _scip_coverage,
     _unindexed_paths,
 )
-from server.code.app.symbol.diff import _parse_unified_diff_full, _touched_rows_for_diff
+from server.code.app.symbol.diff import (
+    DEFINITION_KINDS,
+    _parse_unified_diff_full,
+    _touched_rows_for_diff,
+)
 from server.code.app.symbol.dispatch import _dispatch_missing, _dispatch_seeds
 from server.code.app.symbol.edges import (
     _IMPACT_READ_LIMIT,
@@ -130,19 +134,26 @@ async def _diff_seeds(
     overlay: Any,
 ) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     """Diff shape: (seed paths, the index's function rows in them, the touched rows, the
-    ids the walk seeds). Hunk ranges narrow whole files to the functions actually edited,
-    which is what makes this sharper than a flat file-level reaching set; the functions an
-    open PR adds are seeds the index lacks, appended as tier `overlay`."""
+    ids the walk seeds). The changed lines narrow whole files to the functions actually
+    edited, which is what makes this sharper than a flat file-level reaching set; the
+    functions an open PR adds are seeds the index lacks, appended as tier `overlay`."""
     with code_span("impact.diff_parse") as sp:
-        hunks, header_names = _parse_unified_diff_full(in_diff) if in_diff else ({}, {})
+        hunks, _, changes = _parse_unified_diff_full(in_diff) if in_diff else ({}, {}, {})
         span_attrs(sp, results=len(hunks))
     seed_paths = list(dict.fromkeys([*in_files, *hunks.keys()]))[:200]
     with code_span("impact.functions_for_paths", seeds=len(seed_paths)) as sp:
-        symbol_rows = (
-            await repo.functions_for_paths(org, ns, seed_paths, limit=400) if seed_paths else []
+        definitions = (
+            await repo.functions_for_paths(org, ns, seed_paths, limit=2000, kinds=DEFINITION_KINDS)
+            if seed_paths
+            else []
         )
-        span_attrs(sp, results=len(symbol_rows))
-    touched_rows, seed_ids = _touched_rows_for_diff(symbol_rows, hunks, header_names)
+        span_attrs(sp, results=len(definitions))
+    # Classes are read so that a line of a class body is not taken for the method below it;
+    # the radius is seeded by functions only.
+    touched_rows, _, _ = _touched_rows_for_diff(definitions, changes)
+    touched_rows = [r for r in touched_rows if str(r.get("kind")) != "class"]
+    seed_ids = list(dict.fromkeys(sid for r in touched_rows for sid in r["tier_ids"]))
+    symbol_rows = [r for r in definitions if str(r.get("kind")) != "class"]
     added_rows = _overlay_added_rows(overlay)
     if added_rows:
         touched_rows = [*touched_rows, *added_rows]

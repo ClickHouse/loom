@@ -1,6 +1,7 @@
 """Reads over loom.code_edges, loom.code_call_sites_unresolved and
 loom.code_caller_guards: call edges in both directions, declined call
-sites, caller guards, caller counts and include edges.
+sites, caller guards, caller counts, the test files calling a set of
+definitions and include edges.
 """
 
 from __future__ import annotations
@@ -620,6 +621,43 @@ class EdgesMixin(CodeRepoBase):
             }
             for r in rows
         }
+
+    async def test_files_calling(
+        self, org: str, ns: str, symbol_ids: list[str], *, limit: int = 30
+    ) -> list[dict[str, Any]]:
+        """Test files with a live `calls` edge into `symbol_ids` (the first 1,000), each
+        with how many of them it calls (`callees`), most first, then by path. One grouped
+        read on the edge table's (org, namespace, tier, to_symbol_id) prefix; the test-path
+        filter runs before the cap, so production callers take none of it."""
+        ids = [s for s in dict.fromkeys(symbol_ids) if s][:1000]
+        if not ids:
+            return []
+        rows: list[dict[str, Any]] = await self._ch.query_all(
+            """
+            SELECT path, uniqExact(to_symbol_id) AS callees
+            FROM (
+                SELECT tier, to_symbol_id, from_symbol_id, path, line,
+                       argMax(tombstoned_at IS NULL, version) AS is_live
+                FROM loom.code_edges
+                WHERE org = {org:String} AND namespace = {ns:String}
+                  AND to_symbol_id IN {ids:Array(String)} AND edge_kind = 'calls'
+                  AND match(path, {test_path_pattern:String})
+                GROUP BY tier, to_symbol_id, from_symbol_id, path, line
+                HAVING is_live = 1
+            )
+            GROUP BY path
+            ORDER BY callees DESC, path
+            LIMIT {limit:UInt32}
+            """,
+            {
+                "org": org,
+                "ns": ns,
+                "ids": ids,
+                "test_path_pattern": TEST_PATH_PATTERN,
+                "limit": int(limit),
+            },
+        )
+        return rows
 
     async def include_edges(self, org: str, ns: str) -> list[tuple[str, str]]:
         """(from_path, include_target) pairs, live, both tiers."""

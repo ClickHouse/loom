@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   advicePayload,
   adviceTests,
+  askedTests,
   checkoutPython,
   decideBlock,
   gateMode,
@@ -25,16 +26,17 @@ const GATE = {
   obligations: true,
   counts_floor: true,
   tests: [
-    { test_path: "tests/unit/test_a.py", why: "stem_partner", run: "pytest tests/unit/test_a.py", run_unknown: false },
+    { test_path: "tests/unit/test_a.py", why: "changed_test", run: "pytest tests/unit/test_a.py", run_unknown: false },
     { test_path: "tests/unit/test_a.py", why: "test_map", run: "pytest tests/unit/test_a.py", run_unknown: false },
-    { test_path: "src/x/tests/gtest_parts.cpp", why: "graph_hop", run: "", run_unknown: true },
+    { test_path: "src/x/tests/gtest_parts.cpp", why: "static_call", run: "", run_unknown: true },
   ],
-  untested: [
+  untested: [],
+  unlinked: [
     { qualified_name: "DB::MergeTreeData::renameTempPartAndAdd", path: "src/a.cpp" },
     { qualified_name: "DB::MergeTreeData::renameTempPartAndAdd", path: "src/a.cpp" },
     { qualified_name: "DB::Foo::bar", path: "src/b.cpp" },
   ],
-  untested_total: 2,
+  unlinked_total: 2,
 };
 
 test("the gate advises at edit time unless LOOM_TEST_GATE says block or off", () => {
@@ -54,7 +56,7 @@ test("the edit-time line names the commands of the tests the index links to the 
   // Beside tests to run no function is named: the graph is a floor, and the line asks for no reply.
   assert.doesNotMatch(text, /renameTempPartAndAdd|no test reaches|links no test/);
   assert.equal(
-    renderAdvice("src/a.py", adviceTests("src/a.py", GATE), { python: ".venv/bin/python", untested: "Foo::bar" }),
+    renderAdvice("src/a.py", adviceTests("src/a.py", GATE), { python: ".venv/bin/python", unlinked: "Foo::bar" }),
     text,
   );
   assert.deepEqual(advicePayload(text), {
@@ -78,7 +80,7 @@ test("a changed test names its own command; a file no runner takes, a test the c
     line("src/a.py", gone, () => true),
     "Loom tests for src/a.py: pytest tests/gone.py",
   );
-  for (const none of [null, {}, { tests: [] }, { untested: [{ qualified_name: "m::f" }] }]) {
+  for (const none of [null, {}, { tests: [] }, { unlinked: [{ qualified_name: "m::f" }] }]) {
     assert.equal(line("src/a.py", none), "");
   }
   assert.equal(advicePayload(""), null);
@@ -86,16 +88,16 @@ test("a changed test names its own command; a file no runner takes, a test the c
 
 test("a file with no test to name gets the functions the index links no test to, as the index's view", () => {
   assert.equal(
-    renderAdvice("src/a.py", [], { untested: "MergeTreeData::renameTempPartAndAdd, Foo::bar" }),
+    renderAdvice("src/a.py", [], { unlinked: "MergeTreeData::renameTempPartAndAdd, Foo::bar" }),
     "Loom tests for src/a.py: the index links no test to MergeTreeData::renameTempPartAndAdd, Foo::bar",
   );
-  assert.equal(renderAdvice("src/a.py", [], { untested: "" }), "");
+  assert.equal(renderAdvice("src/a.py", [], { unlinked: "" }), "");
 });
 
 test("the edit-time line folds pytest files into one command and counts the commands it leaves out", () => {
   const many = ["a", "b", "c", "d", "e", "f"].map((n) => ({
     test_path: `tests/test_${n}.py`,
-    why: "graph_hop",
+    why: "static_call",
     run: `pytest tests/test_${n}.py`,
   }));
   assert.equal(
@@ -124,7 +126,7 @@ test("blocks once per signature, then lets the stop through", () => {
   assert.equal(other.block, true);
 });
 
-test("render dedupes commands, lists unknown-runner tests and untested names", () => {
+test("render dedupes commands, lists unknown-runner tests and unlinked names", () => {
   const text = renderGate(GATE);
   assert.match(text, /^Loom test gate \(graph is a floor\): run: pytest tests\/unit\/test_a\.py · /);
   assert.equal((text.match(/pytest tests\/unit\/test_a\.py/g) || []).length, 1);
@@ -133,29 +135,74 @@ test("render dedupes commands, lists unknown-runner tests and untested names", (
   assert.match(text, /\. Run the tests before finishing, or say why not\.$/);
 });
 
-test("beside tests to run, an untested function is the index's view, not a fact about those tests", () => {
+test("an unlinked definition is the index's view, never a fact about the tests", () => {
   // A constructor, and a test file whose every test builds the object: the graph holds no edge between them.
   const built = {
     obligations: true,
     counts_floor: true,
     tests: [{ test_path: "tests/test_widgets.py", why: "changed_test", run: "pytest tests/test_widgets.py" }],
-    untested: [{ qualified_name: "src.pkg.widgets::Widget::__init__", path: "src/pkg/widgets.py" }],
-    untested_total: 1,
+    unlinked: [{ qualified_name: "src.pkg.widgets::Widget::__init__", path: "src/pkg/widgets.py" }],
+    unlinked_total: 1,
   };
   assert.equal(
     renderGate(built, { python: "python3", testExists: () => true }),
     "Loom test gate (graph is a floor): run: python3 -m pytest tests/test_widgets.py · the index links no test to: Widget::__init__ (the tests named here may still reach it). Run the tests before finishing, or say why not.",
   );
-  assert.doesNotMatch(renderGate(GATE, { testExists: () => true }), /no test reaches/);
   assert.match(
     renderGate(GATE, { testExists: () => true }),
     /Foo::bar \(the tests named here may still reach them\)\. /,
   );
-  // With no test to run there is none to hedge about.
+  // With no test to run there is none to hedge about, and nothing to add: no run measured the code unexecuted.
   for (const none of [renderGate({ ...GATE, tests: [] }), renderGate(GATE, { testExists: () => false })]) {
-    assert.match(none, /no test reaches: MergeTreeData::renameTempPartAndAdd, Foo::bar\. /);
+    assert.match(none, /the index links no test to: MergeTreeData::renameTempPartAndAdd, Foo::bar[ .]/);
+    assert.doesNotMatch(none, /may still reach|Add a test/);
   }
-  assert.match(renderGate({ ...GATE, tests: [] }), /Foo::bar\. Add a test that reaches it/);
+  assert.equal(
+    renderGate({ ...GATE, tests: [] }),
+    "Loom test gate (graph is a floor): the index links no test to: MergeTreeData::renameTempPartAndAdd, Foo::bar.",
+  );
+  for (const text of [renderGate(GATE), renderGate(built), renderGate({ ...GATE, tests: [] })]) {
+    assert.doesNotMatch(text, /no test reaches/);
+  }
+});
+
+test("a definition a coverage run measured unexecuted asks for a test", () => {
+  const measured = {
+    obligations: true,
+    tests: [{ test_path: "tests/test_a.py", why: "static_call", run: "pytest tests/test_a.py" }],
+    untested: [
+      { qualified_name: "pkg.mod::Parser::reset", commit: "0123456789abcdef0123456789abcdef01234567" },
+      { qualified_name: "pkg.mod::Parser::close", commit: "0123456789abcdef0123456789abcdef01234567" },
+    ],
+    untested_total: 2,
+    unlinked: [{ qualified_name: "pkg.mod::helper" }],
+  };
+  assert.equal(
+    renderGate(measured),
+    "Loom test gate: run: pytest tests/test_a.py · the index links no test to: pkg.mod::helper (the tests named here may still reach it) · measured unexecuted at 0123456789: Parser::reset, Parser::close. Run the tests before finishing, or say why not. Add a test that runs the unexecuted code, or say why none is needed.",
+  );
+  // A row that names no run is no measurement, and asks for nothing.
+  assert.equal(renderGate({ obligations: true, untested: [{ qualified_name: "pkg.mod::f" }] }), "");
+  // Runs at two commits name neither.
+  const mixed = { ...measured, untested: [measured.untested[0], { qualified_name: "pkg.mod::f", commit: "ffff" }] };
+  assert.match(renderGate(mixed), /measured unexecuted: Parser::reset, pkg\.mod::f\. /);
+});
+
+test("a stop asks for the tests about the change, and for file neighbours only up to the cap", () => {
+  const t = (why, i) => ({ test_path: `tests/test_${why}_${i}.py`, why, run: `pytest tests/test_${why}_${i}.py` });
+  const neighbors = Array.from({ length: 30 }, (_, i) => t("file_neighbor", i));
+  const paths = (tests) => tests.map((x) => x.test_path);
+  // No test is linked to the change: the four neighbours that call the most of the file.
+  assert.deepEqual(paths(askedTests({ tests: neighbors })), paths(neighbors.slice(0, 4)));
+  // One linked test leaves room for three; five leave none, and all five are asked.
+  const one = [t("static_call", 0), ...neighbors];
+  assert.deepEqual(paths(askedTests({ tests: one })), paths([one[0], ...neighbors.slice(0, 3)]));
+  const five = [t("changed_test", 0), ...[1, 2, 3].map((i) => t("static_call", i)), ...neighbors, t("test_map", 4)];
+  assert.deepEqual(paths(askedTests({ tests: five })), paths(five.filter((x) => x.why !== "file_neighbor")));
+  const text = renderGate({ obligations: true, tests: one });
+  assert.match(text, /run: pytest tests\/test_static_call_0\.py tests\/test_file_neighbor_0\.py /);
+  assert.doesNotMatch(text, /test_file_neighbor_3|more\)/);
+  assert.deepEqual(askedTests(null), []);
 });
 
 test("plain pytest runs fold into one command; a run with an option stays its own", () => {
@@ -418,10 +465,10 @@ test("pytest runs use the checkout's interpreter; none found is said plainly", (
 test("nothing to run asks for a test, not for running tests", () => {
   const text = renderGate({
     obligations: true,
-    untested: [{ qualified_name: "server.naming::validate_namespace_name" }],
+    untested: [{ qualified_name: "server.naming::validate_namespace_name", commit: "abc1234" }],
   });
-  assert.match(text, /no test reaches: server\.naming::validate_namespace_name/);
-  assert.match(text, /Add a test that reaches it, or say why none is needed\.$/);
+  assert.match(text, /measured unexecuted at abc1234: server\.naming::validate_namespace_name/);
+  assert.match(text, /Add a test that runs the unexecuted code, or say why none is needed\.$/);
   assert.doesNotMatch(text, /Run the tests/);
 });
 
@@ -556,7 +603,7 @@ const HEREDOC =
 const RUN_GATE = {
   obligations: true,
   tests: [{ test_path: "tests/test_a.py", run: "pytest tests/test_a.py" }],
-  untested: [{ qualified_name: "m::f" }],
+  unlinked: [{ qualified_name: "m::f" }],
 };
 const answered = (objs, gate = RUN_GATE, cwd = ROOT) =>
   runAnswered(gate, objs.flat(), {
@@ -828,6 +875,22 @@ test("a run of a subset or of another file answers nothing", () => {
   );
 });
 
+test("file neighbours past the cap do not keep a run from answering the gate", () => {
+  const neighbors = Array.from({ length: 30 }, (_, i) => ({
+    test_path: `tests/test_n${i}.py`,
+    why: "file_neighbor",
+    run: `pytest tests/test_n${i}.py`,
+  }));
+  const gate = {
+    obligations: true,
+    tests: [{ test_path: "tests/test_a.py", why: "static_call", run: "pytest tests/test_a.py" }, ...neighbors],
+  };
+  const ran = (paths) => [edit(), bash(`pytest ${paths.join(" ")}`, "===== 9 passed in 0.12s =====")];
+  const asked = ["tests/test_a.py", "tests/test_n0.py", "tests/test_n1.py", "tests/test_n2.py"];
+  assert.equal(answered(ran(asked), gate), true);
+  assert.equal(answered(ran(asked.slice(0, 3)), gate), false);
+});
+
 test("a gate that asks for more than a pytest run of present tests still asks", () => {
   const no = [said("Fix f. Do not run the test suite."), edit()];
   const ran = [edit(), bash(SUITE, PASSED)];
@@ -836,7 +899,7 @@ test("a gate that asks for more than a pytest run of present tests still asks", 
     tests: [...RUN_GATE.tests, { test_path: "tests/gone_test.py", run: "pytest tests/gone_test.py" }],
   };
   const other = { ...RUN_GATE, tests: [{ test_path: "tests/a.test.ts", run: "npx vitest run tests/a.test.ts" }] };
-  const untested = { ...RUN_GATE, tests: [] };
+  const untested = { ...RUN_GATE, tests: [], untested: [{ qualified_name: "m::f", commit: "abc1234" }] };
   assert.equal(answered(ran, missing), false);
   assert.equal(answered(no, missing), false);
   assert.equal(answered(ran, other), false);
@@ -1322,11 +1385,11 @@ test("a changed file's tests ride the tool call that changed it, once", async ()
               .map((f) => ({ test_path: f, why: "changed_test", run: `pytest ${f}` })),
             ...stem.map((n) => ({
               test_path: `tests/test_${n}.py`,
-              why: "stem_partner",
+              why: "test_map",
               run: `pytest tests/test_${n}.py`,
             })),
           ],
-          untested: stem.length ? [{ qualified_name: "m::g" }] : [],
+          unlinked: stem.length ? [{ qualified_name: "m::g" }] : [],
         },
         "/v1/code.impact": {
           touched_symbols: [{ qualified_name: "m::g" }],
