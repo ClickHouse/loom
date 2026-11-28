@@ -446,7 +446,9 @@ _CONTRACT: dict[str, RuleContract] = {
         exceptions=_UNLINKED_READ,
         uncertainty=(
             "While the link pass backfills earlier writes, a memory it has not reached is "
-            "counted here even when nothing of it will resolve."
+            "counted here even when nothing of it will resolve. A write queued after the "
+            "pass's position with an earlier write time (an insert in flight, a writer "
+            "clock behind ClickHouse's) is counted under its cause until the next pass."
         ),
     ),
 }

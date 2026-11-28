@@ -65,7 +65,9 @@ class _Pass:
     def has_read(self, org: str, memory: dict[str, Any]) -> bool:
         """The pass read `memory` as it is now: written before the queue position and,
         while the backfill runs, at or before the identity it has reached. A version is
-        the write's wall-clock time in ns."""
+        the write's wall-clock time in ns, and the position is ClickHouse's time at the
+        queue insert: a write queued after the position with an earlier version (an
+        insert in flight, a writer clock behind) reads as read until the next pass."""
         if not self.read_to or int(memory["version"]) // 1000 > self.read_to:
             return False
         ident = (org, *(str(memory[c]) for c in IDENTITY[1:]))
