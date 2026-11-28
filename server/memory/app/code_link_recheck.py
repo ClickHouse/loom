@@ -371,9 +371,8 @@ async def _recheck(
             if new is None and r.before.state != "missing":
                 renamed = Successor(None, uncertain=True)  # cannot tell: a live link is unsure
             far = new or []
-        # found under no name it had: looked for where it may have moved, never for a
-        # link already missing, nor one the same-file search left unsure, unless the new
-        # definitions there were each compared with it and none is close
+        # found under no name it had, and live: looked for where it may have moved when the
+        # same-file answer is certain, or no new definition there is close (`unmatched`)
         unsure = renamed.uncertain
         sought = (
             r.lost
