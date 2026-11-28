@@ -76,9 +76,10 @@ def _mirror_names_nothing_else(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _ranges_rename_nothing_across_files(monkeypatch):
-    # likewise: a lost name is looked for under another name only where a test says so
+    # likewise: a lost name is looked for under another name only where a test says so.
+    # Searched, with nothing brought in: a range not searched keeps an unresolved link
     async def turnover(self, base, head, *, limit):
-        return None
+        return code_link_pass.Turnover([], [], [])
 
     monkeypatch.setattr(code_link_pass.RepoReads, "turnover", turnover)
 
