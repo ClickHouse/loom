@@ -92,9 +92,14 @@ class ChildWorkers:
         `drain_timeout_s`, or after STOP_TIMEOUT_S, whichever comes first. A
         cancelled stop kills it at once."""
         kill_at = min(self._deadline + drain_timeout_s, time.monotonic() + STOP_TIMEOUT_S)
-        if self._watch is not None:
-            self._watch.cancel()
-            await asyncio.gather(self._watch, return_exceptions=True)
+        try:
+            if self._watch is not None:
+                self._watch.cancel()
+                await asyncio.gather(self._watch, return_exceptions=True)
+        except asyncio.CancelledError:
+            # Cancellation can arrive before _reap owns the child's cleanup.
+            await self._reap(time.monotonic())
+            raise
         await self._reap(kill_at)
 
     def status(self) -> list[dict[str, object]]:
