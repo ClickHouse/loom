@@ -1065,12 +1065,12 @@ separate mirror-content cleanup before serving; this account procedure does not 
 ### Memory links written during a recheck
 
 A build that takes the repository's recheck lease to insert a memory's links writes no
-new row shape and no setting. Replicas of the previous build insert without the lease, so
-while they run the link worker a link can be inserted just after a pass snapshotted. Each
-pass records a digest of the links not checked at its head, taken before it reads any
-link; the next pass at the same head that finds the digest changed rechecks those links,
-so such a link stops being served as fresh within two passes, with no wait for the last
-previous-build replica to go.
+new row shape and adds no setting. Replicas of the previous build insert without the
+lease, so while they run the link worker a link can be inserted just after a pass read
+the table. Each pass records a digest of the links not checked at its head, taken before
+it reads any link. The next pass at the same head rechecks those links when the digest
+changed, so such a link stops being served as fresh within two passes, whether or not a
+previous-build replica is still running.
 
 ## Independent proposal approval
 

@@ -684,28 +684,30 @@ No source text is fetched from a network or fabricated to fill a gap.
 ## Memory links written during a recheck
 
 A recheck pass follows a repository's links from its checked head to its indexed head
-under the repository's lease, and a writer that links a memory inserts its links under
-the same lease. A pass that starts after the insert reads the new links. A pass that ran
-before the writer took the lease checked a head the writer's links were not built at,
-so the writer finds the indexed head moved and inserts nothing: it parks that
-repository's memories behind the `*` marker (the other repositories of the batch are
-inserted and the queue cursor moves on), and the pending scan, which runs under the
-lease, links them at its own head. A writer that finds the lease held does the same. No
-link is stored in a state that waits for a pass, and the read side trusts a link only
-when the checked head is the indexed head.
+under the repository's lease. A writer that links a memory inserts its links under the
+same lease, so a pass that starts after the insert reads the new links.
 
-The indexed head, and every read a pass makes of the links, run under
-`sequential_reads()`, so a head another replica indexed and a link another replica
-inserted under the lease are seen. That holds when the state writes are visible to a
-sequential read, as `loom doctor` checks for `select_sequential_consistency`.
+A pass can run before the writer takes the lease and check a head the writer's links
+were not built at. The writer then finds the indexed head moved and inserts nothing. It
+parks that repository's memories behind the `*` marker, inserts the other repositories
+of the batch and moves the queue cursor on. The pending scan, which runs under the
+lease, links the parked memories at its own head. A writer that finds the lease held
+does the same. No link is stored in a state that waits for a pass, and the read side
+trusts a link only when the checked head is the indexed head.
 
-A build without the lease (the previous one during a rolling upgrade) can insert a link
-built at an older commit after a pass read the table. A pass at an unchanged head follows
-nothing, so each pass records, before it reads any link, a digest of the live links not
-checked at its head (`store.behind_digest`: each key and version). The next pass at that
-head finds the digest changed and rechecks those links from their own checked commit
-(`_catch_up`). The digest is compared, never a timestamp, so no host's clock matters; a
-pass that moved links changes the digest once more and its next catch-up is a no-op.
+The indexed head and every read a pass makes of the links run under
+`sequential_reads()`, so the pass sees a head another replica indexed and a link another
+replica inserted under the lease. That holds when state writes are visible to a
+sequential read, which `loom doctor` checks through `select_sequential_consistency`.
+
+A build without the lease, such as the previous build during a rolling upgrade, can
+insert a link built at an older commit after a pass read the table. A pass at an
+unchanged head follows nothing, so each pass records a digest of the live links not
+checked at its head (`store.behind_digest`, over each key and version). It takes the
+digest before it reads any link. The next pass at that head rechecks those links from
+their own checked commit (`_catch_up`) when the digest changed. The check compares
+digests and never timestamps, so no host's clock matters. A pass that moved links
+changes the digest once more, and the catch-up after it rechecks nothing.
 
 ## Invariants
 
