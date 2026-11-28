@@ -23,6 +23,7 @@ class _Cfg:
     label = "o/code-x"
     repo = "Org/Repo"
     provider = "github"
+    pr_source = "github"
     github_token = "tok"
     git_dir = ""
     source = "config"

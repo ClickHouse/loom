@@ -11,6 +11,7 @@ from typing import Any
 
 from server.code.app.bisect_facts import _MAX_PATHS, IssueFacts, Widening
 from server.code.app.spans import code_span
+from server.code.domain.index.remote import pr_web_url
 from server.core.datetimes import naive_utc_now_seconds
 from server.settings import settings
 from server.tracker.domain import bisect as bi
@@ -281,7 +282,7 @@ async def _code_history_rows(
                 "merged_at": r.get("merged_at"),
                 "matched_paths": matched,
                 "affected_file_paths": files,
-                "url": f"https://github.com/{repo}/pull/{n}" if repo and n else "",
+                "url": pr_web_url(repo, n),
                 "additions": int(r.get("additions") or 0),
                 "deletions": int(r.get("deletions") or 0),
             }

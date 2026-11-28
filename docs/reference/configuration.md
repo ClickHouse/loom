@@ -488,7 +488,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CODE_PR_HISTORY_ENABLED` | `bool` | `False` |  | Merged-PR history sync (GitHub REST, cursor-resumable). |
+| `LOOM_CODE_PR_HISTORY_ENABLED` | `bool` | `False` |  | Merged-PR history sync (GitHub REST, or the REST API of a Forgejo host; cursor-resumable). |
 | `LOOM_CODE_PR_HISTORY_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between PR-history sync passes. |
 
 ### The set-wide backport report

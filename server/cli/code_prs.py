@@ -1,10 +1,11 @@
-"""`loom code backfill-prs` and the GitHub history backfills: merged PRs,
+"""`loom code backfill-prs` (GitHub or Forgejo) and the GitHub history backfills:
 reviews, items and assignees."""
 
 from __future__ import annotations
 
 import argparse
 import sys
+from typing import Any
 
 from server.cli._ch import connect_code_plane
 from server.cli.code_run import _identity, _note, _repo_cfg
@@ -21,6 +22,8 @@ async def _backfill_prs(args: argparse.Namespace) -> int:
     from server.settings import settings
 
     cfg = _repo_cfg(args)
+    if cfg.pr_source == "forgejo":
+        return await _backfill_prs_forgejo(args, cfg)
     if not cfg.github_token:
         # Same policy as the code_pr_history worker: public repos read fine
         # anonymously, but at 60 req/h a day of ClickHouse merges (~100 PRs,
@@ -66,6 +69,59 @@ async def _backfill_prs(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _backfill_prs_forgejo(args: argparse.Namespace, cfg: Any) -> int:
+    """Merged PRs newest close first, back to `--months`, from the page the last run
+    stopped at (`pr_backfill_page`; a finished walk starts over at page 1, its rows
+    rewritten as the same versions). Forgejo's API has no merged-date search, so this
+    walk replaces GitHub's day windows."""
+    from datetime import timedelta
+
+    from server.clients import forgejo
+    from server.clients.github import GitHubError, RateLimited
+    from server.code.domain.index.remote import forgejo_api_repo
+    from server.code.store.index import CodeRepo
+    from server.code.workers.pr_history import pr_rows
+    from server.core.ch import get_client
+    from server.settings import settings
+
+    api = forgejo_api_repo(cfg.git_remote)
+    await connect_code_plane(get_client(), args)
+    org, ns = cfg.org, cfg.namespace
+    repo = CodeRepo()
+    months = args.months or settings.code_pr_backfill_months
+    oldest = naive_utc_now() - timedelta(days=30 * months)
+    page = int(await repo.get_state(org, ns, "pr_backfill_page") or 1)
+    total = 0
+    while total < args.max_prs:
+        try:
+            prs, nxt = await forgejo.merged_prs_back_to(
+                api,
+                cfg.github_token,
+                oldest,
+                max_prs=min(200, args.max_prs - total),
+                base=cfg.git_branch,
+                start_page=page,
+                max_pages=5,
+            )
+        except RateLimited as e:
+            print(f"rate limited ({e}); resume later — cursor kept at page {page}", file=sys.stderr)
+            return 1
+        except GitHubError as e:
+            print(f"forgejo error at page {page}: {e}", file=sys.stderr)
+            return 1
+        if prs:
+            await repo.insert_rows("code_pr_history", await pr_rows(repo, org, ns, prs))
+            total += len(prs)
+        print(f"  from page {page}: {len(prs)} merged PRs (total {total})")
+        await repo.set_state(org, ns, "pr_backfill_page", str(nxt or 1))
+        if not nxt:
+            break
+        page = nxt
+    print(f"backfill-prs: {total} PRs back to {oldest.date()}")
+    _note(prs=total)
+    return 0
+
+
 async def _backfill_reviews(args: argparse.Namespace) -> int:
     from server.clients.github import GitHubError, RateLimited, pr_review_comments
     from server.code.store.index import CodeRepo
@@ -73,6 +129,9 @@ async def _backfill_reviews(args: argparse.Namespace) -> int:
     from server.core.ch import get_client
 
     cfg = _repo_cfg(args)
+    if cfg.pr_source != "github":
+        print("backfill-reviews: GitHub repositories only", file=sys.stderr)
+        return 2
     if not cfg.github_token:
         print(
             "backfill-reviews: LOOM_CODE_GITHUB_TOKEN required (one request per PR)",
@@ -130,6 +189,9 @@ async def _backfill_items(args: argparse.Namespace) -> int:
     from server.settings import settings
 
     cfg = _repo_cfg(args)
+    if cfg.pr_source != "github":
+        print("backfill-items: GitHub repositories only", file=sys.stderr)
+        return 2
     if not cfg.github_token:
         print("backfill-items: LOOM_CODE_GITHUB_TOKEN required", file=sys.stderr)
         return 2
@@ -193,6 +255,9 @@ async def _backfill_assignees(args: argparse.Namespace) -> int:
     from server.core.ch import get_client
 
     cfg = _repo_cfg(args)
+    if cfg.pr_source != "github":
+        print("backfill-assignees: GitHub repositories only", file=sys.stderr)
+        return 2
     if not cfg.github_token:
         print("backfill-assignees: LOOM_CODE_GITHUB_TOKEN required", file=sys.stderr)
         return 2

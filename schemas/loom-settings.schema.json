@@ -1570,7 +1570,7 @@
         "code_pr_history_enabled": {
           "default": false,
           "type": "boolean",
-          "description": "Merged-PR history sync (GitHub REST, cursor-resumable)."
+          "description": "Merged-PR history sync (GitHub REST, or the REST API of a Forgejo host; cursor-resumable)."
         },
         "code_pr_history_interval_seconds": {
           "default": 900,

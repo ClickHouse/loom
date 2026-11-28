@@ -3307,7 +3307,7 @@
         },
         {
          "dest": "backfill-prs",
-         "help": "Merged-PR history from GitHub.",
+         "help": "Merged-PR history from GitHub or a Forgejo host.",
          "metavar": "backfill-prs"
         },
         {

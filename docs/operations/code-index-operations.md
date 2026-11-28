@@ -94,7 +94,9 @@ when the deployment indexes more than one repository.
   run the commands above again once a colour deployment's previous colour has stopped.
 
 - **A GitHub token** (`LOOM_CODE_GITHUB_TOKEN`, or `github_token` per entry) for
-  merged-PR history and for private remotes.
+  merged-PR history and for private remotes. On a Forgejo host the entry's
+  `github_token` is that host's token, never `LOOM_CODE_GITHUB_TOKEN`
+  ([PR history from Forgejo](../features/code-index/history-and-prs.md#forgejo-hosts)).
 
 ## Configure the entry
 
@@ -116,7 +118,7 @@ LOOM_CODE_REPOS_JSON='[
 | Field                                | Meaning                                                                                                                       |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
 | `namespace`, `org`                   | where the index lives                                                                                                         |
-| `repo`                               | `owner/name` on GitHub                                                                                                        |
+| `repo`                               | `owner/name` on GitHub, `host/owner/name` on a Forgejo host                                                                   |
 | `git_dir`, `git_remote`              | the bare clone and its remote; branches of one repository share one clone                                                     |
 | `git_branch`                         | the branch this namespace tracks                                                                                              |
 | `path_prefixes`                      | comma-separated prefixes to index; an entry without it indexes the whole tree minus the built-in denylist                     |
@@ -132,6 +134,7 @@ LOOM_CODE_REPOS_JSON='[
 | `scip_extra_producers`               | further compiler-tier producers over the same tree (a Python repository with a TypeScript frontend), each in its own checkout |
 | `git_extra_branches`                 | globs of other remote branches the shared mirror should carry                                                                 |
 | `github_token`                       | per-entry override of `LOOM_CODE_GITHUB_TOKEN`                                                                                |
+| `forge`                              | `forgejo` for a Forgejo host: its pull requests are read from the host's API                                                  |
 | `git_proxy_identity`                 | the user name its git presents to an operator's [git proxy](#git-through-a-forward-proxy); unset, the deployment's default    |
 
 Name a `git_remote` host in ASCII, as punycode for an internationalised name: a page
@@ -284,7 +287,8 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   runs it. `--dialect-folder-pass` lets SQL files of undecided dialect take the dialect
   their directory agrees on.
 - `backfill-prs` loads merged-PR history from GitHub, resumable by cursor and bounded by
-  GitHub's rate limit (`LOOM_CODE_PR_BACKFILL_MONTHS`, default 12). `backfill-reviews`
+  GitHub's rate limit (`LOOM_CODE_PR_BACKFILL_MONTHS`, default 12), or from a Forgejo
+  host's API. `backfill-reviews`
   adds inline review comments, `backfill-assignees` requested reviewers, and
   `backfill-items` issues and PRs in any state.
 - **The worker does not start a first index for a configured entry.** An entry without a

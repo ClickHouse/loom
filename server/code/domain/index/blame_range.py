@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from server.code.domain.index.remote import pr_web_url
 from server.settings import settings
 
 CANDIDATES = "candidates"
@@ -605,7 +606,7 @@ def merge_legs(
                 merge_commit_sha=sha,
                 merge_sha_source=("stored" if stored else "mirror") if sha else "",
                 kind=kind_of(title),
-                url=f"https://github.com/{repo}/pull/{n}" if repo else "",
+                url=pr_web_url(repo, n),
             )
         )
     out.sort(key=lambda c: (-c.lines_blamed, -unix_of(c.merged_at), -c.pr_number))

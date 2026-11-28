@@ -103,7 +103,7 @@ default is `off`) are not listed here.
 | `LOOM_CODE_HOST_ISLANDS` | Shell inside CI/build files (Actions `run:`, GitLab `script:`, Dockerfile `RUN`, Makefile recipes, Jenkinsfile `sh`) is parsed for facets, script `includes` edges and SQL; jobs, targets and stages… |
 | `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | True applies the built-in generated, minified and vendored ingest rules (code/app/index/denylist.py), which match 0.19% of rows. |
 | `LOOM_CODE_ORG_READABLE` | True lets every authenticated principal of the org read every configured code namespace (right for public or org-internal repos); false leaves reads to the namespace's own visibility and grants. |
-| `LOOM_CODE_PR_HISTORY_ENABLED` | Merged-PR history sync (GitHub REST, cursor-resumable). |
+| `LOOM_CODE_PR_HISTORY_ENABLED` | Merged-PR history sync (GitHub REST, or the REST API of a Forgejo host; cursor-resumable). |
 | `LOOM_CODE_PY_SQL_ISLANDS` | SQL a Python file runs (database-client call arguments and SQL-looking literals) becomes `statement` symbols, facets (confidence 0.7 with a format hole) and table edges. |
 | `LOOM_CODE_REPO_PUBLIC` | The scalar repo entry is public: its namespace registers join_policy=open and discoverable. |
 | `LOOM_CODE_SANDBOX_REQUIRED` | Set by deployments that ship the sandbox profiles: a repository job refuses to run rather than run unsandboxed, and /v1/health reports the missing sandbox as an error. |

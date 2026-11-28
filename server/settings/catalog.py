@@ -1372,7 +1372,8 @@ class CodeSettings(BaseModel):
     code_scip_go_private: str = ""
 
     # --- PR history ---
-    # Merged-PR history sync (GitHub REST, cursor-resumable).
+    # Merged-PR history sync (GitHub REST, or the REST API of a Forgejo host;
+    # cursor-resumable).
     code_pr_history_enabled: bool = False
     # Seconds between PR-history sync passes.
     code_pr_history_interval_seconds: int = 900

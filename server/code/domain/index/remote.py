@@ -164,6 +164,29 @@ def provider_for(remote: str) -> str:
         return "git"
 
 
+def forgejo_api_repo(remote: str) -> str:
+    """`https://<host>[:port]/api/v1/repos/<owner>/<name>` for a Forgejo remote, HTTPS or
+    SSH: the API is served over HTTPS on the remote's host. ValueError for a remote that
+    names no `<owner>/<name>`."""
+    spec = parse_remote(remote)
+    owner, _, name = spec.repo.removeprefix(f"{spec.host}/").partition("/")
+    if not owner or not name or "/" in name:
+        raise ValueError("a Forgejo remote names <owner>/<repository>")
+    port = urlsplit(spec.url).port if spec.url.startswith("https:") else None
+    return f"https://{spec.host}{f':{port}' if port else ''}/api/v1/repos/{owner}/{name}"
+
+
+def pr_web_url(repo: str, number: int) -> str:
+    """The web page of pull request `number` of `repo` as configured: GitHub's `/pull/N`
+    for `owner/name`, Forgejo's `/pulls/N` for `host/owner/name`. '' without a
+    repository or number."""
+    if not repo or not number:
+        return ""
+    if "." in repo.split("/", 1)[0]:
+        return f"https://{repo}/pulls/{number}"
+    return f"https://github.com/{repo}/pull/{number}"
+
+
 def repo_tag(remote: str) -> str:
     """The `repo:<id>` tag the coding plugins stamp on session memories for this remote:
     10 hex of sha256 over `host/owner/name`, lower-cased, with the scheme, user, port and

@@ -467,7 +467,7 @@ def register_code_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
 
 
 def _register_backfill_prs(csub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    p_prs = csub.add_parser("backfill-prs", help="Merged-PR history from GitHub.")
+    p_prs = csub.add_parser("backfill-prs", help="Merged-PR history from GitHub or a Forgejo host.")
     _add_common(p_prs)
     p_prs.add_argument("--months", type=int, default=None)
     p_prs.add_argument("--max-prs", type=int, default=100000)

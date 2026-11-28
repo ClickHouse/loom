@@ -1,4 +1,4 @@
-"""Merged-PR history sync from the GitHub REST API (cursor-resumable).
+"""Merged-PR history sync from the GitHub REST API, or a Forgejo host's (cursor-resumable).
 
 Keeps `loom.code_pr_history` current so code.history / code.examples /
 context packs can rank by ownership and recency. The cursor is the max
@@ -83,7 +83,7 @@ async def _run(result: CodePrHistoryResult) -> None:
         nxt = repos[i + 1] if i + 1 < len(repos) else configured[0]
         pass_context.set_cursor(nxt.namespace)
         pass_context.set_namespace(cfg.namespace)
-        if cfg.provider != "github":
+        if not cfg.pr_source:
             result.note = f"PR history is not available for {cfg.provider} remotes"
             continue
         try:
@@ -91,8 +91,9 @@ async def _run(result: CodePrHistoryResult) -> None:
                 result.note = f"{cfg.label}: no git_head watermark yet; run `loom code backfill`"
                 continue
             await _sync_repo(cfg, repo, result)
-            await _sync_items(cfg, repo, result)
-            await _fill_pr_heads(cfg, repo, result)
+            if cfg.pr_source == "github":  # issues, PR heads and reviews are GitHub's alone
+                await _sync_items(cfg, repo, result)
+                await _fill_pr_heads(cfg, repo, result)
         except Exception as e:
             result.errors.append(f"{cfg.label}: {type(e).__name__}: {e}")
             logger.exception("code_pr_history: repo %s failed", cfg.label)
@@ -151,12 +152,29 @@ async def pr_rows(repo: Any, org: str, ns: str, prs: list[Any]) -> list[dict[str
     ]
 
 
+async def _merged_prs(cfg: Any, since: datetime) -> list[Any]:
+    """The PRs merged into the entry's branch since `since`, from its PR source."""
+    if cfg.pr_source == "forgejo":
+        from server.clients import forgejo
+        from server.code.domain.index.remote import forgejo_api_repo
+
+        api = forgejo_api_repo(cfg.git_remote)
+        return await forgejo.merged_prs_since(
+            api, cfg.github_token, since, max_prs=40, base=cfg.git_branch
+        )
+    from server.clients.github import merged_prs_since
+
+    return await merged_prs_since(
+        cfg.repo, cfg.github_token, since, max_prs=40, base=cfg.git_branch
+    )
+
+
 async def _sync_repo(cfg: Any, repo: Any, result: CodePrHistoryResult) -> None:
     global _warned_no_token
-    from server.clients.github import GitHubError, RateLimited, merged_prs_since
+    from server.clients.github import GitHubError, RateLimited
 
     token = cfg.github_token
-    if not token:
+    if not token and cfg.pr_source == "github":
         # Public repos read fine anonymously (60 req/h shared per IP; one
         # pass is ~1 request). A private repo 404s and lands in errors —
         # the operator sees it on the Health tab instead of a silent no-op.
@@ -180,14 +198,16 @@ async def _sync_repo(cfg: Any, repo: Any, result: CodePrHistoryResult) -> None:
     try:
         # Only PRs merged INTO this entry's branch: a release-branch namespace
         # is about its backports, not master's firehose.
-        prs = await merged_prs_since(cfg.repo, token, since, max_prs=40, base=cfg.git_branch)
+        prs = await _merged_prs(cfg, since)
     except RateLimited as e:
         result.note = f"rate limited: {e}"
         return
     except GitHubError as e:
         # Logged as well as counted: a private repo 404ing or a revoked token
         # would otherwise show only as a count on the Health tab.
-        logger.warning("code_pr_history: %s github error (cursor kept): %s", cfg.label, e)
+        logger.warning(
+            "code_pr_history: %s %s error (cursor kept): %s", cfg.label, cfg.pr_source, e
+        )
         result.errors.append(f"{cfg.label}: {e}")
         return
 
@@ -199,7 +219,7 @@ async def _sync_repo(cfg: Any, repo: Any, result: CodePrHistoryResult) -> None:
     pass_context.check_stop()  # after the GitHub reads: a lost lease writes nothing
     await repo.insert_rows("code_pr_history", rows)
     result.prs_upserted = len(rows)
-    if token and settings.code_pr_reviews_enabled:
+    if token and settings.code_pr_reviews_enabled and cfg.pr_source == "github":
         result.reviews_upserted += await _sync_reviews(
             cfg, repo, org, ns, [pr.number for pr in prs]
         )
