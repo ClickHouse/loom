@@ -198,22 +198,32 @@ HAVING successful_requests > 0
 ORDER BY successful_requests DESC, domain
 LIMIT 50;
 
--- A completed day takes precedence over its partial snapshots.
+-- Keep partial counts only while the domain is disclosed and final counts are unavailable.
 CREATE OR REPLACE VIEW loom_product_analytics.loom_adoption_live_domains AS
-SELECT day, installation_id, loom_version, domain_activity
-FROM loom_product_analytics.adoption_domain_snapshots FINAL
-WHERE day BETWEEN toDate(now('UTC')) - 1 AND toDate(now('UTC'))
-    AND observed_at BETWEEN now('UTC') - INTERVAL 2 HOUR AND now('UTC')
-    AND loom_version != '0.0.0-smoke'
-    AND clickhouse_version != '0.0.0-smoke'
-    AND installation_id NOT IN (
-        SELECT installation_id FROM loom_product_analytics.loom_adoption_enrollments WHERE is_internal = 1
-    )
-    AND (installation_id, day) NOT IN (
-        SELECT installation_id, day FROM loom_product_analytics.loom_external_adoption_windows
-        WHERE schema_version = 3 AND window_end = toDateTime(day + 1, 'UTC')
-            AND day >= toDate(now('UTC')) - 1
-    );
+SELECT snapshot.day, snapshot.installation_id, snapshot.loom_version,
+       arrayFilter(item -> completed.present = 0 OR (
+           has(completed.names, item.domain) AND NOT has(completed.measured, item.domain)
+       ), snapshot.domain_activity) AS domain_activity
+FROM (
+    SELECT day, installation_id, loom_version, domain_activity
+    FROM loom_product_analytics.adoption_domain_snapshots FINAL
+    WHERE day BETWEEN toDate(now('UTC')) - 1 AND toDate(now('UTC'))
+        AND observed_at BETWEEN now('UTC') - INTERVAL 2 HOUR AND now('UTC')
+        AND loom_version != '0.0.0-smoke'
+        AND clickhouse_version != '0.0.0-smoke'
+        AND installation_id NOT IN (
+            SELECT installation_id FROM loom_product_analytics.loom_adoption_enrollments WHERE is_internal = 1
+        )
+) AS snapshot
+LEFT JOIN (
+    SELECT day, installation_id, 1 AS present,
+           arrayMap(item -> item.domain, user_domains) AS names,
+           arrayMap(item -> item.domain, domain_activity) AS measured
+    FROM loom_product_analytics.loom_external_adoption_windows
+    WHERE schema_version = 3 AND window_end = toDateTime(day + 1, 'UTC')
+        AND day >= toDate(now('UTC')) - 1
+) AS completed USING (day, installation_id)
+SETTINGS join_use_nulls = 0;
 
 -- Only reports covered by the public domain-sharing notice supply names.
 CREATE OR REPLACE VIEW loom_product_analytics.loom_adoption_disclosed_domains AS

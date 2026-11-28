@@ -65,8 +65,8 @@ Snapshots include the installation UUID, UTC day, observation timestamp, softwar
 versions, and aggregate activity for up to 2,000 eligible domains, ordered by
 successful requests. Each snapshot counts requests and distinct active users and
 serving processes since UTC midnight. The public directory refreshes every minute
-while visible and uses a completed daily report in place of snapshots for that
-installation and day.
+while visible. Completed daily counts replace the snapshot counts for the same
+installation and domain.
 
 The report excludes private mirror events, benchmark traffic, background traffic, and
 unclassified routes. It contains no full email addresses, names, operation strings,

@@ -104,10 +104,10 @@ retained reports through the latest complete UTC day. Activity groups request,
 feature, transport, model, and installation measures by day, week, and month
 using the same complete-day cutoff.
 
-The first report date and its Loom and ClickHouse versions come from the earliest
-eligible retained window. The version charts count installations with successful
-requests and use the Loom and ClickHouse versions from each installation's latest
-active day in the period.
+The first report date comes from the earliest eligible retained window.
+The software versions table counts installations with successful requests and
+uses the version pair from each installation's latest active day in the past
+30 complete UTC days.
 Public metrics exclude internal installations and reports with the smoke test
 version in either software field.
 
@@ -126,8 +126,9 @@ separately. Weekly and monthly activity report the peak measured daily count.
 
 The directory shows successful requests and distinct active installations by
 domain in its selected window, including today's snapshots. Active users and
-serving processes use the latest measured day. A completed daily report replaces
-that installation's snapshots for the day. The directory uses snapshots observed
+serving processes use the latest measured day. Completed daily counts replace the
+snapshot counts for the same installation and domain. If a completed report lists
+a domain without counts, the directory can display its recent snapshot. The directory uses snapshots observed
 within the past two hours. The first activity date can precede the selected window.
 The public response contains counts and version labels. Account identifiers and
 serving process names stay on the installation.

@@ -686,7 +686,9 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
             VALUES
                 ('measured', '2026-11-26 12:00:00', '2026-11-27 00:00:00', '2026-11-26',
                  3, '1.2.0', '26.1.0', 23, 23, 23, [('live.example', 1, 23)],
-                 [('live.example', 3, 23, 2)])
+                 [('live.example', 3, 23, 2)]),
+                ('capped', '2026-11-26 12:00:00', '2026-11-27 00:00:00', '2026-11-26',
+                 3, '1.2.0', '26.1.0', 4, 4, 4, [('capped.example', 1, 4)], [])
             """,
             """
             INSERT INTO loom_product_analytics.adoption_domain_snapshots
@@ -699,6 +701,8 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
                  [('live.example', 3, 5, 1)]),
                 (4, 'measured', '2026-11-26', '2026-11-26 23:55:00', '1.3.0', '26.1.0',
                  [('live.example', 3, 20, 2)]),
+                (4, 'capped', '2026-11-26', '2026-11-26 23:55:00', '1.3.0', '26.1.0',
+                 [('capped.example', 1, 3, 1), ('removed.example', 2, 8, 1)]),
                 (4, 'internal', '2026-11-27', '2026-11-27 01:25:00', '1.3.0', '26.1.0',
                  [('internal.example', 1, 30, 1)]),
                 (4, 'smoke', '2026-11-27', '2026-11-27 01:25:00', '1.3.0', '0.0.0-smoke',
@@ -711,7 +715,9 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
     )
 
     directories = [json.loads(row) for row in report["domain_directories"]]
-    assert all(row["domains"] == ["live.example", "new.example"] for row in directories)
+    assert all(
+        row["domains"] == ["live.example", "capped.example", "new.example"] for row in directories
+    )
     domain_rows = {
         row["domain"]: row
         for row in map(json.loads, report["domain_accounts"])
@@ -730,3 +736,4 @@ def test_public_domain_directory_uses_latest_snapshot_until_daily_report() -> No
         "last_seen": "2026-11-27",
     }
     assert domain_rows["new.example"]["successful_requests"] == 2
+    assert domain_rows["capped.example"]["successful_requests"] == 3

@@ -101,6 +101,9 @@ SETTINGS optimize_move_to_prewhere_if_final = 0
 """
 
 DAILY_DOMAIN_ACTIVITY_SQL = f"""
+WITH eligible_contacts AS (
+    SELECT * FROM ({_CONTACTS_SQL}) AS contacts WHERE {_VALID_CONTACT_DOMAIN}
+)
 SELECT
     contacts.domain,
     uniqExact(contacts.email) AS user_count,
@@ -108,7 +111,7 @@ SELECT
     sum(activity.requests) AS successful_requests,
     if(successful_requests = 0, 0,
        nullIf(uniqExactIf(activity.instance, activity.known_process), 0)) AS serving_processes
-FROM ({_CONTACTS_SQL}) AS contacts
+FROM eligible_contacts AS contacts
 LEFT JOIN (
     SELECT
         org, namespace, subject, instance,
@@ -117,9 +120,9 @@ LEFT JOIN (
         count() AS requests
     FROM loom.agent_events
     WHERE {_REQUEST_SCOPE} AND status_class = 'ok'
+        AND (org, namespace) IN (SELECT org, namespace FROM eligible_contacts)
     GROUP BY org, namespace, subject, instance
 ) AS activity USING (org, namespace)
-WHERE {_VALID_CONTACT_DOMAIN}
 GROUP BY contacts.domain
 HAVING successful_requests > 0
 ORDER BY contacts.domain

@@ -230,7 +230,7 @@ const state = Object.fromEntries(
         </div>
         <div class="coverage">
           {summary?.last_reported === today && <Text size="sm" color="muted">Totals include completed reporting windows today.</Text>}
-          {observation && <Text size="sm" color="muted">Earliest retained report {showDay(observation.day)} UTC · Loom {observation.loom_version} · ClickHouse {observation.clickhouse_version}</Text>}
+          {observation && <Text size="sm" color="muted">Earliest retained report {showDay(observation.day)} UTC</Text>}
           <Link size="sm" href="/telemetry">Telemetry definitions</Link>
         </div>
       </section>
