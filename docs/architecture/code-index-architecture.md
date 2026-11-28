@@ -702,13 +702,20 @@ sequential read, which `loom doctor` checks through `select_sequential_consisten
 
 A build without the lease, such as the previous build during a rolling upgrade, can
 insert a link built at an older commit after a pass read the table. A pass at an
-unchanged head follows nothing, so each pass records a digest of the live links not
+unchanged head follows nothing, so each pass takes a digest of the live links not
 checked at its head (`store.behind_digest`, over each key and version, and over each
-key and commit for a lost link). It takes the digest before it reads any link. The next pass at that head rechecks those links from
-their own checked commit (`_catch_up`) when the digest changed. The check compares
-digests and never timestamps, so no host's clock matters. A recheck
-moves the links it finds out of that set, and a lost link keeps its digest when the
-recheck rewrites it, so the catch-up after it rechecks nothing.
+key and commit for a lost link) before it reads any link. It trusts that digest only as
+the digest of a set it has already rechecked. When the `behind/` cursor holds no
+verified digest for this head, or a different one, `_catch_up` rechecks the whole set
+from each link's own checked commit. That includes the first pass after an upgrade, a
+pass at a new head (after its follow, which moves the links it loaded out of the set),
+and a pass that finds the digest changed. It reads a page of `memory_code_links_batch`
+links in key order per pass and keeps its place in the cursor. The cursor stores the
+digest the sweep started at only after the last page, so a link that arrives during the
+sweep makes the digest differ and starts another. The check compares digests and never
+timestamps, so no host's clock matters. A recheck moves the links it finds out of that
+set, and a lost link keeps its digest when the recheck rewrites it, so the sweep after
+it rechecks nothing.
 
 ## Invariants
 

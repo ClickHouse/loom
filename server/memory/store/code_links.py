@@ -476,14 +476,32 @@ async def behind_digest(
 
 
 async def behind(
-    org: str, code_namespace: str, head: str, *, ch: _CHClient | None = None
-) -> list[LinkRow]:
-    """The live links not checked at `head`."""
-    rows = await (ch or _default_client()).query_all(
-        "SELECT * " + _BEHIND.format(_LIVE=_LIVE),
-        params={"org": org, "cns": code_namespace, "head": head},
+    org: str,
+    code_namespace: str,
+    head: str,
+    *,
+    after: tuple[str, ...] | None,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> tuple[list[LinkRow], tuple[str, ...] | None]:
+    """Up to `limit` live links not checked at `head`, in key order after `after`, and
+    the next page's start (None at the end)."""
+    since = f" AND {_past(_KEY_COLUMNS, _KEY_TYPES)}" if after else ""
+    rows = _links(
+        await (ch or _default_client()).query_all(
+            "SELECT * "
+            + _BEHIND.format(_LIVE=_LIVE)
+            + f"{since} ORDER BY {_KEY} LIMIT {{lim:UInt32}}",
+            params={
+                "org": org,
+                "cns": code_namespace,
+                "head": head,
+                "lim": int(limit),
+                **_past_params(after or ()),
+            },
+        )
     )
-    return _links(rows)
+    return rows, _key(rows[-1]) if len(rows) == int(limit) else None
 
 
 async def stale_fingerprints(

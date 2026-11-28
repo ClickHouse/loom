@@ -1069,8 +1069,8 @@ new row shape and adds no setting. Replicas of the previous build insert without
 lease, so while they run the link worker a link can be inserted just after a pass read
 the table. Each pass records a digest of the links not checked at its head, taken before
 it reads any link. The next pass at the same head rechecks those links when the digest
-changed, so such a link stops being served as fresh within two passes, whether or not a
-previous-build replica is still running.
+changed, a page of links per pass, so such a link is rechecked within a few passes
+whether or not a previous-build replica is still running.
 
 ## Independent proposal approval
 

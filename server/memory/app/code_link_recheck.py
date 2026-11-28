@@ -316,22 +316,33 @@ async def _catch_up(
     files: link_pass.RepoReads,
     result: link_pass.PassResult,
 ) -> None:
-    """Recheck the links a pass at `head` never saw. A pass at an unchanged head follows
-    nothing, so a link an older build inserted after the last pass read the table, built
-    at another commit, would keep its state. The pass records a digest of the links not
-    checked at `head`, taken before it read any link (`now`), so none it missed is
-    vouched for; when the next one finds it changed, those links are rechecked. Links
-    that were rechecked leave the set, and lost ones keep their digest, so a catch-up
-    that moved links is followed by one that rechecks nothing."""
-    seen = link_pass.Cursor[dict[str, str]](f"behind/{org}/{cns}", {})
+    """Recheck the links not checked at `head` that no pass followed. A pass at an
+    unchanged head follows nothing, so a link an older build inserted after the last pass
+    read the table, built at another commit, would keep its state. `now` is a digest of
+    those links taken before the pass read any link. It is trusted only as the digest of
+    a set already rechecked: when the cursor holds no verified digest for this head, or a
+    different one, the whole set is rechecked, a page of the batch size per pass in key
+    order, and the digest the sweep started at is stored after its last page. Rechecked
+    links leave the set and lost ones keep their digest, so a sweep that moved links is
+    followed by one that rechecks nothing."""
+    seen = link_pass.Cursor[dict[str, Any]](f"behind/{org}/{cns}", {})
     before = await seen.read()
-    if before.get("head") == head and before.get("links") != now:
-        links = await store.behind(org, cns, head)
-        still, failed = await _recheck_rows(org, cns, head, files, result, links)
-        await _set_unparsed(org, cns, await _unparsed(org, cns) | still)
-        if failed:
-            result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
-    await seen.write({"head": head, "links": now})
+    mine = before.get("head") == head
+    if mine and before.get("links") == now:
+        return
+    after = tuple(before["after"]) if mine and before.get("after") else None
+    target = before["target"] if after else now
+    links, nxt = await store.behind(
+        org, cns, head, after=after, limit=int(settings.memory_code_links_batch)
+    )
+    still, failed = await _recheck_rows(org, cns, head, files, result, links)
+    await _set_unparsed(org, cns, await _unparsed(org, cns) | still)
+    if failed:
+        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
+    if nxt:
+        await seen.write({"head": head, "links": "", "target": target, "after": list(nxt)})
+    else:
+        await seen.write({"head": head, "links": target})
 
 
 async def _unparsed(org: str, cns: str) -> set[str]:
