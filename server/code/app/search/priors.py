@@ -76,6 +76,11 @@ _NOISE_DIR_RE = re.compile(r"(?:^|/)(?:tests?|examples?|fuzzers|benchmarks)(?:/|
 _NOISE_FILE_RE = re.compile(r"(?:^|/)(?:test_[^/]+|[^/]+_(?:test|fuzz))\.(?:h|hpp|cpp|cc|cxx)$")
 
 
+def _noise_path(path: str) -> bool:
+    """A test, example, fuzzer or benchmark path: what the noise penalty demotes."""
+    return bool(_NOISE_DIR_RE.search(path) or _NOISE_FILE_RE.search(path))
+
+
 # 0.35 with tests/ and ci/ in the corpus: a grid on the C++ conceptual fixture (penalty
 # {0.5, 0.35, 0.25}) read r@5 0.741/0.769/0.769, r@10 0.801/0.810/0.810 — knee at 0.35,
 # recovering most of the dilution the larger corpus caused (0.778 without tests/ and
@@ -221,7 +226,7 @@ def _apply_fusion_signals(
     scored: list[tuple[CodeUnit, float]] = []
     for u in ranked:
         s = u.score
-        noisy = bool(_NOISE_DIR_RE.search(u.path) or _NOISE_FILE_RE.search(u.path))
+        noisy = _noise_path(u.path)
         if not test_intent and noisy:
             s *= _NOISE_PENALTY
         if catalogue_penalty != 1.0 and _CATALOGUE_FILE_RE.search(u.path):
