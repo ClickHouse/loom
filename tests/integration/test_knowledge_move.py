@@ -616,10 +616,62 @@ async def test_a_retry_onto_a_copy_with_its_chunks_and_tables_gone_copies_it_aga
     async def cut_off(doc: Any) -> None:
         raise RuntimeError("cut off before the delete")
 
+    from server.core.ch import CHClient, error_code
+    from server.core.rmt_carry import fingerprint
+
+    send_failure: dict[str, Any] | None = None
+    original_insert = CHClient._fenced_insert
+
+    async def observed_insert(
+        client: Any,
+        table: str,
+        data: Any,
+        columns: Any,
+        types: Any,
+        stored: frozenset[str] | None,
+        settings: Any,
+        deadline: float,
+    ) -> Any:
+        nonlocal send_failure
+        try:
+            return await original_insert(
+                client, table, data, columns, types, stored, settings, deadline
+            )
+        except Exception as error:  # Capture the native send error before translation.
+            if table == "loom.datasets":
+                kind = type(error).__name__
+                try:
+                    code = error_code(error)
+                except Exception:  # noqa: BLE001 — A defective formatter must not replace the send failure.
+                    code = None
+                send_failure = {
+                    "kind": kind
+                    if kind
+                    in {
+                        "DatabaseError",
+                        "OperationalError",
+                        "BackendUnavailableError",
+                        "TimeoutError",
+                    }
+                    else "other",
+                    "code": code if code is not None and 0 <= code <= 65535 else None,
+                    "stored_count": None if stored is None else len(stored),
+                    "stored_fingerprint": None if stored is None else fingerprint(stored),
+                }
+            raise
+
     with monkeypatch.context() as m:
         m.setattr(move, "_delete_source", cut_off)
+        m.setattr(CHClient, "_fenced_insert", observed_insert)
         with pytest.raises(RuntimeError):
-            await _move_here(move, src, dst, uri)
+            try:
+                await _move_here(move, src, dst, uri)
+            except Exception as error:  # Retain send context on a translated error.
+                if send_failure is not None:
+                    error.add_note(
+                        "catalog send failure: " + json.dumps(send_failure, sort_keys=True)
+                    )
+                raise
     # What a row insert that landed after its take-back leaves: the row, no chunks, no
     # catalog, no table rows.
     for table in ("loom.chunks", "loom.datasets", "loom.dataset_rows"):
