@@ -2699,6 +2699,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_code_links
     `checked_at` DateTime DEFAULT now(),
     `tombstoned_at` Nullable(DateTime) DEFAULT NULL,
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
+    `inserted_at` DateTime64(3) DEFAULT now64(3),
     INDEX idx_memory_code_links_memory_id memory_id TYPE bloom_filter GRANULARITY 1,
     INDEX idx_memory_code_links_memory_key memory_key TYPE bloom_filter GRANULARITY 1,
     INDEX idx_memory_code_links_former_paths former.path TYPE bloom_filter GRANULARITY 1,
