@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from server.code.app.search.state import _POOL, _POOL_KEEP
+from server.code.domain.index.pool_cut import MAX_DEPTH
 from server.code.store.index import CodeRepo
 
 # ClickHouse's default for query_plan_max_limit_for_lazy_materialization.
@@ -49,6 +50,8 @@ async def _leg_statements() -> list[tuple[str, dict[str, Any]]]:
 def test_pool_depths_stay_under_the_lazy_materialization_cap() -> None:
     assert _POOL <= LAZY_LIMIT_CAP
     assert _POOL_KEEP <= _POOL
+    # the lexical leg's cut scans this deep at most (`cut_depth`)
+    assert MAX_DEPTH <= LAZY_LIMIT_CAP
 
 
 @pytest.mark.asyncio
