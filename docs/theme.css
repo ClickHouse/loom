@@ -199,25 +199,25 @@
   text-wrap: balance;
 }
 
-:root:has([data-docs-overview]) .prose > h1 {
+:root:has([data-docs-index]) .prose > h1 {
   font-size: clamp(2.125rem, 4vw, 3.75rem);
   font-weight: 660;
   letter-spacing: -0.052em;
   text-align: center;
 }
 
-:root:has([data-docs-overview]) #blume-content {
+:root:has([data-docs-index]) #blume-content {
   inline-size: 100%;
   max-inline-size: 72rem;
   margin-inline: auto;
   padding-block-start: clamp(3rem, 6vw, 5rem);
 }
 
-:root:has([data-docs-overview]) #blume-content .prose {
+:root:has([data-docs-index]) #blume-content .prose {
   max-inline-size: none;
 }
 
-:root:has([data-docs-overview]) .prose > h1 + p {
+:root:has([data-docs-index]) .prose > h1 + p {
   max-inline-size: 58ch;
   margin-inline: auto;
   color: var(--blume-muted-foreground);
@@ -225,11 +225,11 @@
   text-align: center;
 }
 
-:root:has([data-docs-overview]) :is([data-blume-toc], .docs-outline) {
+:root:has([data-docs-index]) :is([data-blume-toc], .docs-outline) {
   display: none;
 }
 
-:root:not(:has([data-docs-overview])) #blume-content .prose > h1 + p {
+:root:not(:has([data-docs-index])) #blume-content .prose > h1 + p {
   color: var(--blume-muted-foreground);
   font-size: 1.125rem;
   line-height: 1.6;
@@ -242,7 +242,7 @@
   gap: 0.625rem;
   inline-size: min(100%, 30rem);
   min-block-size: 3rem;
-  margin: 1.75rem auto 0;
+  margin-block-start: 1.75rem;
   padding: 0.65rem 1rem;
   border: 1px solid var(--blume-border);
   border-radius: var(--click-button-radii-all, 0.25rem);
@@ -252,12 +252,16 @@
   cursor: pointer;
 }
 
+:root:has([data-docs-index]) #blume-content .docs-landing-search {
+  margin-inline: auto;
+}
+
 #blume-content .docs-landing-search:is(:hover, :focus-visible) {
   border-color: var(--blume-accent);
   color: var(--blume-foreground);
 }
 
-:root:has([data-docs-overview])
+:root:has([data-docs-index])
   .prose
   > p:has(> a[href$="/getting-started/quickstart"] + a[href$="/playground/source-change"]) {
   justify-content: center;
@@ -265,15 +269,15 @@
 }
 
 @media (min-width: 64rem) {
-  :root:has([data-docs-overview]) [data-blume-doc-grid] {
+  :root:has([data-docs-index]) [data-blume-doc-grid] {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  :root:has([data-docs-overview]) [data-blume-nav-drawer] {
+  :root:has([data-docs-index]) [data-blume-nav-drawer] {
     display: none;
   }
 
-  :root:has([data-docs-overview]) #blume-content {
+  :root:has([data-docs-index]) #blume-content {
     --loom-docs-card-columns: repeat(4, minmax(0, 1fr));
   }
 }

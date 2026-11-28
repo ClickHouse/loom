@@ -4,7 +4,7 @@ import { withMountedBase } from "blume/components/islands/base-path.ts";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { Text } from "@clickhouse/click-ui/Text";
-import { documentationOverview } from "./documentation-link";
+import { documentationOverview, isDocumentationIndex } from "./documentation-link";
 import { frameCopy } from "./site-frame-copy";
 import { siteLocales, type SiteLocale } from "./site-locales";
 
@@ -24,7 +24,7 @@ const { crumbs, strings, centered = false, wide = false } = Astro.props;
 const language = Astro.currentLocale ?? "en";
 const locale = Object.hasOwn(siteLocales, language) ? (language as SiteLocale) : "en";
 const current = crumbs.at(-1);
-const markdown = Astro.url.pathname.replace(/\/$/, "") + ".md";
+const pathname = Astro.url.pathname.replace(/\/$/, "");
 const markdownLabels: Record<SiteLocale, string> = {
   en: "View as Markdown",
   es: "Ver en Markdown",
@@ -42,7 +42,7 @@ const parents = [
   ...(section ? [{ label: section.label, href: withMountedBase(section.href ?? section.path) }] : []),
   ...crumbs.slice(0, -1).map(({ label, route }) => ({ label, href: route && withMountedBase(route) })),
 ];
-const linked = new Set([Astro.url.pathname.replace(/\/$/, "")]);
+const linked = new Set([pathname]);
 const trail = parents.filter(({ href }) => {
   if (!href) return true;
   if (linked.has(href)) return false;
@@ -51,23 +51,25 @@ const trail = parents.filter(({ href }) => {
 });
 ---
 
-{current && trail.length > 0 && (
+{!isDocumentationIndex(pathname, locale) && (
   <div class:list={["docs-page-path", !wide && ["mx-auto", centered ? "max-w-[54rem]" : "max-w-content"]]}>
-    <nav aria-label={strings?.breadcrumb ?? "Breadcrumb"} class="docs-breadcrumb" data-loom-docs-breadcrumb>
-      <ol role="list">
-        {trail.map(({ label, href }, index) => (
+    {current && trail.length > 0 && (
+      <nav aria-label={strings?.breadcrumb ?? "Breadcrumb"} class="docs-breadcrumb" data-loom-docs-breadcrumb>
+        <ol role="list">
+          {trail.map(({ label, href }, index) => (
+            <li>
+              {index > 0 && <Icon aria-hidden="true" className="rtl:-scale-x-100" name="chevron-right" size="xs" />}
+              {href ? <Link href={href} size="sm">{label}</Link> : <Text component="span" color="muted" size="sm">{label}</Text>}
+            </li>
+          ))}
           <li>
-            {index > 0 && <Icon aria-hidden="true" className="rtl:-scale-x-100" name="chevron-right" size="xs" />}
-            {href ? <Link href={href} size="sm">{label}</Link> : <Text component="span" color="muted" size="sm">{label}</Text>}
+            <Icon aria-hidden="true" className="rtl:-scale-x-100" name="chevron-right" size="xs" />
+            <Text aria-current="page" component="span" size="sm">{current.label}</Text>
           </li>
-        ))}
-        <li>
-          <Icon aria-hidden="true" className="rtl:-scale-x-100" name="chevron-right" size="xs" />
-          <Text aria-current="page" component="span" size="sm">{current.label}</Text>
-        </li>
-      </ol>
-    </nav>
-    <Link className="docs-markdown-link" href={markdown} size="sm" aria-label={markdownLabel}>
+        </ol>
+      </nav>
+    )}
+    <Link className="docs-markdown-link" href={`${pathname}.md`} size="sm" aria-label={markdownLabel}>
       <span class="docs-markdown-full">{markdownLabel}</span>
       <span class="docs-markdown-compact" aria-hidden="true">Markdown</span>
     </Link>
@@ -78,7 +80,6 @@ const trail = parents.filter(({ href }) => {
   .docs-page-path {
     display: flex;
     flex-wrap: wrap;
-    justify-content: space-between;
     align-items: center;
     gap: 0.25rem 1rem;
     margin-block-end: 1.125rem;
@@ -117,6 +118,7 @@ const trail = parents.filter(({ href }) => {
     display: inline-flex;
     align-items: center;
     min-block-size: 2rem;
+    margin-inline-start: auto;
     white-space: nowrap;
   }
 

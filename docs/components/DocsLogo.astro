@@ -1,7 +1,7 @@
 ---
 import { Link } from "@clickhouse/click-ui/Link";
 import loomLogo from "../public/loom.svg?raw";
-import { documentationOverview } from "./documentation-link";
+import { documentationOverview, isDocumentationIndex } from "./documentation-link";
 import { siteLocales, type SiteLocale } from "./site-locales";
 import "./click-ui-dark.css";
 
@@ -12,7 +12,7 @@ interface Props {
 const language = Astro.props.locale ?? Astro.currentLocale ?? "en";
 const locale = Object.hasOwn(siteLocales, language) ? (language as SiteLocale) : "en";
 const overview = documentationOverview(locale);
-const current = Astro.url.pathname.replace(/\/$/, "") === overview.href;
+const pathname = Astro.url.pathname.replace(/\/$/, "");
 ---
 
 <Link
@@ -21,8 +21,8 @@ const current = Astro.url.pathname.replace(/\/$/, "") === overview.href;
   hrefLang={overview.hreflang}
   lang="en"
   dir="ltr"
-  aria-current={current ? "page" : undefined}
-  data-docs-overview={current ? "" : undefined}
+  aria-current={pathname === overview.href ? "page" : undefined}
+  data-docs-index={isDocumentationIndex(pathname, locale) ? "" : undefined}
   weight="semibold"
 >
   <span class="docs-brand-mark" aria-hidden="true" set:html={loomLogo} />
