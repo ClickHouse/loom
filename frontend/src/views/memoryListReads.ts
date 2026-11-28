@@ -11,7 +11,7 @@ import { CARD_VALUE_CHARS } from "../components/MemoryCard";
 import { errorRequestId } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
-import { KEYWORD_PAGE, keywordThenRanked, namesWriter, rowIdentity, rowIds } from "../lib/memoriesSearch";
+import { KEYWORD_PAGE, keywordThenRanked, listPages, namesWriter, rowIdentity, rowIds } from "../lib/memoriesSearch";
 
 // The fields the page and its cards read. Field names are a quarter of a row, so a field
 // the page does not read costs on every row. `sensitivity`, which marks a high row sent
@@ -78,20 +78,15 @@ async function readSearchPreview(
   const writer = namesWriter(hit);
   const scope = writer ? { ...identity, user_id: hit.user_id, session_id: hit.session_id } : identity;
   const key = rowIdentity(identity.namespace, hit);
-  for (let offset = 0; !signal.aborted; ) {
-    const page = await listMemories(scope, KEYWORD_PAGE, {
-      agent: writer ? hit.agent : undefined,
-      prefix: hit.memory_key,
-      offset,
-      fields: MEMORIES_LIST_FIELDS,
-      previewChars: CARD_VALUE_CHARS,
-      signal,
-    });
+  for await (const page of listPages(scope, KEYWORD_PAGE, {
+    agent: writer ? hit.agent : undefined,
+    prefix: hit.memory_key,
+    fields: MEMORIES_LIST_FIELDS,
+    previewChars: CARD_VALUE_CHARS,
+    signal,
+  })) {
     const entry = page.entries.find((row) => rowIds(identity.namespace, row).includes(key));
     if (entry) return { ...entry, value: entry.value ?? null };
-    // The server may cap a page below KEYWORD_PAGE: advance by the rows it returned.
-    offset += page.entries.length;
-    if (!page.entries.length || offset >= page.total) break;
   }
   return null;
 }

@@ -42,6 +42,36 @@ describe("resolveSearchWriter under a narrowed token", () => {
     expect(listMemories).not.toHaveBeenCalled();
   });
 
+  it("leaves the user out for an end-user token, which the server pins itself", async () => {
+    vi.mocked(storedToken).mockReturnValue(jwt({ sub: "user:u1", iss: "idp" }));
+    expect(await resolveSearchWriter(identity, hit, ABORT)).toMatchObject({ user_id: "u1" });
+    const sent = vi.mocked(listMemories).mock.calls[0][0];
+    expect(sent.user_id).toBeUndefined();
+    expect(sent.session_id).toBe("*");
+  });
+
+  it("reads later pages for a unique key and names its writer", async () => {
+    vi.mocked(storedToken).mockReturnValue(jwt({}));
+    const other = { memory_key: "deploy_note_2", agent: "claude-desktop", user_id: "u2", session_id: "s2" };
+    vi.mocked(listMemories)
+      .mockResolvedValueOnce({ entries: [other], rows_read: 1, total: 2, truncated: true } as never)
+      .mockResolvedValueOnce({
+        entries: [{ memory_key: "deploy_note", agent: "claude-desktop", user_id: "u1", session_id: "s1" }],
+        rows_read: 1,
+        total: 2,
+        truncated: false,
+      } as never);
+    expect(await resolveSearchWriter(identity, hit, ABORT)).toMatchObject({ user_id: "u1", session_id: "s1" });
+    expect(vi.mocked(listMemories).mock.calls.map((c) => c[2]?.offset)).toEqual([0, 1]);
+  });
+
+  it("names no writer when the list is not read to its end", async () => {
+    vi.mocked(storedToken).mockReturnValue(jwt({}));
+    vi.mocked(listMemories).mockResolvedValue({ entries: [], rows_read: 0, total: 5, truncated: true } as never);
+    expect(await resolveSearchWriter(identity, hit, ABORT)).toBeUndefined();
+    expect(listMemories).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the wildcards for a namespace-wide token", async () => {
     vi.mocked(storedToken).mockReturnValue(jwt({}));
     await resolveSearchWriter(identity, hit, ABORT);

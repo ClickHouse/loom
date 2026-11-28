@@ -10,6 +10,13 @@ export interface TokenReadScope {
   readUserId: string | null;
 }
 
+/** Whether the token is an end user's: `sub: user:<id>` with no namespace or service-account
+ *  claim. The server pins its reads to that user, which `tokenReadScope` cannot see. */
+export function endUserToken(jwt: string | null | undefined): boolean {
+  const json = tokenPayload(jwt);
+  return typeof json?.sub === "string" && json.sub.startsWith("user:") && !("namespaces" in json) && !("sa" in json);
+}
+
 /** The token's read scope, read without verification: it gates what the page offers, never
  *  what the server answers. Null for a missing or unparseable token. */
 export function tokenReadScope(jwt: string | null | undefined): TokenReadScope | null {
