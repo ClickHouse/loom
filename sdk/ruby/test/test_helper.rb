@@ -2,6 +2,8 @@
 
 require "json"
 require "minitest/autorun"
+require "fileutils"
+require "tmpdir"
 
 require "clickhouse/loom"
 require_relative "fake_server"
@@ -11,7 +13,10 @@ class LoomTest < Minitest::Test
 
   def setup
     @server = FakeServer.new
-    @saved_env = ENV.to_h.slice("LOOM_BASE_URL", "LOOM_API_KEY")
+    @saved_env = ENV.to_h.slice("LOOM_BASE_URL", "LOOM_API_KEY", "HOME")
+    # A home of its own, so a developer's ~/.loom/token never reaches a test.
+    @home = Dir.mktmpdir("loom-home")
+    ENV["HOME"] = @home
     ENV.delete("LOOM_BASE_URL")
     ENV.delete("LOOM_API_KEY")
     Loom.reset_configuration!
@@ -21,7 +26,9 @@ class LoomTest < Minitest::Test
     @server.close
     ENV.delete("LOOM_BASE_URL")
     ENV.delete("LOOM_API_KEY")
+    ENV.delete("HOME")
     @saved_env.each { |name, value| ENV[name] = value }
+    FileUtils.rm_rf(@home)
     Loom.reset_configuration!
   end
 

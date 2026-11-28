@@ -51,7 +51,8 @@ client = Loom::Client.new(namespace: "user-42") # an argument wins over the conf
 | Setting                        | Default                                                                      |
 | ------------------------------ | ---------------------------------------------------------------------------- |
 | `base_url`                     | `LOOM_BASE_URL`, else `http://localhost:7777`                                |
-| `api_key`                      | `LOOM_API_KEY`; with neither, no `Authorization` header                      |
+| `api_key`                      | `LOOM_API_KEY`, else `~/.loom/token`; with none, no `Authorization` header   |
+| `token_provider`               | None; see [Tokens](#tokens)                                                  |
 | `org`, `namespace`, `agent`    | Left out of the body when blank, so the server's defaults apply              |
 | `open_timeout`, `read_timeout` | 10 and 60 seconds                                                            |
 | `retry_policy`                 | `{ max_attempts: 3, backoff: 0.25, ... }` (see [Retries](#retries))          |
@@ -59,6 +60,24 @@ client = Loom::Client.new(namespace: "user-42") # an argument wins over the conf
 | `logger`, `log_level`          | No logging; see [Logging](#logging)                                          |
 
 An argument to `Client.new` wins over `Loom.configure`, which wins over the environment.
+
+### Tokens
+
+Instead of a fixed `api_key`, a `token_provider` hands over the token for each request:
+any object with `token(refused)`, or a Proc. After a `401` the client asks it once more,
+passing the token the server refused, and sends the call again with the new one. A
+provider with nothing fresher returns the refused token, and the `401` is raised. An
+empty token sends no `Authorization` header, and a provider that responds to `origin`
+is only used with a client for that origin.
+
+```ruby
+client = Loom::Client.new(token_provider: ->(refused) { MyVault.loom_token(renew: !refused.nil?) })
+```
+
+The credential, first found wins: `token_provider:`, `api_key:`, the configured
+`token_provider`, the configured `api_key`, `LOOM_API_KEY`, then the first line of
+`~/.loom/token` (what `loom mint-token --save` writes). Passing both `api_key:` and
+`token_provider:` raises `ArgumentError`. A stored `loom login` session is not read yet.
 
 ## Calls
 
@@ -144,8 +163,7 @@ The retry and idempotency rules of the TypeScript and Python SDKs:
 | `total_backoff_budget`    | unbounded seconds of sleep per call                         |
 
 Not carried over yet: pacing on the `X-RateLimit-*` headers before a `429` arrives, a
-per-call timeout, and resending a `401` with a fresh token (the gem takes a fixed
-`api_key`).
+per-call timeout, and a stored `loom login` session (`~/.loom/credentials`).
 
 The client does not follow redirects, so a memory body and token never go to another
 origin: a `3xx` answer raises a `Loom::Error`.
