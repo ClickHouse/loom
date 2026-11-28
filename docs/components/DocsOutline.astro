@@ -13,16 +13,6 @@ interface Props {
 const { headings, title, variant } = Astro.props;
 const mobile = variant === "mobile";
 const Outline = mobile ? "details" : "div";
-const markdown = Astro.url.pathname.replace(/\/$/, "") + ".md";
-const markdownLabels: Record<string, string> = {
-  en: "View as Markdown",
-  es: "Ver en Markdown",
-  ja: "Markdown で表示",
-  ko: "Markdown으로 보기",
-  "pt-BR": "Ver em Markdown",
-  "zh-CN": "查看 Markdown",
-};
-const markdownLabel = markdownLabels[Astro.currentLocale ?? "en"] ?? markdownLabels.en;
 ---
 
 {(headings.length > 0 || (mobile && Astro.slots.has("default"))) && (
@@ -51,12 +41,7 @@ const markdownLabel = markdownLabels[Astro.currentLocale ?? "en"] ?? markdownLab
         </ul>
       </blume-toc>
     )}
-    <div class:list={["docs-outline-actions", mobile && "border-border border-t p-2"]}>
-      <Link className="docs-markdown-link" href={markdown} size="sm">
-        {markdownLabel}
-      </Link>
-      <slot />
-    </div>
+    <slot />
   </Outline>
 )}
 
@@ -69,12 +54,6 @@ const markdownLabel = markdownLabels[Astro.currentLocale ?? "en"] ?? markdownLab
     max-block-size: min(18rem, 40dvh);
     overflow-y: auto;
     scrollbar-width: thin;
-  }
-
-  .docs-outline-actions :global(.docs-markdown-link) {
-    display: inline-flex;
-    align-items: center;
-    min-block-size: 2.25rem;
   }
 
   .docs-outline :global(a[aria-current="location"]) {

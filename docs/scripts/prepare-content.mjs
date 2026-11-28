@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { escape } from "html-escaper";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import sharp from "sharp";
+import { gettingStartedOverview } from "../lib/documentation-routes.mjs";
 import { readSiteDates } from "./content-dates.mjs";
 import { withContentMetadata } from "./content-metadata.mjs";
 
@@ -353,6 +354,9 @@ async function prepareContent() {
     if (prepared !== text) writeFileSync(file, prepared);
   }
 
+  await prepareDocsLandingMedia();
+  prepareLandingSearch();
+
   const packagePath = fileURLToPath(import.meta.resolve("blume/package.json"));
   const codemod = join(dirname(packagePath), "skills", "blume-migrate", "scripts", "mkdocs-codemod.mjs");
   const result = spawnSync(process.execPath, [codemod, "--write", content], {
@@ -361,7 +365,7 @@ async function prepareContent() {
   });
 
   if (result.status !== 0) process.exit(result.status ?? 1);
-  if (!existsSync(join(content, "index.md"))) process.exit("Blume content preparation produced no index page.");
+  if (!existsSync(join(content, "index.mdx"))) process.exit("Blume content preparation produced no index page.");
 
   for (const file of contentFiles(content)) {
     let text = readFileSync(file, "utf8")
@@ -371,7 +375,28 @@ async function prepareContent() {
     text = rewriteSourceLinks(text, relative(content, file));
     writeFileSync(file, text);
   }
-  await prepareDocsLandingMedia();
+}
+
+function prepareLandingSearch() {
+  for (const locale of ["en", ...locales]) {
+    const directory = join(content, locale === "en" ? "" : locale);
+    const source = [join(directory, "index.md"), join(directory, `${gettingStartedOverview.slice(1)}.md`)].find(
+      existsSync,
+    );
+    if (!source) continue;
+
+    const text = readFileSync(source, "utf8");
+    const frontmatter = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(text)?.[0] ?? "";
+    const body = text.slice(frontmatter.length);
+    const lead = fromMarkdown(body).children.find(
+      (node) => node.type === "paragraph" && node.children.some((child) => child.type === "text" && child.value.trim()),
+    );
+    const offset = lead?.position.end.offset ?? 0;
+    const search = '<Visibility for="web">\n  <DocsLandingSearch />\n</Visibility>';
+    const rendered = `${frontmatter}${body.slice(0, offset)}\n\n${search}\n\n${body.slice(offset)}`;
+    writeFileSync(source.replace(/\.md$/, ".mdx"), rendered);
+    rmSync(source);
+  }
 }
 
 async function prepareDocsLandingMedia() {

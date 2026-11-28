@@ -10,8 +10,6 @@ pagination: false
 
 Set up Loom and connect your agents to shared memory, cited documents, and indexed code.
 
-<button aria-haspopup="dialog" class="docs-landing-search" data-loom-docs-landing-search type="button">Search documentation</button>
-
 [Install Loom](getting-started/quickstart.md)
 [Try the playground](https://loom.clickhouse.com/playground/source-change)
 
