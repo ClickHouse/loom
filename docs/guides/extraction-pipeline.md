@@ -23,7 +23,7 @@ parameter of the Python SDK's `memory.set_from_messages` helper; send it over HT
 | `loom.drop_session_echoes`        | Drops facts restating what the session's own Loom calls carried.                                 |
 | `loom.drop_activity_narration`    | Drops narration of tool activity with no durable outcome.                                        |
 | `loom.drop_non_durable`           | Coding sessions: drops status snapshots, housekeeping, plans.                                    |
-| `loom.verify_durable`             | Coding sessions: verifier pass over the remaining facts.                                         |
+| `loom.verify_durable`             | Coding sessions: a model pass drops non-durable facts and facts already stored. Fails open.      |
 | `loom.hash_dedup`                 | Drops facts whose canonical hash is already stored.                                              |
 | `loom.bulk_write`                 | Files bot rules (`about="agent"`) to the learnings queue, writes the rest via `memory.bulk_set`. |
 

@@ -89,6 +89,52 @@ def test_coding_instructions_preserve_the_complete_large_profile() -> None:
     assert text.endswith("Don't re-fetch — it's been delivered.")
 
 
+def test_a_plugin_connection_gets_one_paragraph_and_the_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A coding-agent plugin's hooks carry the routing, so its startup text says what
+    the tool families are for and repeats nothing a hook or the client says."""
+    full = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
+    plugin = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "coding", schema_profile="plugin")
+    )
+    rules, profile = _split(plugin)
+    assert profile == _split(full)[1]
+    rules = rules.strip()
+    assert len(rules) <= 320 and "\n" not in rules
+    for part in (
+        "Use Loom first for unchanged indexed code and tests",
+        "`loom_code_search`",
+        "`loom_search` recalls saved memory",
+        "`loom_memory_set` saves a fact when the user asks",
+        '`loom_op` (`op="help"`) finds other operations',
+    ):
+        assert part in rules, part
+    for said_elsewhere in (
+        "repository bound to this connection",
+        "loom_context_pack",
+        "ToolSearch",
+        "default memory namespace",
+    ):
+        assert said_elsewhere not in rules, said_elsewhere
+    # another toolset keeps its own rules under the same profile
+    core = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "core", schema_profile="plugin")
+    )
+    assert "**7. Using Loom.**" in core
+
+    async def no_default(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"org": "acme", "namespace": "", "agent": "a", "readable": ["code-a", "mem-b"]}
+
+    monkeypatch.setattr(mcp_primer, "_caller_defaults", no_default)
+    text = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "coding", schema_profile="plugin")
+    )
+    assert text.endswith(
+        " No default namespace: pass `namespace` (`code-a`, `mem-b`) on memory and tracker calls."
+    )
+
+
 def test_compact_coding_primer_preserves_scope_and_profile() -> None:
     full = asyncio.run(
         mcp_primer._initialize_instructions(object(), "coding", schema_profile="standard")

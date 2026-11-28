@@ -952,6 +952,23 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     on one repository volume with no checkout file shared, and a pass of N with the
     setting on then shares the packs.
 
+65. **A code namespace being erased** (`server/code/app/index/erasing.py`): N's code
+    writers skip a namespace an unfinished erasure may reach, and N's `code_index.purge`
+    refuses, retryably, while work begun before the erasure was recorded may still write
+    it. N-1's writers do neither and N-1's purge does not wait, so an erasure during the
+    rollout can leave rows written after its purge, as before; `verify.residue` fails
+    the saga on those in `code_chunks` and `code_summaries`, and it is repeated. No gate
+    holds the rollout.
+
+66. **A definition renamed as it moves to another file or scope**
+    (`server/code/domain/successor.py::elsewhere`): N's link recheck follows it; N-1's
+    reads the link `missing`, as before. One host rechecks a repository at a time, so a
+    range is read by one build. A `missing` link is never handed to a definition added
+    since, so a link N-1 read `missing` during the rollout stays `missing` under N
+    until its own name returns. The link rows are unchanged; `wide_ranges` is one more
+    number in the `memory_code_links` pass outcome, which every build serves as stored. No gate holds the
+    rollout.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

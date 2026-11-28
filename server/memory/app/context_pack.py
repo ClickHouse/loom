@@ -459,7 +459,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
     evidence = [
         EvidenceItem(
             citation=f"memory:{input.namespace}/{r.memory_key}",
-            text=_vtext(r.value),
+            text=_code_now(h) + _vtext(r.value),
             source="fact",
             group=f"fact:{input.namespace}",
             score=float(r.confidence or 0.0),
@@ -560,6 +560,14 @@ def _code_state_and_commit(hit: Any) -> tuple[str, str]:
     )
 
 
+def _code_now(hit: Any) -> str:
+    """`(code moved: …) ` ahead of the text of a hit whose code is now at another name or
+    path than it was written against (`code_moved`); '' otherwise. The line's label
+    carries the state."""
+    moved = code_change.note("", moved=getattr(hit, "code_moved", None) or [])
+    return f"{moved.lstrip()} " if moved else ""
+
+
 async def _pack_decisions_from_hits(
     st: _PackState, decision_hits: list[Any], actors: _KeyWriters, *, abstained: bool
 ) -> None:
@@ -605,7 +613,9 @@ async def _pack_decisions_from_hits(
         made = str(rec.get("made_at") or "")[:10]
         author = _hit_author(actors, input, h)
         line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
-        line += (f" {made}" if made else "") + code_change.note(*_code_state_and_commit(h))
+        line += (f" {made}" if made else "") + code_change.note(
+            *_code_state_and_commit(h), getattr(h, "code_moved", None) or []
+        )
         line += f" {scenario}"
         if outcome:
             line += f" → {rec['stage']}: {outcome}"
@@ -708,7 +718,7 @@ async def _pack_memories(st: _PackState) -> None:
             evidence.append(
                 EvidenceItem(
                     citation=cite,
-                    text=h.content_excerpt,
+                    text=_code_now(h) + h.content_excerpt,
                     source=source,
                     group=group,
                     score=float(getattr(h, "rank_score", 0.0) or 0.0),

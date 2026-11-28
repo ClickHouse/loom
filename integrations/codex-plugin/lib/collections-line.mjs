@@ -12,6 +12,7 @@
 // as data, never as the primer's own words.
 
 import { recalledDataBlock } from "./prompt-recall.mjs";
+import { toolsetParts } from "./toolset.mjs";
 
 /** Collections named on the line; the rest are counted. */
 export const MAX_NAMED = 6;
@@ -125,8 +126,7 @@ export function renderCollectionsLine(result, { writes = true } = {}) {
  *  deployment's default toolset on the server, which this cannot know. The Codex plugin names its toolset
  *  in its own .mcp.json and sets no option, so it reads as writable. */
 export function toolsetAllows(toolset) {
-  const raw = String(toolset || "").toLowerCase();
-  const parts = [...new Set(raw.split(/[+ ,]+/).filter(Boolean))];
+  const parts = toolsetParts(toolset);
   if (parts.length === 1 && parts[0] === "assistant") return null;
   return { writes: !(parts.length === 1 && parts[0] === "readonly") };
 }

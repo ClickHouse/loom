@@ -38,6 +38,7 @@
       "route": "hybrid",
       "abstain": false,
       "retrieval_confidence": 0.8,
+      "retrieval_risk": "low",
       "results": [
         {
           "path": "src/parser.py",

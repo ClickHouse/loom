@@ -73,6 +73,6 @@ consistently linked duplicates) are easier than many trackers'.
 
 [Connect a coding agent](../getting-started/connect-a-coding-agent.md) installs the
 plugins that capture sessions once recording is on; the [code index](code-intelligence.md)
-needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`.
+needs a repository added.
 
 Some ops on this page are marked experimental on the [status page](../reference/status.md).

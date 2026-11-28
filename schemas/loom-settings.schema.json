@@ -47,6 +47,11 @@
           "type": "integer",
           "description": "Seconds between adoption checks and retries. A report covers 12 hours."
         },
+        "adoption_telemetry_share_domain_activity": {
+          "default": false,
+          "type": "boolean",
+          "description": "Share daily account, successful request and serving process counts for contact domains. Requires domain sharing."
+        },
         "adoption_telemetry_share_domains": {
           "default": true,
           "type": "boolean",
@@ -298,7 +303,7 @@
           "default": 8,
           "minimum": 1,
           "type": "integer",
-          "description": "Bulk-path conflict checks run at once (at least 1)."
+          "description": "Similarity reads one request runs at once (at least 1): a bulk write's conflict checks, and a coding capture's reads of the stored memories nearest its facts."
         },
         "bulk_conflict_check_max_entries": {
           "default": 200,
@@ -1163,7 +1168,7 @@
         "code_fusion_signals": {
           "default": true,
           "type": "boolean",
-          "description": "Post-fusion rank priors in code.search (path-noise penalty, query↔path stem affinity, file coherence), applied after RRF and before the outcome boost. Kill switch."
+          "description": "Rank priors in code.search (the test-path and prose penalties, query↔path stem affinity, file coherence), applied after RRF and before the outcome boost. The lexical leg also picks its candidates on the two path penalties, before RRF. Kill switch for both."
         },
         "code_gh_items_backfill_days": {
           "default": 730,
@@ -1330,9 +1335,9 @@
           "description": "Size cap of the dependents re-extraction overflow queue; paths past it are dropped and counted."
         },
         "code_ingest_enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean",
-          "description": "Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark."
+          "description": "Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. It polls every configured repository; False = nothing polls, and `code.refresh` is the only trigger."
         },
         "code_ingest_exclude": {
           "default": "",
@@ -2222,7 +2227,7 @@
         "code_search_prose_penalty": {
           "default": 0.25,
           "type": "number",
-          "description": "Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off."
+          "description": "Multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths. The ranking multiplies the fused score by it, and the lexical leg picks its candidates on each row's vote times it, before RRF. A smaller value makes the lexical leg read deeper. 1.0 = off."
         },
         "code_search_query_max_tokens": {
           "default": 48,
@@ -4766,7 +4771,7 @@
         "memory_extract_coding_sweep_min_user_turns": {
           "default": 4,
           "type": "integer",
-          "description": "A coding capture keeps the coverage sweep's density / uncovered auto-gates only with at least this many user turns (on short sessions the sweep's output is mostly junk). 0 = always keep. An explicit namespace / per-call switch wins either way."
+          "description": "A trajectory replay keeps the coverage sweep's density / uncovered auto-gates only with at least this many user turns (on short sessions the sweep's output is mostly junk); a plugin's session capture never takes them. 0 = always keep. An explicit namespace / per-call switch wins either way."
         },
         "memory_extract_compact_prompt_max_chars": {
           "default": 1200,
@@ -4856,7 +4861,7 @@
         "memory_extract_verify_models": {
           "default": "claude-opus-5-5",
           "type": "string",
-          "description": "The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not and folds same-claim paraphrases and replaced states. A fact is dropped only when every model says drop; folds come from the first. Fails open. \"\" turns it off."
+          "description": "The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not, folds same-claim paraphrases and replaced states, and names the facts a stored memory already states. A fact is dropped as non-durable only when every model says drop; folds and stored restatements come from the first. Fails open. \"\" turns it off."
         },
         "memory_extract_verify_timeout_s": {
           "default": 45.0,
@@ -5981,7 +5986,7 @@
         "otel_code_counts_cache_s": {
           "default": 3600,
           "type": "integer",
-          "description": "Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols and code_edges, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export."
+          "description": "Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges and memory_code_links, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export."
         },
         "otel_code_grep_replay_cache_s": {
           "default": 3600,

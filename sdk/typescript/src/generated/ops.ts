@@ -5220,6 +5220,7 @@ export interface MemorySearchHit {
   namespace?: string;
   code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
   code_changed_since?: string;
+  code_moved?: CodeLink[];
   body_truncated?: boolean;
   next?: string;
   source_resource_id?: string;
@@ -5233,6 +5234,19 @@ export interface MemorySearchHit {
   derived_from?: string[];
   score_components?: Record<string, number>;
   resolved_from?: string | null;
+}
+
+export interface CodeLink {
+  code_namespace: string;
+  path: string;
+  symbol?: string;
+  start_line?: number;
+  end_line?: number;
+  state: "fresh" | "moved" | "changed" | "unresolved" | "missing";
+  changed_since?: string;
+  suggestion?: string;
+  was_path?: string;
+  was_symbol?: string;
 }
 
 export interface MemoryAskOutput {
@@ -5485,15 +5499,6 @@ export interface MemoryGetOutput {
   locked_by?: string;
   recall_by_agent?: RecallByAgent[];
   sensitivity?: string;
-}
-
-export interface CodeLink {
-  code_namespace: string;
-  path: string;
-  symbol?: string;
-  state: "fresh" | "moved" | "changed" | "unresolved" | "missing";
-  changed_since?: string;
-  suggestion?: string;
 }
 
 export interface RecallByAgent {
@@ -6057,6 +6062,7 @@ export interface MemoryForFileHit {
   verification?: "human" | "process" | "stale" | "none";
   code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
   use_guidance?: UseGuidance | null;
+  code_moved?: CodeLink[];
 }
 
 export interface MemoryForFileOutput {
@@ -8750,6 +8756,7 @@ export interface NamespaceValidateFinding {
   count: number;
   samples?: Array<Record<string, unknown>>;
   detail: string;
+  totals?: Record<string, number>;
 }
 
 export interface NamespaceValidateOutput {

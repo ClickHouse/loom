@@ -88,10 +88,19 @@ class CodeLink(BaseModel):
     code_namespace: str
     path: str
     symbol: str = ""  # '' for a file link
+    # The definition's first and last line at the link's last check; 0 for a file link and
+    # for code that was not found.
+    start_line: int = 0
+    end_line: int = 0
     state: CodeState
     changed_since: str = ""
     # the `revise` policy's corrected claim; '' when none
     suggestion: str = ""
+    # The path and symbol the memory was written against, when the link is now at another
+    # (`was_symbol` '' for a file link): the memory's text still names these. Both '' for a
+    # link where it was written, and for code that was not found.
+    was_path: str = ""
+    was_symbol: str = ""
 
 
 class MemoryGetOutput(ProjectedRow):
@@ -186,8 +195,9 @@ class MemoryGetOutput(ProjectedRow):
     session_id: str = ""
     # Lifecycle state from loom.memory.status.
     status: str | None = None
-    # The code this memory is linked to: each link's path, symbol, state (`fresh`,
-    # `moved`, `changed`, `unresolved` or `missing`) and the `revise` policy's suggestion.
+    # The code this memory is linked to: each link's path, symbol, lines, state (`fresh`,
+    # `moved`, `changed`, `unresolved` or `missing`), the `revise` policy's suggestion, and
+    # the path and symbol it was written against when the code has since moved.
     code: list[CodeLink] = Field(default_factory=list)
     # For a `status='superseded'` row, the memory_id of the row
     # that replaced it ('' otherwise) — the bundle turns it into a

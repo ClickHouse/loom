@@ -555,11 +555,13 @@ def test_codex_registration_env_var_is_checked_and_probed(tmp_path: Path) -> Non
 def test_stranded_flush_jobs_are_a_warning_with_the_cause(tmp_path: Path) -> None:
     now_ms = int(NOW * 1000)
     (tmp_path / f"loom-flush-{now_ms - 2_000_000}-1.json").write_text("{}")  # 33 min old
+    (tmp_path / f"loom-record-Stop-{now_ms - 2_000_000}-1.json").write_text("{}")  # a payload
     (tmp_path / f"loom-flush-{now_ms - 1000}-2.json").write_text("{}")  # in flight
     (tmp_path / "unrelated.json").write_text("{}")
     name, grade, detail = dc.flush_check(tmp_path, NOW)
-    assert grade == "WARN" and "1 capture job" in detail and "fail open" in detail
+    assert grade == "WARN" and "2 capture job" in detail and "fail open" in detail
     (tmp_path / f"loom-flush-{now_ms - 2_000_000}-1.json").unlink()
+    (tmp_path / f"loom-record-Stop-{now_ms - 2_000_000}-1.json").unlink()
     name, grade, detail = dc.flush_check(tmp_path, NOW)
     assert grade == "PASS" and "1 in flight" in detail
 

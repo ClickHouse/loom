@@ -1977,6 +1977,168 @@ about the user ("The user wants answers in French."). An "about": "agent"
 entry is not stored as a memory; do not also emit the rule as a normal fact.
 """
 
+
+# The whole extraction prompt of a coding plugin's session capture. The prompt
+# above is written for conversations: its code rule asks for the concrete diff
+# and a `File.cpp:123` location, and under it a coding session yields its own
+# edits, which exist only in a working tree, and one line-numbered location per
+# lookup, which the code index answers. A later session reuses what the code
+# is, across definitions. Most captures hold nothing to keep, so the prompt is
+# the cost of the call: it carries no conversation rule or example, and its
+# schema only the fields a coding fact uses and the two that end a state the
+# user bounds (the parser defaults the rest).
+CODING_SESSION_ANCHOR = "CODING SESSION — REUSABLE CODEBASE KNOWLEDGE ONLY"
+_CODING_SESSION_SYSTEM_PROMPT = f"""\
+Role: evidence-bound memory extractor. The messages are one AI coding
+session in a repository. Later sessions in the same repository search
+this memory so that they do not have to read the same code again. Extract
+the durable facts the messages hold and return strict JSON. Expect few
+facts: most sessions hold zero to five.
+
+RECORD WHAT IS ASSERTED. Write each statement as the messages state it,
+even when it contradicts what you believe is true: never correct a value,
+and never label a statement a claim, an error or a belief. Copy names,
+paths, commands, versions and numbers verbatim.
+
+==============================================================
+WHAT THE USER STATES
+==============================================================
+
+Extract what a [user] turn states that holds beyond this session, one
+fact per statement:
+  • a standing rule or convention for the repository or for how work is
+    done in it ("changelog entries only for user-visible changes");
+  • a preference (see the Preference rule under "tags");
+  • a decision: what was chosen, what was rejected, and why;
+  • a fact about the user, their team, their setup, environment,
+    deployment, constraints or plans;
+  • a named reviewer's or maintainer's standing expectations, tied to
+    that person's handle.
+The subject is "User" for a fact about the user, the repository or
+project for a rule about it, and the person's name for a fact about
+someone else. Resolve a relative date ("last week") against
+`observation_date`. What the user asks for or requires for this task
+alone (the request, its scope, how to submit it, what to run or not to
+run) is not a fact, however it is phrased: DO NOT EXTRACT below applies
+to every turn.
+
+==============================================================
+{CODING_SESSION_ANCHOR}
+==============================================================
+
+Everything about the code and the work is extracted under this section
+alone.
+
+EXTRACT, each as ONE claim that is true of the code and stands alone:
+  • how a behaviour is reached: the path from an entry point to the
+    definition that does the work, when it crosses definitions or files.
+    One claim for the whole path, never one fact per hop;
+  • a relation between definitions in different files that reading one
+    of them does not show: what has to change together, what overrides
+    what, which definition a name really resolves to;
+  • an invariant, constraint or pitfall the session ran into, with its
+    reason: a check that already exists, a test or a configuration that
+    makes the obvious change fail, an order that matters;
+  • which test constrains a definition, when that shaped the work;
+  • the cause of a bug or a surprising behaviour: how the code as it
+    was BEFORE this session's edits produces it.
+Write each claim in the present tense with the code as its subject,
+never "the assistant found" or "the user asked". Name every definition in
+backticks next to the file that holds it (`Router.resolve` in
+src/app/router.py), with the names and paths the messages give. Leave
+line numbers out: they move, and the name finds the place.
+
+DO NOT EXTRACT:
+  • what this session changed or added: an edit, a new option, branch or
+    test, a docstring or changelog line ("X now does Y", "added Z", "X
+    has a new …", "the fix was …"). Until it is committed it exists only
+    in this working tree; from then on the commit history records it.
+    When the change rests on something durable (why the old code behaved
+    as it did, a constraint the change had to respect, the places that
+    have to change together), extract THAT as a claim about the code and
+    leave the change out of it;
+  • the task, the request, progress, test or command results, what was
+    or was not run, hook or tool messages, instructions that hold for
+    this session only;
+  • what one lookup answers: where a single name is defined, what one
+    function's own text says, a file's contents, a list of names;
+  • one claim twice, or one claim split across facts.
+
+Example. [assistant] "The crash came from `parse_header` in
+http/parse.py returning None for an empty value, which `Request.__init__`
+in http/request.py indexes without a check. I made `parse_header` return
+an empty tuple and added `test_empty_header`."
+  NOT facts: "`parse_header` now returns an empty tuple", "`test_empty_header`
+  was added" (this session's edits).
+  ONE fact: "`Request.__init__` in http/request.py indexes the result of
+  `parse_header` in http/parse.py without a None check, so a None from
+  `parse_header` crashes request construction."
+
+==============================================================
+EXISTING MEMORIES
+==============================================================
+
+`existing_memories`, when shown, lists facts already remembered. Do not
+extract a fact one of them already states. A fact that updates or refines
+one of them is emitted with that memory's index in `linked_keys`; a fact
+that contradicts one is emitted as stated.
+
+==============================================================
+OUTPUT SCHEMA
+==============================================================
+
+Return exactly one JSON object with one key, "facts", a list of objects:
+
+  "key": short_snake_case naming the SUBJECT and the ATTRIBUTE, never the
+    value (`user_merge_strategy`). A new value for an attribute already
+    keyed reuses its key, never `_new` or `_2`.
+  "value": the fact as one complete sentence that stands alone.
+  "tags": 0-4 lowercase tags. Preference rule: a user preference carries
+    BOTH "preference" and "preference:ATTRIBUTE", ATTRIBUTE being the
+    singular lowercase noun it is about (underscore-joined).
+  "entities": 0-6 lowercase named things: definitions, files, tools, people.
+  "topics": 0-3 lowercase concept phrases of 2-5 words, the idea the fact
+    is about and not one of its entities; [] when there is none.
+  "linked_keys": indices from existing_memories this fact updates or
+    refines (default []).
+  "source_message_indices": REQUIRED on every fact. 1-3 zero-based indices
+    from current_messages ([0:user], [1:assistant], ...) that directly
+    support the fact, never prior_turns.
+  "temporal_anchor": ISO date (YYYY-MM-DD) the fact is about when the
+    messages date it; null for a fact about the code, a rule or a
+    preference.
+  "valid_to": ISO date the fact stopped being true, when the messages
+    give a clear end ("the team used Jenkins until March 2026"); omit
+    while it still holds.
+  "foresight": ONLY for a temporary state or a plan whose end or length
+    the messages state ("staging is being rebuilt until Friday", "on
+    call for two weeks"): {{"until": ISO date it ends, or null,
+    "duration_days": the stated length in days, or null}}, at least one
+    of the two set. Never for a rule, a preference or a fact about the
+    code.
+  "relations": REQUIRED when the fact has 2+ entities: triples
+    {{"s": subject, "v": verb, "o": object}}, lowercase, the verb 1-3
+    words underscore-joined.
+  "about": "other" when the fact is about a person other than the user;
+    omit otherwise.
+  "forget": true ONLY when the user asks to forget or to stop using
+    something: `key` names the attribute, `value` what to forget,
+    `linked_keys` every existing memory that holds it. Do not also emit
+    the forgotten information.
+
+The example's fact in this schema:
+{{"facts": [{{"key":"request_init_parse_header_none",
+"value":"`Request.__init__` in http/request.py indexes the result of `parse_header` in http/parse.py without a None check, so a None from `parse_header` crashes request construction.",
+"tags":["code","pitfall"],
+"entities":["request.__init__","parse_header","http/request.py","http/parse.py"],
+"relations":[{{"s":"request.__init__","v":"indexes_result_of","o":"parse_header"}}],
+"source_message_indices":[0]}}]}}
+
+{{"facts": []}} is the right answer for a session that established nothing
+reusable about the code and in which the user stated nothing durable.
+No markdown. No commentary. Only the JSON object.
+"""
+
 _JUDGE_SYSTEM_PROMPT = """You judge extracted memorable facts against
 the source messages they were extracted from.
 
@@ -2049,6 +2211,16 @@ careful re-examination there is genuinely nothing memorable, return
 {"facts": []} — but only after looking carefully.
 """
 
+# The retry of a coding session, whose rules decide what a fact is: the addendum
+# above would end the prompt by asking for every value those rules leave out.
+_CODING_SESSION_RETRY_ADDENDUM = """
+
+The previous reply held no usable fact: it was not the JSON object of the
+OUTPUT SCHEMA, or none of its facts was an object with a "key" and a
+"value". Answer again in that schema, under the same rules. {"facts": []}
+is still the right answer for a session with nothing to extract.
+"""
+
 
 # A SMALL input (one decision, one preference — the shape an
 # agent's tool call sends) does not need the 49 schema anchors written for
@@ -2113,22 +2285,42 @@ def compact_extraction_prompt(prompt: str, keep: frozenset[str] = _COMPACT_EXAMP
 # facts (memory/app/durability_verifier.py). Part A is the judge's rubric: the
 # LLM decides real vs junk. A softer wording ("measured results", "when
 # unsure, KEEP") dropped only a small share of what the judge calls junk.
-# Part B is the same-claim folds.
-DURABILITY_VERIFIER_PROMPT_VERSION = "durability-verifier-v1"
+# Part B is the same-claim folds. Part C is the facts a stored memory already states.
+DURABILITY_VERIFIER_PROMPT_VERSION = "durability-verifier-v3"
 
-DURABILITY_VERIFIER_SYSTEM_PROMPT = """You review facts that an extractor pulled from one AI coding session (Claude Code, Codex) before they are stored in a long-term memory that future sessions search.
+# The extractor's coding-session rule, judged again for a session capture: an
+# edit the session made reads as a fact about the codebase, and is one only
+# once it is committed.
+_VERIFIER_CODEBASE_RULES = """Facts about the codebase. KEEP what a later session in the same repository could reuse instead of reading the code again: how a behaviour is reached across definitions or files, a relation between definitions that reading one of them does not show, an invariant, constraint or pitfall with its reason, which test constrains a definition, the cause of a bug in the code as it was. Such a fact is kept whoever worked it out and from however many lookups. DROP a fact that reports what this session edited or added ("X now does Y", "added a test", "X has a new option", a docstring or changelog line): until the edit is committed it exists in one working tree, and afterwards the commit history records it. DROP a fact one lookup answers: where a single name is defined, what one function's own text says, a line number, a list of names.
 
-Do two things.
+"""
+
+
+def _durability_verifier_prompt(codebase_rules: str = "", codebase_kept: str = "") -> str:
+    return f"""You review facts that an extractor pulled from one AI coding session (Claude Code, Codex) before they are stored in a long-term memory that future sessions search.
+
+Do three things.
 
 A. For each fact, decide KEEP or DROP.
 KEEP a fact if it would still be true and useful to recall in a week: a fact about the user, their preferences or decisions, the project, the codebase, or the world.
 DROP a fact if it narrates this session's own activity, restates a tool's output or a file's text, records a transient state (a status, a count at a moment, a version just written), is test chatter, or is a vague/garbled fragment.
 
-When the session goal and its lookups are shown: a session that asked Loom or a tool to look something up (is this already reported, which PR caused this, search the issues) mostly produces facts that repeat what the lookup returned: an issue's title, state or fix, a PR's number, merge date, versions or author, a workaround quoted from the record. DROP those; the tracker and the code index already hold them. The same holds for a fact whose subject is the assistant, the agent or the user reporting a finding ("Assistant stated…", "Assistant identified…", "User was told…", "The check found…"). KEEP only what the lookup could not have supplied: what the user decided, prefers or said about their own setup, deployment or plans.
+{codebase_rules}When the session goal and its lookups are shown: a session that asked Loom or a tool to look something up (is this already reported, which PR caused this, search the issues) mostly produces facts that repeat what the lookup returned: an issue's title, state or fix, a PR's number, merge date, versions or author, a workaround quoted from the record. DROP those; the tracker and the code index already hold them. The same holds for a fact whose subject is the assistant, the agent or the user reporting a finding ("Assistant stated…", "Assistant identified…", "User was told…", "The check found…"). KEEP only what the lookup could not have supplied: what the user decided, prefers or said about their own setup, deployment or plans{codebase_kept}.
 
 B. List groups of facts that state the SAME claim (the same subject and the same assertion, even in other words; a fact that only adds detail to another is the same claim). Facts that are merely about the same topic are NOT a group. For each group give the number of the most complete member. Also list pairs where a later fact replaces an earlier one (a preference that changed, a bug a later fact says is fixed, a policy that was replaced).
 
+C. When facts already stored in the memory are shown (S0, S1, ...): list each extracted fact that a stored fact already states, with the number of that stored fact. It qualifies only when the stored fact makes the same assertion about the same subject, even in other words, and the extracted fact says nothing the stored one lacks. An extracted fact that adds a detail, gives another value, names another item or describes a later state is NOT listed, and neither is one that is merely about the same topic. When unsure, do not list it.
+
 Answer JSON only:
-{"verdicts": [{"i": <n>, "keep": true|false, "why": "<5-12 words>"}],
- "same_claim": [{"members": [<n>, ...], "best": <n>}],
- "superseded": [{"old": <n>, "new": <n>}]}"""
+{{"verdicts": [{{"i": <n>, "keep": true|false, "why": "<5-12 words>"}}],
+ "same_claim": [{{"members": [<n>, ...], "best": <n>}}],
+ "superseded": [{{"old": <n>, "new": <n>}}],
+ "stored": [{{"i": <n>, "s": <stored fact number>}}]}}"""
+
+
+# A trajectory replay's facts are tool actions written under their own
+# instructions, so only a session capture is judged by the codebase rules.
+DURABILITY_VERIFIER_SYSTEM_PROMPT = _durability_verifier_prompt()
+DURABILITY_VERIFIER_SESSION_PROMPT = _durability_verifier_prompt(
+    _VERIFIER_CODEBASE_RULES, ", and a codebase fact of the kind kept above"
+)

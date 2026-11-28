@@ -1,0 +1,245 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
+import data from "blume:data";
+import { newTabAttrs } from "blume/core/new-tab.ts";
+import { publisher } from "../lib/site-identity.mjs";
+import loomLogo from "../public/loom.svg?raw";
+import { documentationLink } from "./documentation-link";
+import { frameCopy } from "./site-frame-copy";
+import { enterpriseLink, siteLocales, type SiteLocale } from "./site-locales";
+
+interface FooterLink {
+  href: string;
+  label: string;
+  hreflang?: string;
+  lang?: string;
+}
+
+interface Props {
+  locale?: SiteLocale;
+  path?: string;
+  start?: { href: string; hreflang: string };
+  documentation?: boolean;
+  links?: FooterLink[];
+  copyright?: string;
+  consentSettings?: string;
+}
+
+const {
+  locale = "en",
+  path = Astro.url.pathname,
+  start = documentationLink(locale, "/getting-started/quickstart"),
+  documentation,
+  links = [],
+  copyright = "© ClickHouse, Inc.",
+  consentSettings,
+} = Astro.props;
+const labels = frameCopy[locale];
+const currentPath = path.replace(/\/$/, "");
+const documentationPages = [
+  ["/glossary", "Glossary"],
+  ["/operations/upgrades", "Upgrades"],
+].map(([route, defaultTitle]) => {
+  const link = documentationLink(locale, route);
+  const title = data.routes.find(({ path }) => `/docs${path}` === link.href)?.title ?? defaultTitle;
+  return { ...link, label: title, lang: link.hreflang };
+});
+const groups: { label: string; links: FooterLink[] }[] = [
+  {
+    label: labels.product,
+    links: [
+      { label: labels.useCases, href: "/use-cases", hreflang: "en" },
+      { label: "Playground", href: "/playground/source-change", hreflang: "en", lang: "en" },
+      { label: labels.enterprise, ...enterpriseLink(locale) },
+      { label: labels.adoption, href: "/adoption", hreflang: "en" },
+    ],
+  },
+  {
+    label: labels.docs,
+    links: [{ label: labels.start, ...start }, ...documentationPages],
+  },
+  {
+    label: labels.resources,
+    links: [
+      { label: labels.benchmarks, ...documentationLink(locale, "/benchmarks/results") },
+      { label: labels.telemetry, href: "/telemetry", hreflang: "en" },
+      ...links,
+    ],
+  },
+];
+const legalLinks = [
+  { label: publisher.name, href: publisher.url },
+  { label: "Privacy policy", href: new URL("/legal/privacy-policy", publisher.url).href },
+  { label: "Trademark policy", href: new URL("/legal/trademark-policy", publisher.url).href },
+];
+---
+
+<footer class="shared-footer" data-blume-footer={documentation ? "" : undefined}>
+  <div class="footer-main">
+    <Link className="footer-wordmark" href={siteLocales[locale].href} lang="en" dir="ltr">
+      <span class="footer-mark" aria-hidden="true" set:html={loomLogo} />
+      <span>ClickHouse <strong>Loom</strong></span>
+    </Link>
+    <nav class="footer-navigation" aria-label={labels.resources}>
+      {groups.map((group) => (
+        <div class="footer-group">
+          <Title className="footer-heading" size="xs" type="h2">{group.label}</Title>
+          <ul>
+            {group.links.map(({ label, href, hreflang, lang }) => (
+              <li>
+                <Link
+                  href={href}
+                  hrefLang={hreflang}
+                  lang={lang}
+                  size="md"
+                  aria-current={currentPath === href.replace(/\/$/, "") ? "page" : undefined}
+                  {...(documentation ? newTabAttrs(href) : {})}
+                >{label}</Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  </div>
+  <div class="footer-meta">
+    <Text className="footer-copyright" color="muted" size="sm">{copyright}</Text>
+    <nav aria-label={publisher.name}>
+      <ul>
+        {legalLinks.map(({ label, href }) => (
+          <li><Link href={href} hrefLang="en" lang="en" size="sm">{label}</Link></li>
+        ))}
+        {consentSettings && (
+          <li><Button data-blume-consent-open="" htmlType="button" label={consentSettings} type="empty" /></li>
+        )}
+      </ul>
+    </nav>
+  </div>
+</footer>
+
+<style>
+  .shared-footer {
+    --footer-background: color-mix(in srgb, var(--click-global-color-background-default), black 30%);
+    --footer-border: color-mix(in srgb, var(--click-global-color-stroke-intense) 48%, transparent);
+    padding-inline: var(--page-gutter, var(--loom-docs-gutter, clamp(1rem, 3.2vw, 4rem)));
+    border-block-start: 1px solid var(--footer-border);
+    background: var(--footer-background);
+    text-align: start;
+  }
+
+  .footer-main {
+    display: grid;
+    grid-template-columns: minmax(13rem, 1fr) minmax(0, 3fr);
+    align-items: start;
+    gap: clamp(1.75rem, 4vw, 4rem);
+    padding-block: clamp(2.25rem, 4.5vw, 4rem);
+  }
+
+  .shared-footer :global(.footer-wordmark) {
+    display: inline-flex;
+    align-items: center;
+    justify-self: start;
+    gap: 0.7rem;
+    min-block-size: 2.75rem;
+    color: var(--click-global-color-text-default);
+    font-size: 1.08rem;
+    font-weight: 560;
+    letter-spacing: -0.025em;
+    text-decoration: none;
+  }
+
+  .footer-mark,
+  .footer-mark :global(svg) {
+    display: block;
+    inline-size: 2rem;
+    block-size: 2rem;
+  }
+
+  .shared-footer .footer-mark :global(:is(.loom-logo-background, .loom-logo-cutout)) {
+    fill: var(--footer-background);
+  }
+
+  .shared-footer .footer-mark :global(.loom-logo-mark[stroke]) {
+    stroke: var(--click-global-color-accent-default);
+  }
+
+  .shared-footer .footer-mark :global(.loom-logo-mark[fill]) {
+    fill: var(--click-global-color-accent-default);
+  }
+
+  .footer-navigation {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.75rem clamp(0.9rem, 3vw, 2rem);
+  }
+
+  .footer-group :global(.footer-heading) {
+    margin: 0 0 0.6rem;
+    color: var(--click-global-color-text-default);
+    font-size: 1.125rem;
+    line-height: 1.35;
+    text-align: start;
+    overflow-wrap: anywhere;
+  }
+
+  .shared-footer ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .shared-footer nav :global(a) {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 1.875rem;
+    color: var(--click-global-color-text-muted);
+    text-decoration: none;
+    overflow-wrap: anywhere;
+  }
+
+  .shared-footer nav :global(a:is(:hover, :focus-visible, [aria-current="page"])) {
+    color: var(--click-global-color-text-default);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+
+  .footer-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    border-block-start: 1px solid var(--footer-border);
+    padding-block: 1.15rem;
+  }
+
+  .footer-meta ul {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.25rem 1.25rem;
+  }
+
+  .footer-meta :global(.footer-copyright) {
+    margin: 0;
+  }
+
+  @media (max-width: 49rem) {
+    .footer-main {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 34rem) {
+    .footer-navigation {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .shared-footer nav :global(a) {
+      min-block-size: 2.5rem;
+    }
+  }
+</style>

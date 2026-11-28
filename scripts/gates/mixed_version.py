@@ -617,7 +617,7 @@ class Scenario:
         """No statement text or error in query_log, and no server log error
         since `since`, holds a spelling of the key; each search first shows a
         refused read of the probe reached that log."""
-        sql(self.ch_port, "SYSTEM FLUSH LOGS")
+        sql(self.ch_port, "SYSTEM FLUSH LOGS query_log")
         refused = sql(
             self.ch_port,
             "SELECT count() FROM system.query_log WHERE user = {user:String} "
@@ -639,7 +639,7 @@ class Scenario:
         # The server log records each refused read's error, whatever log_queries says.
         deadline = time.monotonic() + SETTLE_S
         while True:
-            sql(self.ch_port, "SYSTEM FLUSH LOGS")
+            sql(self.ch_port, "SYSTEM FLUSH LOGS text_log")
             quoted = sql(
                 self.ch_port,
                 "SELECT count() FROM system.text_log WHERE event_time >= {since:DateTime} "

@@ -642,6 +642,14 @@ async def _link_pages(ch: RecordingCH, c: dict[str, Any]) -> None:
     await code_links._heads(ch, [(ORG, NS, AGENT, "-", "-", "k")], ["code-a"])
 
 
+async def _unlinked_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.store import code_links
+
+    await code_links.linkable_of_namespace(ORG, NS, ["k"] if c["scoped"] else None, limit=5, ch=ch)
+    await code_links.code_namespaces([(ORG, "code-a")] if c["scoped"] else None, ch=ch)
+    await code_links.link_states(ORG, NS, ["00000000-0000-0000-0000-000000000001"], ch=ch)
+
+
 def cases() -> list[Case]:
     return [
         Case(
@@ -756,5 +764,11 @@ def cases() -> list[Case]:
             "server.memory.store.code_links",
             _link_pages,
             {"after": (False, True)},
+        ),
+        Case(
+            "code_links.unlinked_reads",
+            "server.memory.store.code_links",
+            _unlinked_reads,
+            {"scoped": (False, True)},
         ),
     ]

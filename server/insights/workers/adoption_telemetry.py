@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx
@@ -19,8 +20,44 @@ from server.workers import pass_context, status_store
 
 _COLLECTOR_URL = "https://loom.clickhouse.com/api/v1/adoption"
 _WINDOW = timedelta(hours=12)
+# not a setting: the collector accepts reports up to one MiB.
+_MAX_REPORT_BYTES = 1_048_576
 # not a setting: bounds reads of the collector acknowledgement record.
 _MAX_ACK_BYTES = 4096
+
+
+def _report_body(report: dict[str, Any]) -> bytes:
+    encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    body = bytearray()
+    for part in encoder.iterencode(report):
+        chunk = part.encode("utf-8")
+        if len(body) + len(chunk) > _MAX_REPORT_BYTES:
+            break
+        body.extend(chunk)
+    else:
+        return bytes(body)
+
+    # Preserve totals and prioritise names over optional activity details.
+    totals = {name: value for name, value in report.items() if name != "user_domains"}
+    if "domain_activity" in totals:
+        totals["domain_activity"] = []
+    body = bytearray(encoder.encode(totals).encode("utf-8")[:-1])
+    body.extend(b',"user_domains":[')
+    if len(body) + 2 > _MAX_REPORT_BYTES:
+        raise ValueError("adoption totals exceed the collector report size limit")
+    names = sorted(
+        report["user_domains"],
+        key=lambda row: (-row["successful_requests"], -row["user_count"], row["domain"]),
+    )
+    for index, row in enumerate(names):
+        chunk = encoder.encode(row).encode("utf-8")
+        if len(body) + len(chunk) + bool(index) + 2 > _MAX_REPORT_BYTES:
+            break
+        if index:
+            body.extend(b",")
+        body.extend(chunk)
+    body.extend(b"]}")
+    return bytes(body)
 
 
 def _reporting_window() -> tuple[datetime, datetime]:
@@ -59,13 +96,21 @@ async def run_pass() -> None:
     restricted = (
         configured_restricted_pairs() if settings.adoption_telemetry_share_domains else None
     )
-    report = await window_report(start, end, installation_id, restricted=restricted, ch=ch)
+    report = await window_report(
+        start,
+        end,
+        installation_id,
+        restricted=restricted,
+        share_domain_activity=settings.adoption_telemetry_share_domain_activity,
+        ch=ch,
+    )
     pass_context.check_stop()
     try:
         async with get_http_client().stream(
             "POST",
             _COLLECTOR_URL,
-            json=report,
+            content=_report_body(report),
+            headers={"Content-Type": "application/json"},
             follow_redirects=False,
             timeout=8.0,  # not a setting: allows the collector's six-second insert budget.
         ) as response:

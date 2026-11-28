@@ -78,12 +78,17 @@ test("status distinguishes an expired token, rejected bearer and viewer grant", 
 test("status reports stranded capture jobs without reading their contents", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-status-flush-"));
   try {
-    const job = path.join(dir, "loom-flush-1790320000000-123.json");
-    fs.writeFileSync(job, "sensitive content never read");
-    fs.utimesSync(job, new Date(now - 900_000), new Date(now - 900_000));
+    // A flusher job and a hook payload the recording launcher handed off.
+    for (const name of ["loom-flush-1790320000000-123.json", "loom-record-Stop-1790320000000-123.json"]) {
+      const job = path.join(dir, name);
+      fs.writeFileSync(job, "sensitive content never read");
+      fs.utimesSync(job, new Date(now - 900_000), new Date(now - 900_000));
+    }
     const { fetchImpl } = responses();
     const result = await clientStatus({ serverUrl, token: token(), scope, now, fetchImpl, tempDirectory: dir });
-    assert.equal(result.checks.find((c) => c.name === "flush").grade, "WARN");
+    const flush = result.checks.find((c) => c.name === "flush");
+    assert.equal(flush.grade, "WARN");
+    assert.match(flush.detail, /^2 capture job\(s\) /);
     assert.equal(JSON.stringify(result).includes("sensitive content"), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

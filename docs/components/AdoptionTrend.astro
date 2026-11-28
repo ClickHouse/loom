@@ -1,162 +1,317 @@
 ---
-import { Table } from "@clickhouse/click-ui/Table";
-import { periodOffset } from "../lib/adoption-view.mjs";
+import { type ChartGrain, type ChartPoint, periodEnd, scaleLimit } from "../lib/adoption-chart-series.mjs";
+import { daysBefore, periodOffset } from "../lib/adoption-view.mjs";
 
 interface Props {
-  rows: { day: string; value: number; days?: number; estimate?: number | null; current?: boolean }[];
+  rows: ChartPoint[];
   label: string;
-  grain?: "month" | "week" | "day";
+  grain?: ChartGrain;
   mode?: "line" | "bars";
   color?: "accent" | "info";
-  showTable?: boolean;
+  axisMaximum?: number;
+  fitObservedRange?: boolean;
+  axisStart?: string;
+  axisEnd?: string;
+  compact?: boolean;
+  showDates?: boolean;
+  showNotes?: boolean;
+  emptyMessage?: string;
 }
 
-const { rows, label, grain = "day", mode = "bars", color = "accent", showTable = true } = Astro.props;
-const first = rows[0].day;
-const last = rows[rows.length - 1].day;
-const offset = (day: string) => periodOffset(first, day, grain);
-const intervals = offset(last);
-const rawMaximum = Math.max(1, ...rows.map(({ value, estimate }) => Math.max(value, estimate ?? value)));
-const tick = 10 ** Math.floor(Math.log10(Math.max(1, rawMaximum / 2)));
-const maximum = Math.ceil(rawMaximum / (2 * tick)) * 2 * tick;
-const yPosition = (value: number) => 100 - (value * 100) / maximum;
-const xPosition = (day: string) => (intervals ? (offset(day) * 100) / intervals : 50);
-const date = new Intl.DateTimeFormat("en", {
+const {
+  rows,
+  label,
+  grain = "day",
+  mode = "bars",
+  color = "accent",
+  axisMaximum = 0,
+  fitObservedRange = false,
+  axisStart,
+  axisEnd,
+  compact = false,
+  showDates = true,
+  showNotes = true,
+  emptyMessage = "No observations in this window.",
+} = Astro.props;
+
+const reported = rows.filter(({ value }) => Number.isFinite(value)).sort((a, b) => a.day.localeCompare(b.day));
+const firstDay = reported[0]?.day;
+const lastDay = reported.at(-1)?.day;
+const first = axisStart && (!firstDay || axisStart < firstDay) ? axisStart : firstDay;
+const last = axisEnd && (!lastDay || axisEnd > lastDay) ? axisEnd : lastDay;
+const intervals = first && last ? Math.max(0, periodOffset(first, last, grain)) : 0;
+const bins = intervals + 1;
+const bucket = (day: string) => (first ? periodOffset(first, day, grain) : 0);
+let middle: string | undefined;
+if (first && intervals >= 7) {
+  const offset = Math.round(intervals / 2);
+  if (grain === "month") {
+    const date = new Date(first);
+    date.setUTCMonth(date.getUTCMonth() + offset);
+    middle = date.toISOString().slice(0, 10);
+  } else {
+    middle = daysBefore(first, -offset * (grain === "week" ? 7 : 1));
+  }
+}
+
+const rawMaximum = Math.max(0, axisMaximum, ...reported.map(({ value }) => value));
+const rawMinimum = Math.min(0, ...reported.map(({ value }) => value));
+const signed = rawMinimum < 0;
+const upper = signed && rawMaximum > 0 ? scaleLimit(Math.max(rawMaximum, -rawMinimum)) : scaleLimit(rawMaximum);
+let minimum = signed ? (rawMaximum > 0 ? -upper : -scaleLimit(-rawMinimum)) : 0;
+let maximum = !signed && upper === 0 ? 1 : upper;
+if (fitObservedRange && mode === "line" && reported.length > 0 && !signed) {
+  const lower = Math.min(...reported.map(({ value }) => value));
+  const step = scaleLimit(Math.max(1, (rawMaximum - lower) / 2));
+  minimum = Math.max(0, Math.floor((lower - step / 3) / step) * step);
+  maximum = Math.max(minimum + 2 * step, Math.ceil(rawMaximum / step) * step);
+}
+const yPosition = (value: number) => 100 - ((value - minimum) * 100) / (maximum - minimum);
+const zero = yPosition(0);
+
+const dateFormat = new Intl.DateTimeFormat("en", {
   month: "short",
-  ...(grain === "month"
-    ? { year: "numeric" }
-    : { day: "numeric", ...(first.slice(0, 4) !== last.slice(0, 4) && { year: "numeric" }) }),
+  ...(grain === "month" ? { year: "numeric" } : { day: "numeric" }),
+  ...(grain !== "month" && first?.slice(0, 4) !== last?.slice(0, 4) && { year: "numeric" }),
   timeZone: "UTC",
 });
-const formatDay = (day: string) => date.format(Date.parse(day));
-const number = new Intl.NumberFormat("en-US");
-const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
-const coverage = rows.some(({ days }) => days !== undefined);
-const forecast = rows.some(({ value, estimate }) => estimate != null && estimate > value);
-const pending = rows.some(({ current }) => current);
-const missing = rows.length < intervals + 1;
+const exactDateFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" });
+const exactMonthFormat = new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" });
+const formatDay = (day: string) => dateFormat.format(Date.parse(day));
+function formatPeriod(day: string) {
+  const start = new Date(day);
+  if (grain === "month") return exactMonthFormat.format(start);
+  if (grain === "week") return exactDateFormat.formatRange(start, new Date(daysBefore(periodEnd(day, grain), 1)));
+  return exactDateFormat.format(start);
+}
+const number = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
+const tickFormat = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 });
+const ticks = [maximum, (maximum + minimum) / 2, minimum];
+
+const points = reported.map(({ day, value, days, current, partial }) => {
+  const index = bucket(day);
+  const x = ((index + 0.5) * 100) / bins;
+  const y = yPosition(value);
+  const tip = [
+    formatPeriod(day),
+    number.format(value),
+    ...(days !== undefined && grain !== "day" ? [days + " days reported"] : []),
+  ].join(" · ");
+  return {
+    index,
+    x,
+    y,
+    tip,
+    pending: Boolean(current || partial),
+    side: x < 30 ? "start" : x > 70 ? "end" : undefined,
+  };
+});
+const runs: { points: typeof points; pending: boolean }[] = [];
+
+if (mode === "line") {
+  for (const point of points) {
+    const run = runs.at(-1);
+    const previous = run?.points.at(-1);
+    if (!run || !previous || point.index !== previous.index + 1) {
+      runs.push({ points: [point], pending: point.pending });
+    } else if (run.pending !== point.pending) {
+      runs.push({ points: [previous, point], pending: point.pending });
+    } else {
+      run.points.push(point);
+    }
+  }
+}
+const edge = ({ x, y }: (typeof points)[number], shift: string) =>
+  `${x.toFixed(3)}% calc(${y.toFixed(3)}% ${shift} 1px)`;
+const segments = runs
+  .filter(({ points }) => points.length > 1)
+  .map(({ points, pending }) => ({
+    pending,
+    clip: `polygon(${[...points.map((point) => edge(point, "-")), ...points.toReversed().map((point) => edge(point, "+"))].join(",")})`,
+  }));
+const pending = points.some((point) => point.pending);
+const missing = points.length < bins;
+const latest = points.at(-1);
 ---
 
-<figure class:list={["trend", color, mode]} aria-label={label + " by " + grain}>
-  <div class="plot" aria-hidden="true">
-    <div class="scale">
-      <span>{compact.format(maximum)}</span>
-      <span>{compact.format(maximum / 2)}</span>
-      <span>0</span>
+<figure
+  class:list={["trend", color, mode, { compact }]}
+  data-adoption-trend
+  tabindex={points.length ? 0 : undefined}
+  aria-label={label + (latest ? ". Latest observation " + latest.tip : ". " + emptyMessage)}
+>
+  <div class="plot">
+    <div class="scale" aria-hidden="true">{ticks.map((tick) => <span>{tickFormat.format(tick)}</span>)}</div>
+    <div class="marks" style={`--bins:${bins};--zero:${zero}%`}>
+      {signed && <span class="zero-line" aria-hidden="true" />}
+      {segments.map(({ clip, pending }) => <span class:list={["segment", { pending }]} style={"clip-path:" + clip} aria-hidden="true" />)}
+      {points.map(({ x, y, pending, tip, side }) => (
+        <button
+          type="button"
+          class:list={["mark", { pending }]}
+          data-adoption-mark
+          data-tip-side={side}
+          aria-label={tip}
+          tabindex="-1"
+          style={`--x:${x.toFixed(3)}%;--y:${y.toFixed(3)}%;--bar-top:${Math.min(y, zero).toFixed(3)}%;--bar-height:${Math.abs(y - zero).toFixed(3)}%`}
+        />
+      ))}
+      {!points.length && <span class="empty-plot">{emptyMessage}</span>}
     </div>
-    {mode === "line" ? (
-      <div class="marks">
-        {rows.map(({ day, value, current }, index) => {
-          const next = rows[index + 1];
-          const left = xPosition(day);
-          const top = yPosition(value);
-          const right = next && xPosition(next.day);
-          const bottom = next && yPosition(next.value);
-          const edge = (x: number, y: number, shift: string) => x + "% calc(" + y + "% " + shift + " 1px)";
-          return <>
-            {next && offset(next.day) === offset(day) + 1 && (
-              <span
-                class:list={["segment", { partial: next.current }]}
-                style={"clip-path:polygon(" + [edge(left, top, "-"), edge(right, bottom, "-"), edge(right, bottom, "+"), edge(left, top, "+")].join(",") + ")"}
-              />
-            )}
-            <span class:list={["point", { current }]} title={formatDay(day) + " · " + number.format(value)} style={"left:" + left + "%;top:" + top + "%"} />
-          </>;
-        })}
-      </div>
-    ) : (
-      <div class="marks columns" style={"--intervals:" + (intervals + 1)}>
-        {rows.map(({ day, value, current, estimate }) => (
-          <div class="column" title={formatDay(day) + " · " + number.format(value)} style={"grid-column:" + (offset(day) + 1)}>
-            <span class:list={["bar", { current }]} style={"--height:" + (100 - yPosition(value)) + "%"} />
-            {estimate != null && estimate > value && <span class="bar projection" style={"--height:" + (100 - yPosition(estimate - value)) + "%"} />}
-          </div>
-        ))}
-      </div>
-    )}
   </div>
-  <figcaption>
-    <div class="dates" aria-hidden="true">
-      <time datetime={first}>{formatDay(first)}</time>
-      {last !== first && <time datetime={last}>{formatDay(last)}</time>}
-    </div>
-    {(pending || forecast || missing) && <div class="plot-note">
-      {pending && <span><i class="partial-key"></i>Period in progress</span>}
-      {forecast && <span><i class="forecast-key"></i>Projected remainder</span>}
-      {missing && <span>Gaps show periods with no report.</span>}
-    </div>}
-  </figcaption>
-  {showTable && <details>
-    <summary aria-label={"View data table for " + label}>View data table</summary>
-    <Table
-      aria-label={label + " by " + grain}
-      size="sm"
-      mobileLayout="scroll"
-      headers={[{ label: "UTC period", scope: "col" }, { label, scope: "col" }, ...(coverage ? [{ label: "Days reported", scope: "col" }] : [])]}
-      rows={rows.map(({ day, value, days }) => ({
-        id: day,
-        items: [{ label: day }, { label: number.format(value) }, ...(coverage ? [{ label: days ?? "—" }] : [])],
-      }))}
-    />
-  </details>}
+  {((showDates && first && last) || (showNotes && points.length > 0 && (pending || missing))) && (
+    <figcaption>
+      {showDates && first && last && <div class="dates">
+        <time datetime={first}>{formatDay(first)}</time>
+        {middle && <time datetime={middle}>{formatDay(middle)}</time>}
+        {last !== first && <time datetime={last}>{formatDay(last)}</time>}
+      </div>}
+      {showNotes && points.length > 0 && (pending || missing) && <div class="plot-note">
+        {pending && <span>Some periods have partial coverage.</span>}
+        {missing && <span>Gaps mark missing observations.</span>}
+      </div>}
+    </figcaption>
+  )}
 </figure>
+
+<script>
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    event.target.closest<HTMLElement>("[data-adoption-mark]")?.focus({ preventScroll: true });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (!(event.target instanceof HTMLElement)) return;
+    const chart = event.target.closest<HTMLElement>("[data-adoption-trend]");
+    if (!chart) return;
+    if (event.key === "Escape" && chart !== event.target) {
+      chart.focus({ preventScroll: true });
+      return;
+    }
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    const marks = Array.from(chart.querySelectorAll<HTMLElement>("[data-adoption-mark]"));
+    const index = marks.indexOf(event.target);
+    const next = index < 0
+      ? (event.key === "ArrowRight" ? 0 : marks.length - 1)
+      : index + (event.key === "ArrowRight" ? 1 : -1);
+    if (marks[next]) {
+      event.preventDefault();
+      marks[next].focus({ preventScroll: true });
+    }
+  });
+</script>
 
 <style>
   .trend {
     --plot-color: var(--accent);
-    margin: 0.85rem 0 0;
+    --scale-width: 3rem;
+    --scale-gap: 0.55rem;
+    direction: ltr;
+    margin: 0;
     inline-size: 100%;
     min-inline-size: 0;
     font-variant-numeric: tabular-nums;
   }
   .trend.info { --plot-color: var(--click-alert-color-text-info); }
-  .plot { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.65rem; }
+  .plot { display: grid; grid-template-columns: var(--scale-width) minmax(0, 1fr); gap: var(--scale-gap); }
   .scale {
     display: flex;
     flex-direction: column;
     justify-content: space-between;
     align-items: end;
-    align-self: stretch;
     margin-block: -0.5em;
     font-size: 0.75rem;
     color: var(--muted);
   }
   .marks {
     position: relative;
-    block-size: clamp(7rem, 13vw, 13rem);
+    block-size: clamp(6.25rem, 11vw, 11rem);
     background: linear-gradient(var(--line), var(--line)) top / 100% 1px no-repeat,
       linear-gradient(var(--line), var(--line)) center / 100% 1px no-repeat,
       linear-gradient(var(--line), var(--line)) bottom / 100% 1px no-repeat;
   }
+  .compact .marks { block-size: clamp(4.25rem, 7vw, 6rem); }
+  .zero-line { position: absolute; inset-inline: 0; inset-block-start: var(--zero); border-block-start: 1px solid var(--muted); }
   .segment { position: absolute; inset: 0; background: var(--plot-color); pointer-events: none; }
-  .segment.partial { opacity: 0.45; }
-  .point {
+  .segment.pending { opacity: 0.45; }
+  .mark {
     position: absolute;
-    inline-size: clamp(0.23rem, 1vw, 0.4rem);
+    inset-inline-start: var(--x);
+    inline-size: calc(100% / var(--bins));
+    transform: translateX(-50%);
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    color: inherit;
+    background: transparent;
+    cursor: default;
+  }
+  .mark:focus-visible { outline: 1px solid var(--plot-color); outline-offset: 0; }
+  .mark::before { content: ""; position: absolute; inset-inline-start: 50%; transform: translateX(-50%); background: var(--plot-color); }
+  .line .mark {
+    inset-block-start: var(--y);
+    block-size: 1rem;
+    inline-size: min(1.25rem, calc(100% / var(--bins)));
+    transform: translate(-50%, -50%);
+  }
+  .line .mark::before {
+    inset-block-start: 50%;
+    inline-size: 0.35rem;
     aspect-ratio: 1;
     border-radius: 50%;
     transform: translate(-50%, -50%);
-    background: var(--plot-color);
   }
-  .point.current { border: 1px solid var(--plot-color); background: var(--surface); }
-  .columns {
+  .line .mark.pending::before { border: 1px solid var(--plot-color); background: var(--surface); }
+  .bars .mark { inset-block: 0; }
+  .bars .mark::before {
+    inset-block-start: var(--bar-top);
+    inline-size: min(72%, 2rem);
+    block-size: max(1px, var(--bar-height));
+  }
+  .bars .mark.pending::before {
+    background: repeating-linear-gradient(135deg, var(--plot-color) 0 1px, transparent 1px 4px);
+  }
+  .mark::after {
+    display: none;
+    position: absolute;
+    inset-inline-start: 50%;
+    inset-block-end: calc(100% + 0.25rem);
+    transform: translateX(-50%);
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--click-global-color-text-default);
+    font-size: 0.75rem;
+    white-space: nowrap;
+    pointer-events: none;
+    content: attr(aria-label);
+  }
+  .mark:focus { z-index: 1; }
+  .mark:focus::after { display: block; }
+  .mark[data-tip-side="start"]::after { inset-inline-start: 0; transform: none; }
+  .mark[data-tip-side="end"]::after { inset-inline: auto 0; transform: none; }
+  @media (hover: hover) and (pointer: fine) {
+    .mark:hover { z-index: 2; }
+    .mark:hover::after { display: block; }
+    .marks:has(.mark:hover) .mark:focus:not(:hover)::after { display: none; }
+  }
+  .empty-plot {
+    position: absolute;
+    inset: 0;
     display: grid;
-    gap: min(0.5rem, calc(20% / var(--intervals)));
-    grid-template-columns: repeat(var(--intervals), minmax(0, 1fr));
+    place-content: center;
+    padding: 0.35rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    text-align: center;
   }
-  .column { grid-row: 1; display: flex; flex-direction: column-reverse; min-inline-size: 0; }
-  .bar { inline-size: 100%; max-inline-size: 2.5rem; block-size: var(--height); margin-inline: auto; background: var(--plot-color); }
-  .bar.current { background: color-mix(in srgb, var(--plot-color) 48%, var(--surface)); }
-  .bar.projection, .forecast-key {
-    background: repeating-linear-gradient(135deg, var(--plot-color) 0 1px, var(--surface) 1px 4px);
+  .dates {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.4rem;
+    padding-inline-start: calc(var(--scale-width) + var(--scale-gap));
+    margin-block-start: 0.45rem;
   }
-  .dates { display: flex; justify-content: space-between; gap: 0.45rem; padding-inline-start: 2rem; margin-block-start: 0.45rem; }
-  figcaption { color: var(--muted); font-size: 0.77rem; }
-  .plot-note { display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; margin-block-start: 0.6rem; }
-  .plot-note span { display: inline-flex; align-items: center; gap: 0.4rem; }
-  .plot-note i { inline-size: 0.7rem; block-size: 0.55rem; border: 1px solid var(--plot-color); border-radius: 1px; }
-  .partial-key { background: color-mix(in srgb, var(--plot-color) 48%, var(--surface)); }
-  .line .partial-key { border-radius: 50%; background: var(--surface); }
-  details { margin-block-start: 0.8rem; }
-  summary { cursor: pointer; padding-block: 0.5rem; color: var(--click-global-color-text-link-default); font-size: 0.86rem; }
+  figcaption { color: var(--muted); font-size: 0.75rem; }
+  .plot-note { display: flex; flex-wrap: wrap; gap: 0.4rem 0.75rem; margin-block-start: 0.6rem; }
 </style>

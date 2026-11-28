@@ -1,6 +1,7 @@
 """Which of a memory's code links are current, and the links served on reads: a memory's
-`code` on memory.get, a search hit's `code_state`, the stale links namespace.validate
-lists. The worker that makes and follows the links is `server.memory.app.code_links`."""
+`code` on memory.get, a search hit's `code_state` and `code_moved`, the stale links
+namespace.validate lists. The worker that makes and follows the links is
+`server.memory.app.code_links`."""
 
 from __future__ import annotations
 
@@ -83,14 +84,23 @@ async def current_links(org: str, links: list[LinkRow]) -> list[LinkRow]:
     return [a for h in heads for a in current(org, h, by_mid.get(str(h["mid"]), []))]
 
 
+# the states of a link whose code is not what its memory was written against
+STALE = ("changed", "unresolved", "missing")
+
+
 async def stale_links(
-    org: str, namespace: str, keys: Sequence[str] | None = None, *, limit: int
+    org: str,
+    namespace: str,
+    keys: Sequence[str] | None = None,
+    *,
+    limit: int,
+    states: Sequence[str] = STALE,
 ) -> list[dict[str, Any]]:
-    """Up to `limit` of the namespace's changed, unresolved and missing links into
-    repositories the caller may read, of its served memories (those under `keys` when
-    given) as they are now, one per memory, newest check first; each with its memory_key,
-    memory_id, code_namespace, path, qualified_name, state, changed_since, checked_at and
-    `total`, the number of memories they are of."""
+    """Up to `limit` of the namespace's links in `states` (changed, unresolved and
+    missing unless given) into repositories the caller may read, of its served memories
+    (those under `keys` when given) as they are now, one per memory, newest check first;
+    each with its memory_key, memory_id, code_namespace, path, qualified_name, state,
+    changed_since, checked_at and `total`, the number of memories they are of."""
     trunk = code.trunk_namespace(org, namespace)
     tagged = [] if trunk else _tag_namespaces(org)
     seen = await readable_namespaces(org, {trunk, *(cns for _, cns in tagged)} - {""})
@@ -99,7 +109,7 @@ async def stale_links(
     return await store.stale_of_served(
         org,
         namespace,
-        ["changed", "unresolved", "missing"],
+        list(states),
         memory_keys=keys,
         trunk=trunk,
         tag_namespaces=tagged,
@@ -262,19 +272,45 @@ async def links_of(org: str, memory: dict[str, Any]) -> list[CodeLink]:
         log.debug("code links unavailable: %s", e)
         return []
     return [
-        CodeLink.model_validate(
-            {
-                "code_namespace": a["code_namespace"],
-                "path": a["path"],
-                "symbol": a["qualified_name"],
-                "state": a["state"],
-                "changed_since": a["changed_since"],
-                "suggestion": a["suggestion"],
-            }
-        )
-        for a in sorted(rows, key=lambda a: (a["path"], a["qualified_name"]))
+        served_link(a)
+        for a in sorted(rows, key=_by_place)
         if a["state"] != "pending" and a["code_namespace"] in seen
     ]
+
+
+def _by_place(link: Mapping[str, Any]) -> tuple[str, str]:
+    return str(link.get("path") or ""), str(link.get("qualified_name") or "")
+
+
+def served_link(link: Mapping[str, Any], *, suggestion: bool = True) -> CodeLink:
+    """A link row as a read serves it: its lines only where the code was found, and the
+    path and symbol the memory was written against when it is now at another
+    (`code_change.relocation`)."""
+    located = link["state"] in code_change.LOCATED
+    was_path, was_symbol = code_change.relocation(link) or ("", "")
+    return CodeLink.model_validate(
+        {
+            "code_namespace": link["code_namespace"],
+            "path": link["path"],
+            "symbol": link["qualified_name"],
+            "start_line": int(link.get("start_line") or 0) if located else 0,
+            "end_line": int(link.get("end_line") or 0) if located else 0,
+            "state": link["state"],
+            "changed_since": link.get("changed_since") or "",
+            "suggestion": (link.get("suggestion") or "") if suggestion else "",
+            "was_path": was_path,
+            "was_symbol": was_symbol,
+        }
+    )
+
+
+def relocated(links: Sequence[Mapping[str, Any]]) -> list[CodeLink]:
+    """Of the links a read serves for one memory (made from it as it is now, `current`,
+    in repositories the caller may read), those now at another path or symbol than it was
+    written against, by path and symbol: what a reader names beside the memory, whose
+    text still says the old name. The `revise` policy's suggestion stays on memory.get."""
+    moved = [a for a in links if code_change.relocation(a)]
+    return [served_link(a, suggestion=False) for a in sorted(moved, key=_by_place)]
 
 
 _IDENT = ("namespace", "agent", "user_id", "session_id", "memory_key")
@@ -355,10 +391,12 @@ async def _annotation_reads(
 
 async def annotate_hits(input: Any, hits: list[Any]) -> None:
     """Set each search hit's `code_state` to its worst link in a repository the caller
-    may read and `code_changed_since` to the commit of that state
-    (`code_change.worst_commit`; the links themselves on `_code_links`), mark for a lower
-    rank (`_code_ranked_down`) the hits whose code changed or went, and drop, in place,
-    the hits about code that is gone (`code_change.hidden`)."""
+    may read, `code_changed_since` to the commit of that state
+    (`code_change.worst_commit`) and `code_moved` to those of the links now at another
+    path or symbol than the memory was written against (`relocated`; the links
+    themselves on `_code_links`), mark for a lower rank (`_code_ranked_down`) the hits
+    whose code changed or went, and drop, in place, the hits about code that is gone
+    (`code_change.hidden`)."""
     try:
         memories, seen, policies = await _annotation_reads(input, hits)
     except Exception as e:  # noqa: BLE001 — the links are additive to the read
@@ -379,6 +417,7 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
         h._code_links = shown
         h.code_state = code_change.worst([a["state"] for a in shown])
         h.code_changed_since = code_change.worst_commit(shown)
+        h.code_moved = relocated(shown)
         # the served window moves it down after the verdict (`code_change.rank_down`)
         h._code_ranked_down = bool(
             m

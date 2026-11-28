@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
-from server.code.domain.anchor_state import definition_state
+from server.code.domain.anchor_state import definition_state, fingerprint
 from server.code.domain.extract.lang_detect import detect_by_extension
 from server.code.domain.extract.lang_go import go_dir_scope
 from server.code.domain.extract.lang_rust import module_scope_rust
@@ -78,7 +78,8 @@ class Definition:
 class Link:
     """One anchor: a symbol (or, with `qualified_name` '', the file) a memory is about.
     `body_hash` is the definition's fingerprint when the memory was written,
-    `checked_hash` at the last check (a new edit to changed code moves it)."""
+    `checked_hash` at the last check (a new edit to changed code moves it); a file
+    link's are those of the lines its memory cites (`cited_fingerprint`)."""
 
     path: str
     qualified_name: str = ""
@@ -204,6 +205,85 @@ def mentions(text: str, *, cap: int = 16) -> list[Mention]:
     return [Mention(name, in_prose) for name, in_prose in list(out.items())[:cap]]
 
 
+class Span(NamedTuple):
+    """A name written as code: where it is in the text and how it is spelled, without
+    the `self.`, `cls.` or `this.` before it (`receiver`, '' when it has none)."""
+
+    start: int
+    end: int
+    name: str
+    receiver: str = ""
+
+
+# what quotes code and names none: a fenced block (an unclosed one runs to the end), a
+# URL, a quoted string (an apostrophe inside a word opens none)
+_FENCED = re.compile(r"^[ \t]*(```|~~~)[^\n]*\n.*?(?:^[ \t]*\1[^\n]*$|\Z)", re.M | re.S)
+_URL = re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://[^\s`]+")
+_QUOTED = re.compile(r"\"[^\"\n]*\"|(?<!\w)'[^'\n]+'(?!\w)")
+_TICKED = re.compile(r"`([^`\n]+)`")
+_TICKED_NAME = re.compile(rf"\s*({_IDENT.pattern})(?:\(\))?\s*")
+# what joins a name to something longer when it touches it: a path, a flag, an anchor,
+# an assignment, an address, a quote
+_JOINS_BEFORE = frozenset("/-#=@\"'.:")
+_JOINS_AFTER = frozenset("/-#=@\"'")
+_FILE_SUFFIX = re.compile(r"\.\w")
+
+
+def _joined(text: str, start: int, end: int) -> bool:
+    """What is written from `start` to `end` is a part of something longer: a path, a
+    flag, a URL fragment, an assignment, a file name."""
+    before = text[start - 1] if start else " "
+    after = text[end] if end < len(text) else " "
+    return before in _JOINS_BEFORE or after in _JOINS_AFTER or bool(_FILE_SUFFIX.match(text, end))
+
+
+def code_spans(text: str) -> tuple[list[Span], list[tuple[int, int]]]:
+    """The names `text` writes as code, in text order, and the spans that quote code
+    without naming any. A name is a whole backticked identifier (`` `Reader.get` ``,
+    `` `load_rows()` ``), an `A::b`, or a call written `a.b(` or `f()`; never a word
+    of the prose, which `mentions` reads and a rewrite may not. Quoted are a fenced
+    block, a URL, a quoted string and a backticked span that is more than one name. A
+    name joined to something longer (`--load_rows`, `load_rows.py`, `x=Reader::get`)
+    is neither."""
+    quoted: list[tuple[int, int]] = []
+    found: list[Span] = []
+
+    def blank(m: re.Match[str]) -> str:
+        quoted.append(m.span())
+        return re.sub(r"[^\n]", " ", m[0])
+
+    def ticked(m: re.Match[str]) -> str:
+        name = _TICKED_NAME.fullmatch(m[1])
+        if name is None:
+            return blank(m)
+        if not _joined(m.string, m.start(), m.end()):
+            found.append(_span(m.start(1) + name.start(1), name[1]))
+        return " " * len(m[0])
+
+    masked = _mask_pytest_nodes(text or "")
+    for rx in (_FENCED, _URL, _QUOTED):
+        masked = rx.sub(blank, masked)
+    masked = _TICKED.sub(ticked, masked)
+    for rx in (_QUALIFIED, _DOTTED_CALL, _EMPTY_CALL):
+        found.extend(
+            _span(m.start(), m[0]) for m in rx.finditer(masked) if not _joined(masked, *m.span())
+        )
+    return sorted(found), sorted(quoted)
+
+
+def _span(start: int, spelled: str) -> Span:
+    """The span of a name spelled `spelled` at `start`, its receiver apart."""
+    name = _RECEIVER.sub("", spelled)
+    receiver = spelled[: len(spelled) - len(name)]
+    return Span(start + len(receiver), start + len(spelled), name, receiver)
+
+
+def code_shaped(word: str) -> bool:
+    """`word` alone is a name `mentions` reads in prose: camelCase, PascalCase or
+    snake_case."""
+    return bool(_CAMEL.fullmatch(word) or _SNAKE.fullmatch(word))
+
+
 def names_symbol(mention: str, qualified_name: str, path: str) -> bool:
     """`mention` is the qualified name or a `::`- / `.`-separated suffix of it."""
     m, q = mention.replace("::", "."), qualified_name.replace("::", ".")
@@ -289,6 +369,38 @@ def local_name(qualified_name: str, path: str) -> str:
     return q
 
 
+def cited_names(found: Sequence[Mention]) -> list[str]:
+    """The bare names of a memory's mentions `found`, each once, of `_MIN_BARE` or more
+    characters: a shorter one, the `get` of `Reader.get`, is a word of any file."""
+    names = (bare_name(m.name).lstrip("~") for m in found)
+    return list(dict.fromkeys(n for n in names if len(n) >= _MIN_BARE))
+
+
+# not a setting: a file link's stored fingerprint is of the lines this selects
+_MAX_CITED_LINES = 8
+
+
+def cited_lines(lines: Sequence[str], names: Sequence[str]) -> list[str]:
+    """The lines of a file that hold one of `names` as a whole word, in file order, runs
+    of whitespace as one space: what a memory linked to the file says of it. An edit to
+    a line that holds none of `names`, a shift of these and a new indentation leave them
+    as they were. A name on more than `_MAX_CITED_LINES` lines is a word of the file
+    (`None`, `self`) and selects none: an edit that takes a name across that count
+    changes the lines selected."""
+    held: set[int] = set()
+    for name in names:
+        word = re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)")
+        on = [i for i, line in enumerate(lines) if word.search(line)]
+        if len(on) <= _MAX_CITED_LINES:
+            held.update(on)
+    return [" ".join(lines[i].split()) for i in sorted(held)]
+
+
+def cited_fingerprint(lines: Sequence[str], names: Sequence[str]) -> str:
+    """A file link's fingerprint: its `cited_lines`; '' when the file holds none."""
+    return fingerprint(cited_lines(lines, names))
+
+
 def locate(
     link: Link,
     path_now: str,
@@ -334,17 +446,29 @@ def recheck(
     elsewhere: Sequence[Definition] = (),
     uncertain: bool = False,
     carried: bool = False,
+    cited: str = "",
     head: str,
 ) -> Link:
     """The link once its code is read at `head`, where its file is `path_now` ('' when
     deleted) defining `here`: found (`locate`), or `unresolved` when `uncertain`, else
     `missing`. A link not found keeps its name and follows its file, so a revert finds
-    it again."""
+    it again. A file link's code is the lines its memory cites, `cited` their
+    fingerprint at `head` (`cited_fingerprint`): it reads `changed` while they are not
+    the ones it was written against, and one written against none takes the first it
+    finds as its baseline."""
     if not link.qualified_name:
         if not path_now:
             return _in_state(link, "missing", head)
-        state = "moved" if link.moved_from_anchor(path_now, "") else "fresh"
-        return replace(_in_state(link, state, head), path=path_now)
+        if link.body_hash and cited != link.body_hash:
+            state = "changed"
+        else:
+            state = "moved" if link.moved_from_anchor(path_now, "") else "fresh"
+        return replace(
+            _in_state(link, state, head),
+            path=path_now,
+            body_hash=link.body_hash or cited,
+            checked_hash=cited,
+        )
     d = locate(link, path_now, here, renamed=renamed, elsewhere=elsewhere)
     if d is None:
         lost = _in_state(link, "unresolved" if uncertain else "missing", head)

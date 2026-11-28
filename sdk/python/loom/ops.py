@@ -13134,6 +13134,7 @@ class MemorySearchHit(TypedDict, total=False):
         Union[Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal[""]]
     ]
     code_changed_since: NotRequired[str]
+    code_moved: NotRequired[list["CodeLink"]]
     body_truncated: NotRequired[bool]
     next: NotRequired[str]
     source_resource_id: NotRequired[str]
@@ -13147,6 +13148,21 @@ class MemorySearchHit(TypedDict, total=False):
     derived_from: NotRequired[list[str]]
     score_components: NotRequired[dict[str, float]]
     resolved_from: NotRequired[Optional[str]]
+
+
+class CodeLink(TypedDict, total=False):
+    "A memory's link to code."
+
+    code_namespace: Required[str]
+    path: Required[str]
+    symbol: NotRequired[str]
+    start_line: NotRequired[int]
+    end_line: NotRequired[int]
+    state: Required[Literal["fresh", "moved", "changed", "unresolved", "missing"]]
+    changed_since: NotRequired[str]
+    suggestion: NotRequired[str]
+    was_path: NotRequired[str]
+    was_symbol: NotRequired[str]
 
 
 class MemoryAssignCategoryInput(TypedDict, total=False):
@@ -13407,17 +13423,6 @@ class MemoryGetOutput(TypedDict, total=False):
     locked_by: NotRequired[str]
     recall_by_agent: NotRequired[list["RecallByAgent"]]
     sensitivity: NotRequired[str]
-
-
-class CodeLink(TypedDict, total=False):
-    "A memory's link to code."
-
-    code_namespace: Required[str]
-    path: Required[str]
-    symbol: NotRequired[str]
-    state: Required[Literal["fresh", "moved", "changed", "unresolved", "missing"]]
-    changed_since: NotRequired[str]
-    suggestion: NotRequired[str]
 
 
 class RecallByAgent(TypedDict, total=False):
@@ -14255,6 +14260,7 @@ class MemoryForFileHit(TypedDict, total=False):
         Union[Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal[""]]
     ]
     use_guidance: NotRequired[Optional["UseGuidance"]]
+    code_moved: NotRequired[list["CodeLink"]]
 
 
 class MemoryGetInput(TypedDict, total=False):
@@ -18277,6 +18283,7 @@ class NamespaceValidateFinding(TypedDict, total=False):
     count: Required[int]
     samples: NotRequired[list[dict[str, Any]]]
     detail: Required[str]
+    totals: NotRequired[dict[str, int]]
 
 
 class ObserveCrystallizeInput(TypedDict, total=False):

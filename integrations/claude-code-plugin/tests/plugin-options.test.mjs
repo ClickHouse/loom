@@ -373,7 +373,7 @@ test("the manifest declares the options and the MCP url takes the server and too
   const mcp = JSON.parse(fs.readFileSync(new URL("../.mcp.json", import.meta.url), "utf8"));
   assert.equal(
     mcp.mcpServers.loom.url,
-    "${user_config.server_url}/mcp?toolset=${user_config.toolset}#${CLAUDE_PROJECT_DIR}",
+    "${user_config.server_url}/mcp?toolset=${user_config.toolset}&schema_profile=plugin#${CLAUDE_PROJECT_DIR}",
   );
   assert.match(mcp.mcpServers.loom.headersHelper, /loom-mcp-headers\.mjs/);
 });

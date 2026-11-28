@@ -1992,6 +1992,9 @@ function CodeLinks({ links }: { links: CodeLink[] }) {
         {links.map((l) => {
           const state = CODE_STATE[l.state] ?? CODE_STATE.fresh;
           const since = l.state === "changed" && l.changed_since ? ` since ${l.changed_since.slice(0, 7)}` : "";
+          const lines = l.start_line ? `:${l.start_line}-${l.end_line}` : "";
+          // what the memory's text still calls it: the symbol, or the path when only the file moved
+          const was = l.was_path ? (l.was_symbol && l.was_symbol !== l.symbol ? l.was_symbol : l.was_path) : "";
           return (
             <li key={`${l.code_namespace}:${l.path}:${l.symbol}`} className="min-w-0">
               <div className="flex items-center gap-2 min-w-0">
@@ -2000,8 +2003,13 @@ function CodeLinks({ links }: { links: CodeLink[] }) {
               </div>
               <p className="text-xs font-mono text-text-muted break-all">
                 {l.code_namespace}
-                {l.symbol ? ` · ${l.path}` : ""}
+                {l.symbol ? ` · ${l.path}${lines}` : ""}
               </p>
+              {was && (
+                <p className="text-xs text-text-muted break-all">
+                  Written as <span className="font-mono">{was}</span>
+                </p>
+              )}
               {l.suggestion && <p className="mt-1 text-xs text-text-muted">Suggested: {l.suggestion}</p>}
             </li>
           );

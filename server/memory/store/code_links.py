@@ -555,12 +555,21 @@ async def policy_due(
     return [str(r["mid"]) for r in rows]
 
 
-async def code_namespaces(*, ch: _CHClient | None = None) -> list[tuple[str, str]]:
+async def code_namespaces(
+    among: Sequence[tuple[str, str]] | None = None, *, ch: _CHClient | None = None
+) -> list[tuple[str, str]]:
     """Every (org, code namespace) holding a live link, and maybe one whose links were
-    all tombstoned since: read without FINAL."""
+    all tombstoned since: read without FINAL. With `among`, only those of them, read by
+    the sort key's prefix."""
+    within = (
+        "AND (org, code_namespace) IN {among:Array(Tuple(String, String))} "
+        if among is not None
+        else ""
+    )
     rows = await (ch or _default_client()).query_all(
         f"SELECT DISTINCT org, code_namespace FROM {TABLE} WHERE tombstoned_at IS NULL "
-        "ORDER BY org, code_namespace"
+        f"{within}ORDER BY org, code_namespace",
+        params={"among": sorted(among)} if among is not None else None,
     )
     return [(str(r["org"]), str(r["code_namespace"])) for r in rows]
 
@@ -570,7 +579,8 @@ SELECT org, namespace, agent, user_id, session_id, memory_key, actor,
        toString(memory_id) AS mid, value, tags, files,
        toString(content_sha256) AS sha,
        CAST(status AS String) AS status, tombstoned_at,
-       pinned, lock_mode, lock_until, verified_by, verified_sha256, sensitivity
+       pinned, lock_mode, lock_until, verified_by, verified_sha256, sensitivity,
+       valid_to, invalid_at, temporal_anchor
 FROM loom.memory FINAL
 """
 
@@ -875,6 +885,48 @@ async def stale_of_served(
             "readable": sorted(readable),
             "lim": max(int(limit), 1),
         },
+    )
+
+
+async def linkable_of_namespace(
+    org: str,
+    namespace: str,
+    memory_keys: Sequence[str] | None = None,
+    *,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """Up to `limit` of the namespace's served memories the link pass may link (no raw
+    tool observation: a key that starts `obs:`), those under `memory_keys` when given,
+    the last written first: each one's identity, `mid`, value, tags, files, `sha` and
+    version."""
+    keys = "AND memory_key IN {mks:Array(String)} " if memory_keys is not None else ""
+    return await (ch or _default_client()).query_all(
+        "SELECT namespace, agent, user_id, session_id, memory_key, "
+        "toString(memory_id) AS mid, value, tags, files, "
+        "toString(content_sha256) AS sha, version "
+        "FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} "
+        f"{keys}AND tombstoned_at IS NULL AND status IN ('active', 'conflicted') "
+        "AND NOT startsWith(memory_key, 'obs:') ORDER BY version DESC LIMIT {lim:UInt32}",
+        params={"org": org, "ns": namespace, "mks": list(memory_keys or []), "lim": int(limit)},
+    )
+
+
+async def link_states(
+    org: str, namespace: str, memory_ids: Sequence[str], *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The live links of these memories of `namespace`, each as its `mid`, code_namespace,
+    qualified_name, state and inputs_hash."""
+    if not memory_ids:
+        return []
+    return await query_all_sliced(
+        ch or _default_client(),
+        # `mid`, not `memory_id`: an alias of that name would shadow the column below
+        "SELECT toString(memory_id) AS mid, code_namespace, qualified_name, "
+        f"CAST(state AS String) AS state, inputs_hash {_LIVE} AND org = {{org:String}} "
+        "AND namespace = {ns:String} AND memory_id IN {ids:Array(UUID)}",
+        {"org": org, "ns": namespace, "ids": sorted(set(memory_ids))},
+        "ids",
     )
 
 

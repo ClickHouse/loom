@@ -40,7 +40,10 @@ unknown, read files you are about to edit from your checkout.
 
 The lag is counted against Loom's local mirror, so it reads 0 while the mirror has
 stopped fetching. `stale` therefore also turns true when the fetch is overdue, and the
-status ops report the mirror's age:
+status ops report the mirror's age. Every pass that fetches records the time. An index
+with no fetch on record (a backfill that nothing polls or refreshes) is overdue once its
+`git_head` is older than the same limit; `clone_fetched_at` and `fetched_at` are then
+empty.
 
 - `code.index_status` (one namespace) and `code.repos` (every readable entry) return
   `clone_head`, `clone_fetched_at` and `fetch_overdue` (older than
@@ -126,9 +129,11 @@ The Python SDK has `agent.code.coverage_watch(commit, inbox, namespace=…)` and
 
 ## Pushing freshness from CI
 
-The poller (`LOOM_CODE_INGEST_INTERVAL_SECONDS`, 120) catches every merge. To index a
-merge at once, call `code.refresh` from the post-merge job with a writer token scoped to
-the code namespace:
+The `code_ingest` poller is on by default (`LOOM_CODE_INGEST_ENABLED`): once a
+repository is configured it fetches every `LOOM_CODE_INGEST_INTERVAL_SECONDS` (120) and
+catches every merge. With no repository configured its pass ends at once: no git job, no
+sandbox probe and no model call. To index a merge at once, call `code.refresh` from the
+post-merge job with a writer token scoped to the code namespace:
 
 ```bash
 curl -fsS -X POST "$LOOM_BASE_URL/v1/code.refresh" \
@@ -141,7 +146,64 @@ curl -fsS -X POST "$LOOM_BASE_URL/v1/code.refresh" \
 - `expected_head` is only logged. `wait=true` blocks until the pass ends (up to
   `wait_timeout_seconds`, default 300); the answer carries `triggered`,
   `already_running`, `head_before` and `head_after`.
+- A pass that ran to its end is followed by a recheck of the
+  [memories linked to the namespace's code](../../concepts/memory.md#memories-linked-to-code),
+  so with `wait=true` their link state is that of `head_after` when the call returns. The
+  recheck calls no model: a claim the `revise` policy has to judge stays due for the
+  `memory_code_links` worker. A recheck that fails, that the link worker or another
+  refresh is already running, or that the wait cuts short never fails the call; the
+  worker's next pass finishes it.
 - The call is best-effort; the poller heals a missed trigger.
+
+As a GitHub Actions job, with `LOOM_BASE_URL` a repository variable and `LOOM_CI_TOKEN` a
+repository secret:
+
+```yaml
+name: loom-refresh
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Index this push in Loom
+        env:
+          LOOM_BASE_URL: ${{ vars.LOOM_BASE_URL }}
+          LOOM_CI_TOKEN: ${{ secrets.LOOM_CI_TOKEN }}
+        run: |
+          curl -fsS -X POST "$LOOM_BASE_URL/v1/code.refresh" \
+            -H "Authorization: Bearer $LOOM_CI_TOKEN" -H 'Content-Type: application/json' \
+            -d '{"org":"<org>","namespace":"code-myrepo","expected_head":"'"$GITHUB_SHA"'"}'
+```
+
+As a GitLab CI job, with both values as masked CI/CD variables:
+
+```yaml
+loom-refresh:
+  stage: deploy
+  image: curlimages/curl:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - >-
+      curl -fsS -X POST "$LOOM_BASE_URL/v1/code.refresh"
+      -H "Authorization: Bearer $LOOM_CI_TOKEN" -H 'Content-Type: application/json'
+      -d '{"org":"<org>","namespace":"code-myrepo","expected_head":"'"$CI_COMMIT_SHA"'"}'
+```
+
+### Trigger-only deployments
+
+`LOOM_CODE_INGEST_ENABLED=false` switches the poller off: nothing fetches on a timer, and
+`code.refresh` is the only thing that indexes a push. Every configured repository then
+needs a CI job like the ones above. `/v1/health` reports `code_repos_untriggered` as an
+error, with a count and no repository name, while a repository is configured, the poller
+is off, the worker ledger holds no `code_ingest` pass from the last day and no
+`code.refresh` was ever recorded for that repository (`last_refresh_at` in
+`code.index_status`). A poller's pass counts whatever it did, so after the poller is
+switched off the error can take a day to appear. The first `code.refresh` for the
+repository clears it within `LOOM_CODE_REPOS_REFRESH_SECONDS`.
 
 Operators watch `loom.code.tier_lag_seconds{tier}`; the lagging-tier runbook is in
 [code index operations](../../operations/code-index-operations.md).
@@ -152,6 +214,7 @@ Operators watch `loom.code.tier_lag_seconds{tier}`; the lagging-tier runbook is 
 | -------------------------------------------- | ------- | -------------------------------------------------------------------- |
 | `LOOM_CODE_STALE_AFTER_COMMITS`              | 5       | commits behind before `as_of.stale` is true                          |
 | `LOOM_CODE_FETCH_STALE_AFTER_SECONDS`        | 3600    | mirror age before `fetch_overdue` and `stale` (0 disables the check) |
+| `LOOM_CODE_INGEST_ENABLED`                   | true    | the `code_ingest` poller; false leaves `code.refresh` as the trigger |
 | `LOOM_CODE_INGEST_INTERVAL_SECONDS`          | 120     | how often `code_ingest` polls the mirror                             |
 | `LOOM_CODE_READY_EMBED_COVERAGE`             | 0.95    | embedded share before `code.search` uses its vector leg              |
 | `LOOM_CODE_COVERAGE_NOTIFY_INTERVAL_SECONDS` | 60      | how often coverage watches are checked                               |

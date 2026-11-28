@@ -18,14 +18,18 @@ crates.io installation. The SDK source supports Rust 1.84+, but resolved
 dependencies can require a newer toolchain. The library leaves dependency locking
 to the application; commit your application's `Cargo.lock`.
 
-The client speaks HTTP/2 to an `https` address, negotiating it over ALPN with a
-fallback to HTTP/1.1, and HTTP/1.1 to a plain `http` address.
+The published `0.1.1` crate does not enable HTTP/2 by default. Its async and
+blocking clients do not have `request` or `request_json`. For `0.1.1`, see the
+[async API reference](https://docs.rs/clickhouse-loom/0.1.1/clickhouse_loom/) or the
+[source for the optional blocking client](https://docs.rs/crate/clickhouse-loom/0.1.1/source/src/blocking.rs).
 
-The crate has an independent version in its
-[manifest](https://github.com/ClickHouse/loom/blob/main/sdk/rust/Cargo.toml).
-Use [docs.rs](https://docs.rs/clickhouse-loom) for the API of a published version,
-and the [operation reference](operations.md) for the server's current contracts.
-The repository reference describes the SDK shipped with that source revision.
+The SDK in this repository offers both direct route methods and negotiates
+HTTP/2 over ALPN for HTTPS connections, with a fallback to HTTP/1.1. Plain HTTP
+uses HTTP/1.1. To use these features, follow the
+[source installation instructions](https://github.com/ClickHouse/loom/tree/main/sdk/rust#install).
+The SDK has its own version in the
+[crate manifest](https://github.com/ClickHouse/loom/blob/main/sdk/rust/Cargo.toml).
+See the [operation reference](operations.md) for the server's current contracts.
 
 ## Save and read memory
 
@@ -135,10 +139,12 @@ failures before dispatch. The server authorizes every call.
 
 ## Routes outside the op registry
 
-`request` and `request_json` reach the routes the operation registry does not
-hold, such as `/v1/whoami` and `/v1/knowledge.upload`. A `RouteRequest` carries
-the method, a path on the server the client is bound to, query parameters and
-a JSON or raw body, all sent as given:
+The SDK from this repository provides `request` and `request_json` for routes
+outside the operation registry, such as `/v1/whoami` and `/v1/knowledge.upload`.
+For a crates.io install, check the `Client` API for your version on
+[docs.rs](https://docs.rs/clickhouse-loom). A `RouteRequest` carries the method,
+a path on the server the client is bound to, query parameters and a JSON or raw
+body, all sent as given:
 
 ```rust
 use clickhouse_loom::RouteRequest;
@@ -235,9 +241,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The blocking client owns a runtime thread and offers the same generated
-operations, call options and routes outside the op registry. Call it from an
-ordinary OS thread. Calling from a thread entered into Tokio returns
-`Error::Configuration`.
+operations and call options. When built from this repository, it also offers
+routes outside the operation registry. Call it from an ordinary OS thread.
+Calling from a thread entered into Tokio returns `Error::Configuration`.
 
 ## Capabilities and examples
 

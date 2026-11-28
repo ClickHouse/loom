@@ -1202,6 +1202,26 @@ def no_mirrors(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_code_erasure_running() -> Iterator[None]:
+    """No erasure reaches a code namespace and no work holds one, for every test that
+    does not say otherwise: unit fakes answer statements by shape, so the ledger read and
+    the purge's in-use check would read rows nobody wrote. Not through `monkeypatch`, so a
+    test's own monkeypatch is undone before the settings check."""
+    from server.code.app.index import erasing
+
+    async def _not_erased(org: str, namespace: str) -> bool:
+        return False
+
+    async def _free(*_a: object, **_k: object) -> str:
+        return ""
+
+    before = erasing.being_erased, erasing._holder
+    erasing.being_erased, erasing._holder = _not_erased, _free  # type: ignore[assignment]
+    yield
+    erasing.being_erased, erasing._holder = before  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
 def isolated_retirement_gate(monkeypatch):
     """Each test models a fresh process; permanent shutdown cannot leak between them."""
     from server.core import retirement

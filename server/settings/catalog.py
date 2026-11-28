@@ -1169,8 +1169,9 @@ class CodeSettings(BaseModel):
     # warning) and the issue mirror is skipped.
     code_github_token: str = ""
     # Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files →
-    # tree-sitter symbols/edges → context pack → advance watermark.
-    code_ingest_enabled: bool = False
+    # tree-sitter symbols/edges → context pack → advance watermark. It polls every
+    # configured repository; False = nothing polls, and `code.refresh` is the only trigger.
+    code_ingest_enabled: bool = True
     # Seconds between fast-tier ingest passes; extra-branch fetches of a shared mirror
     # are spaced by 0.9 of it (at least 30 s).
     code_ingest_interval_seconds: int = 120
@@ -1632,9 +1633,10 @@ class CodeSettings(BaseModel):
     # --- search ranking, legs and caches (code.search) ------------------------
     # Fire-and-forget code_search_trace/code_search_outcome telemetry.
     code_trace_log_enabled: bool = True
-    # Post-fusion rank priors in code.search (path-noise penalty, query↔path
+    # Rank priors in code.search (the test-path and prose penalties, query↔path
     # stem affinity, file coherence), applied after RRF and before the outcome
-    # boost. Kill switch.
+    # boost. The lexical leg also picks its candidates on the two path penalties,
+    # before RRF. Kill switch for both.
     code_fusion_signals: bool = True
     # Long-question trim: past this many lexemes the question is treated as an
     # issue body (template headings stripped, the rarest 32 tokens gate, the
@@ -1736,9 +1738,11 @@ class CodeSettings(BaseModel):
     # Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the
     # question kinds `code_search_catalogue_kinds` names; 1.0 = off.
     code_search_catalogue_penalty: float = 1.0
-    # Fusion multiplier for prose files (documentation, release notes, changelogs)
-    # unless the query asks for documentation or the search is constrained to paths;
-    # 1.0 = off.
+    # Multiplier for prose files (documentation, release notes, changelogs) unless
+    # the query asks for documentation or the search is constrained to paths. The
+    # ranking multiplies the fused score by it, and the lexical leg picks its
+    # candidates on each row's vote times it, before RRF. A smaller value makes
+    # the lexical leg read deeper. 1.0 = off.
     code_search_prose_penalty: float = 0.25
     # Chunk-kind ranking prior when the request names none: structural boosts the
     # kind named by the question; flat/default apply fixed tables; off disables it.
@@ -2167,10 +2171,10 @@ class ExtractionSettings(BaseModel):
     # The coverage sweep reads its listed turns and sentences in groups of this
     # many items, one concurrent call each (more recall for more tokens). 0 = one call.
     memory_extract_coverage_sweep_batch_items: Annotated[int, LIVE] = 0
-    # A coding capture keeps the coverage sweep's density / uncovered
+    # A trajectory replay keeps the coverage sweep's density / uncovered
     # auto-gates only with at least this many user turns (on short sessions the
-    # sweep's output is mostly junk). 0 = always keep. An explicit namespace /
-    # per-call switch wins either way.
+    # sweep's output is mostly junk); a plugin's session capture never takes them.
+    # 0 = always keep. An explicit namespace / per-call switch wins either way.
     memory_extract_coding_sweep_min_user_turns: Annotated[int, LIVE] = 4
 
     # --- size segments ---
@@ -2898,7 +2902,8 @@ class MemorySettings(BaseModel):
     # Supersession pairs one bulk write follows on the triple plane in the request; the
     # rest are recorded for the projection repair to follow. 0 = the repair follows all.
     memory_bulk_follow_max_pairs: Annotated[int, LIVE] = Field(default=1024, ge=0)
-    # Bulk-path conflict checks run at once (at least 1).
+    # Similarity reads one request runs at once (at least 1): a bulk write's conflict
+    # checks, and a coding capture's reads of the stored memories nearest its facts.
     bulk_conflict_check_concurrency: int = Field(default=8, ge=1)
     # Facts per batched candidate lookup (conflict and value-update peers) on
     # the write path; matches the per-fact concurrency so wall time stays flat.
@@ -4164,9 +4169,10 @@ class ModelSettings(BaseModel):
     # mid answer escalates to strong once.
     memory_ask_mid_model: str = ""
     # The durability check on a coding capture: one batched call per capture per
-    # listed model (CSV) judges each fact durable or not and folds same-claim
-    # paraphrases and replaced states. A fact is dropped only when every model says
-    # drop; folds come from the first. Fails open. "" turns it off.
+    # listed model (CSV) judges each fact durable or not, folds same-claim
+    # paraphrases and replaced states, and names the facts a stored memory already
+    # states. A fact is dropped as non-durable only when every model says drop; folds
+    # and stored restatements come from the first. Fails open. "" turns it off.
     memory_extract_verify_models: str = "claude-opus-5-5"
     # The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence
     # thresholds were set on this model; a cheaper one is only safe for clears.
@@ -4375,9 +4381,10 @@ class ObservabilitySettings(BaseModel):
     # K=V), "" = auto (otlp when the endpoint is set, else ch).
     otel_exporter: Annotated[Literal["", "ch", "otlp"], CaseFolded] = ""
     # Seconds between refreshes of the per-namespace code-plane COUNT gauges
-    # (one FINAL scan each of code_files, code_chunks, code_symbols and
-    # code_edges, on the lease holder). The counts move once an index run, so
-    # an hour is enough; each refresh reads every live code row. 0 = every export.
+    # (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges
+    # and memory_code_links, on the lease holder). The counts move once an index
+    # run, so an hour is enough; each refresh reads every live code row. 0 = every
+    # export.
     otel_code_counts_cache_s: int = 3600
     # Seconds between recounts of the code.grep wrong-abstain gauge (a
     # `content` scan per namespace with abstains). 0 = gauge off.
@@ -4453,6 +4460,9 @@ class ObservabilitySettings(BaseModel):
     adoption_telemetry_enabled: bool = True
     # Share namespace contact domains and counts in adoption reports. Set false to omit them.
     adoption_telemetry_share_domains: bool = True
+    # Share daily account, successful request and serving process counts for contact domains.
+    # Requires domain sharing.
+    adoption_telemetry_share_domain_activity: bool = False
     # Seconds between adoption checks and retries. A report covers 12 hours.
     adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 

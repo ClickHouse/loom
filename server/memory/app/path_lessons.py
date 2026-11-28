@@ -24,7 +24,7 @@ from typing import Any, NamedTuple
 
 from server.code.domain.anchor import local_name
 from server.memory.api.models_for_file import MemoryForFileInput
-from server.memory.app.code_link_reads import inputs_now
+from server.memory.app.code_link_reads import inputs_now, relocated
 from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
 from server.memory.domain import code_change
@@ -34,7 +34,6 @@ from server.memory.domain.recall import query_tokens
 from server.memory.store import code_links
 
 logger = logging.getLogger(__name__)
-_LOCATED_STATES = ("fresh", "moved", "changed")
 
 
 def _excerpt(hit: dict[str, Any]) -> str | None:
@@ -70,7 +69,7 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
     excerpt = _excerpt(hit)
     if excerpt is None:
         return None
-    lesson = {
+    lesson: dict[str, Any] = {
         "path": path,
         "memory_key": str(hit["memory_key"]),
         "namespace": str(hit["namespace"]),
@@ -79,6 +78,9 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
     }
     if hit.get("code_changed_since"):
         lesson["changed_since"] = str(hit["code_changed_since"])
+    if hit.get("code_moved"):
+        # a code link's non-empty fields: the row is served within a token cap
+        lesson["code_moved"] = [{k: v for k, v in m.items() if v} for m in hit["code_moved"]]
     if hit.get("supersedes_key"):
         lesson["supersedes_key"] = str(hit["supersedes_key"])
     guidance = hit.get("use_guidance")
@@ -255,7 +257,7 @@ async def _confirmed_omissions(
     for link in links:
         if link["code_namespace"] != trunk_ns:
             continue
-        if not link["complete"] or link["state"] not in _LOCATED_STATES:
+        if not link["complete"] or link["state"] not in code_change.LOCATED:
             uncertain.add(link["memory_id"])
         elif source is not None and not source.excludes(
             link["path"], link["checked_commit"], link["start_line"], link["end_line"]
@@ -293,8 +295,10 @@ async def lessons_for_paths(
     (`fresh`, `moved`, or `changed`, `unresolved` or `missing` when that code differs from
     what the memory was written against), '' for a row that names the file only;
     `changed_since`, the commit that put its code in a `changed`, `unresolved` or `missing`
-    state, when one is known; and `supersedes_key`, the key of the older row it replaces,
-    when the conflict check linked one. `timeout_s` bounds the file reads together;
+    state, when one is known; `code_moved`, its links to code in the file that is now at
+    another path or symbol than the row was written against, when there are any; and
+    `supersedes_key`, the key of the older row it replaces, when the conflict check linked
+    one. `timeout_s` bounds the file reads together;
     failed or unfinished reads leave the completed files' rows intact. A nonempty `query`
     ranks matching excerpts after constraints and pins across the selected paths,
     preserving path and listing order on ties. Uncapped grep and read answers focus
@@ -376,7 +380,7 @@ def _source_lesson(
         link
         for link in links
         if link["complete"]
-        and link["state"] in _LOCATED_STATES
+        and link["state"] in code_change.LOCATED
         and link["path"] == path
         and windows.overlaps_window(
             path, link["checked_commit"], link["start_line"], link["end_line"]
@@ -388,11 +392,14 @@ def _source_lesson(
             | {
                 "code_state": code_change.worst([link["state"] for link in matching]),
                 "code_changed_since": code_change.worst_commit(matching),
+                "code_moved": [link.model_dump() for link in relocated(matching)],
             },
             path,
         )
     if hit.get("pinned") or is_whole_row(hit.get("memory_type", ""), hit.get("tags") or []):
-        return _lesson(hit | {"code_state": "unresolved", "code_changed_since": ""}, path)
+        return _lesson(
+            hit | {"code_state": "unresolved", "code_changed_since": "", "code_moved": []}, path
+        )
     return None
 
 

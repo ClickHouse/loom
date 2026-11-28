@@ -93,6 +93,7 @@ default is `off`) are not listed here.
 
 | Setting | Meaning |
 | --- | --- |
+| `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY` | Share daily account, successful request and serving process counts for contact domains. |
 | `LOOM_ALLOW_INSECURE` | True lets a non-loopback bind start with auth off, MCP open mode, open self-signup outside trust-network, the dev signing secret or a weak root, gateway or end-user key. |
 | `LOOM_ASSISTANT_ENABLED` | Serve the assistant with its explicitly configured provider; false refuses chat. |
 | `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` | Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` ("<op> <request_id>"), so query_log rows group by shape. |
@@ -102,7 +103,6 @@ default is `off`) are not listed here.
 | `LOOM_CODE_GRAPH_STATS_ENABLED` | Weekly graph statistics: PageRank, degrees, test_map rebuild. |
 | `LOOM_CODE_HOST_ISLANDS` | Shell inside CI/build files (Actions `run:`, GitLab `script:`, Dockerfile `RUN`, Makefile recipes, Jenkinsfile `sh`) is parsed for facets, script `includes` edges and SQL; jobs, targets and stages… |
 | `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | True applies the built-in generated, minified and vendored ingest rules (code/app/index/denylist.py), which match 0.19% of rows. |
-| `LOOM_CODE_INGEST_ENABLED` | Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. |
 | `LOOM_CODE_ORG_READABLE` | True lets every authenticated principal of the org read every configured code namespace (right for public or org-internal repos); false leaves reads to the namespace's own visibility and grants. |
 | `LOOM_CODE_PR_HISTORY_ENABLED` | Merged-PR history sync (GitHub REST, cursor-resumable). |
 | `LOOM_CODE_PY_SQL_ISLANDS` | SQL a Python file runs (database-client call arguments and SQL-looking literals) becomes `statement` symbols, facets (confidence 0.7 with a format hole) and table edges. |

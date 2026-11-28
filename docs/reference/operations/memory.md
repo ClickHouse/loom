@@ -924,7 +924,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `user_id` | `str` | The resolved row's user and session: a write back to this row (restore, verify) names them, since a key repeats across users and sessions. |
 | `session_id` | `str` | The session or conversation the row belongs to; `'-'` for none. |
 | `status` | `str \| None` | Lifecycle state from loom.memory.status. |
-| `code` | `list[CodeLink]` | The code this memory is linked to: each link's path, symbol, state (`fresh`, `moved`, `changed`, `unresolved` or `missing`) and the `revise` policy's suggestion. |
+| `code` | `list[CodeLink]` | The code this memory is linked to: each link's path, symbol, lines, state (`fresh`, `moved`, `changed`, `unresolved` or `missing`), the `revise` policy's suggestion, and the path and symbol it was written against when the code has since… |
 | `superseded_by` | `str` | For a `status='superseded'` row, the memory_id of the row that replaced it ('' otherwise) — the bundle turns it into a `supersedes` edge on the newer row. |
 | `duplicate_of` | `str` | The row this one duplicates (status='duplicate'), and the verdict the row shows on read, derived from `status` (active → clear, conflicted → conflict, duplicate, superseded). |
 | `conflict_verdict` | `str` | clear \| conflict \| duplicate \| superseded, as described above. |

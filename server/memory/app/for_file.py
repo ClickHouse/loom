@@ -20,7 +20,7 @@ from server.memory.api.models_for_file import (
     MemoryForFileOutput,
     _MemoryForFileHit,
 )
-from server.memory.app.code_link_reads import guidance_code_states
+from server.memory.app.code_link_reads import guidance_code_states, relocated
 from server.memory.app.use_guidance import guidance_source_states, procedure_status_for_row
 from server.memory.domain import code_change
 from server.memory.domain.decision_schema import (
@@ -198,8 +198,8 @@ def _body(hit: dict[str, Any], *, decision: bool, whole: bool = True) -> str:
 def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     """`(pinned)` for a pinned row, `(source changed)` for a decision with a readable
     changed source, `(outcome: failed)` for a decision whose recorded outcome failed,
-    and a note when its linked code changed or went. An extracted decision nobody pinned
-    is the normal case and carries no pin mark."""
+    and a note when its linked code changed or went, or is now at another name or path.
+    An extracted decision nobody pinned is the normal case and carries no pin mark."""
     tags = hit.get("tags") or []
     out = " (pinned)" if hit.get("pinned") else ""
     freshness = (hit.get("use_guidance") or {}).get("freshness", {})
@@ -208,7 +208,7 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     if decision and FAILURE_TAG in tags:
         out += " (outcome: failed)"
     state, commit = str(hit.get("code_state") or ""), str(hit.get("code_changed_since") or "")
-    return out + code_change.note(state, commit)
+    return out + code_change.note(state, commit, hit.get("code_moved") or [])
 
 
 def _marker(hit: dict[str, Any], *, show_decision: bool) -> str:
@@ -476,8 +476,8 @@ async def _rows_for(
 ) -> list[dict[str, Any]]:
     """One namespace's rows naming the file or linked to code still in it (`linked`:
     memory_id -> its links here, read alongside the files match; None when that read
-    failed), each stamped with its namespace, the worst state of those links and the
-    commit that put it there.
+    failed), each stamped with its namespace, those links (`links`), their worst state
+    and the commit that put it there.
     `whole_only` keeps decisions and constraints only (the rows printed whole)."""
     statuses = ["active", "conflicted"] if input.include_conflicted else ["active"]
     params = {
@@ -543,12 +543,7 @@ async def _rows_for(
                 "namespace": namespace,
                 "code_state": code_change.worst([a["state"] for a in links]),
                 "code_changed_since": code_change.worst_commit(links),
-                "code_symbols": [
-                    a["qualified_name"]
-                    if a.get("complete") and a["state"] in ("fresh", "moved", "changed")
-                    else ""
-                    for a in links
-                ],
+                "links": links,
                 "source_links": source_links,
             }
         )
@@ -726,6 +721,7 @@ def _hit(r: dict[str, Any], input: MemoryForFileInput) -> _MemoryForFileHit:
         verification=row_verification(r),
         code_state=r.get("code_state", ""),
         use_guidance=r["use_guidance"],
+        code_moved=relocated(r.get("links", [])),
     )
 
 
@@ -806,10 +802,19 @@ async def listing_rows(
     await guided_file_rows(input.org, rows)
     return [
         _with_ids(_hit(r, input), r)
-        | {"code_symbols": r.get("code_symbols", [])}
+        | {"code_symbols": _located_names(r.get("links", []))}
         | ({"source_links": r.get("source_links", [])} if include_source_links else {})
         for r in rows
     ], skipped
+
+
+def _located_names(links: list[LinkRow]) -> list[str]:
+    """The qualified name of each link, '' for one that is cut by the caps, a file link,
+    or code that was not found: what a reader matches against the symbols it serves."""
+    return [
+        a["qualified_name"] if a.get("complete") and a["state"] in code_change.LOCATED else ""
+        for a in links
+    ]
 
 
 def _with_ids(hit: _MemoryForFileHit, row: dict[str, Any]) -> dict[str, Any]:

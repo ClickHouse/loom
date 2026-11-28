@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostEnv } from "./host-env.mjs";
 import { removeSandbox } from "./hook-sandbox.mjs";
+import { RECORDERS } from "../hooks/loom-record.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
@@ -46,7 +47,13 @@ function wiredGeneric() {
   });
 }
 
-const HOOKS = wired();
+/** [{event, script}] for every script the recording launcher runs: Codex and
+ *  a hand-wired client start each of them as a hook of its own. */
+function recorded() {
+  return Object.entries(RECORDERS).flatMap(([event, names]) => names.map((name) => ({ event, script: `${name}.mjs` })));
+}
+
+const HOOKS = [...wired(), ...recorded()];
 const GENERIC_HOOKS = wiredGeneric();
 /** Every wired (script, event), once per payload spelling it can receive. */
 const ALL_HOOKS = [...HOOKS, ...GENERIC_HOOKS];

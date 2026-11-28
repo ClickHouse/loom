@@ -1,0 +1,11 @@
+---
+import AdoptionPage from "../../components/AdoptionPage.astro";
+import { readAdoptionPage } from "../../lib/adoption-request.mjs";
+
+export const prerender = false;
+
+const result = await readAdoptionPage(Astro.request, Astro.url, "oss");
+if (result instanceof Response) return result;
+for (const [name, value] of result.headers) Astro.response.headers.set(name, value);
+---
+<AdoptionPage {...result} />

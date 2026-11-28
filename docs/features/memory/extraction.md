@@ -43,7 +43,7 @@ flowchart LR
    | `loom.drop_session_echoes`        | Drops facts that restate what the session's own Loom calls wrote, asked or got (`session_values`). |
    | `loom.drop_activity_narration`    | Drops narration of tool activity with no outcome ("User read lines 1-1000 of X").                  |
    | `loom.drop_non_durable`           | Coding captures only: drops status snapshots, housekeeping, first-person plans, in-batch repeats.  |
-   | `loom.verify_durable`             | Coding captures only: a model pass that drops what every verifier calls non-durable. Fails open.   |
+   | `loom.verify_durable`             | Coding captures only: a model pass drops non-durable facts and facts already stored. Fails open.   |
    | `loom.hash_dedup`                 | Drops facts whose canonical content hash is already stored.                                        |
    | `loom.bulk_write`                 | Writes through `memory.bulk_set`, with verdicts and one hash-only audit row per write.             |
 
@@ -65,11 +65,54 @@ session that states the same attribute lands on the same key and revises the row
 the user asks to forget something, the matching rows are retired and named in
 `forgotten` / `forgotten_keys` (a window's latest 50 requests are matched by content).
 
+**A stored fact said again** by a later coding capture is dropped when the verifier
+finds the memory that states it. `loom.verify_durable` reads the stored memories nearest
+each remaining fact: the writer's agent and user, any session, the capture's repository
+(its `repo:` tag, or its `project:` tag when it has none; a capture with neither is not
+narrowed), never a `high` row, and only served rows with no `valid_to` and no expiry. Only
+the first verifier model is sent them. A fact that it lists as stated in full by one of
+its own is dropped, and that memory gets one `evidence` usage event instead. A listed fact
+stays when an earlier fact the step keeps has its key, so the write sees both statements
+of that key. Every fact the step keeps goes on to the
+[write-time conflict check](conflicts-and-refusal.md).
+A fact the extractor gave a `valid_at`, a `valid_to` or a `foresight` window is compared
+with no stored memory, and an `append_only` namespace skips this read.
+
 **Coding captures** are requests whose `extra_tags` carry `source:claude-code`,
 `source:codex` or `source:cursor` (the plugins tag every capture), or a trajectory replay
 from the observe plane. Only these run `loom.drop_non_durable` and `loom.verify_durable`.
 The rules in `server/memory/domain/durable_facts.py` match sentence shape, not topic words: what
 a release changed is kept; whether its CI was green at the time is dropped.
+
+A plugin's session capture (a `source:` tag) is extracted with a prompt of its own, at
+every capture size. It holds no conversation rule or example, and is about 2,700 tokens
+where the conversation prompt is 20,000 to 34,000, because most captures hold nothing to
+keep and the prompt is then what the call costs. What the user states that holds beyond
+the session is kept: a standing rule, a preference, a decision, a fact about their setup.
+What the user asks for the task alone is not. Its schema asks for the fields a coding fact
+uses and for the end of a state the user bounds (`valid_to`, `foresight`), so a freeze
+"until Friday" stops being served after that day. The extractor sets no `valid_at`,
+`temporal_confidence`, occurrence record or `question_topic` on a session capture's fact;
+the row takes its `valid_at` from the fact's `temporal_anchor` when that is not in the
+future, else from the observation date. From the work, only knowledge about the codebase
+that a later session in the repository can reuse without reading the code again is kept:
+
+- how a behaviour is reached across definitions or files, as one claim for the whole path;
+- a relation between definitions that reading one of them does not show;
+- an invariant, constraint or pitfall with its reason, and which test constrains a
+  definition;
+- the cause of a bug in the code as it was before the session's edits.
+
+The rules ask for each claim to name its definitions in backticks beside their file paths,
+without line numbers: those names and paths are what the
+[code link pass](../../use-cases/memory-linked-to-code.md) links a memory by. What the
+session itself edited or added is left out: until it is committed it exists in one working
+tree, and the commit history records it afterwards. The task, test results and anything
+one lookup answers (where a single name is defined, what one function's text says) are
+left out too. An empty fact list from a session capture is an answer: the extractor is not
+asked again, and the coverage sweep reads the capture only when the namespace or the call
+turns it on. `loom.verify_durable` judges what remains by the same rules. A trajectory
+replay is extracted under its own instructions and verified without the codebase rules.
 
 ## Rules the assistant states about itself
 

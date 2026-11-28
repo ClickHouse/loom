@@ -44,7 +44,13 @@ async def test_native_private_query_log_is_inaccessible_to_sql_and_analyst(
             assert not capture.exists()
             await ch.query_one("SELECT 1 AS public_control")
             assert "public_control" in capture.read_text()
-        await ch.execute("SYSTEM FLUSH LOGS")
+        # A log's table exists from its first flush, so the logs probed below are named
+        # too. trace_log is left out: the profiler creates it, and its flush can outlast
+        # the server's 180 s bound on a loaded runner.
+        await ch.execute(
+            "SYSTEM FLUSH LOGS query_log, text_log, error_log, query_views_log, "
+            "query_thread_log, processors_profile_log, opentelemetry_span_log"
+        )
         native = await ch.query_all(
             "SELECT query, result_rows FROM system.query_log "
             "WHERE query_id = {qid:String} AND type = 'QueryFinish' LIMIT 2",
