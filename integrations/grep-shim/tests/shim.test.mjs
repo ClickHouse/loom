@@ -83,7 +83,7 @@ async function withServer(mode, fn) {
     let raw = "";
     req.on("data", (c) => (raw += c));
     req.on("end", () => {
-      seen.push({ url: req.url, body: raw ? JSON.parse(raw) : {} });
+      seen.push({ url: req.url, body: raw ? JSON.parse(raw) : {}, auth: req.headers.authorization });
       if (mode === "hang") return;
       if (mode === 401) {
         res.statusCode = 401;
@@ -182,6 +182,23 @@ test("grep, Loom answering: annotated shapes gain only suffixes; everything else
     const r = await shim("grep", ["-rn", "foo", "src"], { cwd: dir, env });
     assert.match(r.out.toString(), new RegExp(`src/a\\.cpp:1:int foo\\(\\) \\{${MARK}a\\.cpp::fn1\n`));
     assert.ok(seen.every((s) => s.url === "/v1/code.enclosing" && s.body.consumer === "grep-shim"));
+  });
+});
+
+test("grep: the token file LOOM_API_KEY_FILE names outranks the config's token", {
+  skip: !NATIVE.grep && "no native grep on PATH",
+}, async () => {
+  const dir = checkout();
+  await withServer("ok", async (url, seen) => {
+    const config = path.join(dir, "config.json");
+    fs.writeFileSync(config, JSON.stringify({ token: "cfg.tok", url }));
+    fs.writeFileSync(path.join(dir, "secret"), "key.tok\n");
+    const env = { LOOM_CONFIG_FILE: config, LOOM_GREP_SHIM_QUIET: "1" };
+    await shim("grep", ["-rn", "foo", "src"], { cwd: dir, env });
+    env.LOOM_API_KEY_FILE = path.join(dir, "secret");
+    await shim("grep", ["-rn", "foo", "src"], { cwd: dir, env });
+    const sent = seen.map((s) => s.auth);
+    assert.deepEqual(sent, ["Bearer cfg.tok", "Bearer key.tok"]);
   });
 });
 

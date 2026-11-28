@@ -45,6 +45,39 @@ def test_a_failing_code_tier_is_a_doctor_problem(monkeypatch: pytest.MonkeyPatch
     assert "Fix: Set the token." in detail
 
 
+@pytest.mark.parametrize(
+    ("repo", "required", "listed"),
+    [
+        ("", False, []),  # the default deployment: memory only
+        ("acme/widget", False, ["repo_jobs_unsandboxed", "repo_sandbox_layout_refused"]),
+        ("", True, ["repo_jobs_unsandboxed", "repo_sandbox_layout_refused"]),
+    ],
+    ids=["no-repository", "a-repository", "sandbox-required"],
+)
+def test_the_sandbox_is_a_doctor_problem_only_where_a_repository_job_is_owed(
+    monkeypatch: pytest.MonkeyPatch, repo: str, required: bool, listed: list[str]
+) -> None:
+    from server.cli import doctor
+    from server.code.app.index import sandbox
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_ingest_enabled", True)
+    monkeypatch.setattr(settings, "code_sandbox_required", required)
+    monkeypatch.setattr(settings, "code_self_service_enabled", False)
+    monkeypatch.setattr(settings, "code_repos_json", "")
+    monkeypatch.setattr(settings, "code_repo", repo)
+    monkeypatch.setattr(settings, "code_org", "acme")
+    monkeypatch.setattr(settings, "code_namespace", "code-widget")
+    monkeypatch.setattr(sandbox, "_available", False)  # probed: no sandbox on this host
+    monkeypatch.setattr(sandbox, "layout_refusal", lambda: "sandbox: /x is inside")
+    monkeypatch.setattr(doctor, "_doctor_tier_failures", lambda: None)
+
+    lines = doctor._problem_checks(doctor._doctor_problems())
+
+    names = sorted(name.removeprefix("problem:") for name, _, _ in lines if "sandbox" in name)
+    assert names == listed
+
+
 def test_doctor_reports_jwt_secret_status(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

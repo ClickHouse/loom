@@ -352,3 +352,128 @@ def test_git_lag_runs_git_only_on_object_ids(monkeypatch: Any) -> None:
         assert otel_probes._git_lag("/nonexistent", bad, head) == (-1, 0.0), bad
         assert otel_probes._git_lag("/nonexistent", head, bad) == (-1, 0.0), bad
     assert calls == []
+
+
+# --- memory links: how far they trail the index, and by state -----------------
+
+
+def _link_lag(monkeypatch: pytest.MonkeyPatch, rows: list, lags: dict, *, now: float) -> dict:
+    by = _lag_series(monkeypatch, rows, lags, now=now)
+    return {k: v for (k, _tier), v in by.items() if k.startswith("memory_link")}
+
+
+def test_links_checked_behind_the_indexed_head_read_as_lag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The link pass stopped at `c` while the index went on to `h`: three commits, the
+    oldest of them twenty minutes old. One pass later the mark is `h` and both read 0."""
+    now = 50_000.0
+    rows = [
+        ("o", "code-loom", "state:git_head", 0.0, "h"),
+        ("o", "code-loom", "state:memory_links_checked", 0.0, "c"),
+        ("o", "code-loom", "links", 0.0, ""),
+    ]
+    lags = {("c", "h"): (3, now - 1200)}
+    assert _link_lag(monkeypatch, rows, lags, now=now) == {
+        "memory_link_lag_commits": 3.0,
+        "memory_link_lag_seconds": 1200.0,
+    }
+    rows[1] = ("o", "code-loom", "state:memory_links_checked", 0.0, "h")
+    assert _link_lag(monkeypatch, rows, lags, now=now) == {
+        "memory_link_lag_commits": 0.0,
+        "memory_link_lag_seconds": 0.0,
+    }
+
+
+def test_a_repository_with_no_live_link_reads_no_link_lag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing rechecks a repository that holds no link, so its mark stays where its
+    last link left it: that is not lag, and no point is exported for it."""
+    rows = [
+        ("o", "code-loom", "state:git_head", 0.0, "h"),
+        ("o", "code-loom", "state:memory_links_checked", 0.0, "c"),
+    ]
+    assert _link_lag(monkeypatch, rows, {("c", "h"): (40, 1.0)}, now=9_000.0) == {}
+    # another repository's live link is not this one's
+    rows.append(("o", "code-other", "links", 0.0, ""))
+    assert _link_lag(monkeypatch, rows, {("c", "h"): (40, 1.0)}, now=9_000.0) == {}
+
+
+def test_links_never_checked_read_no_link_lag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Before the first recheck, and while a full one is owed, the mark is empty: how far
+    the links trail is unknown, which is no observation, never 0."""
+    from server.code.domain.index import repos as r
+
+    monkeypatch.setattr(r, "configured_repos", lambda: [_Repo("code-loom")])
+    seen: list[tuple[str, str]] = []
+
+    def unknown(git_dir: str, since: str, until: str) -> tuple[int, float]:
+        seen.append((since, until))
+        return otel_probes._git_lag(git_dir, since, until)
+
+    rows = [
+        ("o", "code-loom", "state:git_head", 0.0, "a" * 40),
+        ("o", "code-loom", "links", 0.0, ""),
+    ]
+    out = otel_probes._code_lag_series(rows, tip_of=lambda d, b: "", lag_of=unknown, now=1.0)
+    assert out == {} and seen == [("", "a" * 40)]
+    rows.append(("o", "code-loom", "state:memory_links_checked", 0.0, ""))
+    out = otel_probes._code_lag_series(rows, tip_of=lambda d, b: "", lag_of=unknown, now=1.0)
+    assert out == {} and len(seen) == 2
+
+
+def test_links_by_state_become_a_series_per_repository_and_state() -> None:
+    rows = [
+        ("o", "code-loom", "links:fresh", 40.0, ""),
+        ("o", "code-loom", "links:changed", 3.0, ""),
+        ("o", "code-loom", "links:pending", 2.0, ""),
+        ("o", "code-loom", "links", 0.0, ""),  # the lag probe's marker: not a count
+        ("o", "code-loom", "state:memory_links_checked", _ts(5), "abc"),  # not an age
+    ]
+    out = otel_probes._code_series_from_rows(rows, now=NOW)
+    attrs = {"loom.org": "o", "loom.namespace": "code-loom"}
+    assert out == {
+        "memory_code_links": [
+            (40.0, {**attrs, "state": "fresh"}),
+            (3.0, {**attrs, "state": "changed"}),
+            (2.0, {**attrs, "state": "pending"}),
+        ]
+    }
+
+
+def test_the_probe_reads_the_link_mark_the_linked_repositories_and_the_states() -> None:
+    state, counts = otel_probes._CODE_STATE_SQL, otel_probes._CODE_COUNTS_SQL
+    assert "'memory_links_checked'" in state
+    # the linked repositories as the link pass reads them: every minute, so without FINAL
+    linked = state.split("UNION ALL")[1]
+    assert "FROM loom.memory_code_links\n" in linked and "tombstoned_at IS NULL" in linked
+    # the counts by state judge each link by its newest version, on the slow clock
+    by_state = next(leg for leg in counts.split("UNION ALL") if "'links:'" in leg)
+    assert "FROM loom.memory_code_links FINAL" in by_state
+    assert "GROUP BY org, code_namespace, state" in by_state
+
+
+def test_memory_link_gauges_registered() -> None:
+    series = {
+        "memory_link_lag_commits": [(3.0, {"loom.org": "o", "loom.namespace": "code-loom"})],
+    }
+    meter = _Meter()
+    metrics_gauges.register_state_gauges(meter, ch_probe=dict, code_probe=lambda: series)
+    for name in (
+        "loom.memory.code_link_lag_commits",
+        "loom.memory.code_link_lag_seconds",
+        "loom.memory.code_links",
+    ):
+        assert name in meter.gauges and meter.descriptions[name], name
+    import time
+
+    for _ in range(50):
+        obs = meter.gauges["loom.memory.code_link_lag_commits"](None)
+        if obs:
+            break
+        time.sleep(0.02)
+    (o,) = obs
+    assert o.value == 3.0 and o.attributes == {"loom.org": "o", "loom.namespace": "code-loom"}
+    # a series the probe did not return is no observation, not a zero
+    assert meter.gauges["loom.memory.code_link_lag_seconds"](None) == []

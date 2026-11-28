@@ -116,6 +116,27 @@ def test_exception_is_stamped_and_re_raised(cli_spans: Any) -> None:
     assert a["loom.cli.exit_code"] == 1
 
 
+def test_a_failed_shutdown_is_one_line_with_no_traceback(cli_spans: Any, capsys: Any) -> None:
+    import argparse
+
+    from server.cli.dispatch import _dispatch
+    from server.core.retirement import UNFINISHED
+
+    async def _sub() -> int:
+        error = TimeoutError()
+        error.add_note(UNFINISHED)
+        raise error
+
+    args = argparse.Namespace(cmd="code", func=lambda _: code_run._run("backfill", _sub()))
+    assert _dispatch(args) == 1
+    err = capsys.readouterr().err
+    assert "cli.code.backfill: start" in err  # this run's logging is captured
+    assert "Traceback" not in err and "cli.code.backfill: failed" not in err
+    assert err.count("✗ the command returned, but its shutdown did not complete") == 1
+    (span,) = cli_spans.get_finished_spans()
+    assert dict(span.attributes or {})["loom.cli.exit_code"] == 1
+
+
 def test_cli_logging_goes_to_stderr_once(fresh_cli_logging: None) -> None:
     code_run._setup_cli_logging()
     code_run._setup_cli_logging()

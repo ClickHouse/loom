@@ -80,6 +80,16 @@ class AnswersMixin(CodeRepoBase):
         )
         return list(rows or [])
 
+    async def delete_answer_entry(self, org: str, ns: str, question_id: str) -> None:
+        """Every version of the entry under `question_id`: one lightweight delete, which
+        the asking request does not wait on."""
+        await self._ch.execute(
+            "DELETE FROM loom.code_answers WHERE org = {org:String} "
+            "AND namespace = {ns:String} AND question_id = {qid:UUID} "
+            "SETTINGS lightweight_deletes_sync = 0",
+            {"org": org, "ns": ns, "qid": question_id},
+        )
+
     async def file_hash_rows(self, org: str, ns: str, paths: list[str]) -> list[dict[str, Any]]:
         """(`path`, `content_hash`) of the live `code_files` rows of `paths` (at most
         100), the stored hash as the table returns it."""

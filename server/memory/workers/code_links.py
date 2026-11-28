@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from server.memory.store.key_write_lock import LeaseBusy
+from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ async def run_pass() -> dict[str, Any]:
             # cursors last written
             log.exception("memory_code_links: linking failed")
             result.errors.append(f"link: {e!r}")
+            pass_context.note_failure(e, "link")
         await code_link_recheck.recheck_all(result)
         rec.outcome = result.as_dict()
         log_pass_errors(log, "memory_code_links", result.errors)
@@ -76,7 +78,7 @@ class Backfill:
 
 
 async def _link_writes(batch: int, result: PassResult) -> None:
-    """Link the queued writes, the backfill's next page, and sweep erased memories."""
+    """Link the queued writes, the backfill's next page, and sweep unlinkable memories."""
     from server.code.app import memory_links as code
     from server.memory.app import code_link_pass, code_links
     from server.memory.store import code_links as store
@@ -124,7 +126,7 @@ async def _link_writes(batch: int, result: PassResult) -> None:
         if not backfill.done:
             backfill = backfill.read_to(await code_links.backfill(backfill.after, batch, result))
         await backfill_cursor.write(backfill.to_json())
-    swept = await code_links.sweep_erased(await sweep_cursor.read(), batch, result)
+    swept = await code_links.sweep_unlinkable(await sweep_cursor.read(), batch, result)
     await sweep_cursor.write(swept)
 
 

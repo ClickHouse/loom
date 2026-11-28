@@ -1,9 +1,9 @@
 # Code index operations
 
-This page covers how to enable the code index workers, configure repositories and keep
-the index current; the code index runs only when an operator enables its workers and
-configures repositories. Every `code_*` worker except `code_coverage_notify` and
-`code_backport_gaps` is off by default. What the `code.*` operations answer is in the
+This page covers how to configure repositories, enable the code index workers and keep
+the index current; the code index runs once an operator configures a repository. The
+`code_ingest` poller is on by default; the [workers reference](../reference/workers.md)
+lists every worker's default. What the `code.*` operations answer is in the
 [code index overview](../features/code-index/overview.md); how the index is built is in
 [code index architecture](../architecture/code-index-architecture.md).
 
@@ -121,6 +121,7 @@ LOOM_CODE_REPOS_JSON='[
 | `git_branch`                         | the branch this namespace tracks                                                                                              |
 | `path_prefixes`                      | comma-separated prefixes to index; an entry without it indexes the whole tree minus the built-in denylist                     |
 | `exclude`                            | globs never indexed (list or comma-separated)                                                                                 |
+| `embed_exclude`                      | globs indexed but never described or embedded (see below): symbols, edges, the test map and the lexical leg keep them         |
 | `exclude_generated`                  | refuse files whose content marks them generated (`Code generated … DO NOT EDIT.`, `@generated`)                               |
 | `include_contrib_paths`              | vendored `contrib/` paths to index anyway, so their definitions bind the repository's call sites                              |
 | `depends_on`                         | other code namespaces this code calls into; a definition missing here is looked up there                                      |
@@ -137,11 +138,38 @@ Name a `git_remote` host in ASCII, as punycode for an internationalised name: a 
 add refuses any other, so the two spell a host alike.
 
 A git server under a private certificate authority needs `LOOM_CODE_GIT_CA_FILE`: a PEM
-bundle git verifies https remotes with in place of the image's default roots, so include
-the public roots when other remotes are public. Repository jobs read no system or global
-git config and inherit no `GIT_SSL_CAINFO` or `SSL_CERT_FILE`, so this setting is how a
-bundle reaches them. Put it under `/etc/ssl`, which the repository-job sandbox mounts.
-Through the forward proxy, `LOOM_CODE_GIT_PROXY_CA_FILE` takes its place when set.
+bundle git verifies https remotes with in place of the image's default roots. The bundle
+applies to every git a repository job runs, the compiler tier's dependency fetches and
+submodule updates included, not only the entry's remote, so include the public roots
+when any of those reach a public host. Repository jobs read no system or global git
+config and inherit no `GIT_SSL_CAINFO` or `SSL_CERT_FILE`, so this setting is how a
+bundle reaches them. Loom does not check the path when it loads the setting: name an
+absolute path to a file the job can see. The sandbox mounts `/etc/ssl`,
+`/etc/ca-certificates` and `/usr` read-only, so `/etc/ssl` is the place to put the
+bundle; a link works when its target is inside one of those trees too. A relative path,
+a `~/` path, or a link whose target is outside them resolves differently there than on
+the host, and git fails the job with its own words. Through the forward proxy, `LOOM_CODE_GIT_PROXY_CA_FILE` takes its
+place when set.
+
+The setting settles trust, not reach. In the sandbox the egress proxy refuses a remote
+whose name resolves to a loopback, private or link-local address, whatever bundle is
+set, and no setting admits one. A forge on a private address therefore indexes only as an
+operator repository on a host that does not run the sandbox (see _Without the sandbox_).
+
+`embed_exclude` (`LOOM_CODE_EMBED_EXCLUDE` for the scalar entry, and for a
+`LOOM_CODE_REPOS_JSON` entry without its own list) applies to configured entries only: a
+self-service entry has none and is embedded in full. The chunks of a matching path carry
+the `unembedded by design: reference (embed_exclude)` marker: no writer describes or
+embeds them, and the coverage counts leave them out. The `code_summary` pass writes no
+card for such a file. The globs apply to chunks written after they change:
+
+1. Adding a glob leaves the path's existing vectors in place until a chunk's content
+   changes, and its existing card in place until the file changes.
+2. Removing a glob leaves the path's chunks without a vector and outside the coverage
+   denominator, so `code.repos` still reports them covered. No writer re-embeds an
+   unchanged chunk: a chunk is embedded when its content changes, and to embed them all,
+   index the repository into a new namespace with `loom code backfill`. The file's card
+   comes back at the next `code_summary` pass.
 
 An entry whose `git_remote` is a local path or `file://` mirror is known by its `repo`,
 which a page add of the same repository must match: name a mirror of a repository on a
@@ -225,10 +253,36 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   the work, since the unembedded rows are the embed phase's queue. `--commit <sha>` pins
   the tree (and implies `--no-fetch`); `--concurrency N` parallelises files; `--limit N`
   indexes a sample.
+- One process parses and extracts at about one core. `--workers N` runs the index
+  phase's batches of 200 files and the edge pass in N more processes. Each worker is the
+  same command, started with the same arguments, so it runs as the command does: as
+  `background` traffic, under the command's query tag and operation, enrolled and
+  admitted for model work, with its own connection and `--concurrency`, its own
+  `cli.code.backfill` root span (stamped `loom.cli.worker`) and its own start and exit
+  log lines. The cursor moves past a batch once every earlier one is written, the header
+  batches are all written before the first source batch starts, and after a held batch
+  nothing more is handed out. A worker resolves names and imports against what it last
+  read of the index, so during the index phase it misses what the other workers are
+  writing; each worker reads the index again at the sources and at the edge pass, and
+  such a run owes the edge pass whatever the flags say (`--paths-file` and
+  `--no-edges-second-pass` runs included), so the pass binds them against the finished
+  index. One difference remains: a Python call or base class that resolves through
+  another file's inherited members reads the `inherits` edges the pass has rewritten so
+  far, which one process reads in tree order and the workers in the order they finish,
+  so a few such edges can carry another confidence (the same edge, its target found by
+  another rule). A later `loom code backfill` that finds the pass owed runs it; the
+  server's own first index does not. Each worker parses in its own child, so the run holds up to N
+  times the parse memory (`LOOM_CODE_PARSE_MEMORY_MB`) plus one server process per
+  worker. Stopping the command (SIGTERM or Ctrl-C, to the command or its whole process
+  group) or killing it stops every worker inside its batch before the worker retires,
+  and a worker that fails, its retirement included, fails the command with its batch
+  named, after the command has written its own end of the run.
 - The first full backfill of a namespace also re-derives every file's edges after the
   name table is complete, so cross-file references bind (`--no-edges-second-pass` skips
-  it). `--dialect-folder-pass` lets SQL files of undecided dialect take the dialect their
-  directory agrees on.
+  it). The run records that it owes the pass before its first batch and clears the record
+  once the pass is done, so a resumed run, or a rerun after an interrupted pass, still
+  runs it. `--dialect-folder-pass` lets SQL files of undecided dialect take the dialect
+  their directory agrees on.
 - `backfill-prs` loads merged-PR history from GitHub, resumable by cursor and bounded by
   GitHub's rate limit (`LOOM_CODE_PR_BACKFILL_MONTHS`, default 12). `backfill-reviews`
   adds inline review comments, `backfill-assignees` requested reviewers, and
@@ -260,7 +314,7 @@ cadence setting and default is in the [workers reference](../reference/workers.m
 
 | Worker                 | Flag                                     | Does                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ---------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `code_ingest`          | `LOOM_CODE_INGEST_ENABLED`               | every `LOOM_CODE_INGEST_INTERVAL_SECONDS`: fetch, then per first-parent commit re-chunk only changed content, refresh symbols and edges, tombstone deletions, build the merged PR's context pack, advance `git_head`. Hourly it also finds indexed files whose chunks predate their content at head and heals up to `LOOM_CODE_RECONCILE_HEAL_PER_PASS` per pass. Builds self-service first indexes. |
+| `code_ingest`          | `LOOM_CODE_INGEST_ENABLED` (on)          | every `LOOM_CODE_INGEST_INTERVAL_SECONDS`: fetch, then per first-parent commit re-chunk only changed content, refresh symbols and edges, tombstone deletions, build the merged PR's context pack, advance `git_head`. Hourly it also finds indexed files whose chunks predate their content at head and heals up to `LOOM_CODE_RECONCILE_HEAL_PER_PASS` per pass. Builds self-service first indexes. |
 | `code_embed_recovery`  | `LOOM_CODE_EMBED_RECOVERY_ENABLED`       | embeds chunks left without a vector (provider outage, `--phase index`)                                                                                                                                                                                                                                                                                                                               |
 | `code_pr_history`      | `LOOM_CODE_PR_HISTORY_ENABLED`           | syncs newly merged PRs from GitHub                                                                                                                                                                                                                                                                                                                                                                   |
 | `code_graph_stats`     | `LOOM_CODE_GRAPH_STATS_ENABLED`          | weekly: PageRank over the include graph, per-file degrees, the test ↔ source map                                                                                                                                                                                                                                                                                                                     |
@@ -276,7 +330,13 @@ after a merge. It runs the same ingest pass immediately for that namespace on th
 that received it, under the namespace's lease (`code_refresh:<org>/<namespace>`), so
 triggers landing on different replicas coalesce into one pass. It answers 404 for a
 namespace no entry configures, so the pusher never decides what gets indexed. It works
-with the poller disabled.
+with the poller disabled (`LOOM_CODE_INGEST_ENABLED=false`); a repository of such a
+deployment that no CI job has refreshed is the `code_repos_untriggered` health error
+([trigger-only deployments](../features/code-index/freshness.md#trigger-only-deployments)).
+After the pass it rechecks the memories linked to the namespace's code under the link
+worker's per-repository lease, with no model call, so link state does not wait for the
+`memory_code_links` interval; a busy lease or a failed recheck is logged and left to
+that worker.
 
 Open pull requests are not indexed; the working tree stays the client's own.
 
@@ -313,6 +373,20 @@ the rest of the C/C++ toolchain but no scip-clang: point `LOOM_CODE_SCIP_CLANG_P
 your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each worker
 initializes a missing or empty working tree directory as a Git repository and fetches
 each commit into it from the entry's mirror, so a new leader starts from nothing.
+With `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS` on (off by default; turn it on once no
+older build serves, [upgrades](upgrades.md) step 8), the checkout's packs are hard links
+of the mirror's (each marked by a `.keep` file; an operator's own `.keep` stays),
+so a tier costs its working tree rather than a second copy of the repository; a
+checkout that already holds its own copy, from an earlier version or an operator,
+drops it in the checkout gc of the tier's next pass with a new commit (for C/C++, the
+full-index worker's), which keeps the shared packs. That gc runs only with room for
+the checkout's own bytes plus `code_mirror_gc_margin_gb`; on a fuller volume the copy
+stays until there is room, so free space, or remove the checkout to have the next pass
+recreate it shared. The checkout stays a standalone repository. Hard links need the
+checkout on the mirror's filesystem, and the kernel refuses a link to another user's
+pack file the server cannot write (`fs.protected_hardlinks`): there the checkout keeps
+its own copy, gc'd every `code_mirror_gc_interval_h` as before, and the log says so
+once.
 An existing checkout must be the root of a standalone Git working tree, with its
 `.git` directory inside the checkout. Compiler Git jobs need writable metadata
 there. Linked worktrees, external Git metadata, regular files, bare repositories and
@@ -360,9 +434,14 @@ memory the workers process has. The full index of such a tree takes about an hou
   delta over a cap, or one that does not parse, fails the entry's pass before anything
   is applied. The caps hold as read when the delta is opened; a changed value reaches
   the next pass. A delta tier whose delta was refused over a cap, or as a link or a
-  non-regular file, holds at that commit: later passes skip the entry without running
-  the harness, its failing record stands, and a raised cap or a new branch head
-  releases it on the next pass.
+  non-regular file, holds that run: later passes skip the entry without running the
+  harness, and its failing record stands. The hold keeps the run's inputs: the window
+  (the tier's watermark to the branch head), the caps, the entry fields and settings
+  the tier's harness reads (`exclude_generated`, `scip_ts_projects`,
+  `LOOM_CODE_SCIP_TS_PATHS`, `LOOM_CODE_SCIP_DELTA_MAX_TUS`) and the Loom release. A
+  change to any of them releases it on the next pass: a raised cap, a new branch head,
+  a watermark another run moved (`loom code scip-full`, a batch apply), a changed entry
+  field or an upgrade. An indexer upgraded within one Loom release does not.
   - `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` (180 MiB) bounds the file's bytes and
     `LOOM_CODE_SCIP_DELTA_MAX_NODES` (6,000,000) its counted bytes, which bound the JSON
     values the parses build. They bound the work of a pass. Its memory is the round
@@ -742,8 +821,13 @@ sandbox. `seccomp=unconfined` and `apparmor=unconfined` also work where the host
 restrict user namespaces, but they drop the whole profile.
 
 **Without the sandbox** Loom probes once per process, logs a warning and reports
-`repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. With
-`LOOM_CODE_SANDBOX_REQUIRED=true` every repository job is refused (above). Otherwise:
+`repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. With no repository configured
+and no `LOOM_CODE_SANDBOX_REQUIRED`, `loom doctor` prints the probe's warning and lists
+no problem, and a server process probes only when it serves an add from the page. Until
+then its `/v1/health` says nothing of the sandbox, so after a refused add replicas
+differ, and the Repositories page offers the add whenever one that has not probed
+answers. With `LOOM_CODE_SANDBOX_REQUIRED=true` every repository job is refused (above).
+Otherwise:
 
 - operator repositories (`LOOM_CODE_REPOS_JSON`) keep every tier, and their build steps
   run as plain processes on the host, as before;
@@ -860,8 +944,11 @@ uses the proxy, repository jobs are plain processes, so a compiler tier's build 
 Loom's user and can read the token file. Run compiler tiers there only for repositories
 you trust.
 
-**The CA bundles.** There are two, one for each TLS connection, and neither stands in
-for the other. `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo` (in git
+**The CA bundles.** There are three.
+`LOOM_CODE_GIT_CA_FILE` (above) is git's `http.sslCAInfo` for the remotes with no proxy,
+and through the proxy while `LOOM_CODE_GIT_PROXY_CA_FILE` is unset. The proxy's own
+certificate is always `LOOM_CODE_GIT_PROXY_TLS_CA_FILE`, never one of the other two.
+`LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo` (in git
 since release 2.27, older than the git every repository job already needs): the bundle
 git verifies an `https://` proxy's own certificate with, before it sends the identity
 and the token. Without it git checks the proxy against its default roots, so a proxy
@@ -1098,6 +1185,16 @@ has a gold question set; it is never run in CI, whose embedder is fake
 - **Erase an index.** `erasure.request` with `scope_type = namespace` on a code namespace
   also purges the `loom.code_*` tables. An entry that is still configured is re-indexed
   from scratch on the next pass, so retire it first.
+- **Writes during an erasure.** While an erasure that may reach a code namespace is
+  unfinished, the ingest pass, the compiler tiers, the summary, embed recovery, coverage
+  import and graph stats workers skip it and `code.refresh` answers `ERASURE_RUNNING`. The
+  purge refuses with `OVERLOADED` while work begun before the erasure was recorded may
+  still write the namespace: a live entry lock or `code.refresh` lease on it, or a code
+  worker's pass that may have begun before then (an enabled worker with no finished pass
+  yet counts), until that pass's deadline; a worker status that cannot be read refuses
+  too. The recovery worker retries the erasure; once it has given up, repeat the request. This is
+  best effort: a statement already sent, or a writer of an older build, can still leave
+  rows, and `verify.residue` then fails the saga so it is repeated.
 
 ## When a tier fails
 
@@ -1163,7 +1260,7 @@ the output to read.
 | compiler-tier apply fails                                                                                           | batch `failed` with the error                                                                                                                                                                                                                                                            | `loom code scip-retry <batch_id>`                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | a compiler-tier pass fails or hangs                                                                                 | the harness's timeout ends a hang, and the pass deadline (that timeout plus headroom for the git steps and the apply) cancels anything else; the entry lock is freed; a failure the pass reports (the harness's own timeout included) is recorded with its kind and fix in `tier_health` | the next pass; `workers.status` names the timeout                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | compiler-tier window base unknown (history rewritten, pruned mirror)                                                | every `scripts/scip_harness/` tier exits 3, never an empty delta; the Python, TypeScript and Go workers clear the tier's watermark                                                                                                                                                       | the next run is a full index for that tier (`code_scip_full` for C/C++)                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| a compiler-tier delta is a link, not a regular file, or oversize, or the Go harness writes more deltas than modules | the delta is refused (`FileRefused`, or `Go harness wrote more deltas than its N module(s)`) and the entry's pass fails; the watermark stays, and a refused delta holds the tier at that commit (no harness runs) until a cap or the branch head changes                                 | oversize: raise `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` and `LOOM_CODE_SCIP_DELTA_MAX_NODES` (they bound work and the path text kept); for a file entry over the round budget raise `LOOM_CODE_SCIP_DELTA_ROUND_MAX_NODES`, within the worker's memory; a file entry over the fixed character cap is named, and no setting changes that cap: the file it indexes is what to split; a link, a non-regular file or extra deltas keep the failure until the repository changes or the entry is removed |
+| a compiler-tier delta is a link, not a regular file, or oversize, or the Go harness writes more deltas than modules | the delta is refused (`FileRefused`, or `Go harness wrote more deltas than its N module(s)`) and the entry's pass fails; the watermark stays; a `FileRefused` delta holds the tier (no harness runs) until an input of its run changes (above), extra deltas rerun every pass            | oversize: raise `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` and `LOOM_CODE_SCIP_DELTA_MAX_NODES` (they bound work and the path text kept); for a file entry over the round budget raise `LOOM_CODE_SCIP_DELTA_ROUND_MAX_NODES`, within the worker's memory; a file entry over the fixed character cap is named, and no setting changes that cap: the file it indexes is what to split; a link, a non-regular file or extra deltas keep the failure until the repository changes or the entry is removed |
 | GitHub rate limit                                                                                                   | the pass ends, cursor unmoved                                                                                                                                                                                                                                                            | the next pass                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | branch force-pushed (watermark no longer an ancestor)                                                               | watermark reset to the new head, logged                                                                                                                                                                                                                                                  | `loom code backfill` to re-derive                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | weekly graph stats fail                                                                                             | last week's ranks keep serving                                                                                                                                                                                                                                                           | the next weekly pass                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |

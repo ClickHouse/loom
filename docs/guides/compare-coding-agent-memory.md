@@ -116,6 +116,18 @@ value and writer identity as well as the agent's final answer.
 
 ## Reproduce the comparison
 
+In the [source-change playground](https://loom.clickhouse.com/playground/source-change),
+edit the sample retry rule and switch branches to see how the saved lesson state changes.
+The site runs Loom's code-link check on the sample definition and shows the response for each edit.
+
+To run the full evaluation, open the
+[Coding-agent memory evaluation workflow](https://github.com/ClickHouse/loom/actions/workflows/memory-evaluation.yml)
+and choose **Run workflow**. GitHub shows that button when you have write access.
+If you need a repository you can write to, fork Loom, enable Actions in your fork,
+and open **Coding-agent memory evaluation** there. A successful run posts a summary
+and a `memory-evaluation` JSON artifact. It uses a temporary ClickHouse container
+on the hosted runner and needs no service credentials.
+
 Clone the [Loom repository](https://github.com/ClickHouse/loom) and run these commands
 from its root. Use Docker, Node.js 24 or later with npm, Git, `jq`, `curl`, and `uv`.
 

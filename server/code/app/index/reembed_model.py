@@ -8,6 +8,10 @@ scope and content hash — the same for both). The rows are inserted through
 `CodeRepo.insert_rows`, which routes a mapped label to its own table
 (`LOOM_CODE_VECTOR_TABLES`), because the coded vector column is one width per table.
 
+A row unembedded by design (a reference fixture, an `embed_exclude` path) is copied
+with its marker and no vector, so the second label holds the same rows and its
+recovery leaves them alone.
+
 Resumable: a `(path, chunk_id)` already live under the target label is
 skipped, so a stopped run continues where it was. Reads walk the served
 label's key range in path order, one prefix at a time.
@@ -21,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.code.app.index.embed_text import clip_for_embedding
+from server.code.domain.extract.lang_reference import unembedded_by_design
 from server.code.store.index import CodeRepo, build_row
 from server.embedding.documents import document_vectors
 
@@ -42,6 +47,7 @@ _COPY_COLS = (
     "symbol_ids",
     "indexed_commit",
 )
+_READ_COLS = (*_COPY_COLS, "embed_last_error")
 
 
 @dataclass
@@ -71,7 +77,7 @@ async def _source_rows(
         org,
         ns,
         source_model,
-        _COPY_COLS,
+        _READ_COLS,
         path_prefix=path_prefix,
         after_path=after_path,
         limit=limit,
@@ -80,9 +86,11 @@ async def _source_rows(
 
 
 def _target_row(r: dict[str, Any], vec: Any, *, org: str, ns: str, target: str) -> dict[str, Any]:
-    """One source row copied under the `target` label with its new vector;
-    FixedString columns come back as bytes and go in as text."""
+    """One source row copied under the `target` label with its new vector (none,
+    and the source's marker, for a row unembedded by design); FixedString columns
+    come back as bytes and go in as text."""
     cols = {k: r[k] for k in _COPY_COLS}
+    marker = str(r["embed_last_error"])
     cols["chunk_id"] = str(cols["chunk_id"])
     for key in ("content_hash", "indexed_commit"):
         v = cols.get(key)
@@ -95,6 +103,7 @@ def _target_row(r: dict[str, Any], vec: Any, *, org: str, ns: str, target: str) 
         embedding_model=target,
         embedding=list(vec),
         embedding_dim=len(vec),
+        embed_last_error=marker if unembedded_by_design(marker) else "",
         **cols,
     )
 
@@ -158,14 +167,18 @@ async def reembed_namespace(
         todo = [r for r in rows if (str(r["path"]), str(r["chunk_id"])) not in have]
         stats.rows_skipped += len(rows) - len(todo)
         if todo:
+            keep: list[dict[str, Any]] = []
+            embed: list[dict[str, Any]] = []
+            for r in todo:
+                (keep if unembedded_by_design(r["embed_last_error"]) else embed).append(r)
             t0 = time.perf_counter()
-            texts = [clip_for_embedding(str(r["context_text"]) or str(r["content"])) for r in todo]
-            vecs = await document_vectors(embedder, texts)
+            texts = [clip_for_embedding(str(r["context_text"]) or str(r["content"])) for r in embed]
+            vecs = await document_vectors(embedder, texts) if texts else []
             stats.embed_seconds += time.perf_counter() - t0
             out = [
                 _target_row(r, vec, org=org, ns=ns, target=target)
-                for r, vec in zip(todo, vecs, strict=True)
-            ]
+                for r, vec in zip(embed, vecs, strict=True)
+            ] + [_target_row(r, [], org=org, ns=ns, target=target) for r in keep]
             t1 = time.perf_counter()
             await repo.insert_rows("code_chunks", out)
             stats.insert_seconds += time.perf_counter() - t1

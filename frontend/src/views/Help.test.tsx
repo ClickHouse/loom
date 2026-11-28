@@ -87,6 +87,16 @@ describe("Help", () => {
     expect(await screen.findByText("Intro.")).toBeInTheDocument();
   });
 
+  it("keeps jump links to unread sections out of a truncated page", async () => {
+    window.history.replaceState(null, "", "/help?page=guides%2Ftokens-and-grants.md");
+    helpPage.mockResolvedValue(
+      page("guides/tokens-and-grants.md", "# Tokens and grants\n\nIntro.", { truncated: true }),
+    );
+    render(<Help />);
+    expect(await screen.findByText("This page exceeds the reading limit.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Revoke and rotate" })).not.toBeInTheDocument();
+  });
+
   it("says when the build has no such page, or no docs", async () => {
     window.history.replaceState(null, "", "/help?page=guides%2Fabsent.md");
     helpPage.mockResolvedValue({ ...page("guides/absent.md", ""), found: false });

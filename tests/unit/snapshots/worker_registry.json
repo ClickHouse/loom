@@ -31,8 +31,10 @@
   {
    "deadline_seconds()": 900.0,
    "due_scope": null,
-   "first_pass_due": null,
-   "has_first_pass_hook": false,
+   "first_pass_due": {
+    "id": "server.insights.workers.adoption_telemetry:first_pass_due"
+   },
+   "has_first_pass_hook": true,
    "idle_interval_seconds": null,
    "interval_seconds": 3600,
    "max_pass_seconds": null,
@@ -862,8 +864,10 @@
   {
    "deadline_seconds()": 900.0,
    "due_scope": null,
-   "first_pass_due": null,
-   "has_first_pass_hook": false,
+   "first_pass_due": {
+    "id": "server.insights.workers.adoption_telemetry:first_pass_due"
+   },
+   "has_first_pass_hook": true,
    "idle_interval_seconds": null,
    "interval_seconds": 3600,
    "max_pass_seconds": null,
@@ -1168,6 +1172,20 @@
    }
   },
   {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 120,
+   "max_pass_seconds": 900.0,
+   "name": "code_ingest",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.ingest:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 5400.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -1437,8 +1455,10 @@
   {
    "deadline_seconds()": 900.0,
    "due_scope": null,
-   "first_pass_due": null,
-   "has_first_pass_hook": false,
+   "first_pass_due": {
+    "id": "server.insights.workers.adoption_telemetry:first_pass_due"
+   },
+   "has_first_pass_hook": true,
    "idle_interval_seconds": null,
    "interval_seconds": 3600,
    "max_pass_seconds": null,

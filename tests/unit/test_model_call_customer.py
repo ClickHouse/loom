@@ -15,6 +15,7 @@ import pytest
 from server.llm import customer
 from server.observability import genai
 from server.settings import settings
+from tests.unit.code_fixtures import repo_config
 from tests.unit.model_client import through_the_model_client
 from tests.unit.test_conflict_resolver import row_env  # noqa: F401
 
@@ -288,7 +289,7 @@ def test_a_provider_rebuild_batch_makes_one_call_per_org(metered, monkeypatch) -
 def test_a_cli_command_for_one_org_bills_it(metered, monkeypatch) -> None:
     import argparse
 
-    from server.cli import app
+    from server.cli import dispatch
 
     seen: list[str] = []
 
@@ -296,10 +297,10 @@ def test_a_cli_command_for_one_org_bills_it(metered, monkeypatch) -> None:
         seen.append(customer.current())
         return 0
 
-    app._dispatch(argparse.Namespace(cmd="reembed", org="acme", func=command))
+    dispatch._dispatch(argparse.Namespace(cmd="reembed", org="acme", func=command))
     monkeypatch.setattr(settings, "code_org", "code-org")
-    app._dispatch(argparse.Namespace(cmd="code", org=None, func=command))  # LOOM_CODE_ORG
-    app._dispatch(
+    dispatch._dispatch(argparse.Namespace(cmd="code", org=None, func=command))  # LOOM_CODE_ORG
+    dispatch._dispatch(
         argparse.Namespace(cmd="reembed", func=command)
     )  # every org: each row names its own
     assert seen == ["acme", "code-org", ""]
@@ -785,7 +786,7 @@ def test_code_ingest_names_each_repos_org_in_its_commits_bootstrap_and_walk(
     monkeypatch.setattr(w, "selected_repos", lambda org, ns: [cfg])
     monkeypatch.setattr(w, "_without_unsandboxed", lambda repos, result: repos)
     monkeypatch.setattr(w, "prefetch_mirrors", nothing)
-    monkeypatch.setattr(w, "ingest_oldest_first", nothing)
+    monkeypatch.setattr(w, "ingest_round_robin", nothing)
     monkeypatch.setattr(w, "_post_steps", nothing)
     monkeypatch.setattr(w, "_run_repo", run_repo)
     monkeypatch.setattr(w, "_bootstrap_leg", leg)
@@ -804,7 +805,7 @@ def test_code_ingest_names_each_entrys_org_for_its_commits(metered, monkeypatch,
 
     seen: list[str] = []
     clock = _Clock()
-    _wire_streams(monkeypatch, clock, {"a1": int(clock.time()) - 50})
+    _wire_streams(monkeypatch, clock)
 
     async def ingest_commit(*a: Any, **k: Any) -> None:
         await _model_call(seen)
@@ -814,23 +815,22 @@ def test_code_ingest_names_each_entrys_org_for_its_commits(metered, monkeypatch,
     plan, _ = _plan("code-a", ["a1"])
     result = pass_budget.CodeIngestResult()
     budget = pass_budget.PassBudget(clock.now, clock.now + 1000.0)
-    asyncio.run(pass_stream.ingest_oldest_first([plan], result, budget))
+    asyncio.run(pass_stream.ingest_round_robin([plan], result, budget))
     assert seen == [plan.cfg.org] and not result.errors
     _no_refusal_logged(caplog)
 
 
 def test_code_summary_names_each_repos_org(metered, monkeypatch, caplog) -> None:
-    from types import SimpleNamespace
 
     from server.code.domain.index import repos
     from server.code.workers import summary
 
     seen: list[str] = []
 
-    async def summarize(org: str, ns: str, result: Any, cap: int) -> None:
+    async def summarize(org: str, ns: str, result: Any, cap: int, **_: Any) -> None:
         await _model_call(seen)
 
-    cfg = SimpleNamespace(org="acme", namespace="code-a")
+    cfg = repo_config(org="acme", namespace="code-a")
     monkeypatch.setattr(repos, "configured_repos", lambda: [cfg])
     monkeypatch.setattr(summary, "_summarize_repo", summarize)
     monkeypatch.setattr(settings, "code_summary_max_scopes_per_pass", 10)

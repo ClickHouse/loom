@@ -36,7 +36,7 @@
 | 文档搜索 | 文档被拆分为多个章节，经过嵌入后按段落进行搜索和引用；未找到结果的搜索会被归入知识缺口 | [知识文档](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md) · [知识缺口](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md#knowledge-gaps) |
 | 文件与文档来源 | PDF、DOCX、PPTX、XLSX、CSV 等格式由提取器服务解析；已注册的来源会同步到命名空间中 | [导入文件](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md#ingesting-files) · [文档来源](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md#document-sources) |
 | 统一搜索 | 一次调用即可搜索记忆、配置档案、文档和历史对话，并为任务生成上下文包 | [统一搜索](https://github.com/ClickHouse/loom/blob/main/docs/features/unified-search.md) |
-| 询问 AI | 控制台中的助手，回答命名空间中包含的内容，每个论断都附有引用；其模型回答运行在你部署于 Loom 旁边的聊天服务器上 | [控制台](https://github.com/ClickHouse/loom/blob/main/docs/features/dashboard.md#ask-ai) · [聊天服务器设置](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/librechat.md#the-deployed-assistant) |
+| 询问 AI | 控制台中的助手，回答命名空间中包含的内容，每个论断都附有引用；其模型回答运行在你部署于 Loom 旁边的聊天服务器上 | [控制台](https://github.com/ClickHouse/loom/blob/main/docs/features/dashboard.md#ask-ai) · [聊天服务器设置](https://github.com/ClickHouse/loom/blob/main/docs/operations/assistant.md) |
 | 代码索引 | 针对你的 git 仓库提供定义、调用方、影响范围以及按语义搜索 | [代码索引](../features/code-index/overview.md) |
 | PR 与发布历史 | 将已合并的拉取请求与当前的符号、调用方和测试进行关联 | [历史、PR 与发布](https://github.com/ClickHouse/loom/blob/main/docs/features/code-index/history-and-prs.md) |
 | 跟踪器 | 从你自己的 ClickHouse 实时读取 issue、拉取请求、事件和 CI 运行 | [跟踪器平面](https://github.com/ClickHouse/loom/blob/main/docs/features/tracker/overview.md) |

@@ -211,7 +211,7 @@ adding its row.
 | `code_crossref` | SQL <-> C++ crossref for each C++ entry whose `git_head` moved since its last run: `code_test_map` rows linking test queries to the files that register the functions and settings they use. | `LOOM_CODE_CROSSREF_ENABLED` | True | `LOOM_CODE_CROSSREF_INTERVAL_SECONDS` | 1800 |
 | `code_embed_recovery` | Embedding recovery for the code plane (mirror of the memory plane's embedding worker). | `LOOM_CODE_EMBED_RECOVERY_ENABLED` | False | `LOOM_CODE_EMBED_RECOVERY_INTERVAL_SECONDS` | 30 |
 | `code_graph_stats` | Weekly graph statistics: PageRank over the include graph, per-file degrees, and the test↔source map. | `LOOM_CODE_GRAPH_STATS_ENABLED` | False | `LOOM_CODE_GRAPH_STATS_INTERVAL_SECONDS` | 604800 |
-| `code_ingest` | Per-merge fast-tier ingest for the code plane. | `LOOM_CODE_INGEST_ENABLED` | False | `LOOM_CODE_INGEST_INTERVAL_SECONDS` | 120 |
+| `code_ingest` | Per-merge fast-tier ingest for the code plane. | `LOOM_CODE_INGEST_ENABLED` | True | `LOOM_CODE_INGEST_INTERVAL_SECONDS` | 120 |
 | `code_pr_history` | Merged-PR history sync from the GitHub REST API (cursor-resumable). | `LOOM_CODE_PR_HISTORY_ENABLED` | False | `LOOM_CODE_PR_HISTORY_INTERVAL_SECONDS` | 900 |
 | `code_scip_apply` | Apply staged SCIP deltas to the compiler-grade tier. | `LOOM_CODE_SCIP_APPLY_ENABLED` | False | `LOOM_CODE_SCIP_APPLY_INTERVAL_SECONDS` | 60 |
 | `code_scip_delta` | Per-merge compiler-tier freshness: scip-clang deltas. | `LOOM_CODE_SCIP_DELTA_ENABLED` | True | `LOOM_CODE_SCIP_DELTA_INTERVAL_SECONDS` | 300 |

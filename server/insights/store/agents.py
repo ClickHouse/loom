@@ -18,9 +18,10 @@ def connected_where(
     scope_params: dict[str, Any],
 ) -> tuple[str, dict[str, Any]]:
     """The window's predicate: the org, the window, real agents only (the sentinel
-    names "-", "*" and "" are left out), then the named namespace or the caller's
-    scope."""
-    where = "org = {org:String} AND ts > now() - toIntervalHour({wh:UInt32}) AND agent NOT IN ('-', '*', '')"  # noqa: E501
+    names "-", "*" and "" are left out) and their own calls only (a worker's row can
+    name the agent whose request it replayed), then the named namespace or the
+    caller's scope."""
+    where = "org = {org:String} AND ts > now() - toIntervalHour({wh:UInt32}) AND agent NOT IN ('-', '*', '') AND kind != 'worker'"  # noqa: E501
     params: dict[str, Any] = {"org": org, "wh": int(window_hours)}
     if namespace:
         where += " AND namespace = {ns:String}"

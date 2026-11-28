@@ -89,11 +89,13 @@ describe("Browse: a full page", () => {
     await userEvent.type(screen.getByLabelText("Search namespaces"), "secret-ops");
     await waitFor(() => expect(browseNamespaces).toHaveBeenCalledTimes(2));
     // In flight: no card, and no "nothing matches".
+    expect(screen.getByText("Searching all public namespaces…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
     expect(screen.queryByText(/No public namespaces match/)).toBeNull();
 
     await act(async () => answer([]));
     expect(await screen.findByRole("button", { name: "Request access" })).toBeInTheDocument();
+    expect(screen.queryByText("Searching all public namespaces…")).toBeNull();
   });
 
   it("points a repository the server finds past the page to Repositories, not to a request", async () => {

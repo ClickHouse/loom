@@ -44,6 +44,7 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
+| 1.3.1 | `LOOM_CODE_INGEST_ENABLED` | `False` | `True` | A configured repository is fetched and indexed after every push without a setting: a deployment that never set the variable starts polling its repositories and embedding what changed. A deployment that indexes only when CI calls `code.refresh` sets it to false. |
 | 1.3.1 | `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `False` | `True` | Include namespace contact domains and aggregate counts in adoption reports. Deployments can disable domain sharing while continuing to send usage totals. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | `'auto'` | Keep source lookups upfront on the coding toolset. General search and the dispatcher are available through discovery. Other toolsets retain their entrypoints. Explicit lists and empty values retain their meaning. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,loom_op'` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | Make literal code search callable without a preliminary tool lookup. An explicit list still replaces the defaults; an empty value leaves loading to the host. |
@@ -59,17 +60,22 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 ## Assistant
 
-The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it.
+Native assistant admission, tool and model budgets.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_ASSISTANT_LIBRECHAT_URL` | `str` | `''` |  | LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" = no assistant: no service setup at boot, and the panel's chat is off; its starters still read. |
-| `LOOM_ASSISTANT_SERVICE_EMAIL` | `str` | `'loom-assistant@loom.invalid'` |  | Email of the LibreChat service user that owns the agent, read once, when the first boot writes loom.assistant_service; LibreChat sends it no mail. |
-| `LOOM_ASSISTANT_SETUP_RETRY_S` | `float` | `60.0` |  | Seconds before a failed assistant setup is tried again; each next failure doubles the wait, up to 16 times as long (docs/architecture/assistant.md#deployment). |
+| `LOOM_ASSISTANT_ENABLED` | `bool` | `False` |  | Serve the assistant with its explicitly configured provider; false refuses chat. |
+| `LOOM_ASSISTANT_MAX_STEPS` | `int` | `8` |  | Model turns, including the final answer; tool calls share a separate total bound. |
+| `LOOM_ASSISTANT_MAX_TOOL_CALLS` | `int` | `16` |  | Total host-context and model-selected tool calls allowed in one answer. |
+| `LOOM_ASSISTANT_MAX_CONTEXT_BYTES` | `int` | `100000` |  | UTF-8 bytes of the complete context, tools and messages included. |
+| `LOOM_ASSISTANT_MAX_TOOL_RESULT_CHARS` | `int` | `20000` |  | Characters allowed in one tool result; oversize results refuse. |
+| `LOOM_ASSISTANT_MAX_OUTPUT_CHARS` | `int` | `20000` |  | Characters of provisional answer text allowed across all model turns. |
+| `LOOM_ASSISTANT_MAX_OUTPUT_TOKENS` | `int` | `2048` |  | Output tokens requested from one model turn. |
+| `LOOM_ASSISTANT_MAX_TOKENS` | `int` | `100000` |  | Total reported input and output tokens allowed across all turns. |
 | `LOOM_ASSISTANT_ANSWER_TTL_S` | `int` | `600` |  | Seconds one assistant answer may run, and how long its delegated token lives. |
 | `LOOM_ASSISTANT_BUDGET_SHARE` | `float` | `0.5` |  | The share of a namespace's daily model cost cap the assistant may spend, so questions cannot spend what extraction and the conflict resolver need. |
 | `LOOM_ASSISTANT_CONCURRENT_ANSWERS` | `int` | `2` |  | Answers one web process runs at once per namespace (a replica runs its web workers' count times this); bounds how far answers that each passed the cap check can overshoot it. |
-| `LOOM_ASSISTANT_ANSWER_CEILING_USD` | `float` | `0.1` |  | USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price; 0 charges nothing. |
+| `LOOM_ASSISTANT_ANSWER_CEILING_USD` | `float` | `0.1` |  | USD reservation ceiling per answer. Unknown usage retains the reserved cost as an estimate; real unpriced models are refused before a send. Zero refuses calls. |
 
 ## Auth
 
@@ -324,6 +330,7 @@ One code namespace indexes one repository. No repository is configured by defaul
 | `LOOM_CODE_GIT_FETCH_TIMEOUT_S` | `float` | `3600.0` | live | Seconds one fetch, full-tree `ls-tree`, forced checkout or whole-range diff may run; the first fetch after a shallow clone of a large repository can exceed ten minutes. |
 | `LOOM_CODE_MIRROR_GC_INTERVAL_H` | `float` | `168.0` |  | Hours between `git gc` runs of each mirror on this host (low CPU and IO priority, only with room for a second copy plus `code_mirror_gc_margin_gb`). 0 = never. |
 | `LOOM_CODE_MIRROR_GC_MARGIN_GB` | `float` | `5.0` |  | Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without it the gc waits another interval. |
+| `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS` | `bool` | `False` |  | Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its working tree, not a second copy. An older build's git jobs could write the shared packs: turn it on only once no older replica serves, and off before a rollback. |
 
 ### Repository job sandbox
 
@@ -378,7 +385,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_PATH_PREFIXES` | `str` | `''` |  | CSV path prefixes of the scalar entry that are indexed; everything else is skipped. Empty = the whole tree (the ingest denylist still applies). |
 | `LOOM_CODE_GITHUB_TOKEN` | `str` | *(unset)* |  | GitHub token for the default repository: git fetches of a private remote, the PR-history and issue mirrors, and fork lookups. Empty = the REST calls go anonymously (60 requests/h per IP, public repos only; one warning) and the issue mirror is skipped. |
-| `LOOM_CODE_INGEST_ENABLED` | `bool` | `False` |  | Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. |
+| `LOOM_CODE_INGEST_ENABLED` | `bool` | `True` |  | Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. It polls every configured repository; False = nothing polls, and `code.refresh` is the only trigger. |
 | `LOOM_CODE_INGEST_INTERVAL_SECONDS` | `int` | `120` |  | Seconds between fast-tier ingest passes; extra-branch fetches of a shared mirror are spaced by 0.9 of it (at least 30 s). |
 | `LOOM_CODE_INGEST_LIVE_PATHS_TTL_S` | `float` | `60.0` |  | Seconds an ingesting process caches the namespace's live path set (the import-resolution oracle); files it writes join at once. |
 
@@ -553,7 +560,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_EMBED_RECOVERY_FULL_SCAN_SECONDS` | `int` | `1800` |  | The pending scan reads above a version watermark; once per this many seconds it scans from version 0 to catch late rows. 0 = always from 0. |
 | `LOOM_CODE_EMBED_MAX_ATTEMPTS` | `int` | `8` |  | Embed attempts per stub before it is poisoned (`embed_failed_at` set) and skipped. |
 | `LOOM_CODE_EMBED_RECOVERY_BATCH` | `int` | `100` |  | Stub keys the recovery scan takes per repo per pass (also texts per embed call); raise it to onboard large repositories faster. |
-| `LOOM_CODE_READY_EMBED_COVERAGE` | `float` | `0.95` |  | Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says "lexical only". Poisoned rows count against it; fixtures unembedded by design do not. |
+| `LOOM_CODE_READY_EMBED_COVERAGE` | `float` | `0.95` |  | Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says "lexical only". Poisoned rows count against it; rows unembedded by design (reference fixtures, `code_embed_exclude`) do not. |
 
 ### Ingest limits and denylist
 
@@ -562,6 +569,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_INGEST_MAX_FILE_BYTES` | `int` | `1000000` |  | Files above this size are recorded (index_error) and not chunked. 0 = no cap. |
 | `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | `bool` | `False` |  | True applies the built-in generated, minified and vendored ingest rules (code/app/index/denylist.py), which match 0.19% of rows. The `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore file are always honoured. |
 | `LOOM_CODE_INGEST_EXCLUDE` | `str` | `''` |  | CSV of path globs never indexed (the scalar entry's `exclude`). |
+| `LOOM_CODE_EMBED_EXCLUDE` | `str` | `''` |  | CSV of path globs indexed but never described or embedded (the scalar entry's `embed_exclude`; not self-service entries); chunks already written keep their state. |
 | `LOOM_CODE_INGEST_IGNORE_FILE` | `str` | `'.loomignore'` |  | Name of the repo-local ignore file whose patterns are never indexed. |
 
 ### Reconciliation and re-chunking
@@ -645,7 +653,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_TRACE_LOG_ENABLED` | `bool` | `True` |  | Fire-and-forget code_search_trace/code_search_outcome telemetry. |
-| `LOOM_CODE_FUSION_SIGNALS` | `bool` | `True` |  | Post-fusion rank priors in code.search (path-noise penalty, query↔path stem affinity, file coherence), applied after RRF and before the outcome boost. Kill switch. |
+| `LOOM_CODE_FUSION_SIGNALS` | `bool` | `True` |  | Rank priors in code.search (the test-path and prose penalties, query↔path stem affinity, file coherence), applied after RRF and before the outcome boost. The lexical leg also picks its candidates on the two path penalties, before RRF. Kill switch for both. |
 | `LOOM_CODE_SEARCH_QUERY_MAX_TOKENS` | `int` | `48` |  | Long-question trim: past this many lexemes the question is treated as an issue body (template headings stripped, the rarest 32 tokens gate, the first 512 cleaned words embed). Under the cap nothing changes. 0 = off. |
 | `LOOM_CODE_SEARCH_FILE_SATURATION` | `float` | `0.5` |  | Per-file saturation: the 2nd, 3rd... unit from one path is multiplied by decay^excess before the cut; a file's best unit never decays. 0 = off. Skipped under path_prefix, symbol routes and test intent. |
 | `LOOM_CODE_SEARCH_VECTOR_MODELS` | `str` | `''` |  | CSV of vector-model specs a request may name as `vector_model` (e.g. "prefix:512:text-embedding-3-large"); only the vector leg switches. Empty = the override is refused. |
@@ -678,7 +686,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_SEARCH_RERANK_TOP` | `int` | `20` |  | How many fused units the default rerank reads. |
 | `LOOM_CODE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `300` |  | Characters of each candidate shown to the default rerank (path and signature first, then the body head). |
 | `LOOM_CODE_SEARCH_CATALOGUE_PENALTY` | `float` | `1.0` |  | Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the question kinds `code_search_catalogue_kinds` names; 1.0 = off. |
-| `LOOM_CODE_SEARCH_PROSE_PENALTY` | `float` | `0.25` |  | Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off. |
+| `LOOM_CODE_SEARCH_PROSE_PENALTY` | `float` | `0.25` |  | Multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths. The ranking multiplies the fused score by it, and the lexical leg picks its candidates on each row's vote times it, before RRF. A smaller value makes the lexical leg read deeper. 1.0 = off. |
 | `LOOM_CODE_SEARCH_KIND_PRIOR` | `'off' \| 'default' \| 'flat' \| 'structural'` | `'flat'` |  | Chunk-kind ranking prior when the request names none: structural boosts the kind named by the question; flat/default apply fixed tables; off disables it. |
 | `LOOM_CODE_SEARCH_CATALOGUE_KINDS` | `str` | `'responsibility'` |  | The question kinds `code_search_catalogue_penalty` applies to. |
 | `LOOM_CODE_FAN_IN_PRIOR_CAP` | `float` | `0.25` |  | Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool); skipped under test intent and on noise paths; inert without the stats. 0 = off. |
@@ -853,7 +861,7 @@ The coverage sweep gives the turns an extraction's first pass cited nowhere a se
 | `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_AUTO_MIN_STATEMENTS` | `int` | `10` | live | With the namespace and the call silent, the coverage sweep still runs when the ingest is statement-dense — some turn holds at least this many statements (a fact list, a long update). 0 = never. Chatty conversation (one to four sentences a turn) never reaches it. |
 | `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_AUTO_MIN_UNCOVERED` | `int` | `0` | live | With the namespace and the call silent and no list-shaped turn, a conversation ingest still gets the coverage sweep when the first pass left at least this many statements without a memory (lexical, LLM-free). 0 = never: on conversation the gate fires on nearly every session, so enabling it is the operator's token trade. |
 | `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_BATCH_ITEMS` | `int` | `0` | live | The coverage sweep reads its listed turns and sentences in groups of this many items, one concurrent call each (more recall for more tokens). 0 = one call. |
-| `LOOM_MEMORY_EXTRACT_CODING_SWEEP_MIN_USER_TURNS` | `int` | `4` | live | A coding capture keeps the coverage sweep's density / uncovered auto-gates only with at least this many user turns (on short sessions the sweep's output is mostly junk). 0 = always keep. An explicit namespace / per-call switch wins either way. |
+| `LOOM_MEMORY_EXTRACT_CODING_SWEEP_MIN_USER_TURNS` | `int` | `4` | live | A trajectory replay keeps the coverage sweep's density / uncovered auto-gates only with at least this many user turns (on short sessions the sweep's output is mostly junk); a plugin's session capture never takes them. 0 = always keep. An explicit namespace / per-call switch wins either way. |
 
 ### Size segments
 
@@ -1059,7 +1067,7 @@ The MCP transport: tool listing, lean results, session runs.
 | `LOOM_MCP_LOOM_SEARCH_PRECISION_FLOOR` | `float` | `-1.0` |  | Precision floor for loom_search memory hits. Negative = auto (midpoint of the embedder's calibrated noise floor and question→fact p25); 0 disables. |
 | `LOOM_MCP_LOOM_SEARCH_FOREIGN_MARGIN` | `float` | `0.08` |  | Extra margin over the precision floor for hits from another namespace. |
 | `LOOM_MCP_AUTH_MODE` | `'required' \| 'discovery_only' \| 'open'` | `'required'` |  | MCP transport auth mode (the endpoint exposes one tool per wire op, so an anonymous prober could otherwise enumerate every tool): "required"        — every JSON-RPC method requires a bearer. "discovery_only"  — initialize/tools/list/ping open; tools/call needs auth. "open"            — no auth on any method; a non-loopback bind refuses it. Any other value fails at load: a mistyped mode must not boot as some mode. |
-| `LOOM_MCP_TOOLSET` | `str` | `'core'` |  | Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on "assistant"); on every toolset but "assistant" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes read ops only. "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. "tracker", "tasks" — the tracker plane and the task inbox rosters. "atomic"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. "readonly"  — the "all" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. "assistant" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. "all"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops under mcp_code_upload_tools aside. An unknown value is "core". |
+| `LOOM_MCP_TOOLSET` | `str` | `'core'` |  | Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on "assistant", nor where "coding" lists the code tools alone); on every toolset but "assistant" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes read ops only. "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. A connection bound to a repository lists the code tools alone when its URL carries `schema_profile=compact`. "tracker", "tasks" — the tracker plane and the task inbox rosters. "atomic"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. "readonly"  — the "all" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. "assistant" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. "all"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops under mcp_code_upload_tools aside. An unknown value is "core". |
 | `LOOM_MCP_SCHEMA_PROFILE` | `'standard' \| 'full' \| 'compact'` | `'standard'` |  | tools/list schema profile: "standard" (curated prose + inputSchema), "full" (+ outputSchema) or "compact" (first paragraph, argument tree). Per request: `?schema_profile=`. |
 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `str` | `'auto'` |  | "auto" loads source lookups upfront for the coding toolset. A comma-separated list overrides the toolset defaults. Empty leaves loading to the host. |
 | `LOOM_MCP_SESSION_RUN_IDLE_SECONDS` | `int` | `1800` |  | Seconds without a tool call after which the mcp_session_run_sweep worker closes an MCP session's implicit run (one per token and `Mcp-Session-Id`, begun on the first run-scoped tool call); with no background workers anywhere, idle runs stay open. At least 60: each web process re-checks its cached run once a minute (mcp_runs.CHECK_INTERVAL_S), so a shorter window would close runs a process still treats as open. |
@@ -1146,7 +1154,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_IDLE_SECONDS` | `float` | `300.0` | live | Seconds before the re-check of unjudged `conflicted` rows runs again once its read came back short; the read scans every `conflicted` row. |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` | `int` | `200` |  | Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. memory.import checks every entry whatever this says. |
 | `LOOM_MEMORY_BULK_FOLLOW_MAX_PAIRS` | `int` | `1024` | live | Supersession pairs one bulk write follows on the triple plane in the request; the rest are recorded for the projection repair to follow. 0 = the repair follows all. |
-| `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` |  | Bulk-path conflict checks run at once (at least 1). |
+| `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` |  | Similarity reads one request runs at once (at least 1): a bulk write's conflict checks, and a coding capture's reads of the stored memories nearest its facts. |
 | `LOOM_MEMORY_WRITE_CANDIDATE_BATCH` | `int` | `6` |  | Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact. |
 | `LOOM_MEMORY_BULK_PEER_READ` | `'batched' \| 'per_fact'` | `'batched'` |  | How a bulk write reads each fact's conflict and value-update peers: batched = one join per memory_write_candidate_batch facts; per_fact = memory.set's codes-first read per fact, for large namespaces (it may pick another last peer where distances tie). |
 | `LOOM_DUPLICATE_THRESHOLD` | `float` | `0.97` |  | Cosine ≥ this with a canonical-form mismatch marks a write 'duplicate' with a duplicate_of pointer instead of 'conflicted'. Per-namespace override: loom.namespaces.duplicate_threshold. |
@@ -1316,9 +1324,9 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CODE_LINKS_ENABLED` | `bool` | `True` |  | Link memories to the code they name (symbols and files of the repository their `repo:` tag or code namespace names) and keep the links current as the code changes; the namespace's `code_change_policy` decides how reads treat a memory whose code is removed or changed. Off stops linking and rechecks; reads still show the stored states but no longer hide a memory, as nothing keeps them current. |
 | `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | `int` | `60` |  | Seconds between link passes. |
 | `LOOM_MEMORY_CODE_LINKS_MAX_PASS_SECONDS` | `float` | `600.0` |  | Seconds a code-links pass may run before the supervisor abandons it. |
-| `LOOM_MEMORY_CODE_LINKS_BATCH` | `int` | `500` |  | Memory writes one pass links (at least 1). |
+| `LOOM_MEMORY_CODE_LINKS_BATCH` | `int` | `500` |  | Rows per page of memory writes to link or pending links to recheck (at least 1). |
 | `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` | `int` | `60` |  | Seconds the memory code-link pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them (at least 10). A write visible later than this is passed and stays unlinked until a backfill reads it; a longer wait makes that rarer and links every write that much later. |
-| `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` |  | Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped. |
+| `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` |  | Days to retry a code-shaped name absent from trunk, measured when each pending scan starts. |
 | `LOOM_MEMORY_CODE_LINKS_REVISE_PER_PASS` | `int` | `20` |  | Changed claims one pass re-checks with the LLM under the `revise` policy. |
 | `LOOM_MEMORY_CODE_LINKS_MIRROR_NAMING_FILES` | `int` | `200` |  | Changed files that may hold a lost link's name (its callers count) for the mirror's answer to be used; from this many on, the code index alone decides. |
 | `LOOM_MEMORY_CODE_LINKS_MIRROR_CHANGED_FILES` | `int` | `5000` |  | Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched (at most 20,000: each is an argument to git); past it, the code index alone decides. |
@@ -1584,8 +1592,9 @@ Models: which model does each job.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-sonnet-5-5 / qwen2.5:3b / fake-echo-1). |
-| `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant agent's model, which Loom writes into the agent definition at boot. "" = the definition's own (integrations/librechat/agent.yaml), not llm_model. |
-| `LOOM_ASSISTANT_PROVIDER` | `'' \| 'anthropic' \| 'local'` | `''` |  | The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local" = LibreChat's local endpoint (a model server the operator runs; needs assistant_model). |
+| `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant's model, required for real providers. The fake route defaults to fake-echo-1. |
+| `LOOM_ASSISTANT_PRICE_MODEL` | `str` | `''` |  | Price-table model used for assistant route aliases (for example a Bedrock inference profile). Empty uses assistant_model. The operator verifies its rate. |
+| `LOOM_ASSISTANT_PROVIDER` | `'' \| 'anthropic' \| 'openai' \| 'bedrock' \| 'vertex' \| 'local' \| 'fake'` | `''` |  | Native streaming provider. Vertex uses Google Application Default Credentials. Empty disables native model admission. |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
 | `LOOM_LOCAL_EMBEDDING_MODEL_DIR` | `str` | `'var/models'` |  | Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env. |
@@ -1598,7 +1607,7 @@ Models: which model does each job.
 | `LOOM_MEMORY_ASK_SYNTH_MODEL` | `str` | `''` |  | memory.ask synthesis (the strong tier when the cascade is on). |
 | `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP` | `str` | `''` |  | memory.ask cheap tier. "" = off: every ask uses memory_ask_synth_model. When set, server/memory/domain/synth_policy.py routes easy asks cheap and hard ones strong; an empty, uncited or hedging cheap answer escalates to strong once. route_tier / route_reason / synth_model on the output record the choice. |
 | `LOOM_MEMORY_ASK_MID_MODEL` | `str` | `''` |  | memory.ask mid tier. "" = none. With a model set, strong-routed asks whose reason is in memory_ask_synth_mid_routes go mid; an empty, uncited or hedging mid answer escalates to strong once. |
-| `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` | `str` | `'claude-opus-5-5'` |  | The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not and folds same-claim paraphrases and replaced states. A fact is dropped only when every model says drop; folds come from the first. Fails open. "" turns it off. |
+| `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` | `str` | `'claude-opus-5-5'` |  | The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not, folds same-claim paraphrases and replaced states, and names the facts a stored memory already states. A fact is dropped as non-durable only when every model says drop; folds and stored restatements come from the first. Fails open. "" turns it off. |
 | `LOOM_CONFLICT_RESOLVER_MODEL` | `str` | `'gpt-6.1-sol'` |  | The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence thresholds were set on this model; a cheaper one is only safe for clears. |
 | `LOOM_PROFILE_CONSOLIDATION_MODEL` | `str` | `''` |  | Model of the profile fold, which consolidates an identity's memories into its profile; "" = `llm_model`. |
 | `LOOM_STRUCTURED_PROFILE_MODEL` | `str` | `''` |  | Model of the structured profile builder, which fills a user's profile in the namespace's schema; "" = `llm_model`. |
@@ -1686,7 +1695,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_AUDIT_CHECKPOINT_VERIFY_WINDOWS` | `int` | `24` |  | Most recent sealed windows recounted every pass (at least 1). |
 | `LOOM_AUDIT_CHECKPOINT_MAX_SEAL_PER_PASS` | `int` | `48` |  | Most windows one pass seals; a backlog is sealed over later passes. |
 | `LOOM_OTEL_EXPORTER` | `'' \| 'ch' \| 'otlp'` | `''` |  | OTel exporter, for spans and metrics: "ch" writes to `otel_traces` and `otel_metrics_*` in `clickstack_database` (`default` when empty) on the same service, "otlp" ships to otel_exporter_otlp_endpoint (headers: comma-separated K=V), "" = auto (otlp when the endpoint is set, else ch). |
-| `LOOM_OTEL_CODE_COUNTS_CACHE_S` | `int` | `3600` |  | Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols and code_edges, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export. |
+| `LOOM_OTEL_CODE_COUNTS_CACHE_S` | `int` | `3600` |  | Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges and memory_code_links, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export. |
 | `LOOM_OTEL_CODE_GREP_REPLAY_CACHE_S` | `int` | `3600` |  | Seconds between recounts of the code.grep wrong-abstain gauge (a `content` scan per namespace with abstains). 0 = gauge off. |
 | `LOOM_OTEL_AGENT_LABELS_MAX_NAMESPACES` | `int` | `20` |  | Max namespaces `loom.memory.agent_labels_24h` names per probe (top N by label total); the rest sum under `loom.namespace = "other"`. 0 = no cap. |
 | `LOOM_OTEL_INVARIANTS_PROBE_S` | `int` | `3600` |  | Seconds between the state probe's whole-table readings (embed backlog, integrity invariants), taken on the lease holder only. The invariants read 0 and exist to catch drift, so an hour is enough; each reading is one FINAL pass over memory, memory_embeddings and entity_vectors. |
@@ -1707,6 +1716,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_WORKER_LEDGER_ROWS` | `bool` | `True` |  | One agent_events row per worker pass that spent something or failed (operation worker.<name>.pass, kind='worker'); loom.worker_status records every pass. |
 | `LOOM_ADOPTION_TELEMETRY_ENABLED` | `bool` | `True` |  | Self-hosted adoption reports. Set false to stop all adoption reporting. |
 | `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `bool` | `True` |  | Share namespace contact domains and counts in adoption reports. Set false to omit them. |
+| `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY` | `bool` | `False` |  | Share daily account, successful request and serving process counts for contact domains. Requires domain sharing. |
 | `LOOM_ADOPTION_TELEMETRY_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between adoption checks and retries. A report covers 12 hours. |
 | `LOOM_OTEL_ENABLED` | `bool` | `True` |  | Master switch for OTel emission. `init_otel()` also refuses under pytest regardless: server/main.py calls it at import, and a test run must never ship rows into production observability tables. |
 | `LOOM_LANGFUSE_URL` | `str` | `''` |  | Langfuse: with both set, OTel spans are forwarded to Langfuse's OTLP endpoint as a second span processor beside the ClickHouse exporter, retrieval scores are posted, and the erasure saga makes real HTTP DELETE calls (empty = log intent only). The token is `pk-lf-…:sk-lf-…`. |
@@ -1743,6 +1753,8 @@ Embedding and LLM providers.
 | `LOOM_OPENAI_BASE_URL` | `str` | `'https://api.openai.com/v1'` |  | OpenAI's API root, for the Responses API (<root>/responses) and embeddings: point it at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root). |
 | `LOOM_ANTHROPIC_BASE_URL` | `str` | `'https://api.anthropic.com'` |  | Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway in front of Anthropic. Off the default, the key also goes as a bearer, the scheme gateways take. |
 | `LOOM_BEDROCK_REGION` | `str` | `''` |  | Region for native Bedrock model requests; empty uses the AWS SDK's region chain. AWS credentials use the SDK's role, profile or environment credential chain. |
+| `LOOM_VERTEX_PROJECT` | `str` | `''` |  | Google Cloud project that owns the Vertex AI requests, required with the Vertex provider. |
+| `LOOM_VERTEX_LOCATION` | `str` | `''` |  | Vertex AI location: a region, a multi-region ("eu", "us"), or "global". Required with the Vertex provider. |
 | `LOOM_LOCAL_LLM_BASE_URL` | `str` | `'http://localhost:11434/v1'` |  | LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's <host>:11434/v1, llama.cpp's server <host>:8080/v1). |
 | `LOOM_INFERENCE_TOKEN_URL` | `str` | `''` |  | Model calls with no provider key: exchange an identity token (RFC 8693) at this token endpoint of the gateway, and send the answer as the bearer (server/llm/gateway.py). The gateway must trust the token's issuer. "" = the provider keys. |
 | `LOOM_INFERENCE_WORKLOAD_TOKEN_FILE` | `str` | `''` |  | The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience. |
@@ -1773,7 +1785,7 @@ Embedding and LLM providers.
 | `LOOM_EMBEDDING_CACHE_TTL_S` | `float` | `3600.0` |  | Seconds one per-process LRU entry lives. |
 | `LOOM_ADAPTIVE_THRESHOLDS` | `bool` | `True` |  | Derive the similarity gates from this embedder's cosine distribution at boot (server/memory/app/embedder_calibration.py). False pins the scalar defaults (tuned for text-embedding-3-small) — re-bench after an embedder change. Fake embedders and probe failures always use the scalars. |
 | `LOOM_CALIBRATION_REFRESH_SECONDS` | `float` | `60.0` |  | Seconds between each replica's re-read of the shared calibration (loom.embedder_calibration), so every replica serves the same gates. |
-| `LOOM_LLM_PROVIDER` | `str` | `''` |  | "openai" \| "anthropic" \| "bedrock" \| "local" (LOOM_LOCAL_LLM_BASE_URL, no key) \| "fake"; "" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Bedrock requires llm_model and the SDK credential chain. Run `make bench-quick` before making anthropic a default. |
+| `LOOM_LLM_PROVIDER` | `str` | `''` |  | "openai" \| "anthropic" \| "bedrock" \| "vertex" \| "local" \| "fake"; "" = infer from LOOM_LLM_MODEL's name or provider prefix, then from the API keys present, then fake. An explicit value wins. Bedrock and Vertex require a model and deployment credentials. Run `make bench-quick` before making anthropic a default. |
 | `LOOM_REQUIRE_REAL_PROVIDERS` | `bool` | `False` |  | A fake or key-less provider is a `warn` in /v1/health `problems`; true (production) makes it an `error` and `status: degraded`, which preflight and monitors catch. Never changes the HTTP code (503 is ClickHouse-only). |
 | `LOOM_LLM_OPENAI_REASONING_EFFORT` | `str` | `''` |  | Reasoning effort sent to OpenAI models. "" = the lowest the model accepts (learned from its refusals, see server/llm/traits.py); set to pin one value for every call, raised to that lowest; a refused pin above it sends no effort. |
 | `LOOM_LLM_ANTHROPIC_EFFORT` | `str` | `''` |  | Thinking effort sent to Claude models as `output_config.effort`: "low" \| "medium" \| "high"; "" = send none (the model's own default). A model that does not take it refuses it once and is not sent it again. |

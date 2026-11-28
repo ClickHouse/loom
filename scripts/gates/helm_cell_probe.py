@@ -106,7 +106,7 @@ def _check_enabled(docs: list[dict[str, Any]], port: int, *, workers: bool) -> N
             else:
                 assert not probe_ports, (name, probe_ports)
                 assert ENDPOINT_LABEL not in pod["metadata"]["labels"], name
-    for suffix in ("extractor", "librechat", "librechat-mongo"):
+    for suffix in ("extractor",):
         for doc in docs:
             if (
                 doc["kind"] in ("Deployment", "StatefulSet")
@@ -141,8 +141,8 @@ def check_probe_selects_every_listener_workload_and_no_hook_or_test_pod(workers:
     docs = _render(
         *sets(
             *EVERYTHING,
-            "assistant.enabled=true",
-            "assistant.existingSecret=ci",
+            "assistant.nativeEnabled=true",
+            "env.LOOM_ASSISTANT_PROVIDER=fake",
             f"workers.enabled={str(workers).lower()}",
             f"cellProbe.port={ENABLED}",
         )

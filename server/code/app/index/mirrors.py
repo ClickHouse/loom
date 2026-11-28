@@ -42,6 +42,7 @@ from server.code.app.index.bootstrap import (
     restrict_if_restricted,
 )
 from server.code.app.index.mirror_locks import fetch_lock_path, partial_mirror, try_lock
+from server.code.app.index.producer_inference import PRODUCERS
 from server.code.domain.index import repos
 from server.code.store import index as code_store
 from server.core import readiness
@@ -372,10 +373,11 @@ async def _merge_page(cfg: Any, git_dir: str, repo: Any) -> None:
 
 async def gc_if_due(git_dir: str) -> None:
     """`git gc --no-prune` of a mirror or a compiler tier's checkout every
-    `code_mirror_gc_interval_h`, at low CPU and IO priority, only when the disk holds
-    a second copy plus the margin (the new pack is written beside the old one);
-    without that room it waits another interval. Nothing unreachable is pruned, so a
-    checkout borrowing objects from the mirror never loses one."""
+    `code_mirror_gc_interval_h`, or once its mark is gone, at low CPU and IO priority,
+    only when the disk holds a second copy of what the gc rewrites plus the margin (the
+    new pack is written beside the old one); without that room it waits another
+    interval. Nothing unreachable is pruned, and a kept pack (a checkout's packs shared
+    with its mirror) is never rewritten."""
     hours = float(settings.code_mirror_gc_interval_h)
     if hours <= 0 or _mark_age_s(git_dir, _GC_MARK) < hours * 3600:
         return
@@ -407,11 +409,14 @@ async def gc_if_due(git_dir: str) -> None:
 
 
 def _tree_bytes(path: str) -> int:
+    """What a gc of `path` may write again: every file but a kept pack's."""
     total = 0
     for root, _dirs, files in os.walk(path):
+        kept = {f.removesuffix(".keep") for f in files if f.endswith(".keep")}
         for f in files:
-            with contextlib.suppress(OSError):
-                total += os.lstat(os.path.join(root, f)).st_size
+            if f.split(".", 1)[0] not in kept:
+                with contextlib.suppress(OSError):
+                    total += os.lstat(os.path.join(root, f)).st_size
     return total
 
 
@@ -436,8 +441,20 @@ async def _named_paths() -> tuple[set[str], set[str]] | None:
         logger.info("mirror sweep skipped: registry unreadable (%s)", e)
         return None
     mirrors = {c.git_dir for c in cfgs} | {repo_registry.git_dir_for(str(r["repo"])) for r in rows}
-    checkouts = {repos.checkout_for(c, p) for c in cfgs for p in ("", *c.scip_extra_producers)}
-    checkouts |= {repo_registry.checkout_dir_for(str(r["namespace"])) for r in rows}
+    # An entry naming no producer runs whichever tiers its tree calls for, so every
+    # tier's tree is named; one naming its producer runs that tier and its extras.
+    checkouts = {
+        repos.checkout_for(c, p)
+        for c in cfgs
+        for p in (
+            (c.scip_producer, *c.scip_extra_producers)
+            if c.scip_producer
+            else (*PRODUCERS, *c.scip_extra_producers)
+        )
+    }
+    for r in rows:
+        base = repo_registry.checkout_dir_for(str(r["namespace"]))
+        checkouts |= {base, *(repos.sibling_checkout(base, p) for p in PRODUCERS)}
     return mirrors, checkouts
 
 

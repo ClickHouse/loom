@@ -181,26 +181,39 @@ async def test_tools_call_unknown_tool(control_plane_url: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_tools_call_invalid_arguments(control_plane_url: str) -> None:
-    """Missing required fields → a tool result with isError whose text names
-    the fields, so the model reads them (a -32602 frame's data never
-    reaches it)."""
+@pytest.mark.parametrize(
+    ("arguments", "has_example"),
+    [
+        pytest.param({}, True, id="bearer-scope"),
+        pytest.param({"org": "test"}, False, id="explicit-scope"),
+    ],
+)
+async def test_tools_call_invalid_arguments(
+    control_plane_url: str, arguments: dict[str, str], has_example: bool
+) -> None:
+    """Missing fields yield a tool error. Retry templates rely on bearer scope."""
     resp = await _rpc(
         control_plane_url,
         {
             "jsonrpc": "2.0",
             "id": 31,
             "method": "tools/call",
-            # org matches the bearer so authz passes and Pydantic surfaces the failure.
-            "params": {"name": "loom_memory_set", "arguments": {"org": "test"}},
+            "params": {"name": "loom_memory_set", "arguments": arguments},
         },
     )
     result = resp["result"]
     assert result["isError"] is True
-    assert "errors" in result["structuredContent"]
+    feedback = result["structuredContent"]
+    assert feedback["errors"]
+    assert set(feedback["required"]) == {"memory_key", "value"}
     text = result["content"][0]["text"]
     assert "loom_memory_set" in text or "memory.set" in text
-    assert "required:" in text and "example:" in text
+    assert "required:" in text
+    assert ("example:" in text) is has_example
+    if has_example:
+        assert set(feedback["example"]) == {"memory_key", "value"}
+    else:
+        assert "example" not in feedback
 
 
 @pytest.mark.asyncio

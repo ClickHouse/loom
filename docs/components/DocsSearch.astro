@@ -1,0 +1,43 @@
+---
+import { IconButton } from "@clickhouse/click-ui/IconButton";
+import BlumeSearch from "blume/components/layout/Search.astro";
+import { EN_UI, type UIStrings } from "blume/core/i18n-ui.ts";
+import type { Navigation } from "blume/core/types.ts";
+import DocsSearchMarkup from "./DocsSearchMarkup.astro";
+
+interface Props {
+  assistantEnabled?: boolean;
+  navigation?: Navigation;
+  popularPages?: { icon?: string; label: string; route: string }[];
+  strings?: UIStrings["search"];
+  locale?: string;
+  version?: string | null;
+}
+
+const label = Astro.props.strings?.button ?? EN_UI.search.button;
+---
+
+<DocsSearchMarkup>
+  <BlumeSearch {...Astro.props} />
+  <IconButton
+    slot="trigger"
+    aria-keyshortcuts="Meta+K Control+K"
+    aria-label={label}
+    data-blume-search-open=""
+    data-blume-tooltip={label}
+    data-label={label}
+    data-loom-docs-search-trigger=""
+    htmlType="button"
+    icon="search"
+    size="sm"
+    type="ghost"
+  />
+</DocsSearchMarkup>
+
+<style is:global>
+  [data-loom-docs-search-trigger] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+</style>

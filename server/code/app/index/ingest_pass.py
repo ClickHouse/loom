@@ -22,17 +22,19 @@ from collections.abc import Mapping
 from typing import Any
 
 from server.auth.context import current_caller
+from server.code.app.index import erasing
 from server.code.app.index.pass_budget import (
     CodeIngestResult,
     PassBudget,
     RepoPass,
+    cut_key,
     cut_points,
     git_text_source,
     pass_budget,
     rotate_to,
 )
 from server.code.app.index.pass_fetch import _publish_clone_head, fetch_entry, prefetch_mirrors
-from server.code.app.index.pass_stream import ingest_oldest_first
+from server.code.app.index.pass_stream import ingest_round_robin
 from server.core.errors import caller_text
 from server.llm import customer
 from server.settings import settings
@@ -155,7 +157,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     # of it, pass after pass.
     starts = cut_points(pass_context.resume_cursor())
     if not (org and namespace):
-        repos = rotate_to(repos, starts.get("commits", ""))
+        repos = rotate_to(repos, starts.get("commits", ""), key=cut_key)
     commit_budget = budget.phase(settings.code_ingest_walk_budget_share)
     await prefetch_mirrors(repos, result)  # One fetch per mirror
     plans: list[RepoPass] = []
@@ -178,6 +180,8 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             # watermark unmoved, until the org's model calls are back on.
             continue
         try:
+            if await erasing.being_erased(cfg.org, cfg.namespace):
+                continue  # no work on it starts: its purge waits for the work already on it
             # Its model calls are the namespace's, and when code.refresh runs the pass,
             # the caller's (its token's subject), as for any request.
             with customer.for_org(cfg.org, namespace=cfg.namespace, subject=current_caller()[0]):
@@ -192,14 +196,14 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             continue
         if plan is not None:
             plans.append(plan)
-    await ingest_oldest_first(plans, result, commit_budget)
+    await ingest_round_robin(plans, result, commit_budget)
     await _run_leg(
         result,
         budget,
         rotate_to(
             [p for p in plans if p.bootstrap],
             starts.get("bootstrap", ""),
-            key=lambda p: p.cfg.namespace,
+            key=lambda p: cut_key(p.cfg),
         ),
         "bootstrap",
         _bootstrap_leg,
@@ -208,7 +212,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
         result,
         budget,
         rotate_to(
-            [p for p in plans if p.walk], starts.get("walk", ""), key=lambda p: p.cfg.namespace
+            [p for p in plans if p.walk], starts.get("walk", ""), key=lambda p: cut_key(p.cfg)
         ),
         "walk",
         _walk_leg,
@@ -445,7 +449,7 @@ async def _run_repo(
         await repo.set_state(org, ns, "git_head", head, detail="watermark reset")
         result.note = "watermark reset (non-ancestor)"
         return plan
-    plan.pending = commits  # Ingested oldest-first across entries
+    plan.pending = commits  # Ingested round-robin across entries
     return plan
 
 

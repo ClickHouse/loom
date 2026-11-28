@@ -185,6 +185,22 @@ export function ModelsSettings() {
             </>
           }
         />
+      ) : status.llm_provider === "vertex" ? (
+        <div className="space-y-3">
+          <h2>Models &amp; keys</h2>
+          <Alert
+            role="status"
+            state="info"
+            size="medium"
+            text={
+              <>
+                <strong>Vertex AI · {status.llm_model}</strong>
+                <p>Embedding model: {status.embedding_model}</p>
+                <p>Configure Vertex AI and the embedding model in the server environment.</p>
+              </>
+            }
+          />
+        </div>
       ) : (
         <>
           {saved && (

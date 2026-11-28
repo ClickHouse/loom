@@ -6,6 +6,7 @@ import { accept, renderPack, searchBody, searchQuery, shouldAsk, codeLookup, loo
 const RES = {
   abstain: false,
   retrieval_confidence: 0.81,
+  retrieval_risk: "low",
   results: [
     { path: "src/A.cpp", start_line: 10, end_line: 40, symbol: "DB::A::run", signature: "void run()" },
     { path: "src/B.cpp", start_line: 5, end_line: 9, symbol: "DB::B::go", signature: "" },
@@ -20,10 +21,17 @@ test("shouldAsk skips short prompts and slash commands", () => {
   assert.equal(shouldAsk("where do we retry s3 uploads"), true);
 });
 
-test("accept follows the index's own abstain and confidence", () => {
+test("accept follows the index's own abstain and risk label, or a named confidence", () => {
   assert.equal(accept(RES), true);
   assert.equal(accept({ ...RES, abstain: true }), false);
-  assert.equal(accept({ ...RES, retrieval_confidence: 0.3 }), false);
+  // The label is the deployment's own band: a confidence the plugin would
+  // call high is not sent when the index rates the answer a risk.
+  for (const risk of ["medium", "high", "abstain", undefined])
+    assert.equal(accept({ ...RES, retrieval_risk: risk }), false, String(risk));
+  assert.equal(accept({ ...RES, retrieval_confidence: 0.3 }), true);
+  // A threshold the caller names replaces the label.
+  assert.equal(accept({ ...RES, retrieval_confidence: 0.45, retrieval_risk: "medium" }, 0.4), true);
+  assert.equal(accept({ ...RES, retrieval_confidence: 0.3 }, 0.4), false);
   assert.equal(accept({ ...RES, results: [] }), false);
   assert.equal(accept(null), false);
 });
@@ -33,9 +41,18 @@ test("renderPack caps and deduplicates one answer without hiding later evidence"
   const first = renderPack(reply, { cap: 3 });
   assert.match(first.text, /confidence 0\.81/);
   assert.match(first.text, /- src\/A.cpp:10-40 DB::A::run — void run\(\)/);
-  assert.equal(first.text.split("\n").length, 5);
+  assert.equal(first.text.split("\n").length, 4);
   assert.equal(first.text.match(/src\/A.cpp/g).length, 1);
-  assert.match(first.text, /do not run the search again/);
+  // Candidates under a prefix the server knows as Loom's own words; nothing tells the model to stop looking.
+  assert.match(
+    first.text,
+    /^Loom index pointers for this prompt \(confidence 0\.81\); Read a line range to check one:\n/,
+  );
+  assert.doesNotMatch(first.text, /do not|search again/i);
+  assert.equal(
+    renderPack(reply, { cap: 1, header: "Callers:" }).text,
+    "Callers:\n- src/A.cpp:10-40 DB::A::run — void run()",
+  );
   assert.doesNotMatch(first.text, /src\/D.cpp/);
   const changed = structuredClone(reply);
   changed.results[0].signature = "void run(bool strict)";

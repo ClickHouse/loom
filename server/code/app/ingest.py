@@ -21,10 +21,11 @@ from server.code.api.models_ingest import (
     CodeScipStatusOutput,
 )
 from server.code.app.common import invalidate_index_as_of, require_code_intel, resolve_code_identity
+from server.code.app.index import erasing
 from server.code.app.spans import set_code_span_attributes
 from server.code.domain.index.blame_range import sha_text
 from server.code.store.index import CodeRepo
-from server.core import leases
+from server.core import errors, leases
 from server.core.background import TaskSet
 from server.core.errors import LoomServerError, NotFoundError, ValidationError, stored_caller_text
 from server.settings import settings
@@ -39,10 +40,14 @@ _REFRESH_TASKS = TaskSet()
 _LEASE_TTL_S = 120  # not a setting: the lease takeover protocol between replicas
 
 
+def refresh_lease_name(org: str, ns: str) -> str:
+    return f"code_refresh:{quote(org, safe='')}/{quote(ns, safe='')}"
+
+
 async def _take_lease(org: str, ns: str) -> leases.Lease | None:
     """The namespace's deployment-wide refresh lease; None when ClickHouse cannot be
     asked (the process lock alone). LeaseBusy when another process holds it."""
-    name = f"code_refresh:{quote(org, safe='')}/{quote(ns, safe='')}"
+    name = refresh_lease_name(org, ns)
     try:
         lease = await leases.take(name, ttl_s=_LEASE_TTL_S)
     except leases.LeaseUnavailable as e:
@@ -51,6 +56,31 @@ async def _take_lease(org: str, ns: str) -> leases.Lease | None:
     if lease is None:
         raise leases.LeaseBusy(name)
     return lease
+
+
+async def _settle_links(org: str, ns: str, by: float) -> None:
+    """Follow the namespace's memory links to the head the pass indexed, until loop time
+    `by`, so their state is current when the refresh answers, not a link worker interval
+    later. Never raises: links another pass is checking, a recheck that fails and one
+    cut at `by` are left to the link worker's next pass."""
+    from server.memory.app import code_link_recheck
+    from server.workers.status import log_pass_errors
+
+    cut = asyncio.timeout_at(by)
+    try:
+        async with cut:
+            result = await code_link_recheck.recheck_repository(org, ns)
+    except leases.LeaseBusy:
+        logger.info("code.refresh(%s/%s): another pass is checking the memory links", org, ns)
+    except Exception:
+        # the index is refreshed either way: the refresh answers for that alone
+        if cut.expired():
+            logger.warning("code.refresh(%s/%s): the memory link recheck was cut short", org, ns)
+        else:
+            logger.exception("code.refresh(%s/%s): the memory link recheck failed", org, ns)
+    else:
+        if result is not None:
+            log_pass_errors(logger, f"code.refresh({org}/{ns}) memory links", result.errors)
 
 
 async def handle_code_refresh(input: CodeRefreshInput) -> CodeRefreshOutput:
@@ -64,6 +94,8 @@ async def handle_code_refresh(input: CodeRefreshInput) -> CodeRefreshOutput:
     namespace's lease across every replica — concurrent triggers for one
     namespace coalesce wherever they land, and a trigger racing the poller is
     harmless. A mirror this host lacks is cloned in the background, not in the pass.
+    A pass that ran to its end is followed by the recheck of the memories linked to the
+    namespace's code (`_settle_links`), inside the wait when the caller waits.
 
     Only a CONFIGURED namespace can be refreshed: the addressed identity
     must match a repo entry (scalar config or LOOM_CODE_REPOS_JSON), else
@@ -80,6 +112,8 @@ async def handle_code_refresh(input: CodeRefreshInput) -> CodeRefreshOutput:
     org, ns = resolve_code_identity(input.org, input.namespace)
     if repo_for_namespace(org, ns) is None:
         raise NotFoundError(f"namespace {org}/{ns} is not configured for code indexing")
+    if await erasing.being_erased(org, ns):
+        raise errors.ErasureRunningError(f"{org}/{ns} is being erased; refresh it after that")
     repo = CodeRepo()
     head_before = await repo.get_state(org, ns, "git_head")
     # Durable "CI reached us" breadcrumb. The poller keeps the index fresh
@@ -123,7 +157,8 @@ async def handle_code_refresh(input: CodeRefreshInput) -> CodeRefreshOutput:
             result.head[:12],
         )
 
-    async def _one_pass() -> None:
+    async def _one_pass() -> bool:
+        """Whether the ingest pass ran to its end."""
         # Renewed (and released) from before the lock wait, so a pass cancelled
         # while it waits gives the lease up too.
         held: contextlib.AbstractAsyncContextManager[object] = (
@@ -134,11 +169,18 @@ async def handle_code_refresh(input: CodeRefreshInput) -> CodeRefreshOutput:
                 await _pass()
         except leases.LeaseLost:
             logger.warning("code.refresh(%s/%s): lease lost; the pass stopped", org, ns)
+            return False
         except Exception:
             logger.exception("code.refresh: ingest pass failed")
+            return False
+        return True
 
+    loop = asyncio.get_running_loop()
     if input.wait:
-        await asyncio.wait_for(_one_pass(), timeout=input.wait_timeout_seconds)
+        # the links are followed in what the pass leaves of the wait, and never fail it
+        wait_ends = loop.time() + input.wait_timeout_seconds
+        if await asyncio.wait_for(_one_pass(), timeout=input.wait_timeout_seconds):
+            await _settle_links(org, ns, wait_ends)
         head_after = await repo.get_state(org, ns, "git_head")
         return CodeRefreshOutput(
             triggered=True,
@@ -147,7 +189,12 @@ async def handle_code_refresh(input: CodeRefreshInput) -> CodeRefreshOutput:
             head_after=head_after,
         )
 
-    _REFRESH_TASKS.spawn(_one_pass(), name="code-refresh")
+    async def _in_background() -> None:
+        if await _one_pass():
+            # for as long as a pass of the link worker may run
+            await _settle_links(org, ns, loop.time() + settings.memory_code_links_max_pass_seconds)
+
+    _REFRESH_TASKS.spawn(_in_background(), name="code-refresh")
     return CodeRefreshOutput(
         triggered=True,
         already_running=False,

@@ -4,8 +4,8 @@ and workers pods mount the Secret's certificate and key whole (no subPath, so a
 renewed pair reaches them), serve them through LOOM_TLS_CERT_FILE, LOOM_TLS_KEY_FILE
 and LOOM_TLS_MIN_VERSION, and probe over HTTPS; the Service marks its port `appProtocol: https`
 and the helm test calls it over HTTPS. Without it, no pod carries any of that. The
-names the block renders are refused anywhere else, and so is the assistant, which calls
-the port over plain HTTP.
+names the block renders are refused anywhere else. The native assistant shares the
+serving process and supports the same TLS configuration.
 
     python -m scripts.gates.helm_tls
 
@@ -121,9 +121,8 @@ def main() -> None:
     refused(alb.format("backend-protocol"), *sets("tls.secretName=x", ALB_HTTPS, service + "HTTP"))
     only_service = sets("tls.secretName=loom-tls", service + "HTTPS", *EVERYTHING)
     check_served(render(*EKS, *only_service), "on the Service only", "1.2")
-    assistant = ("assistant.enabled=true", "assistant.existingSecret=ci")
-    refused(
-        "assistant.enabled calls Loom's port over plain HTTP", *sets("tls.secretName=x", *assistant)
+    check_served(
+        render(*EKS, *sets(*on, "assistant.nativeEnabled=true")), "native assistant", "1.2"
     )
     # A release upgraded with --reuse-values from a chart without the block, then given a
     # Secret, serves the default minimum.

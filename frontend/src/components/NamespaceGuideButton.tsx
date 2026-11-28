@@ -69,7 +69,7 @@ export function NamespaceGuideButton({
           icon="info-in-circle"
           label="Guide"
           tooltip={about}
-          type="secondary"
+          type="ghost"
           aria-describedby={describedBy}
           onClick={() => setOpen(true)}
         />

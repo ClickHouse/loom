@@ -15,8 +15,8 @@ optional precision upgrades and need their language toolchain in the worker imag
 
 ## Self-service repositories
 
-Needs `LOOM_CODE_SELF_SERVICE_ENABLED` and the `code_ingest` worker. Both are enabled by
-the stock development Compose deployment; custom deployments can disable either.
+Needs `LOOM_CODE_SELF_SERVICE_ENABLED` and the `code_ingest` worker. Both are on by
+default; a deployment can disable either.
 
 It also needs the [repository-job sandbox](../../operations/code-index-operations.md#repository-job-sandbox):
 a repository added here gets compiler tiers that execute its own build code, and its

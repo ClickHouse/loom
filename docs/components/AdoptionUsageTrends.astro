@@ -1,0 +1,40 @@
+---
+import type { ChartGrain } from "../lib/adoption-chart-series.mjs";
+import { activityPoints } from "../lib/adoption-chart-series.mjs";
+import { usageMetricGroups } from "../lib/adoption-view.mjs";
+import AdoptionMetricPair from "./AdoptionMetricPair.astro";
+
+type Metric = (typeof usageMetricGroups)[number]["metrics"][number][0];
+type ActivityRow = {
+  period: string;
+  days_reported: number;
+  complete_days_reported?: number;
+  current: boolean;
+} & Partial<Record<Metric, number | null>>;
+
+interface Props {
+  rows: ActivityRow[];
+  grain: ChartGrain;
+  metric?: string;
+  rangeStart?: string;
+  rangeEnd?: string;
+}
+
+const { rows, grain, metric, rangeStart, rangeEnd } = Astro.props;
+const metrics = usageMetricGroups.flatMap<readonly [Metric, string]>(({ metrics }) => metrics);
+const hasPoints = ([key]: (typeof metrics)[number]) => rows.some((row) => Number.isFinite(row[key]));
+const selected = metrics.find((entry) => entry[0] === metric) ?? metrics.find(hasPoints) ?? metrics[0];
+const footprint = selected?.[0].startsWith("median_");
+---
+
+{selected && (
+  <AdoptionMetricPair
+    label={selected[1]}
+    description={footprint ? "Median daily peak among active installations." : undefined}
+    rows={activityPoints(rows, selected[0], grain)}
+    {grain}
+    kind={footprint ? "gauge" : "additive"}
+    axisStart={rangeStart}
+    axisEnd={rangeEnd}
+  />
+)}

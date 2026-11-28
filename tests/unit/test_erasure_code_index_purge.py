@@ -16,6 +16,7 @@ from server.code.app.index import retire
 from server.erasure.app import saga_steps
 from server.erasure.store import census as erasure_census
 from server.erasure.store import mutations as erasure_mutations
+from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_memory as memory_steps
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -181,3 +182,40 @@ def test_the_saga_step_reads_the_code_tables_through_retire(monkeypatch) -> None
         "code_tables": retire.code_tables_keyed_by_namespace,
         "refresh_views": retire.refresh_code_views,
     }
+
+
+def _asked_in(sql: str) -> bool:
+    """The predicate reaches a row by the namespace it was asked in: `namespace` itself,
+    not only `memory_namespace`, the memory an answer quoted."""
+    return bool(re.search(r"(?<![\w])namespace (=|IN) \{ns:", sql))
+
+
+def test_the_answer_cache_of_an_erased_code_namespace_is_deleted_with_it() -> None:
+    """An answer asked in the erased code namespace carries the repository's code in its
+    text, so the step deletes it with the namespace."""
+    ch = _StubCH([], count=2)
+    n = asyncio.run(graph_steps.delete_code_answers_by_namespace("o", "code-repo", ch=ch))
+    assert n == 2
+    ((count_sql, count_params),) = ch.counts
+    assert "loom.code_answers" in count_sql and _asked_in(count_sql)
+    ((delete_sql, delete_params),) = ch.commands
+    assert delete_sql.lstrip().startswith("DELETE FROM loom.code_answers")  # lightweight
+    assert _asked_in(delete_sql)
+    assert count_params["ns"] == delete_params["ns"] == "code-repo"
+
+
+def test_a_namespace_list_reaches_the_answers_asked_in_any_of_them() -> None:
+    ch = _StubCH([], count=1)
+    asyncio.run(graph_steps.delete_code_answers_by_namespace("o", ["a", "b"], ch=ch))
+    ((delete_sql, delete_params),) = ch.commands
+    assert _asked_in(delete_sql) and "namespace = {ns:String}" not in delete_sql
+    assert delete_params["ns"] == ["a", "b"]
+
+
+def test_the_census_counts_the_answers_asked_in_the_erased_namespace() -> None:
+    """The residue census reads the same predicate the step deletes by, so an answer left
+    asked in the erased namespace fails the erasure instead of passing it."""
+    sub = {s.table: s for s in erasure_census._CENSUS}["loom.code_answers"]
+    assert sub.ns_pred is not None and _asked_in(sub.ns_pred)
+    assert "memory_namespace" in sub.ns_pred  # the memory-quoting answers stay counted
+    assert "answer != ''" in sub.ns_pred  # a tombstone holding no text is not residue

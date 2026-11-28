@@ -20,6 +20,7 @@
 
 import os from "node:os";
 import { readJsonFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
+import { toolsetParts, unknownUnion } from "./toolset.mjs";
 
 export const RECORDING_TTL_MS = 10 * 60 * 1000;
 
@@ -58,6 +59,16 @@ export function recordingFromNamespace(body) {
   if (!body || body.found !== true) return null;
   const v = body.conversation_logging_enabled;
   return typeof v === "boolean" ? v : null;
+}
+
+/** Whether the session's toolset lists the conversation write tools, which only
+ *  `all` does. A model that cannot see them needs no line telling it to leave
+ *  them alone, and the primer then asks the server nothing about the switch.
+ *  A union the server does not serve (`unknownUnion`) may list them, so it
+ *  keeps the line. */
+export function listsConversationTools(toolset) {
+  const parts = toolsetParts(toolset);
+  return parts.includes("all") || unknownUnion(parts);
 }
 
 /** The primer's conversation line for a known or unknown switch. */

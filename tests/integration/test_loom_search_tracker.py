@@ -278,7 +278,7 @@ async def test_general_tracker_search_cites_public_issues_and_prs_only(
     assert response.json()["tracker"]["mode"] == "search"
     assert "canary" not in json.dumps(response.json()["tracker"])
 
-    ch_client.command("SYSTEM FLUSH LOGS")
+    ch_client.command("SYSTEM FLUSH LOGS query_log")
     metrics = ch_client.query(
         "SELECT count(), sum(read_rows), sum(read_bytes), max(memory_usage), max(query_duration_ms) "
         "FROM system.query_log WHERE user={user:String} AND type='QueryFinish'",
