@@ -2,7 +2,11 @@
 
 ## Reporting a vulnerability
 
-Email `security@clickhouse.com` with `[loom]` in the subject. Do not open a public GitHub issue for security-sensitive findings.
+Open the repository's [security page](https://github.com/ClickHouse/loom/security),
+select **Report a vulnerability**, and complete the private reporting form.
+The report is shared with repository maintainers without opening a public issue.
+
+You can also email `security@clickhouse.com` with `[loom]` in the subject. Do not open a public GitHub issue for security-sensitive findings.
 
 Please include, where it makes sense:
 
