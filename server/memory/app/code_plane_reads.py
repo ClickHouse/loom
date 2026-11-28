@@ -14,14 +14,12 @@ from server.code.domain.anchor import Definition, bare_name, local_name
 from server.code.domain.declaration import fingerprint_version
 from server.code.domain.extract import bounded_parse
 from server.identity.domain.read_scope import ReadFilters
-from server.memory.domain.code_change import worst
+from server.memory.domain.code_change import LOCATED, relocation, worst
 from server.memory.domain.decision_schema import CONSTRAINT_TAG
 from server.memory.store import code_links as links_store
 from server.memory.store import code_plane_reads as reads
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
-
-_LOCATED_STATES = ("fresh", "moved", "changed")
 
 
 async def lesson_namespaces(org: str, code_namespace: str, extra: Sequence[str]) -> list[str]:
@@ -79,11 +77,13 @@ async def lessons_for_symbol(
     fresh_at_commit: str = "",
 ) -> list[dict[str, Any]]:
     """The served memories of `namespaces` linked to this symbol, current ones first,
-    each with the state of the symbol's code on the branch read.
+    each with the state of the symbol's code on the branch read, and `code_moved` when
+    the read found that code at another path or symbol than the memory was written
+    against (`_moved_here`).
     `fresh_at_commit` restricts the answer to lessons confirmed fresh at that revision.
     Otherwise an unreadable branch uses trunk's state."""
     from server.code.app import memory_links as code
-    from server.memory.app.code_link_reads import current_links
+    from server.memory.app.code_link_reads import current_links, readable_namespaces
 
     if not namespaces:
         return []
@@ -130,25 +130,52 @@ async def lessons_for_symbol(
         changed=[mid for mid, state in states.items() if state == "changed"],
     )
     rows = {str(r["mid"]): r for r in served}
+    # a place in the trunk repository is named only to a caller who may read it
+    names_trunk = any(relocation({**a, "state": state}) for a, state, _ in matched) and bool(
+        await readable_namespaces(org, {trunk})
+    )
     out: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
     for a, state, suggestion in matched:
         row = rows.get(a["memory_id"])
         if row is None or row["mid"] in out:
             continue
         rank = (state == "changed", not row.get("pinned"), -float(row.get("confidence") or 0))
-        out[row["mid"]] = (
-            rank,
-            {
-                "memory_key": str(row["memory_key"]),
-                "namespace": str(row["namespace"]),
-                "excerpt": str(row["excerpt"]),
-                "code_state": state,
-                "changed_since": a["changed_since"] if state == "changed" else "",
-                "suggestion": suggestion,
-            },
-        )
+        lesson: dict[str, Any] = {
+            "memory_key": str(row["memory_key"]),
+            "namespace": str(row["namespace"]),
+            "excerpt": str(row["excerpt"]),
+            "code_state": state,
+            "changed_since": a["changed_since"] if state == "changed" else "",
+            "suggestion": suggestion,
+        }
+        if names_trunk and (moved := _moved_here(a, state, here)):
+            lesson["code_moved"] = moved
+        out[row["mid"]] = (rank, lesson)
     ranked = [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
     return fit_symbol_lessons(ranked)
+
+
+def _moved_here(
+    a: LinkRow, state: str, here: dict[tuple[str, str], Definition] | None
+) -> list[dict[str, Any]]:
+    """Link `a`, in `state` on the branch read, as a lesson's `code_moved`: a code link's
+    non-empty fields, when the code is where trunk has it now under another path or
+    symbol than the memory was written against; the lines are the branch's own where its
+    files were read (`here`). [] for a branch that still has the code under an earlier
+    name: its text names what the branch has."""
+    from server.memory.app.code_link_reads import relocated
+
+    now = here.get((a["path"], a["qualified_name"])) if here is not None else None
+    if here is not None and now is None:
+        return []
+    link: dict[str, Any] = {
+        **a,
+        "state": state,
+        "changed_since": a["changed_since"] if state == "changed" else "",
+    }
+    if now is not None:
+        link |= {"start_line": now.start_line, "end_line": now.end_line}
+    return [moved.model_dump(exclude_defaults=True) for moved in relocated([link])]
 
 
 def fit_symbol_lessons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -196,8 +223,9 @@ async def decisions_for_paths(
     namespace `trunk_ns` whose `files[]` or code links touch `paths`, at most `limit`
     served and the rest left out. The rows `first` admits rank ahead, then constraints,
     then pinned rows, then by confidence. Each is a `memory.for_file` hit with its
-    `memory_id`, `code_state` the worst over its links on every path and
-    `code_changed_since` the commit of that state, `line` (the
+    `memory_id`, `code_state` the worst over its links on every path,
+    `code_changed_since` the commit of that state, `code_moved` its relocated links on
+    every path, `line` (the
     pre-edit block's line, the value cut) and `text` (the value as that read holds it:
     cut at its ceiling when `value_truncated`). Each path's read keeps its top
     PER_PATH_ROWS rows. `refused`, and nothing read, when the caller may not read
@@ -234,6 +262,8 @@ async def decisions_for_paths(
             if worst([row["code_state"], hit["code_state"]]) != row["code_state"]:
                 row["code_state"] = hit["code_state"]
                 row["code_changed_since"] = hit.get("code_changed_since", "")
+            if row is not hit:
+                row["code_moved"] = [*row.get("code_moved", []), *hit.get("code_moved", [])]
     found = [r | {"line": listing_line(r), "text": value_text(r)} for r in rows.values()]
     found.sort(
         key=lambda r: (
@@ -337,7 +367,7 @@ def _as_trunk_has_it(links: list[LinkRow], qualified_name: str) -> list[tuple[Li
     """(link, code state, suggestion) of each link to the symbol, as trunk's last check
     left it: what is served where the branch's own files cannot be read. A link trunk
     lost is left out, since nothing here shows the code exists."""
-    live = [a for a in links if a["state"] in _LOCATED_STATES]
+    live = [a for a in links if a["state"] in LOCATED]
     defs = [
         Definition(a["path"], a["qualified_name"], bare_name(a["qualified_name"])) for a in live
     ]
@@ -385,7 +415,7 @@ def _lesson_state(
         on_trunk
         and at_current
         and now.body_hash == a["checked_hash"]
-        and (not require_fingerprint or a["state"] in _LOCATED_STATES)
+        and (not require_fingerprint or a["state"] in LOCATED)
     ):
         return stored  # trunk's definition as the worker last checked it
     # compare with the baseline; a branch that still has the code under its anchored

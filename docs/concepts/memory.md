@@ -484,8 +484,24 @@ commits its hashes were taken at. When its old text is gone from git, a link tha
 it takes the text the next check finds and a changed one stays `changed`; one whose old
 text no longer parses keeps its last state, and the worker reports it.
 
-Loom never writes the memory. The namespace's `code_change_policy`
-(`namespace.register`) decides what reads make of a change:
+Loom never writes the memory, so after a rename its text still says the old name. The
+reads that serve its links (listed below, `namespace.validate` apart) name where the
+code is now. A link that is `fresh`, `moved` or `changed` at another path or symbol than
+the memory was written against is served with both: the current `path`, `symbol`,
+`start_line` and `end_line` (trunk's, at the link's last check), and `was_path` and
+`was_symbol`, the oldest of the identities the link keeps (its last 16; a claim the
+`revise` policy found to hold is re-anchored where the code is and still carries them).
+A link to a file carries the path it was written against and no lines. A definition
+renamed back to its first name carries neither, nor does an `unresolved` or `missing`
+link, nor a link to a definition that replaced a link to its file. In text the line
+reads
+``(code moved: `reader::fetch_rows` is now `reader::load_rows` at src/reader.py:12-40)``;
+a line whose code also changed keeps its warning and adds the same clause. A line names
+two such links and counts the rest. Naming the place moves no result: a `moved` memory
+keeps its rank.
+
+The namespace's `code_change_policy` (`namespace.register`) decides what reads make of a
+change:
 
 | Policy                     | Removed code                                                                                                                                                                                                                           | Changed code                                                                                                                                                          |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -540,7 +556,10 @@ trunk's last state.
 
 The links are read where the code is:
 
-- `code.symbol` attaches the linked memories as `lessons`, each with its `code_state`.
+- `code.symbol` attaches the linked memories as `lessons`, each with its `code_state`
+  and, when the definition read is at another path or symbol than the memory was written
+  against, `code_moved` (on a branch, with the branch's own lines; a branch that still
+  has the code under an earlier name gets none, since the text names what it has).
   They come from the repository's team namespace and the `lesson_namespaces` the call
   names (over MCP the caller's memory home when it names none), never from every
   namespace the caller can read. The read is bounded by `code_enrich_timeout_s` and
@@ -555,8 +574,9 @@ The links are read where the code is:
   root that it ends in), each with its `code_state`, within `code_result_lessons_tokens`. Each
   row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `changed_since` (the
   commit that put its code in a changed, unresolved or missing state) when one is known, and
-  `supersedes_key` when it replaces an older row; a row another row read for the answer
-  supersedes is not served. `lessons_left_out` counts the rows the cap, a cut or that rule left
+  `supersedes_key` when it replaces an older row, and `code_moved` (its links to code in the
+  file that is now at another path or symbol than it was written against) when there are
+  any; a row another row read for the answer supersedes is not served. `lessons_left_out` counts the rows the cap, a cut or that rule left
   out. A decision or constraint is served whole or left out. The read runs after the answer,
   never enters the search memo, and is skipped for `include_lessons: false`, with
   `code_result_lessons` off, or for a token narrowed to its own user or session.
@@ -574,15 +594,22 @@ The links are read where the code is:
   `memory.for_file` to read the broader file history.
 - `memory.for_file` serves memories linked to code in the file beside those whose
   `files` name it. A line whose code changed, was not found again or went says so and
-  names the first indexed commit at which it read so; `context.pack` decision lines
-  carry the same note, and its memory lines a `code_state=<state>@<commit>` label.
-- `memory.get` returns the links as `code` (with any `suggestion`); `memory.search` hits
+  names the first indexed commit at which it read so, and a line whose code is now at
+  another path or symbol says where (each hit lists those links as `code_moved`);
+  `context.pack` decision lines carry the same note, and its memory lines a
+  `code_state=<state>@<commit>` label with `(code moved: …)` ahead of the text.
+- `memory.get` returns the links as `code` (each with its lines, any `suggestion`, and
+  `was_path` and `was_symbol` when the code moved); `memory.search` hits
   read from a memory's own row carry its worst link as `code_state` and, when that is
   `changed`, `unresolved` or `missing`, the commit that put it there, when one is known,
-  as `code_changed_since` (a chunk, record or summary hit carries neither and is never
+  as `code_changed_since`, and the links now at another path or symbol as `code_moved`
+  (a chunk, record or summary hit carries none of these and is never
   left out). A `render="reader"` block and every page of `loom_search`'s text say so on
-  such a hit's line, with the same note as a `memory.for_file` line; `memory.ask` notes
-  the memories whose code moved, changed or went.
+  such a hit's line, with the same note as a `memory.for_file` line. Where the
+  deployment sets `memory_ask_code_namespace` to a code namespace the caller may read
+  and leaves `memory_ask_code_staleness` on, `memory.ask` gives its synthesis a note of
+  the memories whose code moved, changed or went, with the same clause for a link now at
+  another path or symbol.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read.
 

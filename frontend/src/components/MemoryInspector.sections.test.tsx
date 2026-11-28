@@ -142,6 +142,49 @@ describe("MemoryInspector reads what is open", () => {
     expect(screen.getByText("docs/b.md")).toBeInTheDocument();
   });
 
+  it("names where moved code is now and what the memory was written as", async () => {
+    vi.mocked(getMemory).mockResolvedValueOnce({
+      found: true,
+      value: "`fetch_rows` retries twice",
+      memory_type: "semantic",
+      confidence: 1,
+      pinned: false,
+      tags: [],
+      created_at: new Date().toISOString(),
+      version: 1,
+      code: [
+        {
+          code_namespace: "code-a",
+          path: "src/reader.py",
+          symbol: "reader::load_rows",
+          start_line: 12,
+          end_line: 40,
+          state: "moved",
+          changed_since: "",
+          was_path: "src/reader.py",
+          was_symbol: "reader::fetch_rows",
+        },
+        {
+          code_namespace: "code-a",
+          path: "src/b.py",
+          symbol: "b::keep",
+          start_line: 3,
+          end_line: 9,
+          state: "fresh",
+          changed_since: "",
+          was_path: "",
+          was_symbol: "",
+        },
+      ],
+    } as MemoryDetail);
+    open();
+    await screen.findByText("Linked code");
+    expect(screen.getByText("reader::load_rows")).toBeInTheDocument();
+    expect(screen.getByText("code-a · src/reader.py:12-40")).toBeInTheDocument();
+    expect(screen.getByText("reader::fetch_rows")).toBeInTheDocument();
+    expect(screen.getAllByText(/Written as/)).toHaveLength(1);
+  });
+
   it("Last recalled counts every agent read that served the key, apart from the ranking credit", async () => {
     const base = {
       found: true,

@@ -726,6 +726,48 @@ async def test_a_rename_alone_moves_the_link(env) -> None:
     (link,) = await _links(mid)
     assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "moved")
 
+    # Loom wrote no new text, so the reads that serve the link name where the code is now
+    # and what the memory still calls it
+    path, now, was = "src/widgets/io.py", link["symbol"], link["was_symbol"]
+    assert (link["path"], link["start_line"], link["end_line"]) == (path, 1, 3)
+    assert (link["was_path"], was.rsplit("::", 1)[-1]) == (path, "fetch_rows")
+    note = f"(code moved: `{was}` is now `{now}` at {path}:1-3)"
+
+    from server.memory.api.models_for_file import MemoryForFileInput
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.for_file import handle_memory_for_file
+    from server.memory.app.search.handler import handle_memory_search
+
+    read = await handle_memory_search(
+        MemorySearchInput(
+            org=ORG, namespace=MEM, agent="*", query="fetch_rows drops empty rows", render="reader"
+        )
+    )
+    hit = next(h for h in read.results if h.memory_key == "fetch-rows")
+    assert hit.code_state == "moved"
+    assert [m.model_dump() for m in hit.code_moved] == [link]
+    line = next(p for p in read.reader_block.split("\n\n") if "[fetch-rows]" in p)
+    assert note in line
+    hook = await handle_memory_for_file(
+        MemoryForFileInput(org=ORG, namespace=MEM, path=path, extra_namespaces=[TRUNK])
+    )
+    (row,) = [h for h in hook.hits if h.memory_key == "fetch-rows"]
+    assert [m.model_dump() for m in row.code_moved] == [link]
+    assert note in hook.rendered
+    (lesson,) = await _lessons(TRUNK, "load_rows")
+    assert (lesson["code_state"], lesson["code_moved"][0]["was_symbol"]) == ("moved", was)
+
+    # renamed back: the link is where the memory says it is, and no reader adds a note
+    c3 = repo.commit({"src/widgets/io.py": src})
+    await _index(TRUNK, repo, c3, ["src/widgets/io.py"])
+    await _pass()
+    (link,) = await _links(mid)
+    assert (link["symbol"], link["was_path"], link["was_symbol"]) == (was, "", "")
+    hook = await handle_memory_for_file(
+        MemoryForFileInput(org=ORG, namespace=MEM, path=path, extra_namespaces=[TRUNK])
+    )
+    assert "code moved" not in hook.rendered
+
 
 async def test_a_file_link_follows_its_cited_lines_and_the_definition_its_memory_names(
     env,
