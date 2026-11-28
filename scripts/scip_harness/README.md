@@ -37,10 +37,11 @@ line, then `wrote <file> (sha …)`.
 
 A document the converter cannot parse or convert (a string that is not UTF-8,
 say) is skipped: it is named once on stderr (`scip_to_delta: warning: skipped
-document …`) and counted in the summary line, and listed in the delta's
+document …`) and counted in the summary line. It is listed in the delta's
 `skipped_files` when it is one of the files the delta converts (a window's
-own, or any in a full run), and the rest of the index converts. The server keeps that file's compiler
-rows and marks them stale until a later delta converts it. With
+own, or any in a full run). The rest of the index converts. The server keeps
+that file's compiler rows and marks them stale until a later delta converts
+it. With
 `SCIP_STOP_ON_FAILED_DOCUMENT=1` (the server sets it from
 `LOOM_CODE_SCIP_STOP_ON_FAILED_DOCUMENT`) `convert_delta` passes
 `--stop-on-failed-document`, and such a document fails the run. An index whose
