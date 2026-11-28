@@ -121,8 +121,8 @@ async function main() {
     timeoutMs: TIMEOUT_MS,
   });
   const text = renderLookup(lookup, res, repo);
-  if (text) process.stdout.write(JSON.stringify(packPayload(text)) + "\n");
   scheduleExit(0);
+  return text ? packPayload(text) : undefined;
 }
 
 runHookMain(main);
