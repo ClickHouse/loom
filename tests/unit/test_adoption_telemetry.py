@@ -15,7 +15,7 @@ from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, run
 
 def test_domain_sharing_is_enabled_by_default() -> None:
     assert Settings.model_fields["adoption_telemetry_share_domains"].default is True
-    assert Settings.model_fields["adoption_telemetry_share_domain_activity"].default is False
+    assert Settings.model_fields["adoption_telemetry_share_domain_activity"].default is True
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -596,12 +596,18 @@ async def test_missing_deployment_id_surfaces_status_without_delivery(
     ids=["redirect", "wrong-acknowledgement", "oversized-acknowledgement"],
 )
 @pytest.mark.parametrize("share_domains", [False, True])
+@pytest.mark.parametrize("domain_activity_enabled", [False, True])
 async def test_delivery_retries_without_recounting_after_ack(
-    monkeypatch: pytest.MonkeyPatch, rejection: httpx.Response | None, share_domains: bool
+    monkeypatch: pytest.MonkeyPatch,
+    rejection: httpx.Response | None,
+    share_domains: bool,
+    domain_activity_enabled: bool,
 ) -> None:
     monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
     monkeypatch.setattr(settings, "adoption_telemetry_share_domains", share_domains)
-    monkeypatch.setattr(settings, "adoption_telemetry_share_domain_activity", True)
+    monkeypatch.setattr(
+        settings, "adoption_telemetry_share_domain_activity", domain_activity_enabled
+    )
     monkeypatch.setattr(
         adoption_telemetry, "utc_now", lambda: datetime(2026, 11, 24, 3, tzinfo=UTC)
     )
@@ -630,7 +636,7 @@ async def test_delivery_retries_without_recounting_after_ack(
         assert start == datetime(2026, 11, 23, 12, tzinfo=UTC)
         assert end == datetime(2026, 11, 24, tzinfo=UTC)
         assert restricted == (restricted_pairs if share_domains else None)
-        assert share_domain_activity is True
+        assert share_domain_activity is domain_activity_enabled
         return {"installation_id": str(installation_id), "window_start": start.isoformat()}
 
     aggregate = AsyncMock(side_effect=report)

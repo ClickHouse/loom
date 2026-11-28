@@ -4462,7 +4462,7 @@ class ObservabilitySettings(BaseModel):
     adoption_telemetry_share_domains: bool = True
     # Share daily account, successful request and serving process counts for contact domains.
     # Requires domain sharing.
-    adoption_telemetry_share_domain_activity: bool = False
+    adoption_telemetry_share_domain_activity: bool = True
     # Seconds between adoption checks and retries. A report covers 12 hours.
     adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 

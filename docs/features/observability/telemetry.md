@@ -56,7 +56,7 @@ report. Daily measurements begin with the next version 3 report.
 | `daily_successful_requests`                                                                                            | Total eligible successful requests in the complete UTC day. Included in the second report of that day.                                                                                                                                   |
 | `active_accounts`                                                                                                      | Distinct authenticated users per organization with at least one eligible successful request in the complete UTC day. Included in the second report of that day.                                                                          |
 | `serving_processes`                                                                                                    | Distinct known server processes with at least one eligible successful request in the complete UTC day. Included in the second report of that day.                                                                                        |
-| `domain_activity`                                                                                                      | Daily active users, successful requests, and serving processes in standard namespaces grouped by shared contact domain. Included when deployments opt in to domain activity sharing.                                                     |
+| `domain_activity`                                                                                                      | Daily active users, successful requests, and serving processes in standard namespaces grouped by shared contact domain. Included by default when domain sharing is enabled.                                                              |
 | `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                                                                  |
 | `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                                                                         |
 | `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                                                                 |
@@ -86,11 +86,12 @@ Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false` on every server and worker rep
 to omit domains while sending aggregate usage. In a settings file, set
 `adoption_telemetry_share_domains: false`.
 
-Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY=true` on every server and worker
-replica to share daily usage counts for reported contact domains. In a settings file,
-set `adoption_telemetry_share_domain_activity: true`. Domain activity sharing is off by
-default and requires domain sharing. Only standard namespaces with a contact domain
-shared in the same report contribute to the public domain activity counts.
+Daily usage counts for reported contact domains are public by default when domain
+sharing is enabled. To share domain names alone, set
+`LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY=false` on every server and worker
+replica. In a settings file, set `adoption_telemetry_share_domain_activity: false`.
+Only standard namespaces with a contact domain shared in the same report contribute
+to the public domain activity counts.
 
 ### Adoption dashboard
 
@@ -103,7 +104,7 @@ in the public directory's lookback period and orders names by those requests. Th
 one-year view uses the 90-day directory. Domain activity sharing adds successful
 requests, active installations, active users, serving processes, the latest
 reported Loom version, and first retained and latest activity dates for each domain.
-Those details use reports from installations that opted in to sharing domain activity.
+Those details use completed daily reports with domain activity sharing enabled.
 Use the domain-sharing setting above to omit domains from your reports.
 `loom_adoption_windows` contains one report per
 `(installation_id, window_start)`. The daily rollup adds request counts and

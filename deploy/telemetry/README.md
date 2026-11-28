@@ -120,12 +120,12 @@ count the same authenticated identity in more than one installation. A serving p
 observed host and process pair. Workers and processes created by restarts count
 separately. Weekly and monthly activity report the peak measured daily count.
 
-Domain activity counts come from reports whose operators enable
-`LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY` alongside domain sharing. The
-directory shows successful requests and distinct active installations from
-complete UTC days in its selected window. Active users and serving processes
+Domain activity counts come from reports with domain and activity sharing enabled.
+Both settings are enabled by default. The directory shows successful requests and
+distinct active installations from complete UTC days in its selected window.
+Active users and serving processes
 use the latest measured day. First and last activity dates and the latest Loom
-version come from qualifying activity in opted-in reports. The first activity date
+version come from qualifying activity in those reports. The first activity date
 can precede the selected window. The public response contains counts and version
 labels. It keeps account identifiers and serving process names on the installation.
 Measurements are unavailable for domains that share their name alone.

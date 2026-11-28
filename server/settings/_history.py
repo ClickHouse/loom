@@ -161,4 +161,14 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "when CI calls `code.refresh` sets it to false."
         ),
     ),
+    DefaultChange(
+        version="1.3.1",
+        name="adoption_telemetry_share_domain_activity",
+        old=False,
+        new=True,
+        why=(
+            "Show daily usage for shared contact domains in the public adoption directory. "
+            "Deployments can disable activity sharing while keeping domain names public."
+        ),
+    ),
 )
