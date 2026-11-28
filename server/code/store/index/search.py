@@ -17,17 +17,24 @@ from server.code.store.index.sql import _scope_sql, path_penalty_sql, skip_tests
 from server.core.datetimes import naive_utc_now as _now
 
 
+def _nearest_first(rows: list[dict[str, Any]], *keys: str) -> list[dict[str, Any]]:
+    """`rows` nearest first, rows at one distance in `keys` order: the statement that
+    read them may sort on the distance alone."""
+    return sorted(rows, key=lambda r: (r["distance"], *(r[k] for k in keys)))
+
+
 def _cut_on_votes(ranked_sql: str, order: str, factor: str) -> str:
     """Wrap the lexical statement, limited to `{depth:UInt32}` rows in `order`, so it
     ranks those rows in that order (`lex_rank`) and marks as `in_pool` the `pool` of
     them with the largest vote in the ranking: `factor`, the factor of the row's path,
-    over RRF_K plus its rank. It returns them with the first `pool` rows by rank, in
-    rank order."""
+    over RRF_K plus its rank, the better rank first among equal votes (a row with the
+    factor 0.25 at rank 1 and a source row at rank 184 both vote 1 / 244). It returns
+    them with the first `pool` rows by rank, in rank order."""
     return f"""
             SELECT *
             FROM (
                 SELECT *, row_number() OVER (
-                    ORDER BY {factor} / ({{rrf_k:Float64}} + lex_rank) DESC
+                    ORDER BY {factor} / ({{rrf_k:Float64}} + lex_rank) DESC, lex_rank
                 ) <= {{pool:UInt32}} AS in_pool
                 FROM (
                     SELECT *, row_number() OVER (ORDER BY {order}) AS lex_rank
@@ -63,6 +70,13 @@ class SearchMixin(CodeRepoBase):
         length. idfs are app-computed from the corpus-stat MVs and bound
         positionally (memory-plane convention).
 
+        Rows with one score come in file order, the earlier lines first
+        (`path, start_line, chunk_id`). A short query's rows tie by the
+        thousand, ClickHouse returns equal rows in the order it read them,
+        which changes with the parts that hold them, and the rank decides
+        the pool and the vote. `(path, chunk_id)` is the table's key under
+        the identity columns, so no two rows are left equal.
+
         `scope` adds the pattern / path predicates to the plain WHERE after
         the identity keys; unset, the statement is unchanged byte for byte.
 
@@ -75,12 +89,11 @@ class SearchMixin(CodeRepoBase):
         more. Every row then carries its rank in the whole leg (`lex_rank`,
         what it votes with) and `in_pool`; the rows are that pool and the
         leg's own first `pool` rows, which calibration reads, in rank order.
-        Rows with one score rank by their factor, the largest first: a short
-        query's rows tie by the thousand, ClickHouse returns equal rows in
-        no fixed order, and the rank decides the pool. The scan reads
-        `pool_cut.cut_depth` rows deep, past which no row can be in the
-        pool. At 1 the statement is unchanged byte for byte, the rows are
-        the pool, and a row's rank is its position.
+        Rows with one score rank by their factor, the largest first, and
+        then in file order. The scan reads `pool_cut.cut_depth` rows deep,
+        past which no row can be in the pool. At 1 the statement is
+        unchanged byte for byte, the rows are the pool, and a row's rank is
+        its position.
 
         The String query form of `hasAnyTokens` tokenizes the query with
         the text index's splitByNonAlpha tokenizer. Its Array form takes
@@ -107,7 +120,8 @@ class SearchMixin(CodeRepoBase):
         scope_sql, scope_params = _scope_sql(scope)
         cut = noise_penalty != 1.0 or prose_penalty != 1.0
         factor, factor_params = path_penalty_sql("path", noise_penalty, prose_penalty)
-        order = f"lex_score DESC, {factor} DESC" if cut else "lex_score DESC"
+        tie = "path, start_line, chunk_id"
+        order = f"lex_score DESC, {factor} DESC, {tie}" if cut else f"lex_score DESC, {tie}"
         sql = f"""
             SELECT chunk_id, path, scope, kind, start_line, end_line,
                    content, symbol_ids, context_description,
@@ -173,7 +187,7 @@ class SearchMixin(CodeRepoBase):
               AND scope IN {{names:Array(String)}}
               AND kind IN ('function', 'class_skeleton')
               {scope_sql}
-            ORDER BY path, scope, start_line
+            ORDER BY path, scope, start_line, chunk_id
             LIMIT 1 BY path, scope
             """,
             {
@@ -222,7 +236,7 @@ class SearchMixin(CodeRepoBase):
             # Source files only — two thirds of the ClickHouse
             # cards are tests, and for a behaviour question they are the nearest
             where_prefix += skip_tests_sql("scope_path")
-        return await self._ch.query_all(
+        rows = await self._ch.query_all(
             f"""
             SELECT scope_path AS path, summary, pagerank,
                    cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
@@ -244,6 +258,7 @@ class SearchMixin(CodeRepoBase):
                 **({"prefix": path_prefix} if path_prefix else {}),
             },
         )
+        return _nearest_first(rows, "path")
 
     async def vector_search_chunks(
         self,
@@ -303,7 +318,7 @@ class SearchMixin(CodeRepoBase):
                 **scope_params,
             },
         )
-        return rows
+        return _nearest_first(rows, "path", "start_line", "chunk_id")
 
     async def vector_shortlist_ids(
         self,
@@ -375,7 +390,8 @@ class SearchMixin(CodeRepoBase):
         the served one until a merge collapsed them.
         The client keeps one row per key, drops the tombstoned ones and the
         rows the two IN lists admit beyond the asked keys, and returns the
-        vector leg's unit columns in distance order, `pool` rows at most."""
+        vector leg's unit columns in distance order, chunks at one distance in
+        file order, `pool` rows at most."""
         if not keys:
             return []
         uniq = sorted({(str(p), str(c)) for p, c in keys})
@@ -406,7 +422,7 @@ class SearchMixin(CodeRepoBase):
                     ORDER BY version DESC
                     LIMIT 1 BY path, chunk_id
                 )
-                ORDER BY distance ASC
+                ORDER BY distance ASC, path, start_line, chunk_id
                 LIMIT {{lim:UInt32}}
                 """,
                 params,

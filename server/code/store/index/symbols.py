@@ -175,7 +175,8 @@ class SymbolsMixin(CodeRepoBase):
         """The names and kinds of the live symbols defined in `paths` — the
         repository's own vocabulary for the files the nearest cards point
         at. One read of two small columns, keyed by path; no bodies, no
-        signatures."""
+        signatures. At most `limit` rows, in name order: the same rows on
+        every read, and a name the cut keeps has its row from each file."""
         if not paths:
             return []
         # No FINAL — on SharedReplacingMergeTree a FINAL read keyed by a
@@ -196,6 +197,7 @@ class SymbolsMixin(CodeRepoBase):
                 GROUP BY tier, qualified_name, symbol_id, name, kind, path
             )
             WHERE is_live = 1
+            ORDER BY name, kind, path
             LIMIT {lim:UInt32}
             """,
             {"org": org, "ns": ns, "paths": sorted(set(paths)), "lim": int(limit)},
@@ -331,7 +333,9 @@ class SymbolsMixin(CodeRepoBase):
         # bare `Field` would otherwise return the 48-line Python helper
         # tests/integration/helpers/dictionary.py::Field above DB::Field on
         # size. The regex is bound as a parameter, never interpolated
-        # (ClickHouse string literals eat backslashes).
+        # (ClickHouse string literals eat backslashes). The path, the line
+        # and the id close the order: overloads share a qualified name and a
+        # span, and the caller serves the first rows.
         # Key discovery from the name-keyed side table (code_symbol_names,
         # a point read by (org, namespace, name)), or the main table
         # when a filename constrains discovery, then the live read by full key.
@@ -364,7 +368,11 @@ class SymbolsMixin(CodeRepoBase):
                 "path": path,
             },
         )
-        keys = [(str(r["tier"]), str(r["qualified_name"]), str(r["symbol_id"])) for r in cand]
+        # The candidates come in no order and the read takes 4,000 keys. Sorted, the cut
+        # keeps the compiler tier's keys first, the tier the ranking prefers, then the
+        # parser tier's, each in qualified-name order: a name with more keys than that
+        # loses its last parser-tier definitions on every request.
+        keys = sorted((str(r["tier"]), str(r["qualified_name"]), str(r["symbol_id"])) for r in cand)
         if not keys:
             return []
         rows = await self._ch.query_all(
@@ -383,7 +391,7 @@ class SymbolsMixin(CodeRepoBase):
                      kind IN ('field', 'method') ASC,
                      tier DESC,
                      kind IN ('class', 'struct', 'enum') DESC,
-                     end_line - start_line DESC, qualified_name
+                     end_line - start_line DESC, qualified_name, path, start_line, symbol_id
             LIMIT {limit:UInt32}
             """,
             {
