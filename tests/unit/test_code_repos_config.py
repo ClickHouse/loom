@@ -154,8 +154,6 @@ def test_backfill_index_exit_code_tolerates_rate_not_perfection() -> None:
     assert backfill_index_exit_code(99, 1) == 1
     assert backfill_index_exit_code(100, 1) == 0
     assert backfill_index_exit_code(0, 0) == 0
-    # a failed write is not a file's error: one row left out fails any run
-    assert backfill_index_exit_code(10234, 0, 1) == 1
 
 
 def test_config_error_is_logged_once_then_read_as_a_gauge(

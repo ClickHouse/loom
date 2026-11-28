@@ -292,14 +292,17 @@ def _prepare(log: str, opts: dict[str, Any]) -> None:
             self.counters["files"] += len(paths)
             return ""
 
-        async def edge_batch(self, paths: list[str]) -> None:
+        async def edge_batch(self, paths: list[str]) -> str:
             live = await _resolve(self, paths[0]) if opts.get("live") else None
             _note(log, role=role, event="edges", first=paths[0], live=live)
+            if paths[0] == opts.get("slow"):
+                await asyncio.sleep(1.0)
             self.edges["files"] += len(paths)
             if paths[0] == opts.get("edge_fails"):
                 # an edge write failed in this batch, in one file's ingest
                 self.edges["errors"] += 1
                 code_backfill.count_unwritten(self.edges, {"code_edges": 3})
+            return code_backfill.write_failed(self.edges)
 
     written = Path(opts["root"]) / "written.txt"
 
@@ -457,27 +460,30 @@ def test_a_held_batch_on_real_workers_starts_nothing_more_and_what_ran_beside_it
     assert owed == ["workers"]
 
 
-def test_an_edge_batch_that_fails_a_write_leaves_the_pass_owed_for_a_resume_without_workers(
+def test_an_edge_batch_that_fails_a_write_stops_the_run_and_a_resume_runs_the_pass(
     tmp_path: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    """A worker's edge batch returns with a failed write. The run still ends (the
-    cursor clears, `git_head` is written) and exits 1 naming the rows the worker
-    counted, and the pass stays owed, so a resume with one process runs it again and
-    only a clean pass clears the record."""
-    first, first_log = _spawn(tmp_path, 2, files=400, edge_fails="f200.py")
+    """A worker's edge batch returns with a failed write while another still runs. No
+    third batch is handed out, and the run exits 1 naming the rows the worker counted,
+    with no watermark, its cursor at the end of the index phase and the pass owed. A
+    resume with one process runs the pass, and only that clean pass clears the record."""
+    first, first_log = _spawn(tmp_path, 2, files=600, slow="f200.py", edge_fails="f0.py")
     first.join(120)
-    assert first.exitcode == 1  # one failed file in 400 would not fail the run; the rows do
+    assert first.exitcode == 1  # one failed file in 600 would not fail the run; the rows do
     assert (
         "failed writes left up to 3 rows out of the index (second edge pass: code_edges 3)"
         in capfd.readouterr().err
     )
-    owed = [e["value"] for e in _events(first_log) if e.get("key") == "backfill_edges_owed:index"]
-    assert owed == ["workers"]  # recorded, and never cleared
-    resume, resume_log = _spawn(tmp_path, 1, files=400)
+    events = _events(first_log)
+    assert sorted(e["first"] for e in events if e["event"] == "edges") == ["f0.py", "f200.py"]
+    state = {e["key"]: e["value"] for e in events if e["event"] == "state"}
+    assert state == {"backfill_edges_owed:index": "workers", "backfill_cursor:index": "600"}
+    resume, resume_log = _spawn(tmp_path, 1, files=600)
     resume.join(120)
     assert resume.exitcode == 0
     events = _events(resume_log)
-    assert [e["first"] for e in events if e["event"] == "edges"] == ["f0.py", "f200.py"]
+    assert [e["first"] for e in events if e["event"] == "batch"] == []
+    assert [e["first"] for e in events if e["event"] == "edges"] == ["f0.py", "f200.py", "f400.py"]
     owed = [e["value"] for e in events if e.get("key") == "backfill_edges_owed:index"]
     assert owed == [""]  # cleared once the pass ran without errors
 

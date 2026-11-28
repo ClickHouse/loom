@@ -212,61 +212,79 @@ def test_an_edge_pass_with_a_failed_file_stays_owed_until_a_rerun_finishes_clean
     assert store.state["backfill_edges_owed:index"] == ""
 
 
+_REPORT = f"backfill at {'f' * 12}: failed writes left up to "
 _RERUN = "re-run to write them (rows already in the index are kept): "
 _COMMAND = "loom code backfill --namespace code-x"
 
 
-def test_an_index_phase_whose_write_failed_exits_non_zero_and_names_the_rows(
+def test_a_failed_index_write_stops_the_run_at_its_batch_and_names_the_rows(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The failed write raised inside a stage that logs it, so no file counts as an
-    error; the rows it dropped are the only record."""
+    error; the rows it dropped are the only record. The next batch's write would fail
+    too, and that batch never starts."""
     store, plan = _harness(monkeypatch, tmp_path, _PATHS)
-    plan["unwritten"] = {"f200.py": {"code_edges": 5, "code_files": 2}}
+    plan["unwritten"] = {
+        "f200.py": {"code_edges": 5, "code_files": 2},
+        "f400.py": {"code_edges": 9},
+    }
     assert _backfill() == 1
+    assert plan["batches"] == ["f0.py", "f200.py"] and plan["edges"] == 0
     assert capsys.readouterr().err.splitlines() == [
-        f"backfill at {'f' * 12}: failed writes left up to 7 rows out of the index "
-        "(index phase: code_edges 5, code_files 2)",
+        "backfill stopped at 200/450: a write failed",
+        _REPORT + "7 rows out of the index (index phase: code_edges 5, code_files 2)",
         _RERUN + _COMMAND,
     ]
-    # the run ends as one with a failed file does: the watermark is written, the
-    # cursor cleared, so the re-run walks the tree again
-    assert store.state["git_head"] == "f" * 40
-    assert store.state["backfill_cursor:index"] == ""
+    # the run ends as a held one does: no watermark, the cursor before that batch
+    assert "git_head" not in store.state
+    assert store.state["backfill_cursor:index"] == "200"
     plan["unwritten"] = {}
     assert _backfill() == 0
-    assert plan["batches"] == ["f0.py", "f200.py", "f400.py"] * 2
+    assert plan["batches"] == ["f0.py", "f200.py", "f200.py", "f400.py"] and plan["edges"] == 1
+    assert store.state["git_head"] == "f" * 40
     assert capsys.readouterr().err == ""
 
 
-def test_a_run_stopped_after_a_failed_write_resumes_at_its_batch(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-) -> None:
-    store, plan = _harness(monkeypatch, tmp_path, _PATHS)
-    plan["unwritten"] = {"f0.py": {"code_symbols": 1}}
-    plan["fail_batch"] = "f400.py"
-    with pytest.raises(_Interrupted):
-        _backfill()
-    assert "backfill_cursor:index" not in store.state  # never moved past f0.py's batch
-    plan["unwritten"], plan["fail_batch"] = {}, None
-    assert _backfill() == 0
-    assert plan["batches"] == ["f0.py", "f200.py", "f0.py", "f200.py", "f400.py"]
-
-
-def test_an_edge_pass_whose_write_failed_exits_non_zero_and_stays_owed(
+def test_a_failed_edge_pass_write_stops_the_run_and_leaves_the_pass_owed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
     store, plan = _harness(monkeypatch, tmp_path, _PATHS)
-    plan["unwritten"] = {"f400.py": {"code_chunks": 2}}
     plan["edge_unwritten"] = {"code_edges": 3}
     assert _backfill() == 1
     assert capsys.readouterr().err.splitlines() == [
-        f"backfill at {'f' * 12}: failed writes left up to 5 rows out of the index "
-        "(index phase: code_chunks 2; second edge pass: code_edges 3)",
+        _REPORT + "3 rows out of the index (second edge pass: code_edges 3)",
         _RERUN + _COMMAND,
     ]
+    # no watermark; the index phase is written, so the re-run starts at the pass
+    assert "git_head" not in store.state
+    assert store.state["backfill_cursor:index"] == "450"
     assert store.state["backfill_edges_owed:index"] == "first-backfill"
-    plan["unwritten"], plan["edge_unwritten"] = {}, {}
+    plan["edge_unwritten"] = {}
     assert _backfill() == 0
-    assert plan["edges"] == 2
+    assert plan["batches"] == ["f0.py", "f200.py", "f400.py"] and plan["edges"] == 2
     assert store.state["backfill_edges_owed:index"] == ""
+    assert store.state["git_head"] == "f" * 40
+
+
+def test_rows_a_failed_write_left_out_fail_the_recorded_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run's `loom.worker_status` row when no file failed and a write did."""
+    recorded: dict[str, Any] = {}
+
+    async def _record(*_a: object, **k: Any) -> None:
+        recorded.update(k)
+
+    async def _noop(*_a: object, **_k: object) -> None:
+        return None
+
+    monkeypatch.setattr(code_backfill, "_record_manual_pass", _record)
+    monkeypatch.setattr(code_backfill, "_compact_after_bulk", _noop)
+    monkeypatch.setattr(code_backfill, "_republish_counts", _noop)
+    counters = code_backfill.index_counters() | {"files": 200}
+    code_backfill.count_unwritten(counters, {"code_edges": 5, "code_files": 2})
+    asyncio.run(
+        code_backfill._close_index(None, counters, "acme", "code-x", "m", 0.0, "f" * 40, "backfill")
+    )
+    assert (recorded["done"], recorded["errors"]) == (200, 7)
+    assert code_backfill.manual_pass_status(recorded["done"], recorded["errors"]) == "partial"

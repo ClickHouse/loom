@@ -99,6 +99,11 @@ def unwritten(counters: dict[str, int]) -> dict[str, int]:
     }
 
 
+def write_failed(counters: dict[str, int]) -> str:
+    """Why a batch a failed write left rows out of stops its run, "" when none did."""
+    return "a write failed" if unwritten(counters) else ""
+
+
 @dataclass
 class _Run:
     """What the index phase's cursor batches and its edge pass run with: one in the CLI
@@ -207,8 +212,9 @@ class _Run:
             counters["embed_reused"] = counters.get("embed_reused", 0) + stats.embed_reused
 
     async def batch(self, paths: list[str]) -> str:
-        """One cursor batch of the index phase: "" once written, else why it was held."""
-        return await _held_batch(
+        """One cursor batch of the index phase: "" once written, else why it stops the
+        run: the org's switch held it, or a write of it failed."""
+        held = await _held_batch(
             self.repo,
             self.org,
             self.ns,
@@ -220,6 +226,7 @@ class _Run:
             head=self.head,
             counters=self.counters,
         )
+        return held or write_failed(self.counters)
 
     async def edge_one(self, reads: Any, path: str, src: bytes) -> None:
         from server.code.app.index.ingest import ingest_file
@@ -245,9 +252,9 @@ class _Run:
             self.edges["files"] += 1
             self.edges["edges"] += stats.edges_new
 
-    async def edge_batch(self, paths: list[str]) -> None:
-        """One batch of the edge pass."""
-        lost = await _backfill_batch_rounds(
+    async def edge_batch(self, paths: list[str]) -> str:
+        """One batch of the edge pass: "" once written, else why it stops the run."""
+        await _backfill_batch_rounds(
             self.repo,
             self.org,
             self.ns,
@@ -257,8 +264,9 @@ class _Run:
             denylist=self.denylist,
             git_dir=self.cfg.git_dir,
             head=self.head,
+            counters=self.edges,
         )
-        count_unwritten(self.edges, lost)
+        return write_failed(self.edges)
 
 
 async def worker_run(args: argparse.Namespace, head: str) -> _Run:
@@ -290,8 +298,8 @@ def _workers_for(
 async def _index_batches(
     run: _Run, batches: list[tuple[int, list[str]]], workers: code_backfill_workers.Workers | None
 ) -> AsyncGenerator[tuple[int, list[str], dict[str, int], str], None]:
-    """The index phase's cursor batches in order, each with its own counters and why the
-    org's switch held it ("" once written): in this process, or across `workers`."""
+    """The index phase's cursor batches in order, each with its own counters and why it
+    stops the run ("" once written): in this process, or across `workers`."""
     if workers is not None:
         async for done in workers.index_batches(batches):
             yield done
@@ -315,9 +323,9 @@ async def _index_phase(
     started: float,
 ) -> str:
     """Run the batches, moving the cursor past each one once every earlier one is
-    written; why the org's switch held one, "" once all are written. A batch written
-    beside the held one is counted and the cursor stays. It also stays before the first
-    batch a failed write left rows out of, so a run stopped after it resumes there."""
+    written; why one stopped the run (the org's switch held it, or a write of it
+    failed), "" once all are written. A batch written beside that one is counted and
+    the cursor stays, so the next run resumes there."""
     held = ""
     paths_file = bool(getattr(run.args, "paths_file", ""))
     async with contextlib.aclosing(_index_batches(run, batches, workers)) as done:
@@ -329,7 +337,7 @@ async def _index_phase(
                 held = why
                 print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
                 continue
-            if not paths_file and not unwritten(counters):
+            if not paths_file:
                 await run.repo.set_state(
                     run.org, run.ns, cursor_key, str(b_start + len(chunk_paths))
                 )
@@ -439,19 +447,21 @@ async def _backfill_run(args: argparse.Namespace, stack: contextlib.AsyncExitSta
         second = await _second_edge_pass(run, paths, workers)
     # By pass, read before the edge pass's rows join the run's counters below.
     lost = {"index phase": unwritten(counters), "second edge pass": unwritten(second or {})}
-    if held:
-        # The batches written before the hold are compacted, republished and recorded.
-        await _close_index(repo, counters, org, ns, model_name, started, head, mode)
-        _say_unwritten(head, lost)
-        return 1
     if second is not None:
         counters["edges_second_pass"] = second["edges"]
         # The run's counters, printed and recorded, hold both passes' errors and rows
         # left out; the lines on stderr split the rows by pass.
         counters["errors"] += second["errors"]
         count_unwritten(counters, lost["second edge pass"])
-        if not paths_file and not second["errors"] and not lost["second edge pass"]:
-            await repo.set_state(org, ns, owed_key, "")
+    if held or lost["second edge pass"]:
+        # A hold or a failed write stopped the run: no watermark, and the cursor and the
+        # owed edge pass say where the next run starts. The batches written before the
+        # stop are compacted, republished and recorded.
+        await _close_index(repo, counters, org, ns, model_name, started, head, mode)
+        _say_unwritten(head, lost)
+        return 1
+    if second is not None and not paths_file and not second["errors"]:
+        await repo.set_state(org, ns, owed_key, "")
     if getattr(args, "dialect_folder_pass", False):
         folder = await _dialect_folder_pass(repo, org, ns, head)
         counters["dialect_inherited"] = folder["inherited"]
@@ -469,16 +479,15 @@ async def _backfill_run(args: argparse.Namespace, stack: contextlib.AsyncExitSta
         await repo.set_state(org, ns, cursor_key, "")
     if paths_file:
         print(f"repair complete at {head[:12]} (watermark untouched): {counters}")
-    elif suffix:
+        return backfill_index_exit_code(counters["files"], counters["errors"])
+    if suffix:
         print(f"twin backfill complete at {head[:12]} (watermark untouched): {counters}")
-    else:
-        print(f"backfill index phase complete at {head[:12]}: {counters}")
-        _note(phase="index", head=head[:12], total_paths=len(paths), **counters)
-        if not args.embed:
-            print("run: loom code backfill --phase embed")
-    left_out = sum(unwritten(counters).values())
-    _say_unwritten(head, lost)
-    return backfill_index_exit_code(counters["files"], counters["errors"], left_out)
+        return backfill_index_exit_code(counters["files"], counters["errors"])
+    print(f"backfill index phase complete at {head[:12]}: {counters}")
+    _note(phase="index", head=head[:12], total_paths=len(paths), **counters)
+    if not args.embed:
+        print("run: loom code backfill --phase embed")
+    return backfill_index_exit_code(counters["files"], counters["errors"])
 
 
 def prefix_coverage_note(all_paths: list[str], prefixes: tuple[str, ...], *, top: int = 6) -> str:
@@ -626,12 +635,15 @@ async def _second_edge_pass(
     print(f"second edge pass: {len(paths)} files against the finished name table")
     if workers is None:
         for _b, chunk in batches:
-            await run.edge_batch(chunk)
+            if await run.edge_batch(chunk):
+                break
     else:
         for part in await workers.edge_batches(batches):
             add_counters(counters, part)
+    why = write_failed(counters)
+    ended = f"stopped: {why}" if why else "complete"
     print(
-        f"second edge pass complete: files={counters['files']} edges=+{counters['edges']} "
+        f"second edge pass {ended}: files={counters['files']} edges=+{counters['edges']} "
         f"errors={counters['errors']} in {time.monotonic() - started:.0f}s"
     )
     return counters
@@ -705,7 +717,8 @@ async def _close_index(
         started=started,
         done=counters["files"],
         rows_written=counters["chunks"] + counters["symbols"] + counters["edges"],
-        errors=counters["errors"],
+        # A row a failed write left out is a failure of the pass, as a file's error is.
+        errors=counters["errors"] + sum(unwritten(counters).values()),
         counters=counters,
         phase="index",
         head=head[:12],
@@ -752,10 +765,10 @@ async def _held_batch(
 ) -> str:
     """One cursor batch as the org's model calls, so its switch applies to them;
     "" once written, else why the switch held it (the cursor stays). The rows its
-    failed writes left out are added to `counters`."""
+    failed writes left out are added to `counters` either way."""
     try:
         with customer.for_org(org, namespace=ns):
-            lost = await _backfill_batch_rounds(
+            await _backfill_batch_rounds(
                 repo,
                 org,
                 ns,
@@ -765,10 +778,10 @@ async def _held_batch(
                 denylist=denylist,
                 git_dir=git_dir,
                 head=head,
+                counters=counters,
             )
     except customer.HOLDS as e:
         return str(e)
-    count_unwritten(counters, lost)
     return ""
 
 
@@ -783,7 +796,8 @@ async def _backfill_batch_rounds(
     denylist: Any,
     git_dir: str,
     head: str,
-) -> dict[str, int]:
+    counters: dict[str, int],
+) -> None:
     """One cursor batch of the CLI backfill in rounds of
     `code_ingest_round_files`: the round's sources
     are read first, `RoundReads.prefetch` parses them and answers every
@@ -794,34 +808,40 @@ async def _backfill_batch_rounds(
     caps a 50k-file release branch at ~2 files/s whatever `--concurrency`.
     Round size 0 keeps the per-file reads (the wrapper then only delegates).
 
-    Returns table -> rows the rounds' failed writes left out. A write is sent when a
-    later read or write of the round needs the buffer written, so its failure raises
-    in that file's ingest, where it is one file's error or a stage's logged failure;
-    the rows it dropped belong to any file of the round. The write as a round ends
-    is sent here, in no file's ingest: its failure is printed and counted, and the
-    batch goes on."""
+    The rows a round's failed writes left out are added to `counters` as the round
+    ends, however it ends, and the batch ends with that round: the run stops there
+    and the next one resumes at this batch. A write is sent when a later read or write
+    of the round needs the buffer written, so its failure raises in that file's
+    ingest, where it is one file's error or a stage's logged failure; the rows it
+    dropped belong to any file of the round. The write as a round ends is sent here,
+    in no file's ingest: its failure is printed."""
     from server.code.app.index.pass_budget import git_text_source
     from server.code.app.index.round_reads import RoundReads, round_size, rounds
 
     size = round_size()
-    lost: dict[str, int] = {}
     with git_text_source(git_dir, head):
         for rnd in rounds(batch_paths, size):
             found = dict(await asyncio.gather(*(source(p) for p in rnd)))
             sources = {p: src for p, src in found.items() if src is not None}
-            async with RoundReads(repo, org, ns) as reads:
-                if size > 0:
-                    await reads.prefetch(sources, denylist)
-                await gather_or_cancel(*(one(reads, p, sources[p]) for p in rnd if p in sources))
-                try:
-                    await reads.flush()
-                except Exception as e:  # noqa: BLE001 — counted in `unwritten`; the run reports it
-                    print(
-                        f"  ! write as the round of {rnd[0]} ended: {type(e).__name__}: {e}",
-                        file=sys.stderr,
+            reads = RoundReads(repo, org, ns)
+            try:
+                async with reads:
+                    if size > 0:
+                        await reads.prefetch(sources, denylist)
+                    await gather_or_cancel(
+                        *(one(reads, p, sources[p]) for p in rnd if p in sources)
                     )
-            add_counters(lost, reads.unwritten)
-    return lost
+                    try:
+                        await reads.flush()
+                    except Exception as e:  # noqa: BLE001 — counted below; the run reports it
+                        print(
+                            f"  ! write as the round of {rnd[0]} ended: {type(e).__name__}: {e}",
+                            file=sys.stderr,
+                        )
+            finally:
+                count_unwritten(counters, reads.unwritten)
+            if reads.unwritten:
+                return
 
 
 async def _backfill_head(git_dir: str, cfg: Any, args: argparse.Namespace) -> str:
@@ -863,7 +883,7 @@ def _say_unwritten(head: str, lost: dict[str, dict[str, int]]) -> None:
     )
 
 
-def backfill_index_exit_code(files: int, errors: int, unwritten_rows: int = 0) -> int:
+def backfill_index_exit_code(files: int, errors: int) -> int:
     """Per-file parse errors are skipped and reported inline, and the
     watermark advances regardless — so the exit code must describe the
     PHASE, not demand a perfect corpus. All-or-nothing here would abort a
@@ -873,9 +893,7 @@ def backfill_index_exit_code(files: int, errors: int, unwritten_rows: int = 0) -
     small delta passes stay strict, where one error IS the signal.
 
     A failed write is not a file's error: it drops rows of every file whose rows
-    shared its buffer, and a re-run writes them. Any row left out exits non-zero."""
-    if unwritten_rows:
-        return 1
+    shared its buffer, so it stops the run before this allowance applies."""
     tolerated = files // 100 if files >= 100 else 0
     return 0 if errors <= tolerated else 1
 

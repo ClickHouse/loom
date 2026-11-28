@@ -283,18 +283,22 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   once the pass is done, so a resumed run, or a rerun after an interrupted pass, still
   runs it. `--dialect-folder-pass` lets SQL files of undecided dialect take the dialect
   their directory agrees on.
-- The index phase exits 1 when an insert of the rows it indexed failed, for example one
-  that ran past `LOOM_CH_TIMEOUT_WRITE_S`, and its last lines on stderr name the pass,
-  the tables and how many rows the failed writes left out, then the command to run again.
-  The count is an upper bound, because a write the client gave up on can still have
-  landed. One failed write can drop rows of several files, so those rows fail the run
-  whatever its file-error count is; with no row left out, a run of 100 files or more
+- A failed insert of the rows the index phase indexed, for example one that ran past
+  `LOOM_CH_TIMEOUT_WRITE_S`, stops the run. The round of files that write belongs to
+  finishes, no later round or batch starts (under `--workers`, the batches already
+  running beside it finish), no watermark is written, and the command exits 1. Its last
+  lines on stderr name the pass, the tables and how many rows the failed writes left
+  out, then the command to run again. The count is an upper bound, because a write the
+  client gave up on can still have landed. The cursor stays before that batch and an
+  edge pass stopped this way stays owed, so the re-run resumes there, keeps the rows
+  already in the index and writes the rest. One failed write can drop rows of several
+  files, so it is not a file error: with no row left out, a run of 100 files or more
   exits 0 with up to 1% of its files failing, a smaller run with none. The record of a
   file over `LOOM_CODE_INGEST_MAX_FILE_BYTES` is written on its own, and a failure there
-  is that file's error. The watermark is written either way and an edge pass with a
-  failed write stays owed. The re-run walks the tree again, keeps the rows already in
-  the index and writes the rest; a run stopped after a failed write resumes at that
-  write's batch.
+  is that file's error. Any other failed write ends the command with the error itself
+  and no such lines: the write that closes a round a held model call or a signal had
+  already stopped, a cursor or watermark write, and the insert of
+  `--dialect-folder-pass`.
 - `backfill-prs` loads merged-PR history from GitHub, resumable by cursor and bounded by
   GitHub's rate limit (`LOOM_CODE_PR_BACKFILL_MONTHS`, default 12). `backfill-reviews`
   adds inline review comments, `backfill-assignees` requested reviewers, and

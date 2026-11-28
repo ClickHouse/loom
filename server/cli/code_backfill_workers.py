@@ -47,7 +47,7 @@ from server.code.app.index.ingest_headers import HEADER_EXTS
 
 _SPAWN = multiprocessing.get_context("spawn")  # a fresh interpreter: no copy of the parent's loop
 
-# (first index, paths, counters, why the org's switch held it: "" once written)
+# (first index, paths, counters, why it stops the run: "" once written)
 Done = tuple[int, list[str], dict[str, int], str]
 
 
@@ -252,8 +252,8 @@ async def serve(run: Any, assignment: Assignment) -> int:
             held = await run.batch(paths)
             return run.counters, held
         run.edges = edge_counters()
-        await run.edge_batch(paths)
-        return run.edges, ""
+        held = await run.edge_batch(paths)
+        return run.edges, held
 
     conn = assignment.conn
     _note(worker=assignment.number)
