@@ -1008,7 +1008,7 @@ copy plus `LOOM_CODE_MIRROR_GC_MARGIN_GB`, 5 GB by default; without it the gc wa
 another interval and logs a warning), and sweeps `LOOM_CODE_REPOS_ROOT` of the mirrors,
 `checkout-*` trees and mirror lock files no active entry names, so a removed repository leaves
 every host, not only the one `code.repo.remove` reached. Between those gcs, a mirror
-or checkout with more than 50 packs a gc may rewrite (git's `gc.autoPackLimit`) gets
+or checkout with more than 500 packs a gc may rewrite gets
 `git repack -d -l --geometric=2`, which merges the small packs its fetches write and
 leaves the large one. The
 `loom.host.disk.free_bytes` / `loom.host.disk.total_bytes` gauges are the disk alarm's input.

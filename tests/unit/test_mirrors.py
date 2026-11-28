@@ -705,8 +705,8 @@ async def test_fix_blame_says_why_there_is_no_mirror_instead_of_a_git_error(
 
 
 def test_more_packs_than_the_limit_are_merged_before_the_gc_is_due(monkeypatch, tmp_path) -> None:
-    """Every mirror fetch writes a pack; past git's `gc.autoPackLimit` they are merged
-    on the next round, not a week later."""
+    """Every mirror fetch writes a pack; past `_PACK_LIMIT` they are merged on the next
+    round, not a week later."""
     import subprocess
 
     def g(repo, *args: str) -> str:
@@ -725,6 +725,7 @@ def test_more_packs_than_the_limit_are_merged_before_the_gc_is_due(monkeypatch, 
         g(git_dir, "-c", "fetch.unpackLimit=1", "fetch", "-q", str(source), "+HEAD:refs/heads/x")
     (git_dir / mirrors._GC_MARK).touch()  # the weekly gc ran a moment ago
     monkeypatch.setattr(settings, "code_mirror_gc_interval_h", 168.0)
+    monkeypatch.setattr(mirrors, "_PACK_LIMIT", 50)  # 500 in production
     packs = git_dir / "objects" / "pack"
     assert len(list(packs.glob("*.pack"))) == 56
 

@@ -371,9 +371,10 @@ async def _merge_page(cfg: Any, git_dir: str, repo: Any) -> None:
         logger.info("mirror %s: ledger merges of %s: %s", git_dir, cfg.namespace, e)
 
 
-# Git's own `gc.autoPackLimit`. Every mirror fetch writes a pack, and a shared
-# checkout's sandboxed job mounts each one it links.
-_PACK_LIMIT = 50
+# Every mirror fetch writes a pack, and a shared checkout's sandboxed job mounts each
+# one it links: a few thousand overflow its argv. Each repack makes every shared
+# checkout run a full gc, so it waits for far more packs than git's own limit of 50.
+_PACK_LIMIT = 500
 
 
 def _unkept_packs(git_dir: str) -> int:
