@@ -362,9 +362,11 @@ carries: `go.mod` (at any depth) for Go; `tsconfig.json`, `jsconfig.json` or
 `pyproject.toml`, `setup.py` or `requirements.txt` at the root for Python.
 `code.index_status` lists them as `compiler_candidates`. Name the producer where a build
 file is incidental, such as a C++ repository whose `pyproject.toml` only serves its test
-tooling; `scip_extra_producers` adds tiers beside a named one. Each tier works in its own
-tree: the named producer (C/C++ when the entry names none) in `scip_checkout_dir`, every
-other one in `<scip_checkout_dir>.<producer>`.
+tooling. Add tiers beside a named producer with `scip_extra_producers`. When the tree
+contains a build file for an unselected tier with no index, `quality_warnings` names
+the producer to add. Each tier works in its own tree: the named producer (C/C++ when
+the entry names none) in `scip_checkout_dir`, every other one in
+`<scip_checkout_dir>.<producer>`.
 
 All the workers are enabled by default, and the Docker image carries every indexer:
 scip-python, scip-typescript, scip-go, and for C/C++ clang 21, lld, CMake, ninja and

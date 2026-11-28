@@ -3,6 +3,7 @@ code-namespace directory registration — the backend of the dashboard's Reposit
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -193,6 +194,59 @@ async def test_index_status_reports_lag_and_refresh_breadcrumb() -> None:
     assert out.state["git_head"]["detail"] == "base 1234"
     # An entry that names no prefixes covers its whole tree
     assert out.path_prefixes == [""]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("primary", "extra", "go_warning"),
+    [
+        (
+            "typescript",
+            [],
+            "scip-go is detected for this tree. Add go to scip_extra_producers to index it.",
+        ),
+        (
+            "typescript",
+            ["go"],
+            "scip-go is available for this tree but has not run (code_scip_go_delta).",
+        ),
+        ("", [], "scip-go is available for this tree but has not run (code_scip_go_delta)."),
+    ],
+    ids=["unselected", "extra-producer", "inferred"],
+)
+async def test_index_status_reports_whether_a_detected_tier_is_selected(
+    monkeypatch: pytest.MonkeyPatch, primary: str, extra: list[str], go_warning: str
+) -> None:
+    from server.code.api.models_status import CodeIndexStatusInput
+
+    class MixedTree(_FakeRepo):
+        async def live_paths_present(self, org: str, ns: str, paths: list[str]) -> set[str]:
+            return {"package.json"}
+
+        async def live_paths_named(self, org: str, ns: str, name: str, *, limit: int) -> list[str]:
+            return ["tools/go.mod"]
+
+    monkeypatch.setattr(index_status, "CodeRepo", MixedTree)
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps(
+            [
+                {
+                    "namespace": "code-clickhouse",
+                    "scip_producer": primary,
+                    "scip_extra_producers": extra,
+                }
+            ]
+        ),
+    )
+
+    out = await index_status.handle_code_index_status(CodeIndexStatusInput())
+
+    assert out.compiler_candidates == ["go", "typescript"]
+    assert [warning for warning in out.quality_warnings if warning.startswith("scip-go")] == [
+        go_warning
+    ]
 
 
 @pytest.mark.asyncio
