@@ -167,6 +167,7 @@ def configured(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
     class _Cfg:
         org, namespace = ORG, NS
+        embed_reuse_from = ""
 
     out: list[Any] = [_Cfg()]
     monkeypatch.setattr(repos_mod, "configured_repos", lambda: list(out))
