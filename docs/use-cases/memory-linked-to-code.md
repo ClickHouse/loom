@@ -36,6 +36,16 @@ reported commit](#check-a-lesson-after-a-code-edit).
   it `fresh`. A link to a file follows the lines that hold a name the memory cites, and
   is replaced by a link to a definition the memory names once the file defines it.
   [Link states](../concepts/memory.md#memories-linked-to-code)
+- **The current name beside a memory written against the old one.** A rename leaves the
+  memory's text as it was written. These reads name where the code is now:
+  `memory.get`, `memory.search` and the `loom_search` text, `memory.for_file` and the
+  pre-edit block, `lessons` on code answers, `context.pack` and the dashboard, and the
+  note `memory.ask` gives its synthesis (where the deployment sets
+  `memory_ask_code_namespace` to a code namespace the caller may read and leaves
+  `memory_ask_code_staleness` on). A line reads
+  ``(code moved: `reader::fetch_rows` is now `reader::load_rows` at src/reader.py:12-40)``,
+  and the structured answer carries the same as `code_moved`.
+  [What reads name](../concepts/memory.md#memories-linked-to-code)
 - **Stale memories handled the way you choose.** The namespace's
   [`code_change_policy`](../reference/operations/namespace.md#namespaceregister) decides:
   `retire_removed` (the default) leaves a memory whose code is all gone out of search and
@@ -123,6 +133,12 @@ The existing `test_memories_follow_their_code`
 [integration regression](https://github.com/ClickHouse/loom/blob/main/tests/integration/test_memory_code_links.py)
 checks these states across commits. It also checks a pure move (`moved`), removed code
 (`missing`) and a release branch whose unchanged definition still reads `fresh`.
+
+To see a rename, change only the function's name on trunk and push. After the index and
+link worker process the commit, `memory.get` on the lesson lists the link under `code`
+with the new `symbol`, its `start_line` and `end_line`, and `was_symbol`, the name the
+lesson's text still uses. A search that serves the lesson carries the same link in
+`code_moved`, and its line in the `loom_search` text names both.
 
 The packaged [MCP smoke](https://github.com/ClickHouse/loom/blob/main/scripts/gates/docker_code_smoke.py)
 saves a lesson, verifies `fresh`, commits a body edit and waits for the indexing and link

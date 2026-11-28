@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from server.code.domain.idents import embedded_idents
+from server.code.domain.idents import embedded_idents, spelled_names
 from server.llm import fake
 from server.memory.domain.decision_extract import _BARE_CAMEL, sort_mentions
 from server.tracker.domain.catalogue import extract_anchors
@@ -20,6 +20,13 @@ from server.tracker.domain.catalogue import extract_anchors
 CASES = [
     pytest.param(embedded_idents, "Ab" + "A" * 27 + "_", id="code-search-pascal"),
     pytest.param(embedded_idents, "ab" + "A" * 27 + "_", id="code-search-camel"),
+    # a dotted run that ends as a path: every part is a place a match could restart
+    pytest.param(lambda s: spelled_names(s, 32), "a." * 20000 + "b/", id="code-search-spelled"),
+    # a run of slashes: each name is looked up in the paths once
+    pytest.param(lambda s: spelled_names(s, 32), "a_b/" * 20000 + "c", id="code-search-paths"),
+    pytest.param(lambda s: spelled_names(s, 32), "a_b/c " * 20000, id="code-search-slashes"),
+    # a run of receivers: each is dropped once
+    pytest.param(lambda s: spelled_names(s, 32), "self." * 20000 + "b", id="code-search-receivers"),
     pytest.param(extract_anchors, "Ab" + "0" * 25 + "_", id="tracker-anchors"),
     pytest.param(lambda s: sort_mentions([s], s), "Ab" + "A" * 27 + "_", id="decision-mentions"),
     pytest.param(fake._CAMEL_RE.findall, "Ab" + "A" * 27 + "_", id="fake-mentions"),
@@ -37,6 +44,7 @@ def test_a_long_identifier_run_is_matched_in_linear_time(
 
 def test_the_shapes_still_match_what_they_named() -> None:
     assert embedded_idents("getUser and FooBar and foo_bar") == {"getuser", "foobar", "foo_bar"}
+    assert spelled_names("getUser and Foo.bar()", 32) == [("getUser",), ("Foo", "bar")]
     assert extract_anchors("why does MergeTreeData crash").components == ["MergeTreeData"]
     assert extract_anchors("why does S3Queue leak").components == ["S3Queue"]
     assert _BARE_CAMEL.match("StorageMergeTree") and not _BARE_CAMEL.match("Storage")
