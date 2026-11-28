@@ -7,7 +7,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Getting started
 
 - [Overview](docs/getting-started/overview.md): Loom is a server that stores memory, documents, conversations, an entity graph and a code index for AI agents, as rows in ClickHouse, with Postgres as an option for live memory and knowledge state.
-- [Quickstart](docs/getting-started/quickstart.md): Run Loom locally with Docker.
+- [Quickstart](docs/getting-started/quickstart.md): Install Loom with Docker, then save and recall your first memory.
 - [Set up Loom with your coding agent](docs/getting-started/agent-setup.md): This page is for a coding agent, Claude Code or Codex, asked to install Loom on the machine it runs on and to prove that the install works.
 - [Shared memory for Claude Code, Codex and Cursor](docs/getting-started/connect-a-coding-agent.md): Loom gives Claude Code, Codex and Cursor shared long-term memory through plugins or MCP tools connected to the same self-hosted server.
 - [Evaluate Loom](docs/getting-started/evaluate.md): Evaluate the decision you need to make, not every harness in the repository.
