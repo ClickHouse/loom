@@ -291,3 +291,20 @@ test("an edit lookup the server did not answer is not repeated at the next edit,
     box.done();
   }
 });
+
+test("a symlink to a file is looked up under its own path, and its read leaves the target's block for the target", {
+  skip: process.platform === "win32",
+}, async () => {
+  const box = sandbox();
+  const srv = await loom();
+  try {
+    fs.symlinkSync("../src/a.py", path.join(box.dir, "docs/link.py"));
+    assert.equal((await hook(box, srv.url, "PostToolUse", read(box, "docs/link.py"))).context, "");
+    assert.equal((await hook(box, srv.url, "PreToolUse", edit(box, "docs/link.py"))).context, "");
+    assert.deepEqual(srv.asked, ["docs/link.py"], "one lookup, by the path git holds");
+    assert.ok((await hook(box, srv.url, "PostToolUse", read(box, "src/a.py"))).context.includes(RENDERED));
+  } finally {
+    srv.close();
+    box.done();
+  }
+});

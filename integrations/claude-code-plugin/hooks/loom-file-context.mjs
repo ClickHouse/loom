@@ -100,6 +100,19 @@ function isFile(abs) {
   }
 }
 
+/** `abs` as the file system names it, a symlink to a file under its own name:
+ *  in a checkout it is a path of its own, as pathUnder reads it, and its
+ *  target is another file. */
+function diskPath(abs) {
+  let link = false;
+  try {
+    link = fs.lstatSync(abs).isSymbolicLink();
+  } catch {
+    // A path that does not exist yet (a Write's new file) is no link.
+  }
+  return link ? path.join(realPath(path.dirname(abs)), path.basename(abs)) : realPath(abs);
+}
+
 /** After a read: the block of each file of the checkout the call read that
  *  this agent context has not been shown. A call that read only seen files
  *  costs no git call and no request. */
@@ -110,7 +123,7 @@ async function afterRead(payload, token) {
   const state = readSessionState(STATE, payload.session_id);
   const now = Date.now();
   // A directory or a missing path has no memory to look up.
-  const fresh = [...new Set(readPaths(payload.tool_name, payload.tool_input, cwd).filter(isFile).map(realPath))].filter(
+  const fresh = [...new Set(readPaths(payload.tool_name, payload.tool_input, cwd).filter(isFile).map(diskPath))].filter(
     (abs) => decideInject(state, key(abs), now, Infinity).inject,
   );
   const left = Math.min(READ_FILES_PER_CALL, readLookupsLeft(state));
@@ -148,7 +161,7 @@ async function beforeEdit(payload, token) {
   const file = targetPath(payload.tool_name, payload.tool_input);
   if (!file) return;
   const cwd = payload.cwd || process.cwd();
-  const key = seenKey(payload.agent_id, realPath(path.resolve(cwd, file)));
+  const key = seenKey(payload.agent_id, diskPath(path.resolve(cwd, file)));
   // An edit lookup the server did not answer is kept under its own key: it
   // holds off the file's next edit lookup, and the file stays unseen for a read.
   const unanswered = `unanswered-edit\n${key}`;

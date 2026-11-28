@@ -289,7 +289,8 @@ record: the run and its usage counters.
   One lookup per session, agent context and file: the files shown are kept
   by their path on disk, under the subagent's id (`agent_id`) for a call a
   subagent made, so a subagent's read leaves the main agent's block for the
-  main agent's own read or edit. PreCompact forgets them, since a
+  main agent's own read or edit. A symlink to a file is looked up and kept
+  under its own path, apart from its target. PreCompact forgets them, since a
   compaction drops the blocks. After a read a file already asked about is
   not asked about again, and costs no git call and no request. Before an
   edit a file asked about in the last 30 min (LOOM_FILE_CONTEXT_TTL_MIN) is
